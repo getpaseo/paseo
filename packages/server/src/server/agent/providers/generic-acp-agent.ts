@@ -8,6 +8,10 @@ import {
   type ACPCatalogModelResolver,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPCurrentModeListener,
+  type ACPExtMethodHandler,
+  type ACPFeatureWriter,
+  type ACPStaticToggleFeature,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
@@ -49,6 +53,11 @@ interface GenericACPAgentClientOptions {
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
+  staticToggleFeatures?: ACPStaticToggleFeature[];
+  featureWriter?: ACPFeatureWriter;
+  extMethodHandler?: ACPExtMethodHandler;
+  currentModeListener?: ACPCurrentModeListener;
+  modeIdTransformer?: (modeId: string) => string | null;
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
 }
@@ -74,6 +83,13 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
+      ...(options.staticToggleFeatures
+        ? { staticToggleFeatures: options.staticToggleFeatures }
+        : {}),
+      ...(options.featureWriter ? { featureWriter: options.featureWriter } : {}),
+      ...(options.extMethodHandler ? { extMethodHandler: options.extMethodHandler } : {}),
+      ...(options.currentModeListener ? { currentModeListener: options.currentModeListener } : {}),
+      ...(options.modeIdTransformer ? { modeIdTransformer: options.modeIdTransformer } : {}),
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
     });

@@ -413,6 +413,10 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  staticToggleFeatures?: ACPStaticToggleFeature[];
+  featureWriter?: ACPFeatureWriter;
+  extMethodHandler?: ACPExtMethodHandler;
+  currentModeListener?: ACPCurrentModeListener;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -443,6 +447,10 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  staticToggleFeatures?: ACPStaticToggleFeature[];
+  featureWriter?: ACPFeatureWriter;
+  extMethodHandler?: ACPExtMethodHandler;
+  currentModeListener?: ACPCurrentModeListener;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -504,6 +512,12 @@ interface PendingPermission {
   turnId: string | null;
 }
 
+interface PendingClientPermission {
+  request: AgentPermissionRequest;
+  resolve: (response: AgentPermissionResponse) => void;
+  turnId: string | null;
+}
+
 interface PendingUserMessage {
   text: string;
   messageId?: string;
@@ -546,6 +560,39 @@ export interface ACPConfigFeatureOption {
   icon?: string;
   emptyOptionLabel?: string;
 }
+
+export interface ACPStaticToggleFeature {
+  id: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  icon?: string;
+}
+
+export interface ACPFeatureWriterContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  featureId: string;
+  value: unknown;
+}
+
+export type ACPFeatureWriter = (context: ACPFeatureWriterContext) => Promise<boolean>;
+
+export interface ACPExtMethodContext {
+  provider: string;
+  sessionId: string | null;
+  config: AgentSessionConfig;
+  requestPermission: (request: AgentPermissionRequest) => Promise<AgentPermissionResponse>;
+  emitTimeline: (item: AgentTimelineItem) => void;
+}
+
+export type ACPExtMethodHandler = (
+  method: string,
+  params: Record<string, unknown>,
+  context: ACPExtMethodContext,
+) => Promise<Record<string, unknown> | null>;
+
+export type ACPCurrentModeListener = (modeId: string | null, config: AgentSessionConfig) => void;
 
 export type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
 interface SelectConfigChoice {
@@ -747,6 +794,21 @@ function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
   };
 }
 
+function buildStaticToggleFeatures(
+  features: ACPStaticToggleFeature[],
+  config: AgentSessionConfig,
+): AgentFeature[] {
+  return features.map((feature) => ({
+    type: "toggle" as const,
+    id: feature.id,
+    label: feature.label,
+    description: feature.description,
+    tooltip: feature.tooltip,
+    icon: feature.icon,
+    value: config.featureValues?.[feature.id] === true,
+  }));
+}
+
 function resolveACPCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
@@ -800,6 +862,10 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly staticToggleFeatures: ACPStaticToggleFeature[];
+  private readonly featureWriter?: ACPFeatureWriter;
+  private readonly extMethodHandler?: ACPExtMethodHandler;
+  private readonly currentModeListener?: ACPCurrentModeListener;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -836,6 +902,10 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.staticToggleFeatures = options.staticToggleFeatures ?? [];
+    this.featureWriter = options.featureWriter;
+    this.extMethodHandler = options.extMethodHandler;
+    this.currentModeListener = options.currentModeListener;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -865,6 +935,10 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        staticToggleFeatures: this.staticToggleFeatures,
+        featureWriter: this.featureWriter,
+        extMethodHandler: this.extMethodHandler,
+        currentModeListener: this.currentModeListener,
         clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
@@ -915,6 +989,10 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      staticToggleFeatures: this.staticToggleFeatures,
+      featureWriter: this.featureWriter,
+      extMethodHandler: this.extMethodHandler,
+      currentModeListener: this.currentModeListener,
       clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
@@ -999,8 +1077,9 @@ export class ACPAgentClient implements AgentClient {
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const autoAcceptFeature = buildACPAutoAcceptFeature(config);
+    const staticFeatures = buildStaticToggleFeatures(this.staticToggleFeatures, config);
     if (this.configFeatureOptions.length === 0) {
-      return [autoAcceptFeature];
+      return [autoAcceptFeature, ...staticFeatures];
     }
 
     this.assertProvider(config);
@@ -1015,6 +1094,7 @@ export class ACPAgentClient implements AgentClient {
       const transformed = this.transformSessionResponse(response);
       return [
         autoAcceptFeature,
+        ...staticFeatures,
         ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
       ];
     } finally {
@@ -1388,6 +1468,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly staticToggleFeatures: ACPStaticToggleFeature[];
+  private readonly featureWriter?: ACPFeatureWriter;
+  private readonly extMethodHandler?: ACPExtMethodHandler;
+  private readonly currentModeListener?: ACPCurrentModeListener;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -1407,6 +1491,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
+  private readonly pendingClientPermissions = new Map<string, PendingClientPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
@@ -1454,6 +1539,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.staticToggleFeatures = options.staticToggleFeatures ?? [];
+    this.featureWriter = options.featureWriter;
+    this.extMethodHandler = options.extMethodHandler;
+    this.currentModeListener = options.currentModeListener;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -1674,6 +1763,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   get features(): AgentFeature[] {
     return [
       buildACPAutoAcceptFeature(this.config),
+      ...buildStaticToggleFeatures(this.staticToggleFeatures, this.config),
       ...deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions),
     ];
   }
@@ -2023,6 +2113,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
+    const staticFeature = this.staticToggleFeatures.find((feature) => feature.id === featureId);
+    if (staticFeature) {
+      const enabled = value === true;
+      if (this.featureWriter) {
+        const handled = await this.featureWriter({
+          connection: this.connection,
+          sessionId: this.sessionId,
+          featureId,
+          value: enabled,
+        });
+        if (!handled) {
+          throw new Error(`${this.provider} does not expose feature '${featureId}'`);
+        }
+      }
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        [featureId]: enabled,
+      };
+      return;
+    }
+
     const featureOption = this.configFeatureOptions.find((option) => option.id === featureId);
     if (!featureOption) {
       throw new Error(`Unknown ${this.provider} feature: ${featureId}`);
@@ -2089,10 +2200,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return Array.from(this.pendingPermissions.values(), (entry) => entry.request);
+    return [
+      ...Array.from(this.pendingPermissions.values(), (entry) => entry.request),
+      ...Array.from(this.pendingClientPermissions.values(), (entry) => entry.request),
+    ];
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+    const clientPending = this.pendingClientPermissions.get(requestId);
+    if (clientPending) {
+      this.pendingClientPermissions.delete(requestId);
+      clientPending.resolve(response);
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: response,
+        turnId: clientPending.turnId ?? undefined,
+      });
+      return;
+    }
+
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
@@ -2154,6 +2282,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
+    this.rejectPendingClientPermissions();
 
     if (this.activeForegroundTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
@@ -2173,6 +2302,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
+    this.rejectPendingClientPermissions();
 
     if (this.connection && this.sessionId) {
       try {
@@ -2316,6 +2446,61 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+  }
+
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!this.extMethodHandler) {
+      throw new Error(`Unknown ACP extension method: ${method}`);
+    }
+
+    const result = await this.extMethodHandler(method, params, {
+      provider: this.provider,
+      sessionId: this.sessionId,
+      config: this.config,
+      requestPermission: (request) => this.enqueueClientPermission(request),
+      emitTimeline: (item) => {
+        this.pushEvent({ type: "timeline", provider: this.provider, item });
+      },
+    });
+    if (result === null) {
+      throw new Error(`Unknown ACP extension method: ${method}`);
+    }
+    return result;
+  }
+
+  private enqueueClientPermission(
+    request: AgentPermissionRequest,
+  ): Promise<AgentPermissionResponse> {
+    return new Promise((resolve) => {
+      this.pendingClientPermissions.set(request.id, {
+        request,
+        resolve,
+        turnId: this.activeForegroundTurnId,
+      });
+      this.pushEvent({
+        type: "permission_requested",
+        provider: this.provider,
+        request,
+        turnId: this.activeForegroundTurnId ?? undefined,
+      });
+    });
+  }
+
+  private rejectPendingClientPermissions(): void {
+    for (const [requestId, pending] of this.pendingClientPermissions) {
+      pending.resolve({ behavior: "deny", interrupt: true });
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: { behavior: "deny", interrupt: true },
+        turnId: pending.turnId ?? undefined,
+      });
+    }
+    this.pendingClientPermissions.clear();
   }
 
   // Cache an asynchronously-delivered slash-command batch and unblock any
@@ -2589,6 +2774,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
     const configuredFeatureValues = this.config.featureValues ?? {};
+    for (const feature of this.staticToggleFeatures) {
+      if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, feature.id)) {
+        continue;
+      }
+      await this.setFeature(feature.id, configuredFeatureValues[feature.id]);
+    }
     for (const featureOption of this.configFeatureOptions) {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
         continue;
@@ -2771,7 +2962,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
-    this.currentMode = this.transformModeId(update.currentModeId);
+    this.currentModeListener?.(update.currentModeId, this.config);
+    const nextMode = this.transformModeId(update.currentModeId);
+    if (nextMode !== null) {
+      this.currentMode = nextMode;
+    }
   }
 
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
