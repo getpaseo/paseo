@@ -29,6 +29,7 @@ interface CreateAgentRequestMessage {
   config?: {
     provider?: unknown;
     modeId?: unknown;
+    featureValues?: unknown;
   };
 }
 
@@ -161,6 +162,60 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
         config: { provider: MODELESS_PROVIDER },
       });
       expect(createAgentRequest.config).not.toHaveProperty("modeId");
+    } finally {
+      await workspace.cleanup();
+      await provider.restore();
+      await profiles.restore();
+    }
+  });
+
+  test("cross-provider profile features survive immediate workspace creation", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "profile-feature-transition-" });
+    const featureProviderId = "profile-feature-e2e";
+    const featureModelId = "claude-opus-5";
+    const profiles = await seedAgentProfiles([
+      {
+        id: "agent_profile_feature_transition",
+        name: "Fast profile",
+        provider: featureProviderId,
+        model: featureModelId,
+        modeId: "bypassPermissions",
+        featureValues: { fast_mode: true },
+      },
+    ]);
+    const provider = await seedModelProvider({
+      id: featureProviderId,
+      label: "Profile feature test",
+      models: [
+        {
+          id: featureModelId,
+          label: "Profile feature model",
+          description: "Cross-provider feature regression model",
+        },
+      ],
+    });
+    const createAgentRecorder = await recordAndBlockCreateAgentRequest(page);
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+      await selectNewWorkspaceProject(page, {
+        projectKey: workspace.projectKey,
+        projectDisplayName: workspace.projectDisplayName,
+      });
+
+      await openModelPicker(page);
+      await applyProfileFromPicker(page, "Fast profile");
+      await submitNewWorkspacePrompt(page, "Create an agent with profile features.");
+
+      const createAgentRequest = await createAgentRecorder.waitForRequest();
+      expect(createAgentRequest).toMatchObject({
+        config: {
+          provider: featureProviderId,
+          featureValues: { fast_mode: true },
+        },
+      });
     } finally {
       await workspace.cleanup();
       await provider.restore();
