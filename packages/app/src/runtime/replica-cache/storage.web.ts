@@ -52,4 +52,19 @@ async function setItem(key: string, value: string): Promise<void> {
   });
 }
 
-export const replicaCacheStorage: ReplicaCacheStorage = { getItem, setItem };
+async function removeItem(key: string): Promise<void> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    transaction.objectStore(STORE_NAME).delete(key);
+    transaction.addEventListener("complete", () => resolve());
+    transaction.addEventListener("error", () =>
+      reject(transaction.error ?? new Error("Failed to remove replica cache")),
+    );
+    transaction.addEventListener("abort", () =>
+      reject(transaction.error ?? new Error("Replica cache removal was aborted")),
+    );
+  });
+}
+
+export const replicaCacheStorage: ReplicaCacheStorage = { getItem, setItem, removeItem };
