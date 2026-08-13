@@ -6,6 +6,8 @@ export interface TreeKillTarget {
   signalCode?: NodeJS.Signals | null;
   kill(signal?: NodeJS.Signals | number): boolean;
   once?(event: "exit", listener: () => void): unknown;
+  off?(event: "exit", listener: () => void): unknown;
+  observeExit?(listener: () => void): () => void;
 }
 
 export interface TerminateWithTreeKillOptions {
@@ -13,6 +15,8 @@ export interface TerminateWithTreeKillOptions {
   forceSignal?: NodeJS.Signals;
   gracefulTimeoutMs: number;
   forceTimeoutMs?: number;
+  beforeSignal?: (signal: NodeJS.Signals) => Promise<boolean>;
+  signalProcessOnly?: boolean;
   onForceSignal?: () => void;
 }
 
@@ -20,7 +24,8 @@ export type TerminateWithTreeKillResult =
   | "already-exited"
   | "terminated"
   | "killed"
-  | "kill-timeout";
+  | "kill-timeout"
+  | "signal-skipped";
 
 // Injection seam: production wires terminateWithTreeKill; tests wire a fake that
 // records which children were terminated as observable state.
@@ -37,28 +42,59 @@ export async function terminateWithTreeKill(
     return "already-exited";
   }
 
-  const exitPromise = waitForProcessExit(child);
-  await signalProcessTree(child, options.gracefulSignal ?? "SIGTERM");
-  if (await waitForExitOrTimeout(exitPromise, options.gracefulTimeoutMs)) {
-    return "terminated";
-  }
+  const exitObserver = observeProcessExit(child);
+  try {
+    const gracefulSignal = options.gracefulSignal ?? "SIGTERM";
+    if (options.beforeSignal && !(await options.beforeSignal(gracefulSignal))) {
+      return "signal-skipped";
+    }
+    await signalTreeOrChild(
+      child,
+      gracefulSignal,
+      options.signalProcessOnly ?? false,
+      options.beforeSignal === undefined,
+    );
+    if (await waitForExitOrTimeout(exitObserver.promise, options.gracefulTimeoutMs)) {
+      return "terminated";
+    }
 
-  options.onForceSignal?.();
-  await signalProcessTree(child, options.forceSignal ?? "SIGKILL");
-  if (options.forceTimeoutMs === undefined) {
-    return "killed";
+    const forceSignal = options.forceSignal ?? "SIGKILL";
+    if (options.beforeSignal && !(await options.beforeSignal(forceSignal))) {
+      return "signal-skipped";
+    }
+    options.onForceSignal?.();
+    await signalTreeOrChild(
+      child,
+      forceSignal,
+      options.signalProcessOnly ?? false,
+      options.beforeSignal === undefined,
+    );
+    if (options.forceTimeoutMs === undefined) {
+      return "killed";
+    }
+    return (await waitForExitOrTimeout(exitObserver.promise, options.forceTimeoutMs))
+      ? "killed"
+      : "kill-timeout";
+  } finally {
+    exitObserver.cancel();
   }
-  return (await waitForExitOrTimeout(exitPromise, options.forceTimeoutMs))
-    ? "killed"
-    : "kill-timeout";
 }
 
-export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
+function signalTreeOrChild(
+  child: TreeKillTarget,
+  signal: NodeJS.Signals,
+  signalProcessOnly: boolean,
+  allowDirectFallback: boolean,
+): Promise<void> {
   if (isProcessExited(child)) {
     return Promise.resolve();
   }
 
   const pid = child.pid;
+  if (signalProcessOnly || (typeof pid === "number" && pid < 0)) {
+    signalDirectChild(child, signal);
+    return Promise.resolve();
+  }
   if (typeof pid !== "number" || pid <= 0) {
     signalDirectChild(child, signal);
     return Promise.resolve();
@@ -66,12 +102,16 @@ export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals)
 
   return new Promise((resolve) => {
     treeKill(pid, signal, (error) => {
-      if (error) {
+      if (error && allowDirectFallback) {
         signalDirectChild(child, signal);
       }
       resolve();
     });
   });
+}
+
+export function signalProcessTree(child: TreeKillTarget, signal: NodeJS.Signals): Promise<void> {
+  return signalTreeOrChild(child, signal, false, true);
 }
 
 function signalDirectChild(child: TreeKillTarget, signal: NodeJS.Signals): void {
@@ -89,17 +129,33 @@ function isProcessExited(child: TreeKillTarget): boolean {
   );
 }
 
-function waitForProcessExit(child: TreeKillTarget): Promise<void> {
+function observeProcessExit(child: TreeKillTarget): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
   if (isProcessExited(child)) {
-    return Promise.resolve();
+    return { promise: Promise.resolve(), cancel: () => undefined };
+  }
+  if (child.observeExit) {
+    let resolveExit: () => void = () => undefined;
+    const promise = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    return { promise, cancel: child.observeExit(resolveExit) };
   }
   if (!child.once) {
-    return new Promise(() => undefined);
+    return { promise: new Promise(() => undefined), cancel: () => undefined };
   }
 
-  return new Promise((resolve) => {
-    child.once?.("exit", resolve);
+  let listener: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    listener = resolve;
+    child.once?.("exit", listener);
   });
+  return {
+    promise,
+    cancel: () => child.off?.("exit", listener),
+  };
 }
 
 async function waitForExitOrTimeout(

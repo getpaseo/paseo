@@ -70,6 +70,18 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
     };
   }
 
+  async verify(): Promise<"match"> {
+    return "match";
+  }
+
+  async verifyProcessGroup(): Promise<"match"> {
+    return "match";
+  }
+
+  async cleanupOwnedProcesses(): Promise<{ complete: true; found: false }> {
+    return { complete: true, found: false };
+  }
+
   async remove(): Promise<void> {}
 
   async list(): Promise<ManagedProcessRecord[]> {
