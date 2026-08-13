@@ -4,6 +4,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 
 export interface AgentExternalUrlDestination {
+  host: string;
   hostname: string;
   url: string;
 }
@@ -18,7 +19,7 @@ export function parseAgentExternalUrl(url: string): AgentExternalUrlDestination 
     if (!ALLOWED_PROTOCOLS.has(destination.protocol) || !destination.hostname) {
       return null;
     }
-    return { hostname: destination.hostname, url: destination.href };
+    return { host: destination.host, hostname: destination.hostname, url: destination.href };
   } catch {
     return null;
   }
@@ -28,10 +29,10 @@ export function agentExternalUrlConfirmationMessage(
   destination: AgentExternalUrlDestination,
 ): string {
   const hostnameLabel = destination.hostname.includes("xn--")
-    ? "Destination hostname (ASCII/punycode)"
-    : "Destination hostname";
+    ? "Destination host (ASCII/punycode)"
+    : "Destination host";
   return [
-    `${hostnameLabel}: ${destination.hostname}`,
+    `${hostnameLabel}: ${destination.host}`,
     `Full URL: ${destination.url}`,
     "",
     "This link was supplied by an agent. The live destination may differ from content inspected elsewhere.",

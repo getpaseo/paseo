@@ -55,11 +55,25 @@ describe("agent external URL confirmation", () => {
     const destination = parseAgentExternalUrl("https://faß.de/path");
 
     expect(destination).toEqual({
+      host: "xn--fa-hia.de",
       hostname: "xn--fa-hia.de",
       url: "https://xn--fa-hia.de/path",
     });
     expect(agentExternalUrlConfirmationMessage(destination!)).toContain(
-      "Destination hostname (ASCII/punycode): xn--fa-hia.de",
+      "Destination host (ASCII/punycode): xn--fa-hia.de",
+    );
+  });
+
+  it("shows an explicit non-default port in the destination host", () => {
+    const destination = parseAgentExternalUrl("https://example.com:8443/path");
+
+    expect(destination).toEqual({
+      host: "example.com:8443",
+      hostname: "example.com",
+      url: "https://example.com:8443/path",
+    });
+    expect(agentExternalUrlConfirmationMessage(destination!)).toContain(
+      "Destination host: example.com:8443",
     );
   });
 });
