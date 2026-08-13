@@ -1996,7 +1996,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): void {
     const workspaceKeys = new Set<string>();
     for (const event of events) {
-      const commonRelativePath = getRealpathAwareRelativePath(target.repoGitRoot, event.path);
+      const commonRelativePath = getRealpathAwareRelativePath(
+        target.repoGitRoot,
+        event.path,
+      )?.replaceAll("\\", "/");
       if (commonRelativePath === "config" || commonRelativePath === "info/exclude") {
         for (const workspaceKey of target.workspaceKeys) workspaceKeys.add(workspaceKey);
         continue;
@@ -2006,7 +2009,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (
           facts?.isGit &&
           facts.absoluteGitDir &&
-          getRealpathAwareRelativePath(facts.absoluteGitDir, event.path) === "config.worktree"
+          getRealpathAwareRelativePath(facts.absoluteGitDir, event.path)?.replaceAll("\\", "/") ===
+            "config.worktree"
         ) {
           workspaceKeys.add(workspaceKey);
         }
