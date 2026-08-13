@@ -1436,8 +1436,8 @@ export class OpenCodeAgentClient implements AgentClient {
     try {
       await runProviderRefreshActivity(context, "server.acquire", async () => {
         acquisition = options.force
-          ? await this.serverManager.acquireNew()
-          : await this.serverManager.acquireCurrent();
+          ? await this.serverManager.acquireNew(context?.signal)
+          : await this.serverManager.acquireCurrent(context?.signal);
       });
       if (!acquisition) throw new Error("OpenCode server acquisition did not complete");
       context?.signal.throwIfAborted();
