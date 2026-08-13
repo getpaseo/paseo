@@ -71,26 +71,21 @@ interface GrokQuotaProviderOptions {
   homeDir?: string;
 }
 
-async function readJsonBodyOrNull(response: Response): Promise<unknown | null> {
-  try {
-    return await response.json();
-  } catch (error) {
-    if (error instanceof SyntaxError) return null;
-    throw error;
-  }
-}
-
 async function readGrokPlanLabel(
   settingsResult: PromiseSettledResult<Response>,
 ): Promise<string | null> {
   if (settingsResult.status !== "fulfilled" || !settingsResult.value.ok) {
     return null;
   }
-  const parsed = GrokSettingsResponseSchema.safeParse(
-    await readJsonBodyOrNull(settingsResult.value),
-  );
-  const label = parsed.success ? parsed.data.subscription_tier_display : undefined;
-  return label && label.length > 0 ? label : null;
+  try {
+    const parsed = GrokSettingsResponseSchema.safeParse(await settingsResult.value.json());
+    const label = parsed.success ? parsed.data.subscription_tier_display : undefined;
+    return label && label.length > 0 ? label : null;
+  } catch {
+    // Settings is optional decoration. Abort, stream failure, or invalid JSON
+    // must not hide a successful billing fetch.
+    return null;
+  }
 }
 
 function wrappedNumber(value: { val?: number } | null | undefined): number | null {
