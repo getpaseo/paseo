@@ -61,7 +61,7 @@ export function buildGrokPlanModeFeature(enabled: boolean): AgentFeatureToggle {
   };
 }
 
-export function normalizeGrokExtMethod(method: string): string {
+function normalizeGrokExtMethod(method: string): string {
   return method.startsWith("_") ? method.slice(1) : method;
 }
 
@@ -90,7 +90,7 @@ export function mapGrokPlanPermissionResponse(
   return { outcome: "cancelled" };
 }
 
-export function buildGrokPlanPermissionRequest(params: {
+function buildGrokPlanPermissionRequest(params: {
   provider: string;
   planContent: string | null;
 }): AgentPermissionRequest {
@@ -132,7 +132,7 @@ export function buildGrokPlanPermissionRequest(params: {
   };
 }
 
-export function buildGrokPlanTimelineItem(params: {
+function buildGrokPlanTimelineItem(params: {
   toolCallId: string;
   planContent: string | null;
 }): Extract<AgentTimelineItem, { type: "tool_call" }> | null {
@@ -204,14 +204,14 @@ export async function handleGrokExtMethod(
     planContent: request.planContent,
   });
   const response = await context.requestPermission(permission);
-  const timelineItem = buildGrokPlanTimelineItem({
-    toolCallId: request.toolCallId,
-    planContent: request.planContent,
-  });
-  if (timelineItem) {
-    context.emitTimeline(timelineItem);
-  }
   if (response.behavior === "allow") {
+    const timelineItem = buildGrokPlanTimelineItem({
+      toolCallId: request.toolCallId,
+      planContent: request.planContent,
+    });
+    if (timelineItem) {
+      context.emitTimeline(timelineItem);
+    }
     syncGrokPlanModeFromCurrentMode(GROK_AGENT_MODE_ID, context.config);
   }
   return { ...mapGrokPlanPermissionResponse(response) };
