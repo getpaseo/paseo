@@ -1986,6 +1986,38 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("repository exclude changes update working-tree filtering", async () => {
+    const watcher = createWatcherHarness();
+    let ignoredDirectories = "node_modules/\n";
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, { runGitCommand });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = getWatcherRecordsForDirectory(watcher, REPO_CWD)[0];
+    const repositoryWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[0];
+    ignoredDirectories = "node_modules/\nbuild/\n";
+
+    repositoryWatcher?.callback(null, [
+      { path: path.join(GIT_DIR, "info", "exclude"), type: "update" },
+    ]);
+    await vi.waitFor(() => {
+      expect(checkoutWatcher?.updateIgnore).toHaveBeenCalledTimes(1);
+    });
+    expect(checkoutWatcher?.ignore).toContain(path.join(REPO_CWD, "build"));
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("ignore watcher update failure enters polling with a distinct reason", async () => {
     const watcher = createWatcherHarness();
     const logger = createLogger();

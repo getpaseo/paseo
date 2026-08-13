@@ -1879,6 +1879,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
                 })
               : relevantEvents;
             if (immediateEvents.length > 0) {
+              this.refreshWorkingTreeIgnoresFromRepoMetadataEvents(target, immediateEvents);
               const routedRefreshes = this.routeRepoMetadataEvents(target, immediateEvents);
               this.scheduleRepoMetadataRefresh(
                 target,
@@ -1987,6 +1988,37 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     return refreshes;
+  }
+
+  private refreshWorkingTreeIgnoresFromRepoMetadataEvents(
+    target: RepoGitTarget,
+    events: FileChange[],
+  ): void {
+    const workspaceKeys = new Set<string>();
+    for (const event of events) {
+      const commonRelativePath = getRealpathAwareRelativePath(target.repoGitRoot, event.path);
+      if (commonRelativePath === "config" || commonRelativePath === "info/exclude") {
+        for (const workspaceKey of target.workspaceKeys) workspaceKeys.add(workspaceKey);
+        continue;
+      }
+      for (const workspaceKey of target.workspaceKeys) {
+        const facts = this.workspaceTargets.get(workspaceKey)?.latestFacts;
+        if (
+          facts?.isGit &&
+          facts.absoluteGitDir &&
+          getRealpathAwareRelativePath(facts.absoluteGitDir, event.path) === "config.worktree"
+        ) {
+          workspaceKeys.add(workspaceKey);
+        }
+      }
+    }
+    for (const workspaceKey of workspaceKeys) {
+      const workspaceTarget = this.workspaceTargets.get(workspaceKey);
+      const workingTreeTarget = workspaceTarget
+        ? this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget)
+        : null;
+      if (workingTreeTarget) void this.refreshWorkingTreeIgnoredDirectories(workingTreeTarget);
+    }
   }
 
   private isFetchRemoteMetadataEvent(target: RepoGitTarget, event: FileChange): boolean {
