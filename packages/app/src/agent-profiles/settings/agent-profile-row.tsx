@@ -73,30 +73,32 @@ export function AgentProfileRow({
 
   return (
     <View style={rowStyle} testID={`agent-profile-row-${profile.id}`}>
-      <View style={styles.iconWrapper}>
-        <AgentProfileGlyph icon={profile.icon} color={profile.color} size={ICON_SIZE.md} />
-      </View>
-      <View style={settingsStyles.rowContent}>
-        <View style={styles.titleLine}>
-          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-            {profile.name}
-          </Text>
-          <Text style={styles.summary} numberOfLines={1}>
-            {summary}
-          </Text>
+      <View style={styles.rowMain}>
+        <View style={styles.iconWrapper}>
+          <AgentProfileGlyph icon={profile.icon} color={profile.color} size={ICON_SIZE.md} />
         </View>
-        {profile.notes ? (
-          <View style={styles.notes}>
-            <ThemedFileText size={ICON_SIZE.xs} uniProps={mutedColorMapping} />
-            <Text
-              style={styles.notesText}
-              numberOfLines={2}
-              testID={`agent-profile-notes-${profile.id}`}
-            >
-              {profile.notes}
+        <View style={settingsStyles.rowContent}>
+          <View style={styles.titleLine}>
+            <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+              {profile.name}
+            </Text>
+            <Text style={styles.summary} numberOfLines={1}>
+              {summary}
             </Text>
           </View>
-        ) : null}
+          {profile.notes ? (
+            <View style={styles.notes}>
+              <ThemedFileText size={ICON_SIZE.xs} uniProps={mutedColorMapping} />
+              <Text
+                style={styles.notesText}
+                numberOfLines={2}
+                testID={`agent-profile-notes-${profile.id}`}
+              >
+                {profile.notes}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       </View>
       <View style={styles.rowActions}>
         <Button
@@ -145,12 +147,17 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     paddingVertical: theme.spacing[3],
   },
+  rowMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+  },
   iconWrapper: {
     width: theme.iconSize.md,
-    alignSelf: "flex-start",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: theme.spacing[1],
+    marginTop: 1,
   },
   titleLine: {
     flexDirection: "row",

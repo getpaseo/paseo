@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useState,
   useCallback,
   useEffect,
@@ -43,6 +42,7 @@ import {
   WrapText,
 } from "lucide-react-native";
 import { type ParsedDiffFile, type DiffLine, type HighlightToken } from "@/git/use-diff-query";
+import { buildDiffFlatItems, sumHeightsBefore, type DiffFlatItem } from "@/git/diff-flat-items";
 import { buildDiffTree, collectDirPaths, compressSingleChildChains } from "@/git/diff-tree";
 import { DiffFolderRow } from "@/git/diff-folder-row";
 import {
@@ -59,10 +59,13 @@ import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { CommitsSection } from "@/git/commits-section/commits-section";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
+import { DiffScroll } from "@/components/diff-scroll";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { shouldAnchorHeaderBeforeCollapse } from "@/git/diff-scroll";
 import {
+  buildSplitDiffRows,
+  buildUnifiedDiffLines,
   type ReviewableDiffTarget,
   type SplitDiffDisplayLine,
   type SplitDiffRow,
@@ -104,7 +107,6 @@ import {
   formatDiffContentText,
   formatDiffGutterText,
   hasVisibleDiffTokens,
-  compactHighlightTokens,
 } from "@/utils/diff-rendering";
 import { isWeb, isNative } from "@/constants/platform";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
@@ -120,15 +122,6 @@ import {
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
-import {
-  buildDiffRowIndex,
-  createDiffRowCache,
-  DIFF_VIRTUALIZATION_CONFIG,
-  type DiffListItem,
-  type SplitRowGroupItem,
-  type UnifiedRowGroupItem,
-} from "@/git/diff-rows/model";
-import { DiffHorizontalContent, DiffHorizontalSurface } from "@/git/diff-horizontal-surface";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -183,6 +176,10 @@ function useDiffRowMetricsStyle(textMetricsStyle: TextStyle): StyleProp<ViewStyl
   );
 }
 
+function HighlightedToken({ token }: { token: HighlightToken }) {
+  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+}
+
 function HighlightedText({
   tokens,
   textMetricsStyle,
@@ -199,21 +196,15 @@ function HighlightedText({
     [textMetricsStyle, wrapLines],
   );
 
-  const keyedTokens = useMemo(() => {
-    let characterOffset = 0;
-    return compactHighlightTokens(tokens).map((token) => {
-      const keyedToken = { key: `${characterOffset}-${token.style ?? "base"}`, token };
-      characterOffset += token.text.length;
-      return keyedToken;
-    });
-  }, [tokens]);
+  const keyedTokens = useMemo(
+    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
+    [tokens],
+  );
 
   return (
     <Text style={containerStyle} testID={testID}>
       {keyedTokens.map(({ key, token }) => (
-        <Text key={key} style={syntaxTokenStyleFor(token.style)}>
-          {token.text}
-        </Text>
+        <HighlightedToken key={key} token={token} />
       ))}
     </Text>
   );
@@ -308,7 +299,6 @@ function LongPressableLine({
   hoverTargetKey,
   onHoverTargetChange,
   style,
-  testID,
   children,
 }: {
   reviewTarget: ReviewableDiffTarget | null | undefined;
@@ -317,7 +307,6 @@ function LongPressableLine({
   hoverTargetKey?: string | null;
   onHoverTargetChange?: (key: string | null) => void;
   style: StyleProp<ViewStyle>;
-  testID?: string;
   children: ReactNode;
 }) {
   const onStartComment = reviewActions?.onStartComment;
@@ -347,26 +336,17 @@ function LongPressableLine({
 
   if (isWeb && (onHoverChange || onHoverTargetChange)) {
     return (
-      <Pressable
-        onHoverIn={handleHoverIn}
-        onHoverOut={handleHoverOut}
-        style={hoverStyle}
-        testID={testID}
-      >
+      <Pressable onHoverIn={handleHoverIn} onHoverOut={handleHoverOut} style={hoverStyle}>
         {children}
       </Pressable>
     );
   }
 
   if (!isNative || !reviewTarget || !onStartComment) {
-    return (
-      <View style={style} testID={testID}>
-        {children}
-      </View>
-    );
+    return <View style={style}>{children}</View>;
   }
   return (
-    <Pressable onPress={handlePress} style={style} testID={testID}>
+    <Pressable onPress={handlePress} style={style}>
       {children}
     </Pressable>
   );
@@ -391,7 +371,6 @@ function DiffGutterCell({
   style,
   textTestID,
   actionTestID,
-  rowTestID,
 }: {
   lineNumber: number | null;
   type: DiffLine["type"] | undefined | null;
@@ -403,7 +382,6 @@ function DiffGutterCell({
   style?: StyleProp<ViewStyle>;
   textTestID?: string;
   actionTestID?: string;
-  rowTestID?: string;
 }) {
   const lineHeight = getNumericLineHeight(textMetricsStyle);
   const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
@@ -447,7 +425,6 @@ function DiffGutterCell({
       onStartComment={onStartComment}
       style={containerStyle}
       actionTestID={actionTestID}
-      testID={rowTestID}
     >
       <Text numberOfLines={1} style={textStyle} testID={textTestID}>
         {formatDiffGutterText(lineNumber)}
@@ -466,7 +443,6 @@ function DiffTextLine({
   hoverTargetKey,
   onHoverTargetChange,
   textTestID,
-  rowTestID,
 }: {
   line: DiffLine;
   wrapLines: boolean;
@@ -477,7 +453,6 @@ function DiffTextLine({
   hoverTargetKey?: string | null;
   onHoverTargetChange?: (key: string | null) => void;
   textTestID?: string;
-  rowTestID?: string;
 }) {
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
   const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
@@ -508,7 +483,6 @@ function DiffTextLine({
       hoverTargetKey={hoverTargetKey}
       onHoverTargetChange={onHoverTargetChange}
       style={containerStyle}
-      testID={rowTestID}
     >
       {line.type !== "header" && visibleTokens ? (
         <HighlightedText
@@ -837,10 +811,6 @@ function SplitDiffColumn({
   wrapLines,
   textMetricsStyle,
   reviewActions,
-  startRowIndex,
-  minContentWidth,
-  textViewportWidth,
-  contentTestID,
   showDivider = false,
 }: {
   rows: SplitDiffRow[];
@@ -849,12 +819,9 @@ function SplitDiffColumn({
   wrapLines: boolean;
   textMetricsStyle: TextStyle;
   reviewActions?: InlineReviewActions;
-  startRowIndex: number;
-  minContentWidth: number;
-  textViewportWidth: number;
-  contentTestID: string;
   showDivider?: boolean;
 }) {
+  const [scrollWidth, setScrollWidth] = useState(0);
   const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
 
   const wrapCellStyle = useMemo(
@@ -868,19 +835,16 @@ function SplitDiffColumn({
   const linesContainerRowStyle = useMemo(
     () => [
       styles.linesContainer,
-      inlineUnistylesStyle({ minWidth: Math.max(textViewportWidth, minContentWidth) }),
+      scrollWidth > 0 && inlineUnistylesStyle({ minWidth: scrollWidth }),
     ],
-    [minContentWidth, textViewportWidth],
+    [scrollWidth],
   );
   const headerLineTextStyle = useMemo(
     () => [styles.diffTextMetrics, textMetricsStyle, styles.diffLineText, styles.headerLineText],
     [textMetricsStyle],
   );
 
-  const keyedRows = useMemo(
-    () => rows.map((row, index) => ({ key: `row-${startRowIndex + index}`, row })),
-    [rows, startRowIndex],
-  );
+  const keyedRows = useMemo(() => rows.map((row, i) => ({ key: `row-${i}`, row })), [rows]);
 
   if (wrapLines) {
     return (
@@ -968,47 +932,50 @@ function SplitDiffColumn({
           );
         })}
       </View>
-      <DiffHorizontalContent
-        viewportStyle={styles.splitColumnScroll}
-        contentStyle={[styles.diffContentInner, linesContainerRowStyle]}
-        testID={contentTestID}
+      <DiffScroll
+        scrollViewWidth={scrollWidth}
+        onScrollViewWidthChange={setScrollWidth}
+        style={styles.splitColumnScroll}
+        contentContainerStyle={styles.diffContentInner}
       >
-        {keyedRows.map(({ key, row }) => {
-          if (row.kind === "header") {
+        <View style={linesContainerRowStyle}>
+          {keyedRows.map(({ key, row }) => {
+            if (row.kind === "header") {
+              return (
+                <View key={key} style={styles.splitHeaderRow}>
+                  <Text style={headerLineTextStyle}>{row.content}</Text>
+                </View>
+              );
+            }
+            const line = side === "left" ? row.left : row.right;
+            const reviewTargetKey = line?.reviewTarget?.key ?? null;
+            const reviewRowState = getSplitInlineReviewThreadState({
+              left: row.left?.reviewTarget,
+              right: row.right?.reviewTarget,
+              reviewActions,
+            });
             return (
-              <View key={key} style={styles.splitHeaderRow}>
-                <Text style={headerLineTextStyle}>{row.content}</Text>
+              <View key={key}>
+                <SplitTextLine
+                  line={line}
+                  wrapLines={false}
+                  textMetricsStyle={textMetricsStyle}
+                  reviewActions={reviewActions}
+                  hoverTargetKey={reviewTargetKey}
+                  onHoverTargetChange={setHoveredReviewTargetKey}
+                />
+                <InlineReviewThreadContent
+                  reviewTarget={line?.reviewTarget}
+                  reviewActions={reviewActions}
+                  reservedHeight={reviewRowState?.height}
+                  viewportWidth={scrollWidth}
+                  pinToViewport
+                />
               </View>
             );
-          }
-          const line = side === "left" ? row.left : row.right;
-          const reviewTargetKey = line?.reviewTarget?.key ?? null;
-          const reviewRowState = getSplitInlineReviewThreadState({
-            left: row.left?.reviewTarget,
-            right: row.right?.reviewTarget,
-            reviewActions,
-          });
-          return (
-            <View key={key}>
-              <SplitTextLine
-                line={line}
-                wrapLines={false}
-                textMetricsStyle={textMetricsStyle}
-                reviewActions={reviewActions}
-                hoverTargetKey={reviewTargetKey}
-                onHoverTargetChange={setHoveredReviewTargetKey}
-              />
-              <InlineReviewThreadContent
-                reviewTarget={line?.reviewTarget}
-                reviewActions={reviewActions}
-                reservedHeight={reviewRowState?.height}
-                viewportWidth={textViewportWidth}
-                pinToViewport
-              />
-            </View>
-          );
-        })}
-      </DiffHorizontalContent>
+          })}
+        </View>
+      </DiffScroll>
     </View>
   );
 }
@@ -1194,7 +1161,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
         ref={dragSourceRef}
         style={showDir ? styles.fileHeaderLeft : [styles.fileHeaderLeft, styles.fileHeaderLeftTree]}
       >
-        {showDir ? null : <View style={styles.fileChevronSpacer} />}
         {showDir ? null : (
           <View style={styles.fileIcon}>
             <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
@@ -1287,250 +1253,193 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function maxLineNumber(file: ParsedDiffFile): number {
-  let maximum = 0;
-  for (const hunk of file.hunks) {
-    maximum = Math.max(maximum, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
-  }
-  return maximum;
-}
-
-function DiffFileStatus({ file }: { file: ParsedDiffFile }) {
-  const { t } = useTranslation();
-  return (
-    <View style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}>
-      <View style={[styles.diffContent, styles.statusMessageContainer]}>
-        <Text style={styles.statusMessageText}>
-          {file.status === "binary"
-            ? t("workspace.git.diff.binaryFile")
-            : t("workspace.git.diff.tooLarge")}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-interface DiffRowGroupProps {
-  item: UnifiedRowGroupItem | SplitRowGroupItem;
-  viewportWidth: number;
-  wrapLines: boolean;
-  codeFontSize: number;
-  textMetricsStyle: TextStyle;
-  reviewActions?: InlineReviewActions;
-  onHeightChange?: (key: string, height: number) => void;
-}
-
-function DiffRowGroupView({
-  item,
-  viewportWidth,
+export function DiffFileBody({
+  file,
+  layout,
   wrapLines,
   codeFontSize,
   textMetricsStyle,
   reviewActions,
-  onHeightChange,
-}: DiffRowGroupProps) {
+  onBodyHeightChange,
+  testID,
+}: {
+  file: ParsedDiffFile;
+  layout: "unified" | "split";
+  wrapLines: boolean;
+  codeFontSize: number;
+  textMetricsStyle: TextStyle;
+  reviewActions?: InlineReviewActions;
+  onBodyHeightChange?: (file: ParsedDiffFile, height: number) => void;
+  testID?: string;
+}) {
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [bodyWidth, setBodyWidth] = useState(0);
   const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
+  const { t } = useTranslation();
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      if (wrapLines) {
-        onHeightChange?.(item.key, event.nativeEvent.layout.height);
-      }
+      setBodyWidth(event.nativeEvent.layout.width);
+      onBodyHeightChange?.(file, event.nativeEvent.layout.height);
     },
-    [item.key, onHeightChange, wrapLines],
+    [file, onBodyHeightChange],
   );
 
-  const minimumContentWidth = Math.ceil(item.contentColumns * codeFontSize * 0.75 + SPACING[4]);
-  const gutterWidth = lineNumberGutterWidth(maxLineNumber(item.file), codeFontSize);
-  const textViewportWidth = Math.max(0, viewportWidth - gutterWidth);
-  const minimumTextWidth = Math.max(textViewportWidth, minimumContentWidth);
+  const availableWidth = bodyWidth > 0 ? bodyWidth : scrollViewWidth;
   const linesContainerRowStyle = useMemo(
-    () => [styles.linesContainer, inlineUnistylesStyle({ minWidth: minimumTextWidth })],
-    [minimumTextWidth],
-  );
-  const groupStyle = useMemo(
     () => [
-      styles.fileSectionBodyContainer,
-      item.isLast && styles.fileSectionBorder,
-      item.isFirst && styles.diffContent,
-      styles.diffGroupContent,
+      styles.linesContainer,
+      availableWidth > 0 && inlineUnistylesStyle({ minWidth: availableWidth }),
     ],
-    [item.isFirst, item.isLast],
+    [availableWidth],
   );
-
-  if (item.type === "split_group") {
-    return (
-      <View
-        style={[groupStyle, styles.splitRow]}
-        onLayout={handleLayout}
-        dataSet={CODE_SURFACE_DATASET}
-        testID={`diff-file-${item.fileIndex}-group-${item.groupIndex}`}
-      >
-        <SplitDiffColumn
-          rows={item.rows}
-          side="left"
-          gutterWidth={gutterWidth}
-          wrapLines={wrapLines}
-          textMetricsStyle={textMetricsStyle}
-          reviewActions={reviewActions}
-          startRowIndex={item.startRowIndex}
-          minContentWidth={minimumContentWidth}
-          textViewportWidth={Math.max(0, viewportWidth / 2 - gutterWidth)}
-          contentTestID={`diff-file-${item.fileIndex}-group-${item.groupIndex}-left-content`}
-        />
-        <SplitDiffColumn
-          rows={item.rows}
-          side="right"
-          gutterWidth={gutterWidth}
-          wrapLines={wrapLines}
-          textMetricsStyle={textMetricsStyle}
-          reviewActions={reviewActions}
-          startRowIndex={item.startRowIndex}
-          minContentWidth={minimumContentWidth}
-          textViewportWidth={Math.max(0, viewportWidth / 2 - gutterWidth)}
-          contentTestID={`diff-file-${item.fileIndex}-group-${item.groupIndex}-right-content`}
-          showDivider
-        />
-      </View>
-    );
-  }
-
-  if (wrapLines) {
-    return (
-      <View
-        style={groupStyle}
-        onLayout={handleLayout}
-        dataSet={CODE_SURFACE_DATASET}
-        testID={`diff-file-${item.fileIndex}-group-${item.groupIndex}`}
-      >
-        <View style={styles.linesContainer}>
-          {item.lines.map(({ line, lineNumber, key, reviewTarget }, localIndex) => {
-            const index = item.startRowIndex + localIndex;
-            return (
-              <View key={key} testID={`diff-wrapped-row-${index}`}>
-                <DiffLineView
-                  line={line}
-                  lineNumber={lineNumber}
-                  gutterWidth={gutterWidth}
-                  wrapLines
-                  textMetricsStyle={textMetricsStyle}
-                  reviewTarget={reviewTarget}
-                  reviewActions={reviewActions}
-                />
-                <InlineReviewRow
-                  reviewTarget={reviewTarget}
-                  reviewActions={reviewActions}
-                  gutterWidth={gutterWidth}
-                />
-              </View>
-            );
-          })}
-        </View>
-      </View>
-    );
-  }
 
   return (
     <View
-      style={[groupStyle, styles.diffContentRow]}
+      style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
       onLayout={handleLayout}
-      dataSet={CODE_SURFACE_DATASET}
-      testID={`diff-file-${item.fileIndex}-group-${item.groupIndex}`}
+      testID={testID}
     >
-      <View style={styles.gutterColumn}>
-        {item.lines.map(({ line, lineNumber, key, reviewTarget }, localIndex) => {
-          const index = item.startRowIndex + localIndex;
-          const hasReviewThread =
-            getInlineReviewThreadState({ reviewTarget, reviewActions }) !== null;
+      {(() => {
+        if (file.status === "too_large" || file.status === "binary") {
           return (
-            <Fragment key={key}>
-              <DiffGutterCell
-                lineNumber={lineNumber}
-                type={line.type}
+            <View style={styles.statusMessageContainer}>
+              <Text style={styles.statusMessageText}>
+                {file.status === "binary"
+                  ? t("workspace.git.diff.binaryFile")
+                  : t("workspace.git.diff.tooLarge")}
+              </Text>
+            </View>
+          );
+        }
+
+        let maxLineNo = 0;
+        for (const hunk of file.hunks) {
+          maxLineNo = Math.max(
+            maxLineNo,
+            hunk.oldStart + hunk.oldCount,
+            hunk.newStart + hunk.newCount,
+          );
+        }
+        const gutterWidth = lineNumberGutterWidth(maxLineNo, codeFontSize);
+
+        if (layout === "split") {
+          const rows = buildSplitDiffRows(file);
+          return (
+            <View style={[styles.diffContent, styles.splitRow]} dataSet={CODE_SURFACE_DATASET}>
+              <SplitDiffColumn
+                rows={rows}
+                side="left"
                 gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
                 textMetricsStyle={textMetricsStyle}
-                reviewTarget={reviewTarget}
                 reviewActions={reviewActions}
-                isLineHovered={
-                  reviewTarget?.key !== undefined && hoveredReviewTargetKey === reviewTarget.key
-                }
-                textTestID={`diff-gutter-text-${index}`}
-                actionTestID={`diff-gutter-action-${index}`}
-                rowTestID={`diff-gutter-row-${index}`}
               />
-              {hasReviewThread ? (
-                <InlineReviewGutterSpacer
-                  reviewTarget={reviewTarget}
-                  reviewActions={reviewActions}
-                  gutterWidth={gutterWidth}
-                />
-              ) : null}
-            </Fragment>
+              <SplitDiffColumn
+                rows={rows}
+                side="right"
+                gutterWidth={gutterWidth}
+                wrapLines={wrapLines}
+                textMetricsStyle={textMetricsStyle}
+                reviewActions={reviewActions}
+                showDivider
+              />
+            </View>
           );
-        })}
-      </View>
-      <DiffHorizontalContent
-        viewportStyle={styles.splitColumnScroll}
-        contentStyle={[styles.diffContentInner, linesContainerRowStyle]}
-        testID={`diff-file-${item.fileIndex}-group-${item.groupIndex}-content`}
-      >
-        {item.lines.map(({ line, key, reviewTarget }, localIndex) => {
-          const index = item.startRowIndex + localIndex;
-          const hasReviewThread =
-            getInlineReviewThreadState({ reviewTarget, reviewActions }) !== null;
+        }
+
+        const computedLines = buildUnifiedDiffLines(file);
+
+        if (wrapLines) {
           return (
-            <Fragment key={key}>
-              <DiffTextLine
-                line={line}
-                wrapLines={false}
-                textMetricsStyle={textMetricsStyle}
-                reviewTarget={reviewTarget}
-                reviewActions={reviewActions}
-                hoverTargetKey={reviewTarget?.key ?? null}
-                onHoverTargetChange={setHoveredReviewTargetKey}
-                textTestID={`diff-code-text-${index}`}
-                rowTestID={`diff-code-row-${index}`}
-              />
-              {hasReviewThread ? (
-                <InlineReviewThreadContent
-                  reviewTarget={reviewTarget}
-                  reviewActions={reviewActions}
-                  viewportWidth={textViewportWidth}
-                  pinToViewport
-                />
-              ) : null}
-            </Fragment>
+            <View style={styles.diffContent} dataSet={CODE_SURFACE_DATASET}>
+              <View style={styles.linesContainer}>
+                {computedLines.map(({ line, lineNumber, key, reviewTarget }, index) => (
+                  <View key={key} testID={`diff-wrapped-row-${index}`}>
+                    <DiffLineView
+                      line={line}
+                      lineNumber={lineNumber}
+                      gutterWidth={gutterWidth}
+                      wrapLines={wrapLines}
+                      textMetricsStyle={textMetricsStyle}
+                      reviewTarget={reviewTarget}
+                      reviewActions={reviewActions}
+                    />
+                    <InlineReviewRow
+                      reviewTarget={reviewTarget}
+                      reviewActions={reviewActions}
+                      gutterWidth={gutterWidth}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
           );
-        })}
-      </DiffHorizontalContent>
+        }
+
+        const textViewportWidth =
+          scrollViewWidth > 0 ? scrollViewWidth : Math.max(0, bodyWidth - gutterWidth);
+        return (
+          <View style={[styles.diffContent, styles.diffContentRow]} dataSet={CODE_SURFACE_DATASET}>
+            <View style={styles.gutterColumn}>
+              {computedLines.map(({ line, lineNumber, key, reviewTarget }, index) => (
+                <View key={key} testID={`diff-gutter-row-${index}`}>
+                  <DiffGutterCell
+                    lineNumber={lineNumber}
+                    type={line.type}
+                    gutterWidth={gutterWidth}
+                    textMetricsStyle={textMetricsStyle}
+                    reviewTarget={reviewTarget}
+                    reviewActions={reviewActions}
+                    isLineHovered={
+                      reviewTarget?.key !== undefined && hoveredReviewTargetKey === reviewTarget.key
+                    }
+                    textTestID={`diff-gutter-text-${index}`}
+                    actionTestID={`diff-gutter-action-${index}`}
+                  />
+                  <InlineReviewGutterSpacer
+                    reviewTarget={reviewTarget}
+                    reviewActions={reviewActions}
+                    gutterWidth={gutterWidth}
+                  />
+                </View>
+              ))}
+            </View>
+            <DiffScroll
+              scrollViewWidth={scrollViewWidth}
+              onScrollViewWidthChange={setScrollViewWidth}
+              style={styles.splitColumnScroll}
+              contentContainerStyle={styles.diffContentInner}
+            >
+              <View style={linesContainerRowStyle}>
+                {computedLines.map(({ line, key, reviewTarget }, index) => (
+                  <View key={key} testID={`diff-code-row-${index}`}>
+                    <DiffTextLine
+                      line={line}
+                      wrapLines={false}
+                      textMetricsStyle={textMetricsStyle}
+                      reviewTarget={reviewTarget}
+                      reviewActions={reviewActions}
+                      hoverTargetKey={reviewTarget?.key ?? null}
+                      onHoverTargetChange={setHoveredReviewTargetKey}
+                      textTestID={`diff-code-text-${index}`}
+                    />
+                    <InlineReviewThreadContent
+                      reviewTarget={reviewTarget}
+                      reviewActions={reviewActions}
+                      viewportWidth={textViewportWidth}
+                      pinToViewport
+                    />
+                  </View>
+                ))}
+              </View>
+            </DiffScroll>
+          </View>
+        );
+      })()}
     </View>
   );
 }
-
-function areDiffRowGroupPropsEqual(previous: DiffRowGroupProps, next: DiffRowGroupProps): boolean {
-  // Row arrays are rebuilt with the index. File identity pins cached row content, while the
-  // geometry key and compared grouping inputs pin group membership.
-  return (
-    previous.item.key === next.item.key &&
-    previous.item.type === next.item.type &&
-    previous.item.file === next.item.file &&
-    previous.item.fileIndex === next.item.fileIndex &&
-    previous.item.depth === next.item.depth &&
-    previous.item.groupIndex === next.item.groupIndex &&
-    previous.item.startRowIndex === next.item.startRowIndex &&
-    previous.item.isFirst === next.item.isFirst &&
-    previous.item.isLast === next.item.isLast &&
-    previous.item.contentColumns === next.item.contentColumns &&
-    previous.viewportWidth === next.viewportWidth &&
-    previous.wrapLines === next.wrapLines &&
-    previous.codeFontSize === next.codeFontSize &&
-    previous.textMetricsStyle === next.textMetricsStyle &&
-    previous.reviewActions === next.reviewActions &&
-    previous.onHeightChange === next.onHeightChange
-  );
-}
-
-const DiffRowGroup = memo(DiffRowGroupView, areDiffRowGroupPropsEqual);
 
 interface GitDiffPaneProps {
   serverId: string;
@@ -1914,15 +1823,42 @@ export function DiffOptionsMenu({
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 
-type DiffListItemLayoutGetter = NonNullable<FlatListProps<DiffListItem>["getItemLayout"]>;
-
-// COMPAT(react-native-virtualized-list-bounded-data-growth): RN 0.81 carries the old index range
-// through middle insertions, synchronously mounting every inserted diff group in that range.
-const BOUNDED_DIFF_LIST_DATA_GROWTH_PROPS = {
-  unstable_boundedRangeOnDataChange: true,
-} as const;
+type DiffFlatItemLayoutGetter = NonNullable<FlatListProps<DiffFlatItem>["getItemLayout"]>;
 const EMPTY_PATH_LIST: string[] = [];
-const EMPTY_NUMBER_LIST: number[] = [];
+
+interface DiffFileMetrics {
+  contentLength: number;
+  splitLineCount?: number;
+  unifiedLineCount: number;
+}
+
+const diffFileMetricsCache = new WeakMap<ParsedDiffFile, DiffFileMetrics>();
+
+function getDiffFileMetrics(file: ParsedDiffFile): DiffFileMetrics {
+  const cached = diffFileMetricsCache.get(file);
+  if (cached) {
+    return cached;
+  }
+  let contentLength = 0;
+  let unifiedLineCount = 0;
+  for (const hunk of file.hunks) {
+    unifiedLineCount += hunk.lines.length;
+    for (const line of hunk.lines) {
+      contentLength += line.content.length;
+    }
+  }
+  const metrics = { contentLength, unifiedLineCount };
+  diffFileMetricsCache.set(file, metrics);
+  return metrics;
+}
+
+function getSplitDiffLineCount(file: ParsedDiffFile): number {
+  const metrics = getDiffFileMetrics(file);
+  if (metrics.splitLineCount === undefined) {
+    metrics.splitLineCount = buildSplitDiffRows(file).length;
+  }
+  return metrics.splitLineCount;
+}
 
 function computeEmptyMessage(
   hideWhitespace: boolean,
@@ -2061,9 +1997,6 @@ interface SharedDiffViewProps {
       };
 }
 
-type WorkingTreeDiffMode = Extract<SharedDiffViewProps["mode"], { kind: "working_tree" }>;
-const EMPTY_WORKING_TREE_DIFF_MODE: Partial<WorkingTreeDiffMode> = {};
-
 export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffViewProps) {
   const isCompact = useIsCompactFormFactor();
   const { layout, wrapLines, codeFontSize, monoFontFamily } = displayPreferences;
@@ -2077,22 +2010,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       ...(trimmedMonoFontFamily ? { fontFamily: trimmedMonoFontFamily } : null),
     };
   }, [codeFontSize, diffBodyLineHeight, monoFontFamily]);
-  const workingTreeMode = mode.kind === "working_tree" ? mode : EMPTY_WORKING_TREE_DIFF_MODE;
-  const {
-    viewMode = "flat",
-    collapsedFolders: collapsedFoldersArray = EMPTY_PATH_LIST,
-    onFilePress,
-    onOpenFile,
-    onAddToChat,
-    workspaceFileDragScope,
-    onCopyPath,
-    onCopyRelativePath,
-    onReveal,
-    revealTargetName,
-    onDownload,
-    onDuplicate,
-    onRevert,
-  } = workingTreeMode;
+  const viewMode = mode.kind === "working_tree" ? mode.viewMode : "flat";
   const expandedPathsArray = useMemo(() => {
     if (mode.kind === "working_tree") {
       return mode.expandedPaths;
@@ -2103,12 +2021,26 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     return files.map((file) => file.path);
   }, [files, mode]);
   const expandedPaths = useMemo(() => new Set(expandedPathsArray), [expandedPathsArray]);
+  const collapsedFoldersArray =
+    mode.kind === "working_tree" ? mode.collapsedFolders : EMPTY_PATH_LIST;
   const collapsedFolders = useMemo(() => new Set(collapsedFoldersArray), [collapsedFoldersArray]);
   const stickyHeaders = mode.kind !== "commit";
   const interactive = mode.kind !== "commit";
   const reviewActions = mode.kind === "commit" ? undefined : mode.reviewActions;
+  const onFilePress = mode.kind === "working_tree" ? mode.onFilePress : undefined;
   const focusPath = mode.kind === "working_tab" ? mode.focusPath : undefined;
   const focusRequestId = mode.kind === "working_tab" ? mode.focusRequestId : undefined;
+  const onOpenFile = mode.kind === "working_tree" ? mode.onOpenFile : undefined;
+  const onAddToChat = mode.kind === "working_tree" ? mode.onAddToChat : undefined;
+  const workspaceFileDragScope =
+    mode.kind === "working_tree" ? mode.workspaceFileDragScope : undefined;
+  const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
+  const onCopyRelativePath = mode.kind === "working_tree" ? mode.onCopyRelativePath : undefined;
+  const onReveal = mode.kind === "working_tree" ? mode.onReveal : undefined;
+  const revealTargetName = mode.kind === "working_tree" ? mode.revealTargetName : undefined;
+  const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
+  const onDuplicate = mode.kind === "working_tree" ? mode.onDuplicate : undefined;
+  const onRevert = mode.kind === "working_tree" ? mode.onRevert : undefined;
   // Keep selection independent from expansion so future keyboard actions (such as R to rename)
   // can target the current VCS file or folder without changing its open state.
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -2129,24 +2061,19 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     () => new Set(Array.from(collapsedFolders).filter((path) => allFolderPathSet.has(path))),
     [allFolderPathSet, collapsedFolders],
   );
-  const diffListRef = useRef<FlatList<DiffListItem>>(null);
+  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useOverlayFlatListScrollbar(diffListRef, { enabled: !isCompact });
   const { onLayout: updateScrollbarLayout, onScroll: updateScrollbarOffset } = scrollbar;
   const consumedFocusRequestRef = useRef<string | null>(null);
   const pendingFocusRequestRef = useRef<string | null>(null);
   const diffListScrollOffsetRef = useRef(0);
   const diffListViewportHeightRef = useRef(0);
-  const pendingMeasuredHeightCorrectionRef = useRef(0);
-  const [diffListWidth, setDiffListWidth] = useState(800);
   const headerHeightByPathRef = useRef<Record<string, number>>({});
-  const measuredGroupHeightsRef = useRef(new Map<string, number>());
-  const rowCacheRef = useRef(createDiffRowCache());
+  const bodyHeightByKeyRef = useRef<Record<string, number>>({});
   const folderRowHeightRef = useRef<number>(0);
   const defaultHeaderHeightRef = useRef<number>(44);
   const [heightVersion, setHeightVersion] = useState(0);
-  const [geometryVersion, setGeometryVersion] = useState(0);
   const heightVersionFrameRef = useRef<number | null>(null);
-  const geometryVersionFrameRef = useRef<number | null>(null);
   const scheduleHeightVersionUpdate = useCallback(() => {
     if (heightVersionFrameRef.current !== null) {
       return;
@@ -2156,22 +2083,10 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       setHeightVersion((version) => version + 1);
     });
   }, []);
-  const scheduleGeometryVersionUpdate = useCallback(() => {
-    if (geometryVersionFrameRef.current !== null) {
-      return;
-    }
-    geometryVersionFrameRef.current = requestAnimationFrame(() => {
-      geometryVersionFrameRef.current = null;
-      setGeometryVersion((version) => version + 1);
-    });
-  }, []);
   useEffect(
     () => () => {
       if (heightVersionFrameRef.current !== null) {
         cancelAnimationFrame(heightVersionFrameRef.current);
-      }
-      if (geometryVersionFrameRef.current !== null) {
-        cancelAnimationFrame(geometryVersionFrameRef.current);
       }
     },
     [],
@@ -2179,83 +2094,71 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const diffBodyChromeHeight = BORDER_WIDTH[1] * 2;
   const statusBodyHeightEstimate = diffBodyChromeHeight + SPACING[4] * 2 + diffBodyLineHeight;
 
-  const reviewHeightFor = useCallback(
-    (target: ReviewableDiffTarget | null | undefined): number =>
-      getInlineReviewThreadState({ reviewTarget: target, reviewActions })?.height ?? 0,
-    [reviewActions],
-  );
-  const geometryKey = `${layout}:${wrapLines ? "wrap" : "scroll"}:${typographyKey}:${Math.round(diffListWidth)}`;
-  const rowIndex = useMemo(() => {
-    void heightVersion;
-    return buildDiffRowIndex({
+  const { flatItems, stickyHeaderIndices } = useMemo(() => {
+    const { items, stickyHeaderIndices: stickyIndices } = buildDiffFlatItems({
       files,
       viewMode,
       tree: compressedTree,
       collapsedFolders: effectiveCollapsedFolders,
       expandedPaths,
-      layout,
-      wrapLines,
-      lineHeight: diffBodyLineHeight,
-      viewportWidth: diffListWidth,
-      codeFontSize,
-      headerHeightFor: (file) =>
-        headerHeightByPathRef.current[file.path] ?? defaultHeaderHeightRef.current,
-      folderHeight: folderRowHeightRef.current || defaultHeaderHeightRef.current,
-      statusHeight: statusBodyHeightEstimate,
-      measuredGroupHeights: measuredGroupHeightsRef.current,
-      geometryKey,
-      reviewHeightFor,
-      rowCache: rowCacheRef.current,
     });
-  }, [
-    codeFontSize,
-    compressedTree,
-    diffBodyLineHeight,
-    diffListWidth,
-    effectiveCollapsedFolders,
-    expandedPaths,
-    files,
-    geometryKey,
-    heightVersion,
-    layout,
-    reviewHeightFor,
-    statusBodyHeightEstimate,
-    viewMode,
-    wrapLines,
-  ]);
-  const flatItems = rowIndex.items;
-  const horizontalContentColumns = useMemo(
-    () =>
-      flatItems.reduce(
-        (maximum, item) =>
-          item.type === "unified_group" || item.type === "split_group"
-            ? Math.max(maximum, item.contentColumns)
-            : maximum,
-        0,
-      ),
-    [flatItems],
+    return {
+      flatItems: items,
+      stickyHeaderIndices: stickyHeaders ? stickyIndices : [],
+    };
+  }, [compressedTree, effectiveCollapsedFolders, expandedPaths, files, stickyHeaders, viewMode]);
+
+  const getBodyHeightKey = useCallback(
+    (file: ParsedDiffFile): string => {
+      if (file.status === "too_large" || file.status === "binary") {
+        return `${layout}:${wrapLines ? "wrap" : "scroll"}:${typographyKey}:${file.path}:${file.status}`;
+      }
+
+      const metrics = getDiffFileMetrics(file);
+      return [
+        layout,
+        wrapLines ? "wrap" : "scroll",
+        typographyKey,
+        file.path,
+        file.status ?? "ok",
+        file.additions,
+        file.deletions,
+        file.hunks.length,
+        metrics.unifiedLineCount,
+        metrics.contentLength,
+      ].join(":");
+    },
+    [layout, typographyKey, wrapLines],
   );
-  const maximumGutterWidth = useMemo(
-    () =>
-      files.reduce(
-        (maximum, file) =>
-          Math.max(maximum, lineNumberGutterWidth(maxLineNumber(file), codeFontSize)),
-        0,
-      ),
-    [codeFontSize, files],
+
+  const estimateBodyHeight = useCallback(
+    (file: ParsedDiffFile): number => {
+      if (file.status === "too_large" || file.status === "binary") {
+        return statusBodyHeightEstimate;
+      }
+
+      const lineCount =
+        layout === "split"
+          ? getSplitDiffLineCount(file)
+          : getDiffFileMetrics(file).unifiedLineCount;
+      return diffBodyChromeHeight + lineCount * diffBodyLineHeight;
+    },
+    [diffBodyChromeHeight, diffBodyLineHeight, layout, statusBodyHeightEstimate],
   );
-  const horizontalCodeWidth = Math.ceil(
-    horizontalContentColumns * codeFontSize * 0.75 + SPACING[4],
+
+  const getFlatItemHeight = useCallback(
+    (item: DiffFlatItem): number => {
+      if (item.type === "folder") {
+        return folderRowHeightRef.current || defaultHeaderHeightRef.current;
+      }
+      if (item.type === "header") {
+        return headerHeightByPathRef.current[item.file.path] ?? defaultHeaderHeightRef.current;
+      }
+      const bodyHeightKey = getBodyHeightKey(item.file);
+      return bodyHeightByKeyRef.current[bodyHeightKey] ?? estimateBodyHeight(item.file);
+    },
+    [estimateBodyHeight, getBodyHeightKey],
   );
-  const horizontalCodeViewportWidth = Math.max(
-    0,
-    (layout === "split" ? diffListWidth / 2 : diffListWidth) - maximumGutterWidth,
-  );
-  const horizontalSurfaceWidth =
-    diffListWidth + Math.max(0, horizontalCodeWidth - horizontalCodeViewportWidth);
-  const rowIndexRef = useRef(rowIndex);
-  rowIndexRef.current = rowIndex;
-  const stickyHeaderIndices = stickyHeaders ? rowIndex.stickyHeaderIndices : EMPTY_NUMBER_LIST;
 
   const handleFolderRowHeightChange = useCallback(
     (height: number) => {
@@ -2291,48 +2194,28 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     [scheduleHeightVersionUpdate],
   );
 
-  const handleGroupHeightChange = useCallback(
-    (key: string, height: number) => {
+  const handleBodyHeightChange = useCallback(
+    (file: ParsedDiffFile, height: number) => {
       if (!Number.isFinite(height) || height < 0) {
         return;
       }
-      const previousHeight = measuredGroupHeightsRef.current.get(key);
+      const heightKey = getBodyHeightKey(file);
+      const previousHeight = bodyHeightByKeyRef.current[heightKey];
       if (
         previousHeight !== undefined &&
         Math.abs(previousHeight - height) <= DIFF_HEIGHT_CHANGE_EPSILON
       ) {
         return;
       }
-      const currentIndex = rowIndexRef.current;
-      const update = currentIndex.updateHeight(key, height);
-      if (!update) return;
-      if (
-        currentIndex.offsetAt(update.index) + update.previousHeight <=
-        diffListScrollOffsetRef.current
-      ) {
-        pendingMeasuredHeightCorrectionRef.current += update.delta;
-      }
-      measuredGroupHeightsRef.current.set(key, height);
-      scheduleGeometryVersionUpdate();
+      bodyHeightByKeyRef.current[heightKey] = height;
+      scheduleHeightVersionUpdate();
     },
-    [scheduleGeometryVersionUpdate],
+    [getBodyHeightKey, scheduleHeightVersionUpdate],
   );
-
-  useEffect(() => {
-    const correction = pendingMeasuredHeightCorrectionRef.current;
-    if (correction === 0) {
-      return;
-    }
-    pendingMeasuredHeightCorrectionRef.current = 0;
-    const offset = Math.max(0, diffListScrollOffsetRef.current + correction);
-    diffListScrollOffsetRef.current = offset;
-    diffListRef.current?.scrollToOffset({ offset, animated: false });
-  }, [geometryVersion]);
 
   const handleDiffListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offset = event.nativeEvent.contentOffset.y;
-      diffListScrollOffsetRef.current = offset;
+      diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
       updateScrollbarOffset(event);
     },
     [updateScrollbarOffset],
@@ -2344,7 +2227,6 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       if (!Number.isFinite(height) || height <= 0) {
         return;
       }
-      setDiffListWidth(event.nativeEvent.layout.width);
       diffListViewportHeightRef.current = height;
       updateScrollbarLayout(event);
     },
@@ -2352,19 +2234,20 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   );
 
   const computeItemOffset = useCallback(
-    (predicate: (item: DiffListItem) => boolean): number | null => {
+    (predicate: (item: DiffFlatItem) => boolean): number | null => {
       const index = flatItems.findIndex(predicate);
       if (index < 0) {
         return null;
       }
-      return rowIndex.offsetAt(index);
+      return sumHeightsBefore(flatItems, index, getFlatItemHeight);
     },
-    [flatItems, rowIndex],
+    [flatItems, getFlatItemHeight],
   );
 
   const computeHeaderOffset = useCallback(
-    (path: string): number => rowIndex.offsetOfFile(path),
-    [rowIndex],
+    (path: string): number =>
+      computeItemOffset((item) => item.type === "header" && item.file.path === path) ?? 0,
+    [computeItemOffset],
   );
 
   useEffect(() => {
@@ -2504,7 +2387,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   );
 
   const renderFlatItem = useCallback(
-    ({ item }: { item: DiffListItem }) => {
+    ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "folder") {
         return (
           <DiffFolderRow
@@ -2555,31 +2438,29 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
           />
         );
       }
-      if (item.type === "status") {
-        return <DiffFileStatus file={item.file} />;
-      }
       return (
-        <DiffRowGroup
-          item={item}
-          viewportWidth={diffListWidth}
+        <DiffFileBody
+          file={item.file}
+          layout={layout}
           wrapLines={wrapLines}
           codeFontSize={codeFontSize}
           textMetricsStyle={textMetricsStyle}
           reviewActions={reviewActions}
-          onHeightChange={handleGroupHeightChange}
+          onBodyHeightChange={handleBodyHeightChange}
+          testID={`diff-file-${item.fileIndex}-body`}
         />
       );
     },
     [
       codeFontSize,
-      diffListWidth,
-      handleGroupHeightChange,
+      handleBodyHeightChange,
       handleFolderRowHeightChange,
       handleHeaderHeightChange,
       handleCollapseFolder,
       handleSelectPath,
       handleToggleExpanded,
       handleToggleFolder,
+      layout,
       reviewActions,
       workspaceFileDragScope,
       textMetricsStyle,
@@ -2600,26 +2481,20 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     ],
   );
 
-  const flatKeyExtractor = useCallback((item: DiffListItem) => {
-    if (item.type === "folder") {
-      return `folder-${item.dirPath}`;
-    }
-    if (item.type === "unified_group" || item.type === "split_group") {
-      return item.key;
-    }
-    return `${item.type}-${item.file.path}`;
-  }, []);
+  const flatKeyExtractor = useCallback(
+    (item: DiffFlatItem) =>
+      item.type === "folder" ? `folder-${item.dirPath}` : `${item.type}-${item.file.path}`,
+    [],
+  );
 
-  const getFlatItemLayout = useCallback<DiffListItemLayoutGetter>(
+  const getFlatItemLayout = useCallback<DiffFlatItemLayoutGetter>(
     (_data, index) => {
-      void geometryVersion;
-      return {
-        length: rowIndex.heightAt(index),
-        offset: rowIndex.offsetAt(index),
-        index,
-      };
+      const offset = sumHeightsBefore(flatItems, index, getFlatItemHeight);
+      const item = flatItems[index];
+      const length = item ? getFlatItemHeight(item) : 0;
+      return { length, offset, index };
     },
-    [geometryVersion, rowIndex],
+    [flatItems, getFlatItemHeight],
   );
 
   const flatExtraData = useMemo(
@@ -2629,7 +2504,6 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       layout,
       typographyKey,
       heightVersion,
-      geometryVersion,
       viewMode,
       wrapLines,
       reviewActions,
@@ -2639,7 +2513,6 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       expandedPathsArray,
       collapsedFoldersArray,
       heightVersion,
-      geometryVersion,
       layout,
       reviewActions,
       typographyKey,
@@ -2649,45 +2522,29 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     ],
   );
 
-  const diffList = (
-    <FlatList
-      {...BOUNDED_DIFF_LIST_DATA_GROWTH_PROPS}
-      ref={diffListRef}
-      data={flatItems}
-      renderItem={renderFlatItem}
-      keyExtractor={flatKeyExtractor}
-      getItemLayout={getFlatItemLayout}
-      stickyHeaderIndices={stickyHeaderIndices}
-      extraData={flatExtraData}
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      testID="git-diff-scroll"
-      onLayout={handleDiffListLayout}
-      onScroll={handleDiffListScroll}
-      onContentSizeChange={scrollbar.onContentSizeChange}
-      scrollEventThrottle={16}
-      showsVerticalScrollIndicator={!scrollbar.enabled}
-      removeClippedSubviews={false}
-      initialNumToRender={DIFF_VIRTUALIZATION_CONFIG.initialNumToRender}
-      maxToRenderPerBatch={DIFF_VIRTUALIZATION_CONFIG.maxToRenderPerBatch}
-      updateCellsBatchingPeriod={DIFF_VIRTUALIZATION_CONFIG.updateCellsBatchingPeriod}
-      windowSize={DIFF_VIRTUALIZATION_CONFIG.windowSize}
-    />
-  );
-
   return (
     <View style={styles.scrollContainer}>
-      {wrapLines ? (
-        diffList
-      ) : (
-        <DiffHorizontalSurface
-          contentWidth={horizontalSurfaceWidth}
-          viewportWidth={diffListWidth}
-          onViewportWidthChange={setDiffListWidth}
-        >
-          {diffList}
-        </DiffHorizontalSurface>
-      )}
+      <FlatList
+        ref={diffListRef}
+        data={flatItems}
+        renderItem={renderFlatItem}
+        keyExtractor={flatKeyExtractor}
+        getItemLayout={getFlatItemLayout}
+        stickyHeaderIndices={stickyHeaderIndices}
+        extraData={flatExtraData}
+        style={styles.scrollView}
+        contentContainerStyle={styles.contentContainer}
+        testID="git-diff-scroll"
+        onLayout={handleDiffListLayout}
+        onScroll={handleDiffListScroll}
+        onContentSizeChange={scrollbar.onContentSizeChange}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={!scrollbar.enabled}
+        removeClippedSubviews={false}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={10}
+      />
       {scrollbar.overlay}
     </View>
   );
@@ -3607,11 +3464,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     flexShrink: 0,
   },
-  fileChevronSpacer: {
-    width: WORKSPACE_TREE_ICON_SIZE,
-    height: WORKSPACE_TREE_ICON_SIZE,
-    flexShrink: 0,
-  },
   fileIcon: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,
@@ -3642,9 +3494,6 @@ const styles = StyleSheet.create((theme) => ({
   diffContent: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-  },
-  diffGroupContent: {
     backgroundColor: theme.colors.surface1,
   },
   diffContentRow: {
@@ -3693,7 +3542,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitColumnScroll: {
     flex: 1,
-    minWidth: 0,
   },
   splitHeaderRow: {
     backgroundColor: theme.colors.surface2,

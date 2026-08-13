@@ -27,10 +27,6 @@ interface SupervisorHeartbeatMessage {
   type: "paseo:supervisor-heartbeat";
 }
 
-interface WorkerHeartbeatMessage {
-  type: "paseo:worker-heartbeat";
-}
-
 interface BootstrapResult {
   paseoHome: string;
   logger: ReturnType<typeof createRootLogger>;
@@ -232,13 +228,6 @@ async function main() {
     const supervisorPid = process.ppid;
     let lastSupervisorHeartbeatAt = Date.now();
     let supervisorExitRequested = false;
-    const sendWorkerHeartbeat = () => {
-      try {
-        process.send?.({ type: "paseo:worker-heartbeat" } satisfies WorkerHeartbeatMessage);
-      } catch {
-        // The disconnect handler below owns supervisor-loss shutdown.
-      }
-    };
     const exitAfterSupervisorLoss = (reason: string) => {
       if (supervisorExitRequested) {
         return;
@@ -271,10 +260,6 @@ async function main() {
       }
     });
     process.on("disconnect", () => exitAfterSupervisorLoss("ipc_disconnect_event"));
-
-    sendWorkerHeartbeat();
-    const workerHeartbeat = setInterval(sendWorkerHeartbeat, 1_000);
-    workerHeartbeat.unref();
 
     const timer = setInterval(() => {
       const ipcConnected = typeof process.connected === "boolean" ? process.connected : true;

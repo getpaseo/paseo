@@ -136,7 +136,7 @@ export function createProviderSnapshotCache(
     }
 
     let totalBytes = entries.reduce((total, entry) => total + entry.bytes, 0);
-    const retainedEntries = entries.toSorted(oldestFirst);
+    const retainedEntries = [...entries].sort(oldestFirst);
     while (totalBytes > maxBytes) {
       const evicted = retainedEntries.shift();
       if (!evicted) break;
@@ -186,7 +186,7 @@ export function createProviderSnapshotCache(
     if (canStoreIncoming) projectedBytes += incomingBytes;
 
     const keysToRemove: string[] = [];
-    for (const candidate of retainedEntries.toSorted(oldestFirst)) {
+    for (const candidate of [...retainedEntries].sort(oldestFirst)) {
       if (projectedBytes <= maxBytes) break;
       projectedBytes -= candidate.bytes;
       keysToRemove.push(candidate.key);
