@@ -377,7 +377,7 @@ describe("Hub relationship", () => {
 
     const disconnecting = relationship.beginDisconnect();
     await relationship.connectionStateBecomes("disconnecting");
-    expect(relationship.relationshipFile()?.state).toBe("pending");
+    expect(relationship.relationshipFile()?.state).toBe("disconnecting");
     expect(relationship.revocationAttempts()).toBe(0);
 
     relationship.completeEnrollment();
@@ -388,6 +388,22 @@ describe("Hub relationship", () => {
     expect(relationship.latestRevocation()?.daemonId).toBe(enrollment.daemonId);
     expect(relationship.revocationAttempts()).toBe(1);
     expect(relationship.socketAttempts()).toBe(0);
+    expect(relationship.relationshipFile()).toBeNull();
+  });
+
+  test("disconnect persists terminal intent only while remote notification is in flight", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    relationship.holdRevocation();
+
+    const disconnecting = relationship.beginDisconnect();
+    await relationship.relationshipStateBecomes("disconnecting");
+
+    expect(await relationship.status()).toMatchObject({ state: "disconnecting" });
+    expect(relationship.pendingRelationshipRetries()).toBe(0);
+
+    relationship.completeRevocation();
+    await expect(disconnecting.result).resolves.toMatchObject({ state: "not_connected" });
     expect(relationship.relationshipFile()).toBeNull();
   });
 

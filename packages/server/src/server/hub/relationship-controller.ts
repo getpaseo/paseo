@@ -305,6 +305,8 @@ export class HubRelationshipController implements HubRelationshipManagement {
       credential: this.record.credential,
       ...(this.record.state === "active" ? { transport: this.record.transport } : {}),
     };
+    this.persist(disconnecting);
+    this.record = disconnecting;
     this.state = "disconnecting";
     if (waitForEnrollment && !input.force) {
       await Promise.all(this.inFlightEnrollments);
