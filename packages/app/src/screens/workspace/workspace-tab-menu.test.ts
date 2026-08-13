@@ -231,8 +231,10 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onRenameTab).toHaveBeenCalledWith(terminalTab);
   });
 
-  it("includes copy file path for file tabs", () => {
+  it("includes copy and share actions for file tabs", () => {
     const onCopyFilePath = vi.fn();
+    const onCopyFileContents = vi.fn();
+    const onShareFile = vi.fn();
     const fileTab: WorkspaceTabDescriptor = {
       key: "file_abc",
       tabId: "file_abc",
@@ -240,7 +242,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       target: { kind: "file", path: "/some/path.ts", lineStart: 1, lineEnd: 10 },
     };
     const entries = buildWorkspaceTabMenuEntries({
-      surface: "desktop",
+      surface: "mobile",
       tab: fileTab,
       index: 0,
       tabCount: 1,
@@ -248,6 +250,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
+      onCopyFileContents,
+      onShareFile,
       onCopyFilePath,
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -258,11 +262,28 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
-    expect(labels[0]).toBe("Copy file path");
+    expect(labels.slice(0, 3)).toEqual(["Copy file contents", "Share file", "Copy file path"]);
     expect(labels).not.toContain("Copy resume command");
     expect(labels).not.toContain("Copy agent id");
     expect(labels).not.toContain("Rename");
     expect(labels).not.toContain("Reload agent");
+
+    const copyFileContentsEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "copy-file-contents",
+    );
+    const shareFileEntry = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "share-file",
+    );
+    if (!copyFileContentsEntry || copyFileContentsEntry.kind !== "item") {
+      throw new Error("Copy file contents entry missing");
+    }
+    if (!shareFileEntry || shareFileEntry.kind !== "item") {
+      throw new Error("Share file entry missing");
+    }
+    copyFileContentsEntry.onSelect();
+    shareFileEntry.onSelect();
+    expect(onCopyFileContents).toHaveBeenCalledWith("/some/path.ts");
+    expect(onShareFile).toHaveBeenCalledWith("/some/path.ts");
 
     const copyFilePathEntry = entries.find(
       (entry) => entry.kind === "item" && entry.key === "copy-file-path",

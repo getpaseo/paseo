@@ -850,6 +850,8 @@ export function WorkspaceDesktopTabsRow({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
+      copyFileContents: t("workspace.tabs.menu.copyFileContents"),
+      shareFile: t("workspace.tabs.menu.shareFile"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),

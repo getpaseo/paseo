@@ -237,14 +237,15 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   );
 
   const requestFileDownloadToken = useCallback(
-    async (path: string) => {
-      if (!normalizedWorkspaceRoot) {
+    async (path: string, rootOverride?: string) => {
+      const downloadRoot = normalizeWorkspaceValue(rootOverride) ?? normalizedWorkspaceRoot;
+      if (!downloadRoot) {
         throw new Error(t("workspace.fileExplorer.states.unavailable"));
       }
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = await client.requestDownloadToken(normalizedWorkspaceRoot, path);
+      const payload = await client.requestDownloadToken(downloadRoot, path);
       if (payload.error) {
         throw new Error(payload.error);
       }

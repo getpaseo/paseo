@@ -9,6 +9,12 @@ interface UseFileDownloadParams {
   workspaceRoot: string;
 }
 
+interface FileDownloadInput {
+  fileName: string;
+  path: string;
+  root?: string;
+}
+
 /**
  * Returns a stable callback that downloads a single workspace file by its
  * workspace-relative path. Shared by the file explorer tree and the git diff
@@ -19,7 +25,7 @@ export function useFileDownload({
   serverId,
   workspaceId,
   workspaceRoot,
-}: UseFileDownloadParams): (input: { fileName: string; path: string }) => void {
+}: UseFileDownloadParams): (input: FileDownloadInput) => void {
   const daemons = useHosts();
   const daemonProfile = useMemo(
     () => daemons.find((daemon) => daemon.serverId === serverId),
@@ -38,19 +44,30 @@ export function useFileDownload({
   const startDownload = useDownloadStore((state) => state.startDownload);
 
   return useCallback(
-    ({ fileName, path }) => {
-      if (!workspaceScopeId) {
+    ({ fileName, path, root }) => {
+      const downloadRoot = root?.trim() || normalizedWorkspaceRoot;
+      const downloadScopeId = workspaceId?.trim() || downloadRoot || workspaceScopeId;
+      if (!downloadRoot || !downloadScopeId) {
         return;
       }
       void startDownload({
         serverId,
-        scopeId: workspaceScopeId,
+        scopeId: downloadScopeId,
         fileName,
         path,
         daemonProfile,
-        requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+        requestFileDownloadToken: (targetPath) =>
+          requestFileDownloadToken(targetPath, downloadRoot),
       });
     },
-    [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
+    [
+      daemonProfile,
+      normalizedWorkspaceRoot,
+      requestFileDownloadToken,
+      serverId,
+      startDownload,
+      workspaceId,
+      workspaceScopeId,
+    ],
   );
 }
