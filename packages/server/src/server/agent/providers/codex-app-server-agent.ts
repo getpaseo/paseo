@@ -33,8 +33,11 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderRefreshContext,
+  type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
@@ -6611,29 +6614,31 @@ export class CodexAppServerAgentClient implements AgentClient {
     return this.goalsEnabledPromise;
   }
 
-  private resolveAutoReviewEnabled(): Promise<boolean> {
+  private resolveAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    if (signal) return this.probeAutoReviewEnabled(signal);
     if (!this.autoReviewEnabledPromise) {
-      this.autoReviewEnabledPromise = (async () => {
-        try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
-          const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
-          this.logger.trace(
-            {
-              provider: CODEX_PROVIDER,
-              versionOutput,
-              enabled,
-            },
-            "provider.codex.config.auto_review_resolved",
-          );
-          return enabled;
-        } catch (error) {
-          this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
-          return false;
-        }
-      })();
+      this.autoReviewEnabledPromise = this.probeAutoReviewEnabled();
     }
     return this.autoReviewEnabledPromise;
+  }
+
+  private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+      signal?.throwIfAborted();
+      const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
+      signal?.throwIfAborted();
+      const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
+      this.logger.trace(
+        { provider: CODEX_PROVIDER, versionOutput, enabled },
+        "provider.codex.config.auto_review_resolved",
+      );
+      return enabled;
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason;
+      this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
+      return false;
+    }
   }
 
   private async spawnAppServer(
@@ -6787,10 +6792,15 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(
+    _options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
     const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
-      this.resolveAutoReviewEnabled(),
+      this.fetchModelsFromAppServer(context),
+      runProviderRefreshActivity(context, "version", () =>
+        this.resolveAutoReviewEnabled(context?.signal),
+      ),
     ]);
     return {
       models,
@@ -6801,23 +6811,46 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
-  async resolveDefaultModeId(): Promise<string> {
-    return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
+  async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {
+    return (await this.resolveAutoReviewEnabled(input.signal))
+      ? "auto-review"
+      : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(
+    context?: ProviderRefreshContext,
+  ): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    let client: CodexAppServerClient | undefined;
+    let disposePromise: Promise<void> | undefined;
+    const dispose = () => {
+      if (!client) return Promise.resolve();
+      disposePromise ??= client.dispose();
+      return disposePromise;
+    };
+    const handleAbort = () => void dispose().catch(() => undefined);
+    context?.signal.addEventListener("abort", handleAbort, { once: true });
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
+      await runProviderRefreshActivity(context, "app-server.start", async () => {
+        const child = await this.spawnAppServer();
+        client = new CodexAppServerClient(child, this.logger);
+        if (context?.signal.aborted) await dispose();
+      });
+      if (!client) throw new Error("Codex app-server did not start");
+      await runProviderRefreshActivity(context, "initialize", () =>
+        client!.request("initialize", buildCodexAppServerInitializeParams()),
+      );
       client.notify("initialized", {});
 
-      const rawResponse = await client.request("model/list", {});
+      const rawResponse = await runProviderRefreshActivity(context, "model/list", () =>
+        client!.request("model/list", {}),
+      );
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
       const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
-      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
+      const configuredDefaults = await runProviderRefreshActivity(context, "config/read", () =>
+        readCodexConfiguredDefaults(client!, this.logger),
+      );
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
       const hasConfiguredDefaultModel =
@@ -6832,7 +6865,8 @@ export class CodexAppServerAgentClient implements AgentClient {
         }),
       );
     } finally {
-      await client.dispose();
+      context?.signal.removeEventListener("abort", handleAbort);
+      await dispose();
     }
   }
 

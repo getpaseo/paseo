@@ -132,7 +132,7 @@ export async function seedSavedSettingsHosts(
   if (!firstHost) {
     throw new Error("Expected at least one settings host fixture.");
   }
-  const preferences = buildCreateAgentPreferences(firstHost.serverId);
+  const preferences = buildCreateAgentPreferences();
 
   await page.evaluate(
     ({ keys, storedRegistry, storedPreferences }) => {

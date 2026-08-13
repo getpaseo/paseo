@@ -284,6 +284,7 @@ class InMemoryHubRelationships implements HubRelationshipRemote {
   private enrollmentRejection: 401 | 403 | null = null;
   private enrollmentScopes = ["hub.execution.*"];
   private revokeFailures = 0;
+  private revocationGate: Deferred<void> | null = null;
   private readonly relationships = new Set<string>();
   readonly enrollmentSnapshots: RelationshipInvocationSnapshot[] = [];
   readonly socketSnapshots: RelationshipInvocationSnapshot[] = [];
@@ -353,8 +354,19 @@ class InMemoryHubRelationships implements HubRelationshipRemote {
     this.revokeFailures = count;
   }
 
+  holdRevocation(): void {
+    this.revocationGate = deferred<void>();
+  }
+
+  completeRevocation(): void {
+    if (!this.revocationGate) throw new Error("No revocation is waiting");
+    this.revocationGate.resolve();
+    this.revocationGate = null;
+  }
+
   async revoke(input: HubRevocation): Promise<void> {
     this.revocations.push({ ...input });
+    await this.revocationGate?.promise;
     if (this.revokeFailures > 0) {
       this.revokeFailures--;
       throw new Error("Hub is offline");
@@ -510,6 +522,14 @@ export class HubRelationshipHarness {
     }
   }
 
+  async connectionStateBecomes(expected: string): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await this.status()).state === expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Hub connection state did not become ${expected}`);
+  }
+
   async manageRelationshipFromExternalSocket(): Promise<SessionOutboundMessage[]> {
     const address = Object.values(networkInterfaces())
       .flat()
@@ -594,6 +614,14 @@ export class HubRelationshipHarness {
 
   failRevocations(count: number): void {
     this.remote.failRevocations(count);
+  }
+
+  holdRevocation(): void {
+    this.remote.holdRevocation();
+  }
+
+  completeRevocation(): void {
+    this.remote.completeRevocation();
   }
 
   failProviderPromptStart(prompt = "Create through the Hub"): void {

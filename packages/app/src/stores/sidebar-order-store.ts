@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { z } from "zod";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 interface SidebarOrderStoreState {
   projectOrder: string[];
@@ -17,6 +19,14 @@ interface SidebarOrderPersistedState {
   projectOrderByServerId?: Record<string, string[]>;
   workspaceOrderByServerAndProject?: Record<string, string[]>;
 }
+
+const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
+const SidebarOrderPersistedStateSchema = z.strictObject({
+  projectOrder: z.array(z.string()).optional(),
+  workspaceOrderByProject: StringArrayRecordSchema.optional(),
+  projectOrderByServerId: StringArrayRecordSchema.optional(),
+  workspaceOrderByServerAndProject: StringArrayRecordSchema.optional(),
+});
 
 interface SidebarWorkspaceOrderScope {
   serverId: string;
@@ -71,11 +81,11 @@ export function migrateSidebarOrderState(persistedState: unknown): {
   projectOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
 } {
-  const state = persistedState as SidebarOrderPersistedState | undefined;
-
-  if (!state) {
+  const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
+  if (!result.success) {
     return { projectOrder: [], workspaceOrderByProject: {} };
   }
+  const state: SidebarOrderPersistedState = result.data;
 
   const projectOrder = normalizeKeys(state.projectOrder ?? []);
   const seenProjects = new Set(projectOrder);
@@ -135,7 +145,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
     }),
     {
       name: "sidebar-project-workspace-order",
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createValidatedPersistStorage(AsyncStorage, SidebarOrderPersistedStateSchema),
       partialize: (state) => ({
         projectOrder: state.projectOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,

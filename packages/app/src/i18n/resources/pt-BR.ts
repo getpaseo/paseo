@@ -2445,6 +2445,9 @@ export const ptBR: TranslationResources = {
           "Veja a documentação para mais detalhes e as variáveis de ambiente disponíveis para estes comandos",
         setup: "Configuração",
         setupAccessibility: "Comandos de configuração do worktree",
+        uncommittedTitle: "Faça commit das alterações no paseo.json",
+        uncommittedDescription:
+          "Novos worktrees usam o script de configuração do branch base selecionado.",
         teardown: "Desmontagem",
         teardownAccessibility: "Comandos de desmontagem do worktree",
       },

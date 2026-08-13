@@ -137,6 +137,36 @@ describe("create agent preferences", () => {
     expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
   });
 
+  it("strips the explicitly supported legacy location fields", () => {
+    expect(
+      parseFormPreferences({
+        workingDir: "/old/workspace",
+        provider: "codex",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.4-mini",
+            mode: "full-access",
+            thinkingOptionId: "high",
+          },
+        },
+        serverId: "old-host",
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.4-mini",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.4-mini": "high" },
+        },
+      },
+    });
+  });
+
+  it("rejects unknown persisted fields outside the explicit legacy shape", () => {
+    expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({});
+  });
+
   it("persists and reloads the workspace isolation choice", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

@@ -8,7 +8,7 @@ import {
   type HubValidationResult,
 } from "./hub-client/index.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
-import { discoverHubBundle } from "./deploy-bundle.js";
+import { discoverHubBundle, type HubDeployBundle } from "./deploy-bundle.js";
 import { processHubReporter, reportHubProgress, type HubReporter } from "./reporter.js";
 import { addHubResolutionHelp } from "./help.js";
 
@@ -20,7 +20,7 @@ export interface HubDeployOptions {
   json?: boolean;
 }
 
-interface HubDeployEnvironment {
+export interface HubDeployEnvironment {
   cwd: string;
   env: Readonly<Record<string, string | undefined>>;
   credentials?: HubCredentialStore;
@@ -77,6 +77,18 @@ export async function runHubDeploy(
     hub: new HubHttpClient(),
   },
 ): Promise<SingleResult<HubDeployResult> | SingleResult<HubDryRunResult>> {
+  const deployInput = await discoverHubBundle({
+    cwd: environment.cwd,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  });
+  return runHubDeployBundle(options, deployInput, environment);
+}
+
+export async function runHubDeployBundle(
+  options: HubDeployOptions,
+  deployInput: HubDeployBundle,
+  environment: HubDeployEnvironment,
+): Promise<SingleResult<HubDeployResult> | SingleResult<HubDryRunResult>> {
   const credentials = environment.credentials ?? new PrivateHubCredentialStore(environment.env);
   const resolution = {
     options: { origin: options.hub, apiKey: options.apiKey },
@@ -84,10 +96,6 @@ export async function runHubDeploy(
     credentials,
   };
   const origin = resolveHubOrigin(resolution);
-  const deployInput = await discoverHubBundle({
-    cwd: environment.cwd,
-    ...(options.project === undefined ? {} : { project: options.project }),
-  });
   const action = options.dryRun === true ? "Validating" : "Deploying";
   reportHubProgress(
     environment.reporter ?? processHubReporter,

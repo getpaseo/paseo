@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
+import { z } from "zod";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type SidebarGroupMode = "project" | "status";
 
@@ -23,51 +25,55 @@ interface SidebarViewPersistedState {
   hostFilters: string[];
 }
 
-function isSidebarGroupMode(value: unknown): value is SidebarGroupMode {
-  return value === "project" || value === "status";
-}
+const SidebarGroupModeSchema = z.enum(["project", "status"]);
+const SidebarViewPersistedStateSchema = z.strictObject({
+  groupMode: SidebarGroupModeSchema.optional(),
+  hostFilters: z.array(z.string()).optional(),
+  hostFilter: z.string().nullable().optional(),
+  groupModeByServerId: z.record(z.string(), SidebarGroupModeSchema).optional(),
+});
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+type SidebarViewStorageState = z.infer<typeof SidebarViewPersistedStateSchema>;
 
-function readLegacyGroupMode(persistedState: Record<string, unknown>): SidebarGroupMode | null {
+function readLegacyGroupMode(persistedState: SidebarViewStorageState): SidebarGroupMode | null {
   const groupModeByServerId = persistedState.groupModeByServerId;
-  if (!isRecord(groupModeByServerId)) {
+  if (!groupModeByServerId) {
     return null;
   }
 
-  const modes = Object.values(groupModeByServerId).filter(isSidebarGroupMode);
+  const modes = Object.values(groupModeByServerId);
   if (modes.length === 0) return null;
   return modes.includes("status") ? "status" : "project";
 }
 
 // Reads the host filter from any persisted shape: the current `hostFilters` array, or the
 // pre-v2 single `hostFilter` string (null/absent meant "all hosts").
-function readHostFilters(persistedState: Record<string, unknown>): string[] {
+function readHostFilters(persistedState: SidebarViewStorageState): string[] {
   const hostFilters = persistedState.hostFilters;
-  if (Array.isArray(hostFilters)) {
-    return hostFilters.filter((value): value is string => typeof value === "string");
+  if (hostFilters) {
+    return hostFilters;
   }
   // COMPAT(sidebarHostFilters): added in v0.1.102, remove after 2026-12-30 once pre-v2 persisted
   // sidebar state (a single `hostFilter` string) has aged out.
   const legacyHostFilter = persistedState.hostFilter;
-  return typeof legacyHostFilter === "string" ? [legacyHostFilter] : [];
+  return legacyHostFilter ? [legacyHostFilter] : [];
 }
 
 export function migrateSidebarViewState(persistedState: unknown): SidebarViewPersistedState {
-  if (!isRecord(persistedState)) {
+  const result = SidebarViewPersistedStateSchema.safeParse(persistedState);
+  if (!result.success) {
     return { groupMode: "project", hostFilters: [] };
   }
+  const state = result.data;
 
-  const legacyGroupMode = readLegacyGroupMode(persistedState);
+  const legacyGroupMode = readLegacyGroupMode(state);
   if (legacyGroupMode) {
     return { groupMode: legacyGroupMode, hostFilters: [] };
   }
 
   return {
-    groupMode: isSidebarGroupMode(persistedState.groupMode) ? persistedState.groupMode : "project",
-    hostFilters: readHostFilters(persistedState),
+    groupMode: state.groupMode ?? "project",
+    hostFilters: readHostFilters(state),
   };
 }
 
@@ -116,7 +122,10 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
     {
       name: SIDEBAR_VIEW_STORAGE_KEY,
       version: SIDEBAR_VIEW_STORE_VERSION,
-      storage: createJSONStorage(createSidebarViewStorage),
+      storage: createValidatedPersistStorage(
+        createSidebarViewStorage(),
+        SidebarViewPersistedStateSchema,
+      ),
       partialize: (state) => ({
         groupMode: state.groupMode,
         hostFilters: state.hostFilters,

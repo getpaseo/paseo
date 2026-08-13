@@ -2422,6 +2422,8 @@ export const ko: TranslationResources = {
         docsTooltip: "자세한 내용과 이 명령에 사용할 수 있는 환경 변수는 문서를 참조하세요",
         setup: "설정",
         setupAccessibility: "워크트리 설정 명령",
+        uncommittedTitle: "paseo.json 변경 사항을 커밋하세요",
+        uncommittedDescription: "새 워크트리는 선택한 기본 브랜치의 설정 스크립트를 사용합니다.",
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
       },

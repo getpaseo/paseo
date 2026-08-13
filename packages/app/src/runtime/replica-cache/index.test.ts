@@ -25,6 +25,10 @@ class MemoryStorage implements ReplicaCacheStorage {
     this.writes += 1;
     this.values.set(key, value);
   }
+
+  async removeItem(key: string): Promise<void> {
+    this.values.delete(key);
+  }
 }
 
 function workspace(
@@ -272,7 +276,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
@@ -331,12 +335,12 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 3 cache data and overwrites it on flush", async () => {
+  it("rejects and clears version 4 cache data before overwriting it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@paseo:replica-cache",
       JSON.stringify({
-        version: 3,
+        version: 4,
         hosts: [
           {
             serverId: SERVER_ID,
@@ -357,11 +361,12 @@ describe("ReplicaCache", () => {
     cache.setHosts([SERVER_ID]);
 
     await cache.restore();
+    expect(storage.values.has("@paseo:replica-cache")).toBe(false);
     await cache.flush();
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 4,
+      version: 5,
       hosts: [],
     });
   });

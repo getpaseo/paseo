@@ -1,23 +1,20 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { z } from "zod";
+import { readValidatedString } from "@/storage/validated-storage";
 
 const CLIENT_ID_STORAGE_KEY = "@paseo:client-id-v1";
 
 export interface ClientIdStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface ClientIdResolver {
   getOrCreate(): Promise<string>;
 }
 
-function normalizeStoredClientId(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+const ClientIdSchema = z.string().trim().min(1);
 
 export function createClientIdResolver(deps: {
   storage: ClientIdStorage;
@@ -38,8 +35,7 @@ export function createClientIdResolver(deps: {
       }
 
       inFlight = (async () => {
-        const stored = await deps.storage.getItem(storageKey);
-        const existing = normalizeStoredClientId(stored);
+        const existing = await readValidatedString(deps.storage, storageKey, ClientIdSchema);
         if (existing) {
           cached = existing;
           return existing;
@@ -61,7 +57,7 @@ export function createClientIdResolver(deps: {
 }
 
 function generateUuidFromGlobalCrypto(): string {
-  const cryptoObj = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  const cryptoObj = globalThis.crypto;
   if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
     return cryptoObj.randomUUID().replace(/-/g, "");
   }
