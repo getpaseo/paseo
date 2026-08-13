@@ -659,6 +659,28 @@ test("jcode is a built-in backed by the ACP adapter and reports unavailable with
   await expect(client.isAvailable()).resolves.toBe(true);
 });
 
+test("jcode catalog returns runtime ACP models with static empty modes", async () => {
+  mockState.runtimeModels.set("jcode", [
+    {
+      provider: "jcode",
+      id: "jcode-runtime-model",
+      label: "Jcode Runtime Model",
+      isDefault: true,
+    } satisfies AgentModelDefinition,
+  ]);
+
+  const registry = buildProviderRegistry(logger);
+  const catalog = await registry.jcode.fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/registry-models",
+    force: false,
+  });
+
+  expect(catalog.models.map((model) => model.id)).toEqual(["jcode-runtime-model"]);
+  expect(catalog.modes).toEqual([]);
+  expect(catalog.defaultModeId).toBeUndefined();
+});
+
 test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
   const omp = new FakeOmp();
   const registry = buildProviderRegistry(logger, { ompRuntime: omp });
