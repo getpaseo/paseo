@@ -41,6 +41,7 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type FetchCatalogOptions,
+  type ProviderRefreshContext,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -53,6 +54,10 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import {
+  raceProviderRefreshAbort,
+  runProviderRefreshActivity,
+} from "../provider-refresh-deadline.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -68,6 +73,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  type OpenCodeServerAcquisition,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
@@ -297,9 +303,9 @@ type OpenCodeMcpConfig =
     };
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
-const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
 const OPENCODE_METADATA_CONCURRENCY = 4;
 const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
+
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
   {
     name: "compact",
@@ -1422,14 +1428,22 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const acquisition = options.force
-      ? await this.serverManager.acquireNew()
-      : await this.serverManager.acquireCurrent();
-    const { url } = acquisition.server;
-    const isGlobalCatalog = options.scope === "global";
-
+  async fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
+    let acquisition: OpenCodeServerAcquisition | undefined;
     try {
+      await runProviderRefreshActivity(context, "server.acquire", async () => {
+        acquisition = options.force
+          ? await this.serverManager.acquireNew()
+          : await this.serverManager.acquireCurrent();
+      });
+      if (!acquisition) throw new Error("OpenCode server acquisition did not complete");
+      context?.signal.throwIfAborted();
+      const { url } = acquisition.server;
+      const isGlobalCatalog = options.scope === "global";
+
       // OpenCode treats the catalog directory as a workspace. The global catalog
       // is not a project, so use the neutral OpenCode home instead of user home.
       const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
@@ -1444,12 +1458,12 @@ export class OpenCodeAgentClient implements AgentClient {
 
       const client = this.createOpenCodeClient({ baseUrl: url, directory });
       const [models, modes] = await Promise.all([
-        this.fetchModelsFromClient(client, directory),
-        this.fetchModesFromClient(client, directory),
+        this.fetchModelsFromClient(client, directory, context),
+        this.fetchModesFromClient(client, directory, context),
       ]);
       return { models, modes };
     } finally {
-      await acquisition.release();
+      await acquisition?.release();
     }
   }
 
@@ -1637,12 +1651,18 @@ export class OpenCodeAgentClient implements AgentClient {
   private async fetchModelsFromClient(
     client: OpencodeClient,
     directory: string,
+    context?: ProviderRefreshContext,
   ): Promise<AgentModelDefinition[]> {
-    const response = await openCodeMetadataLimit(() =>
-      withTimeout(
-        client.provider.list({ directory }),
-        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
-        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+    const response = await runProviderRefreshActivity(context, "provider.list", () =>
+      raceProviderRefreshAbort(
+        context?.signal,
+        openCodeMetadataLimit(() => {
+          context?.signal.throwIfAborted();
+          return client.provider.list(
+            { directory },
+            context ? { signal: context.signal } : undefined,
+          );
+        }),
       ),
     );
 
@@ -1669,7 +1689,7 @@ export class OpenCodeAgentClient implements AgentClient {
     }
 
     const models: AgentModelDefinition[] = [];
-    this.modelContextWindows.clear();
+    const contextWindows = new Map<string, number>();
     for (const provider of providers.all) {
       if (!isAccessible(provider)) {
         continue;
@@ -1679,7 +1699,7 @@ export class OpenCodeAgentClient implements AgentClient {
         const definition = buildOpenCodeModelDefinition(provider, modelId, model);
         const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
         if (contextWindowMaxTokens !== undefined) {
-          this.modelContextWindows.set(
+          contextWindows.set(
             buildOpenCodeModelLookupKey(provider.id, modelId),
             contextWindowMaxTokens,
           );
@@ -1688,18 +1708,25 @@ export class OpenCodeAgentClient implements AgentClient {
       }
     }
 
+    context?.signal.throwIfAborted();
+    this.modelContextWindows.clear();
+    for (const [key, value] of contextWindows) this.modelContextWindows.set(key, value);
+
     return models;
   }
 
   private async fetchModesFromClient(
     client: OpencodeClient,
     directory: string,
+    context?: ProviderRefreshContext,
   ): Promise<AgentMode[]> {
-    const response = await openCodeMetadataLimit(() =>
-      withTimeout(
-        client.app.agents({ directory }),
-        10_000,
-        "OpenCode app.agents timed out after 10s",
+    const response = await runProviderRefreshActivity(context, "app.agents", () =>
+      raceProviderRefreshAbort(
+        context?.signal,
+        openCodeMetadataLimit(() => {
+          context?.signal.throwIfAborted();
+          return client.app.agents({ directory }, context ? { signal: context.signal } : undefined);
+        }),
       ),
     );
 
