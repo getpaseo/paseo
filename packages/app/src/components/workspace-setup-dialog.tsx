@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
+import { ProjectIconView } from "@/components/project-icon-view";
+import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
@@ -29,7 +31,6 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
-import { projectIconRadius } from "@/components/project-icon-view";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -381,7 +382,6 @@ export function WorkspaceSetupDialog() {
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
 
-  const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -396,19 +396,19 @@ export function WorkspaceSetupDialog() {
   const subtitleContent = useMemo(
     () => (
       <View style={styles.subtitleRow}>
-        {iconSource ? (
-          <Image source={iconSource} style={styles.projectIcon} />
-        ) : (
-          <View style={styles.projectIconFallback}>
-            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-          </View>
-        )}
+        <ProjectIconView
+          iconDataUri={iconDataUri}
+          initial={placeholderInitial}
+          projectViewKey={sourceDirectory}
+          size={ICON_SIZE.md}
+          textStyle={styles.projectIconFallbackText}
+        />
         <Text style={styles.projectTitle} numberOfLines={1}>
           {workspaceTitle}
         </Text>
       </View>
     ),
-    [iconSource, placeholderInitial, workspaceTitle],
+    [iconDataUri, placeholderInitial, sourceDirectory, workspaceTitle],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -461,22 +461,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  // A user's uploaded mark is sized, never clipped — see projectIconRadius.
-  projectIcon: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-  },
-  projectIconFallback: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    borderRadius: projectIconRadius(theme.iconSize.md),
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   projectIconFallbackText: {
-    color: theme.colors.foregroundMuted,
     fontSize: 9,
   },
   projectTitle: {

@@ -44,22 +44,6 @@ export async function resolveStructuredGenerationProviders(
   options: ResolveStructuredGenerationProvidersOptions,
 ): Promise<StructuredGenerationProvider[]> {
   const configuredProviders = readConfiguredProviders(options.daemonConfig);
-  if (configuredProviders.length > 0) {
-    const explicitProviders = resolveExplicitConfiguredProviders(configuredProviders);
-    if (explicitProviders.length === configuredProviders.length) {
-      return dedupeProviders(explicitProviders);
-    }
-
-    const providerEntries = await options.providerSnapshotManager.listProviders({
-      cwd: options.cwd,
-      wait: false,
-    });
-    const providers = resolveConfiguredProviders(configuredProviders, providerEntries);
-    if (providers.length > 0) {
-      return dedupeProviders(providers);
-    }
-  }
-
   const providerEntries = await options.providerSnapshotManager.listProviders({
     cwd: options.cwd,
     wait: true,
@@ -98,42 +82,6 @@ export async function resolveStructuredGenerationProviders(
   }
 
   return dedupeProviders(providers);
-}
-
-function resolveConfiguredProviders(
-  configuredProviders: readonly { provider: string; model?: string; thinkingOptionId?: string }[],
-  providerEntries: readonly ProviderSnapshotEntry[],
-): StructuredGenerationProvider[] {
-  const enabledEntries = providerEntries.filter((entry) => entry.enabled);
-  const modelEntries = enabledEntries.filter((entry) => (entry.models?.length ?? 0) > 0);
-  const entriesByProvider = new Map(enabledEntries.map((entry) => [entry.provider, entry]));
-  const providers: StructuredGenerationProvider[] = [];
-  for (const configured of configuredProviders) {
-    const resolved = resolveConfiguredCandidate(configured, modelEntries, entriesByProvider);
-    if (resolved) {
-      providers.push(resolved);
-    }
-  }
-  return providers;
-}
-
-function resolveExplicitConfiguredProviders(
-  configuredProviders: readonly { provider: string; model?: string; thinkingOptionId?: string }[],
-): StructuredGenerationProvider[] {
-  const providers: StructuredGenerationProvider[] = [];
-  for (const configured of configuredProviders) {
-    const provider = configured.provider.trim();
-    const model = configured.model?.trim();
-    if (!provider || !model) {
-      continue;
-    }
-    providers.push({
-      provider,
-      model,
-      ...(configured.thinkingOptionId ? { thinkingOptionId: configured.thinkingOptionId } : {}),
-    });
-  }
-  return providers;
 }
 
 function resolveCurrentSelection(

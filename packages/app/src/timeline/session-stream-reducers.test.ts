@@ -3557,6 +3557,59 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("publishes task snapshots only from accepted timeline events", () => {
+    const tasks = [
+      { id: "inspect", text: "Inspect", status: "in_progress" as const, completed: false },
+    ];
+    const event: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "todo",
+        items: tasks,
+      },
+    };
+    const currentCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 4,
+    };
+
+    const accepted = processAgentStreamEvent({
+      ...baseStreamInput,
+      event,
+      seq: 5,
+      epoch: "epoch-1",
+      currentCursor,
+    });
+    const stale = processAgentStreamEvent({
+      ...baseStreamInput,
+      event,
+      seq: 4,
+      epoch: "epoch-1",
+      currentCursor,
+    });
+    const wrongEpoch = processAgentStreamEvent({
+      ...baseStreamInput,
+      event,
+      seq: 5,
+      epoch: "epoch-2",
+      currentCursor,
+    });
+    const gapped = processAgentStreamEvent({
+      ...baseStreamInput,
+      event,
+      seq: 8,
+      epoch: "epoch-1",
+      currentCursor,
+    });
+
+    expect(accepted.taskSnapshot).toEqual(tasks);
+    expect(stale.taskSnapshot).toBeUndefined();
+    expect(wrongEpoch.taskSnapshot).toBeUndefined();
+    expect(gapped.taskSnapshot).toBeUndefined();
+  });
+
   it("detects gap and emits catch-up side effect", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",

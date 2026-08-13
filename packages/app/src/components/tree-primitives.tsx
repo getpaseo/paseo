@@ -63,13 +63,7 @@ export function TreeIndentGuides({ depth }: { depth: number }) {
 /** Rotating disclosure chevron for a directory row (points right; rotates down when expanded). */
 export function TreeChevron({ expanded }: { expanded: boolean }) {
   return (
-    <View
-      style={
-        expanded
-          ? [styles.chevron, styles.chevronExpanded]
-          : [styles.chevron, styles.chevronCollapsed]
-      }
-    >
+    <View style={expanded ? [styles.chevron, styles.chevronExpanded] : styles.chevron}>
       <ThemedChevronRight
         size={WORKSPACE_TREE_ICON_SIZE}
         uniProps={foregroundExtraMutedIconColorMapping}
@@ -93,13 +87,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
     flexShrink: 0,
   },
-  // Lucide leaves space around the chevron path. Align its painted right edge inside the fixed
-  // slot; the rotated glyph is wider, so it needs half the optical offset.
-  chevronCollapsed: {
-    left: 4,
-  },
   chevronExpanded: {
-    left: 2,
     transform: [{ rotate: "90deg" }],
   },
 }));

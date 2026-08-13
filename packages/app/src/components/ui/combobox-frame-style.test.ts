@@ -9,6 +9,7 @@ function buildWidthStyle(input: {
 }): Pick<ViewStyle, "width" | "minWidth" | "maxWidth"> {
   const [frameStyle] = buildDesktopFrameStyle({
     desktopMinWidth: input.desktopMinWidth,
+    desktopLockWidth: false,
     referenceWidth: input.referenceWidth,
     desktopFixedHeight: undefined,
     desktopPositionStyle: { left: 0, top: 0 },
@@ -54,5 +55,19 @@ describe("buildDesktopFrameStyle", () => {
       minWidth: 300,
       maxWidth: 400,
     });
+  });
+
+  it("locks the frame to its opening floor when content must not resize it", () => {
+    const [frameStyle] = buildDesktopFrameStyle({
+      desktopMinWidth: 360,
+      desktopLockWidth: true,
+      referenceWidth: 120,
+      desktopFixedHeight: undefined,
+      desktopPositionStyle: { left: 0, top: 0 },
+      shouldHideDesktopContent: false,
+      availableHeight: undefined,
+    }) as ViewStyle[];
+
+    expect(frameStyle).toMatchObject({ width: 360, minWidth: 360, maxWidth: 360 });
   });
 });

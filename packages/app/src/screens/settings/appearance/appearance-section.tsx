@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, TextInput, View, type PressableStateCallbackType } from "react-native";
@@ -32,6 +32,7 @@ import {
   DEFAULT_MONO_FONT_STACK,
   DEFAULT_UI_FONT_STACK,
   ICON_SIZE,
+  THEME_OPTIONS,
   THEME_SWATCHES,
   type Theme,
 } from "@/styles/theme";
@@ -53,27 +54,8 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 function getThemeLabel(t: TFunction, value: AppSettings["theme"]): string {
-  const labelKeys: Record<AppSettings["theme"], string> = {
-    light: "settings.appearance.theme.options.light",
-    dark: "settings.appearance.theme.options.dark",
-    zinc: "settings.appearance.theme.options.zinc",
-    midnight: "settings.appearance.theme.options.midnight",
-    claude: "settings.appearance.theme.options.claude",
-    ghostty: "settings.appearance.theme.options.ghostty",
-    pureBlack: "settings.appearance.theme.options.pureBlack",
-    auto: "settings.appearance.theme.options.auto",
-  };
-  return t(labelKeys[value]);
+  return t(`settings.appearance.theme.options.${value}`);
 }
-
-const PRIMARY_THEMES: readonly AppSettings["theme"][] = ["light", "dark", "auto"];
-const DARK_VARIANT_THEMES: readonly AppSettings["theme"][] = [
-  "zinc",
-  "midnight",
-  "claude",
-  "ghostty",
-  "pureBlack",
-];
 
 // Platform default stacks can be the bare native tokens ("normal"/"monospace");
 // those read as a bug, so show a human label in the placeholder instead.
@@ -169,23 +151,21 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
           <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200}>
-          {PRIMARY_THEMES.map((themeValue) => (
-            <ThemeMenuItem
-              key={themeValue}
-              themeValue={themeValue}
-              selected={value === themeValue}
-              onChange={onChange}
-            />
-          ))}
-          <DropdownMenuSeparator />
-          {DARK_VARIANT_THEMES.map((themeValue) => (
-            <ThemeMenuItem
-              key={themeValue}
-              themeValue={themeValue}
-              selected={value === themeValue}
-              onChange={onChange}
-            />
-          ))}
+          {THEME_OPTIONS.map((option, index) => {
+            const previousOption = THEME_OPTIONS[index - 1];
+            return (
+              <Fragment key={option.name}>
+                {previousOption && previousOption.group !== option.group ? (
+                  <DropdownMenuSeparator />
+                ) : null}
+                <ThemeMenuItem
+                  themeValue={option.name}
+                  selected={value === option.name}
+                  onChange={onChange}
+                />
+              </Fragment>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
     </View>

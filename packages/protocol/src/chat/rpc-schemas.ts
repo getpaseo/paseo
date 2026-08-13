@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ChatMessageSchema, ChatRoomDetailSchema } from "./types.js";
 
+// COMPAT(chatRooms): retained after the v0.3.0 feature removal; remove after 2027-02-09 when mixed-version peers no longer send legacy messages.
+
 export const ChatCreateRequestSchema = z.object({
   type: z.literal("chat/create"),
   requestId: z.string(),

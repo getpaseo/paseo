@@ -52,6 +52,8 @@ import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
+import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
@@ -4898,6 +4900,78 @@ describe("provider listing MCP tool", () => {
         },
       ],
     });
+  });
+});
+
+function daemonConfigStoreStub(agentProfiles?: AgentProfile[]): Pick<DaemonConfigStore, "get"> {
+  const config = MutableDaemonConfigSchema.parse({
+    relay: { enabled: true },
+    mcp: { injectIntoAgents: true },
+    ...(agentProfiles !== undefined ? { agentProfiles } : {}),
+  });
+  return { get: () => config };
+}
+
+describe("agent profile listing MCP tool", () => {
+  const logger = createTestLogger();
+
+  it("returns configured profiles, including notes", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const profiles: AgentProfile[] = [
+      {
+        id: "ui-profile",
+        name: "UI work",
+        provider: "claude",
+        model: "claude-test-model",
+        modeId: "bypassPermissions",
+        thinkingOptionId: "high",
+        featureValues: { fast_mode: true },
+        notes: "Use for UI work: components, layout, design tokens. Not for backend.",
+      },
+    ];
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      daemonConfigStore: daemonConfigStoreStub(profiles),
+      logger,
+    });
+    const tool = registeredTool(server, "list_profiles");
+
+    const response = await tool.handler({});
+
+    expect(response.structuredContent).toEqual({ profiles });
+  });
+
+  it("returns an empty array when no profiles are configured", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      daemonConfigStore: daemonConfigStoreStub(),
+      logger,
+    });
+    const tool = registeredTool(server, "list_profiles");
+
+    const response = await tool.handler({});
+
+    expect(response.structuredContent).toEqual({ profiles: [] });
+  });
+
+  it("returns an empty array when no daemon config store is provided", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "list_profiles");
+
+    const response = await tool.handler({});
+
+    expect(response.structuredContent).toEqual({ profiles: [] });
   });
 });
 
