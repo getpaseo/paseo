@@ -81,6 +81,7 @@ import {
   useAgentProfilePicker,
   type AgentProfileApplyTarget,
   type AgentProfilePicker,
+  type DraftAgentProfileControls,
 } from "@/agent-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
@@ -125,7 +126,6 @@ interface ControlledAgentControlsProps {
 export interface DraftAgentControlsProps {
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider | null;
-  onSelectProvider: (provider: AgentProvider) => void;
   modeOptions: AgentMode[];
   selectedMode: string;
   onSelectMode: (modeId: string) => void;
@@ -139,6 +139,7 @@ export interface DraftAgentControlsProps {
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   selectedThinkingOptionId: string;
   onSelectThinkingOption: (thinkingOptionId: string) => void;
+  onApplyAgentProfile: DraftAgentProfileControls["applyProfile"];
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
@@ -383,6 +384,15 @@ function resolveSnapshotSelectedEntry(
     return null;
   }
   return snapshotEntries.find((e) => e.provider === agentProvider) ?? null;
+}
+
+function resolveSnapshotModeIds(
+  entry: ReturnType<typeof resolveSnapshotSelectedEntry>,
+): string[] | null {
+  if (entry?.status !== "ready" || !entry.modes) {
+    return null;
+  }
+  return entry.modes.map((mode) => mode.id);
 }
 
 function buildAgentProviderDefinitions(
@@ -1550,9 +1560,13 @@ export const AgentControls = memo(function AgentControls({
   // A running agent is one provider's process, so only that provider's profiles
   // can apply to it.
   const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
+  const profileModeIds = useMemo(
+    () => resolveSnapshotModeIds(snapshotSelectedEntry),
+    [snapshotSelectedEntry],
+  );
   const profileTarget = useMemo<AgentProfileApplyTarget>(
-    () => ({ kind: "agent", agentId }),
-    [agentId],
+    () => ({ kind: "agent", agentId, availableModeIds: profileModeIds }),
+    [agentId, profileModeIds],
   );
   const agentProfiles = useAgentProfilePicker({
     serverId,
@@ -1692,7 +1706,6 @@ export const AgentControls = memo(function AgentControls({
 export function DraftAgentControls({
   providerDefinitions,
   selectedProvider,
-  onSelectProvider,
   modeOptions,
   selectedMode,
   onSelectMode,
@@ -1706,6 +1719,7 @@ export function DraftAgentControls({
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
+  onApplyAgentProfile,
   features,
   onSetFeature,
   onDropdownClose,
@@ -1742,20 +1756,10 @@ export function DraftAgentControls({
     () => ({
       kind: "draft",
       controls: {
-        selectProvider: onSelectProvider,
-        selectProviderAndModel: onSelectProviderAndModel,
-        selectMode: onSelectMode,
-        selectThinkingOption: onSelectThinkingOption,
-        setFeature: onSetFeature,
+        applyProfile: onApplyAgentProfile,
       },
     }),
-    [
-      onSelectMode,
-      onSelectProvider,
-      onSelectProviderAndModel,
-      onSelectThinkingOption,
-      onSetFeature,
-    ],
+    [onApplyAgentProfile],
   );
   const agentProfiles = useAgentProfilePicker({
     serverId: modelSelectorServerId,
