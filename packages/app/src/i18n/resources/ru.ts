@@ -2448,6 +2448,9 @@ export const ru: TranslationResources = {
           "Дополнительную информацию и переменные среды, доступные для этих команд, см. в документации.",
         setup: "Настраивать",
         setupAccessibility: "Команды настройки рабочего дерева",
+        uncommittedTitle: "Закоммитьте изменения paseo.json",
+        uncommittedDescription:
+          "Новые рабочие деревья используют сценарий настройки из выбранной базовой ветки.",
         teardown: "Срывать",
         teardownAccessibility: "Команды разрушения рабочего дерева",
       },

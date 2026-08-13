@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
-import { readFile, rm, stat } from "fs/promises";
+import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -33,7 +33,6 @@ import {
 import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
-import { writeFileAtomic } from "../server/atomic-file.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
@@ -794,20 +793,21 @@ export async function runWorktreeTeardownCommands(options: {
   return results;
 }
 
-export async function copySourcePaseoConfigFile(options: {
+export async function seedPaseoConfigFile(options: {
   sourceCwd: string;
   targetCwd: string;
 }): Promise<void> {
   const sourceConfigPath = join(options.sourceCwd, "paseo.json");
   const targetConfigPath = join(options.targetCwd, "paseo.json");
-  let sourceConfig: Buffer;
   try {
-    sourceConfig = await readFile(sourceConfigPath);
+    await stat(targetConfigPath);
+    return;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  await writeFileAtomic(targetConfigPath, sourceConfig);
+  await copyFile(sourceConfigPath, targetConfigPath).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
 }
 
 /**
@@ -1257,7 +1257,7 @@ export const createWorktree = async ({
       : {}),
   });
 
-  await copySourcePaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
 
   if (runSetup) {
     await runWorktreeSetupCommands({
