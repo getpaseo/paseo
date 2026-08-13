@@ -90,6 +90,9 @@ current canonical window losslessly. The stored range describes those exact item
 older pagination and `endSeq` drives forward catch-up. Restore paints the items immediately, requests
 `after endSeq`, and requests `before startSeq` when the user loads older history.
 
+The first resume request is bounded. If it reports more newer history, fetch one latest bounded tail
+instead of replaying every missed page. Live gap recovery still pages forward until current.
+
 If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
 live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
 range and keeps a display-only tail. Restore then uses the ordinary bounded `tail` bootstrap. Never

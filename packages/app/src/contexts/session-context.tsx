@@ -19,7 +19,10 @@ import {
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { isTimelineResumeSnapshotAuthoritative } from "@/timeline/timeline-sync-plan";
+import {
+  isTimelineResumeSnapshotAuthoritative,
+  planTimelineTailFetch,
+} from "@/timeline/timeline-sync-plan";
 import {
   createViewedTimelineSync,
   type TimelineDeliveryMode,
@@ -33,6 +36,7 @@ import {
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
+
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
@@ -66,6 +70,20 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
+
+type TimelineResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agent_timeline_response" }
+>["payload"];
+
+function consumeForcedTimelineTailReplacement(
+  payload: TimelineResponsePayload,
+  replacements: Set<string>,
+): TimelineResponsePayload {
+  if (payload.direction !== "tail") return payload;
+  if (!replacements.delete(payload.agentId)) return payload;
+  return { ...payload, reset: true };
+}
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -350,6 +368,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
+  const forcedTimelineTailReplacements = useRef(new Set<string>());
   const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
@@ -528,12 +547,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   const applyTimelineResponse = useCallback(
-    (
-      payload: Extract<
-        SessionOutboundMessage,
-        { type: "fetch_agent_timeline_response" }
-      >["payload"],
-    ) => {
+    (receivedPayload: TimelineResponsePayload) => {
+      const payload = consumeForcedTimelineTailReplacement(
+        receivedPayload,
+        forcedTimelineTailReplacements.current,
+      );
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
       const shouldMarkAuthoritativeHistoryApplied = isTimelineResumeSnapshotAuthoritative({
@@ -679,6 +697,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
           }
           throw error;
+        }
+      },
+      fetchLatestTail: async (agentId) => {
+        forcedTimelineTailReplacements.current.add(agentId);
+        try {
+          return await getHostRuntimeStore().fetchAgentTimeline(
+            serverId,
+            agentId,
+            planTimelineTailFetch(),
+          );
+        } finally {
+          forcedTimelineTailReplacements.current.delete(agentId);
         }
       },
       reportError: (error) => {
