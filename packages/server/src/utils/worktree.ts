@@ -1465,33 +1465,44 @@ async function fetchWorktreeCheckoutRefs(options: {
   localBranchName: string;
   checkoutRefs: WorktreeCheckoutRef[];
 }): Promise<void> {
+  const { stdout: remoteOutput } = await runGitCommand(["remote"], { cwd: options.cwd });
+  const configuredRemotes = remoteOutput
+    .split(/\r?\n/)
+    .map((remoteName) => remoteName.trim())
+    .filter((remoteName) => remoteName.length > 0);
+  const attemptedRefs: string[] = [];
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
   for (const checkoutRef of options.checkoutRefs) {
-    lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
-        "--force",
-      ],
-      {
-        cwd: options.cwd,
-        timeout: 120_000,
-        acceptExitCodes: [0, 1, 128],
-      },
-    );
-    if (lastResult.exitCode === 0) {
-      return;
+    const preferredRemote = checkoutRef.remoteName ?? "origin";
+    const candidateRemotes = [
+      preferredRemote,
+      ...configuredRemotes.filter((remoteName) => remoteName !== preferredRemote),
+    ];
+    for (const remoteName of candidateRemotes) {
+      attemptedRefs.push(`${remoteName} ${checkoutRef.remoteRef}`);
+      lastResult = await runGitCommand(
+        [
+          "fetch",
+          remoteName,
+          `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
+          "--force",
+        ],
+        {
+          cwd: options.cwd,
+          timeout: 120_000,
+          acceptExitCodes: [0, 1, 128],
+        },
+      );
+      if (lastResult.exitCode === 0) {
+        return;
+      }
     }
   }
-  const attemptedRefs = options.checkoutRefs
-    .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
-    .join(", ");
   throw new Error(
-    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
+    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs.join(", ")}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
 }
 

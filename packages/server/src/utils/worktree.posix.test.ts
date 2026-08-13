@@ -411,6 +411,54 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("Feature.X");
     });
 
+    it("tries other configured remotes when the PR ref is absent from origin", async () => {
+      const originDir = join(tempDir, "fork.git");
+      const upstreamDir = join(tempDir, "upstream.git");
+      const upstreamCloneDir = join(tempDir, "upstream-clone");
+      execFileSync("git", ["clone", "--bare", repoDir, originDir]);
+      execFileSync("git", ["clone", "--bare", repoDir, upstreamDir]);
+      execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], { cwd: repoDir });
+
+      execFileSync("git", ["clone", upstreamDir, upstreamCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], {
+        cwd: upstreamCloneDir,
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: upstreamCloneDir });
+      execFileSync("git", ["checkout", "-b", "contributor/remote-pr"], {
+        cwd: upstreamCloneDir,
+      });
+      writeFileSync(join(upstreamCloneDir, "file.txt"), "from-upstream-pr\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: upstreamCloneDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "upstream pr"], {
+        cwd: upstreamCloneDir,
+      });
+      const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: upstreamCloneDir })
+        .toString()
+        .trim();
+      execFileSync("git", ["push", "origin", "contributor/remote-pr"], {
+        cwd: upstreamCloneDir,
+      });
+      execFileSync("git", [`--git-dir=${upstreamDir}`, "update-ref", "refs/pull/44/head", prHead]);
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "pr-44",
+        source: {
+          kind: "checkout-github-pr",
+          githubPrNumber: 44,
+          headRef: "contributor/remote-pr",
+          baseRefName: "main",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe(
+        "from-upstream-pr\n",
+      );
+    });
+
     it("uses the selected local or origin ref when both exist", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");
