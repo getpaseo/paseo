@@ -37,6 +37,8 @@ import type { HubReporter } from "./reporter.js";
 import { normalizeHubOrigin } from "./origin.js";
 
 const execFileAsync = promisify(execFile);
+const DAEMON_READY_TIMEOUT_MS = 60_000;
+const DAEMON_READY_POLL_MS = 250;
 
 interface HubInitEnvironment {
   env: Readonly<Record<string, string | undefined>>;
@@ -189,9 +191,8 @@ async function ensureDaemonConnection(
     return;
   }
   if (connection.kind === "pending") {
-    throw new HubInitCancelledError(
-      `This daemon is ${connection.state} to ${origin}. Wait for \`paseo hub status\` to show connected, then run Hub init again.`,
-    );
+    await waitForDaemonReady(origin, environment.daemon);
+    return;
   }
   if (connection.kind === "conflict") {
     throw new HubCommandError(
@@ -213,7 +214,41 @@ async function ensureDaemonConnection(
       reporter: environment.reporter,
     },
   );
-  log.success(`Connected this daemon to ${origin}`);
+  await waitForDaemonReady(origin, environment.daemon);
+}
+
+async function waitForDaemonReady(origin: string, connection: HubDaemonConnection): Promise<void> {
+  const daemonId = await withSpinner("Waiting for the daemon to connect", async (reporter) =>
+    withHubDaemon(connection, undefined, async (daemon) => {
+      const deadline = Date.now() + DAEMON_READY_TIMEOUT_MS;
+      while (true) {
+        const status = (await daemon.getHubStatus()).status;
+        const resolution = resolveHubInitConnection(status, origin);
+        if (resolution.kind === "connected") return resolution.daemonId;
+        if (resolution.kind === "conflict") {
+          throw new HubCommandError(
+            "HUB_DAEMON_ALREADY_CONNECTED",
+            `This daemon connected to ${resolution.origin} while Hub init was waiting for ${origin}.`,
+          );
+        }
+        if (resolution.kind === "connect") {
+          throw new HubCommandError(
+            "HUB_DAEMON_CONNECTION_LOST",
+            "The daemon lost its Hub relationship while Hub init was waiting for it.",
+          );
+        }
+        if (Date.now() >= deadline) {
+          throw new HubCommandError(
+            "HUB_DAEMON_CONNECTION_TIMEOUT",
+            "The daemon did not connect within 60 seconds. Check `paseo hub status`, then run Hub init again.",
+          );
+        }
+        reporter.progress(`Daemon is ${resolution.state}`);
+        await delay(DAEMON_READY_POLL_MS);
+      }
+    }),
+  );
+  log.success(`Daemon ${daemonId} is connected to ${origin}`);
 }
 
 async function chooseProject(origin: string, environment: HubInitEnvironment): Promise<HubProject> {
@@ -342,6 +377,10 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string"
     ? error.code
     : undefined;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function readGhValue(args: readonly string[]): Promise<string | undefined> {
