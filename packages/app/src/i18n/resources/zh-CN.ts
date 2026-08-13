@@ -2377,6 +2377,8 @@ export const zhCN: TranslationResources = {
         docsTooltip: "查看命令可用的环境变量和更多细节",
         setup: "Setup",
         setupAccessibility: "Worktree setup 命令",
+        uncommittedTitle: "提交 paseo.json 更改",
+        uncommittedDescription: "新工作树使用所选基础分支中的设置脚本。",
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown 命令",
       },

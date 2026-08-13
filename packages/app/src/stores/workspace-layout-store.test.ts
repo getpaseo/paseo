@@ -15,6 +15,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
   };
 });
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import {
   collectAllPanes,
@@ -314,6 +315,24 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
     });
+  });
+
+  it("keeps layouts written before split sizes were persisted", async () => {
+    const legacyLayout = createDefaultLayout();
+    await AsyncStorage.setItem(
+      "workspace-layout-state",
+      JSON.stringify({
+        state: { layoutByWorkspace: { legacy: legacyLayout } },
+        version: 1,
+      }),
+    );
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+
+    await restored.persist.rehydrate();
+
+    expect(restored.getState().layoutByWorkspace.legacy).toEqual(legacyLayout);
+    expect(restored.getState().splitSizesByWorkspace).toEqual({});
+    await expect(AsyncStorage.getItem("workspace-layout-state")).resolves.not.toBeNull();
   });
 
   it("opens tabs into the focused pane and focuses duplicate opens instead of creating them", () => {

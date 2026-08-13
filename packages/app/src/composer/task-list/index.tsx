@@ -1,20 +1,13 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Text, View } from "react-native";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot } from "lucide-react-native";
+import { View } from "react-native";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import { TaskListRow } from "@/components/task-list-row";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { useSessionStore } from "@/stores/session-store";
-import type { Theme } from "@/styles/theme";
 import type { TodoEntry } from "@/types/stream";
-
-const ThemedCheck = withUnistyles(Check);
-const ThemedCircle = withUnistyles(Circle);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const mutedIcon = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const activeIcon = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const completedIcon = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 
 export const AgentTaskList = memo(function AgentTaskList({
   serverId,
@@ -27,16 +20,6 @@ export const AgentTaskList = memo(function AgentTaskList({
   if (!tasks?.length) return null;
   return <TaskListCard tasks={tasks} />;
 });
-
-function TaskStatusIcon({ task }: { task: TodoEntry }) {
-  if (task.completed || task.status === "completed") {
-    return <ThemedCheck size={15} uniProps={completedIcon} />;
-  }
-  if (task.status === "in_progress") {
-    return <ThemedCircleDot size={15} uniProps={activeIcon} />;
-  }
-  return <ThemedCircle size={15} uniProps={mutedIcon} />;
-}
 
 const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] }) {
   const { t } = useTranslation();
@@ -83,25 +66,9 @@ const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] 
           </Button>
           {expanded ? (
             <View style={styles.list}>
-              {tasks.map((task, index) => {
-                const isActive = task.status === "in_progress";
-                const text = isActive && task.activeForm ? task.activeForm : task.text;
-                return (
-                  <View
-                    key={task.id ?? `${index}:${task.text}`}
-                    style={styles.row}
-                    accessibilityLabel={text}
-                  >
-                    <TaskStatusIcon task={task} />
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.taskText, task.completed && styles.completedText]}
-                    >
-                      {text}
-                    </Text>
-                  </View>
-                );
-              })}
+              {tasks.map((task, index) => (
+                <TaskListRow key={task.id ?? `${index}:${task.text}`} task={task} />
+              ))}
             </View>
           ) : null}
         </View>
@@ -142,22 +109,8 @@ const styles = StyleSheet.create((theme) => ({
   list: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-    paddingTop: theme.spacing[1],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-  },
-  taskText: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  completedText: {
-    color: theme.colors.foregroundMuted,
-    textDecorationLine: "line-through",
+    paddingTop: theme.spacing[2],
+    gap: theme.spacing[1],
   },
 }));

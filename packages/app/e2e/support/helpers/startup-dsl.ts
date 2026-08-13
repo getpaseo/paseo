@@ -106,7 +106,7 @@ class StartupScenario {
     if (!firstHost) {
       throw new Error("Expected at least one startup test host.");
     }
-    const createAgentPreferences = buildStoredCreateAgentPreferences(firstHost.serverId);
+    const createAgentPreferences = buildStoredCreateAgentPreferences();
 
     await this.page.evaluate(
       ({ keys, registry: storedRegistry, createAgentPreferences: storedPreferences }) => {
@@ -245,6 +245,6 @@ function buildStoredHost(input: {
   return buildSeededHost(input);
 }
 
-function buildStoredCreateAgentPreferences(serverId: string) {
-  return buildCreateAgentPreferences(serverId);
+function buildStoredCreateAgentPreferences() {
+  return buildCreateAgentPreferences();
 }
