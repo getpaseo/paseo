@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createCodeClipboardContent,
   createMarkdownClipboardContent,
   type MarkdownClipboardEnvironment,
   type RichClipboardWriter,
@@ -87,6 +88,41 @@ describe("createMarkdownClipboardContent", () => {
 
     expect(content.html).toContain('<a href="file:///tmp/paseo%20notes.md#L4">file</a>');
     expect(content.html).not.toMatch(/href="(?:javascript|data|vbscript):/);
+  });
+});
+
+describe("createCodeClipboardContent", () => {
+  it("keeps the code verbatim and escapes it for the html half", () => {
+    const content = createCodeClipboardContent('if (a < b && c > "d") {', { block: false });
+
+    expect(content.plainText).toBe('if (a < b && c > "d") {');
+    expect(content.html).toContain("if (a &lt; b &amp;&amp; c &gt;");
+  });
+
+  it("leaves a single line undecorated but wraps multi-line code in pre", () => {
+    expect(createCodeClipboardContent("one", { block: false }).html).not.toContain("<code>");
+    expect(createCodeClipboardContent("one\ntwo", { block: true }).html).toContain(
+      "<pre><code>one\ntwo</code></pre>",
+    );
+  });
+
+  it("adds a language class only when the info string carries one", () => {
+    expect(createCodeClipboardContent("x\ny", { block: true, language: "  " }).html).toContain(
+      "<pre><code>",
+    );
+    expect(createCodeClipboardContent("x\ny", { block: true, language: "ts" }).html).toContain(
+      '<pre><code class="language-ts">',
+    );
+  });
+
+  it("escapes an info string that would break out of the class attribute", () => {
+    const content = createCodeClipboardContent("x\ny", {
+      block: true,
+      language: 'ts" onload="alert(1)',
+    });
+
+    expect(content.html).toContain('class="language-ts&quot; onload=&quot;alert(1)"');
+    expect(content.html).not.toContain('onload="alert(1)"');
   });
 });
 

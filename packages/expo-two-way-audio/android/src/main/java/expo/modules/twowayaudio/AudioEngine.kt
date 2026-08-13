@@ -169,6 +169,52 @@ class AudioEngine (context: Context) {
         }
     }
 
+    /**
+     * Give audio focus back once we are neither recording nor playing. The focus request is
+     * AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE, so holding it after a dictation turn leaves the
+     * user's music paused indefinitely.
+     */
+    @SuppressLint("NewApi")
+    fun releaseAudioSession() {
+        if (isRecording || isPlaying) {
+            return
+        }
+        audioFocusRequest?.let { request ->
+            audioManager.abandonAudioFocusRequest(request)
+            audioFocusRequest = null
+        }
+        if (::audioTrack.isInitialized) {
+            audioTrack.pause()
+        }
+    }
+
+    /**
+     * Take the audio session back before playing, mirroring iOS `activateAudioSessionIfNeeded()`.
+     *
+     * `releaseAudioSession()` abandons focus and pauses the track once we go idle, so a playback
+     * turn that starts after that release has to reclaim both. Without this, the assistant's
+     * response plays with no focus held and competes with whatever the user is listening to.
+     * A null [audioFocusRequest] is what "we released" looks like, so it is the guard against
+     * re-requesting focus mid-turn.
+     *
+     * Focus is best effort here, and deliberately not fatal. `playPCMData` is fire-and-forget
+     * from JS — `playAudio()` settles on a duration timer, not on a native ack — so refusing to
+     * queue would report a chunk as played that nobody heard. Playing unfocused is what this
+     * path did before the session was ever released, and it is the better failure. Leaving the
+     * request outstanding instead of abandoning it is also what lets a delayed grant arrive
+     * later through the listener, which is the point of `setAcceptsDelayedFocusGain(true)`.
+     */
+    @SuppressLint("NewApi")
+    private fun acquireAudioSessionIfNeeded() {
+        if (audioFocusRequest != null) {
+            return
+        }
+        requestAudioFocus()
+        if (::audioTrack.isInitialized) {
+            audioTrack.play()
+        }
+    }
+
     @SuppressLint("NewApi")
     private fun requestAudioFocus(): Boolean {
         audioFocusRequest?.let { request ->
@@ -327,7 +373,9 @@ class AudioEngine (context: Context) {
         return isRecording
     }
 
+    @SuppressLint("NewApi")
     fun playPCMData(data: ByteArray) {
+        acquireAudioSessionIfNeeded()
         audioSampleQueue.add(data)
         playbackEvents += 1
         playbackQueuedBytes += data.size.toLong()
@@ -397,11 +445,18 @@ class AudioEngine (context: Context) {
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun resumeRecordingAndPlayer() {
+        val wasRecordingBeforePause = isRecordingBeforePause
+        // Only take the session back if something was actually live when we backgrounded. The
+        // activity lifecycle listener calls this on every onResume, so requesting
+        // AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE unconditionally re-paused the user's music every
+        // time the app came to the foreground — the exact symptom this change exists to remove.
+        if (!wasRecordingBeforePause && !isPlaying) {
+            return
+        }
         if (!requestAudioFocus()) {
             handleAudioFocusBlocked()
             return
         }
-        val wasRecordingBeforePause = isRecordingBeforePause
         isRecording = toggleRecording(wasRecordingBeforePause)
         if (wasRecordingBeforePause && !isRecording) {
             return
@@ -423,7 +478,9 @@ class AudioEngine (context: Context) {
         Log.d("AudioEngine", "Playback paused")
     }
 
+    @SuppressLint("NewApi")
     fun resumePlayback() {
+        acquireAudioSessionIfNeeded()
         audioTrack.play()
         Log.d("AudioEngine", "Playback resumed")
     }

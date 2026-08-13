@@ -2,30 +2,36 @@
 title: Hub triggers
 description: How Hub matches an inbound event to a trigger: events, filters, and the allowlist that gates every execution.
 nav: Triggers
-order: 64
+order: 66
 category: Hub
 ---
 
 # Triggers
 
-A trigger says: when this event arrives, from this source, from these people, run this agent with this prompt.
+A trigger says which provider event can start a workflow. The [Hub workflows](/docs/hub/workflows) page covers the steps, inputs, routing, prompts, and deadlines that run after a match.
+
+`.paseo/workflows/github-mention.yml`:
 
 ```yaml
-triggers:
-  - name: mention
-    on: github.issue_comment
+name: mention
+on: github.issue_comment
+filters:
+  repo: acme/api
+  contains: "@paseo"
+  from_users: [alice]
+max_runtime: 2h
+steps:
+  - id: work
     environment: dev
-    filters:
-      repo: acme/api
-      contains: "@paseo"
-      from_users: [alice]
-    agent:
-      provider: codex
-      mode: full-access
-    prompt: ${{ paseo.event.github.comment.body }}
+    max_runtime: 90m
+    idle_timeout: 10m
+    agent: codex
+    prompt:
+      - text: Call hub.finish_execution when the step is complete.
+      - text: ${{ paseo.prompt }}
 ```
 
-Field-by-field detail is in the [`hub.yml` reference](/docs/hub/configuration/hub-yml). This page covers matching.
+Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
 
 ## Events
 
@@ -51,6 +57,8 @@ Each provider page documents its events and the data they expose:
 
 The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
 
+An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
+
 | Filter       | Applies to     | Matches                                                         |
 | ------------ | -------------- | --------------------------------------------------------------- |
 | `from_users` | all            | GitHub: login. Slack and Discord: **user id**, not display name |
@@ -58,8 +66,8 @@ The allowlist is what keeps a stranger's comment on a public issue from starting
 | `workspace`  | Slack          | Team id, `T01234567`                                            |
 | `guild`      | Discord        | Guild id                                                        |
 | `channels`   | Slack, Discord | Channel ids                                                     |
-| `contains`   | all            | Substring of the message text                                   |
-| `pattern`    | all            | Prefix of the message text                                      |
+| `contains`   | all            | GitHub substring; Slack and Discord invocation prefix           |
+| `pattern`    | all            | Invocation prefix                                               |
 | `connection` | all            | A connection slug, when the organization has several            |
 
 All conditions must pass. There is no `any` mode.
@@ -84,11 +92,11 @@ Both run. Triggers are not ordered and do not shadow each other, in one configur
 
 ## Replying
 
-`allow_outputs` gives the agent a single-use `reply` tool for the conversation that triggered it:
+Put `allow_outputs` on the step that should reply. The reply capabilities are `slack.reply` and `discord.reply`.
 
-```yaml
-allow_outputs:
-  - type: slack.reply
-```
+- Set `max` when a step needs more than one update.
+- Set `required: true` when the step must emit at least one reply before it can finish. A required type must be registered and available for the execution context.
 
-Only `slack.reply` and `discord.reply` exist. GitHub-triggered agents reply with the scoped `GH_TOKEN` they already have, so `gh issue comment` works.
+GitHub has no reply capability; a step with a [`github` block](/docs/hub/github) comments through `gh` instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
+
+The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).

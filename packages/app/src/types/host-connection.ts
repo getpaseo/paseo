@@ -137,14 +137,23 @@ function hostLifecycleEquals(left: HostLifecycle, right: HostLifecycle): boolean
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function dedupeHostConnections(connections: HostConnection[]): HostConnection[] {
+function upsertHostConnectionById(
+  connections: HostConnection[],
+  connection: HostConnection,
+): HostConnection[] {
   const next: HostConnection[] = [];
-  for (const connection of connections) {
-    if (next.some((existing) => hostConnectionEquals(existing, connection))) {
+  let replaced = false;
+  for (const existing of connections) {
+    if (existing.id !== connection.id) {
+      next.push(existing);
       continue;
     }
+
+    if (replaced) continue;
     next.push(connection);
+    replaced = true;
   }
+  if (!replaced) next.push(connection);
   return next;
 }
 
@@ -190,10 +199,10 @@ export function upsertHostConnectionInProfiles(input: {
 
   const matchedProfiles = matchingIndexes.map((index) => existing[index]);
   const prev = matchedProfiles.find((daemon) => daemon.serverId === serverId) ?? matchedProfiles[0];
-  const nextConnections = dedupeHostConnections([
-    ...matchedProfiles.flatMap((daemon) => daemon.connections),
+  const nextConnections = upsertHostConnectionById(
+    matchedProfiles.flatMap((daemon) => daemon.connections),
     input.connection,
-  ]);
+  );
   const nextLifecycle = prev.lifecycle;
   const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
   const nextPreferredConnectionId =

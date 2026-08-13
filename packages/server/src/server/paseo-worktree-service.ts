@@ -13,7 +13,7 @@ import {
 import {
   mapWorkspaceRelativeCwdToWorktree,
   rollbackCreatedPaseoWorktree,
-  seedPaseoConfigFile,
+  copySourcePaseoConfigFile,
   validateBranchSlug,
   type WorktreeConfig,
 } from "../utils/worktree.js";
@@ -28,6 +28,7 @@ import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
+import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
@@ -64,6 +65,13 @@ export async function createPaseoWorktree(
   input: CreatePaseoWorktreeInput,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
+  return runWithGitCommandPriority("high", () => createPaseoWorktreeWithPriority(input, deps));
+}
+
+async function createPaseoWorktreeWithPriority(
+  input: CreatePaseoWorktreeInput,
+  deps: CreatePaseoWorktreeDeps,
+): Promise<CreatePaseoWorktreeResult> {
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
   try {
@@ -77,7 +85,7 @@ export async function createPaseoWorktree(
     }
 
     if (createdWorktree.created) {
-      await seedPaseoConfigFile({
+      await copySourcePaseoConfigFile({
         sourceCwd: workspaceCwdPlan.inputCwd,
         targetCwd: workspaceCwd,
       });

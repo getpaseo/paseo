@@ -1,20 +1,6 @@
 import { z } from "zod";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
-export interface FavoriteModelPreference {
-  provider: string;
-  modelId: string;
-}
-
-export interface FavoriteModelRow {
-  favoriteKey: string;
-  provider: string;
-  providerLabel: string;
-  modelId: string;
-  modelLabel: string;
-  description?: string;
-}
-
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -22,9 +8,17 @@ const providerPreferencesSchema = z.object({
   featureValues: z.record(z.string(), z.unknown()).optional(),
 });
 
+const launchTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("chat") }),
+  z.object({ kind: z.literal("terminal"), profileId: z.string() }),
+]);
+
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
+  // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
+  // Keep the legacy payload alive until every capable host has had a chance to
+  // import it; ordinary preference writes must not erase it first.
   favoriteModels: z
     .array(
       z.object({
@@ -34,10 +28,14 @@ const formPreferencesSchema = z.object({
     )
     .optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
+  // What the New workspace composer submits to: the chat agent (default) or a
+  // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
+  launchTarget: launchTargetSchema.optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
 export type FormPreferences = z.infer<typeof formPreferencesSchema>;
+export type LaunchTarget = z.infer<typeof launchTargetSchema>;
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 
@@ -128,39 +126,4 @@ export function mergeCreateAgentSelectionPreferences(args: {
       ...(args.featureValues ? { featureValues: args.featureValues } : {}),
     },
   });
-}
-
-export function buildFavoriteModelKey(input: FavoriteModelPreference): string {
-  return `${input.provider}:${input.modelId}`;
-}
-
-export function isFavoriteModel(args: {
-  preferences: FormPreferences;
-  provider: string;
-  modelId: string;
-}): boolean {
-  const favoriteKey = buildFavoriteModelKey({ provider: args.provider, modelId: args.modelId });
-  return (args.preferences.favoriteModels ?? []).some(
-    (favorite) => buildFavoriteModelKey(favorite) === favoriteKey,
-  );
-}
-
-export function toggleFavoriteModel(args: {
-  preferences: FormPreferences;
-  provider: string;
-  modelId: string;
-}): FormPreferences {
-  const favorite = { provider: args.provider, modelId: args.modelId };
-  const favoriteKey = buildFavoriteModelKey(favorite);
-  const existingFavorites = args.preferences.favoriteModels ?? [];
-  const hasFavorite = existingFavorites.some(
-    (entry) => buildFavoriteModelKey(entry) === favoriteKey,
-  );
-
-  return {
-    ...args.preferences,
-    favoriteModels: hasFavorite
-      ? existingFavorites.filter((entry) => buildFavoriteModelKey(entry) !== favoriteKey)
-      : [...existingFavorites, favorite],
-  };
 }

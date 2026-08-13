@@ -1,9 +1,20 @@
 export const MARKDOWN_COPY_TAG_ATTRIBUTE = "data-paseo-markdown-tag";
 export const MARKDOWN_COPY_IGNORE_ATTRIBUTE = "data-paseo-markdown-ignore";
+export const MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE = "data-paseo-markdown-list-marker";
 export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
+
+/**
+ * Trailing line breaks, with any indentation that followed the last one.
+ *
+ * Both ways of copying code strip these, for the same reason: pasting a trailing
+ * newline into a terminal runs the last line. A fence body always ends in one, and
+ * ends in several when the author left blank lines before the closing fence; a
+ * selection picks one up whenever it overshoots the end of a rendered line.
+ */
+export const TRAILING_CODE_LINE_BREAKS = /(\r?\n[ \t]*)+$/;
 
 export const markdownCopyDataSet = {
   blockquote: { paseoMarkdownTag: "blockquote" },
@@ -18,6 +29,7 @@ export const markdownCopyDataSet = {
   hr: { paseoMarkdownTag: "hr" },
   ignore: { paseoMarkdownIgnore: "true" },
   li: { paseoMarkdownTag: "li" },
+  listMarker: { paseoMarkdownIgnore: "true", paseoMarkdownListMarker: "true" },
   ol: { paseoMarkdownTag: "ol" },
   p: { paseoMarkdownTag: "p" },
   pre: { paseoMarkdownTag: "pre" },

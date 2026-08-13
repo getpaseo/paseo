@@ -255,6 +255,7 @@ describe("loadSettingsFromStorage", () => {
       isElectron: true,
       settings: {
         releaseChannel: "beta",
+        notifications: { playSound: true },
         daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
       },
     });
@@ -389,6 +390,29 @@ describe("appearance settings", () => {
     });
 
     expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+  });
+
+  it("migrates a switched-off checks row item to the hidden checks display", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarRowItems: { checks: false } }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("none");
+  });
+
+  it("lets a stored checks display win over the row item it replaced", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarChecksDisplay: "icon",
+          sidebarRowItems: { checks: false },
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("icon");
   });
 
   it("clamps the UI font size into range and rejects non-numeric values", async () => {

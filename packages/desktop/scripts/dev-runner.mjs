@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import net from "node:net";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { createElectronSpawnOptions, resolveChildKillTarget } from "./dev-runner-config.mjs";
+import {
+  createElectronSpawnOptions,
+  registerDevRunnerShutdownSignals,
+  resolveChildKillTarget,
+} from "./dev-runner-config.mjs";
 
 import { resolveDevElectronArgs } from "./dev-runner-args.mjs";
 
@@ -27,6 +31,10 @@ const colorEnv = {
   FORCE_COLOR: process.env.FORCE_COLOR || "1",
   npm_config_color: process.env.npm_config_color || "always",
 };
+const devBuildLabel = execFileSync("git", ["branch", "--show-current"], {
+  cwd: rootDir,
+  encoding: "utf8",
+}).trim();
 
 const children = new Map();
 let stopping = false;
@@ -155,8 +163,7 @@ function canConnect(port, host) {
   });
 }
 
-process.on("SIGINT", () => stopAll("SIGTERM"));
-process.on("SIGTERM", () => stopAll("SIGTERM"));
+registerDevRunnerShutdownSignals({ signalSource: process, stop: stopAll });
 
 spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
   cwd: appDir,
@@ -166,6 +173,7 @@ spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
     ...colorEnv,
     BROWSER: "none",
     APP_VARIANT: "development",
+    EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL: devBuildLabel,
     PASEO_WEB_PLATFORM: "electron",
   },
 });

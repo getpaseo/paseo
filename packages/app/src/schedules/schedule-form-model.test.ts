@@ -32,11 +32,26 @@ const HOST_B_MODELS: AgentModelDefinition[] = [
     provider: "mock",
     id: "model-b",
     label: "Model B",
+    aliases: ["model-b-legacy"],
     isDefault: true,
     defaultThinkingOptionId: "high",
     thinkingOptions: [
       { id: "low", label: "Low" },
       { id: "high", label: "High", isDefault: true },
+    ],
+  },
+];
+
+const THINKING_MODELS: AgentModelDefinition[] = [
+  HOST_B_MODELS[0]!,
+  {
+    provider: "mock",
+    id: "model-c",
+    label: "Model C",
+    defaultThinkingOptionId: "low",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "high", label: "High" },
     ],
   },
 ];
@@ -81,6 +96,7 @@ function scheduleOnHost(input: {
   serverName: string;
   cwd: string;
   model: string;
+  thinkingOptionId?: string | null;
   cadence?: ScheduleSummary["cadence"];
 }): TestSchedule {
   return {
@@ -97,7 +113,8 @@ function scheduleOnHost(input: {
         cwd: input.cwd,
         model: input.model,
         modeId: "load-test",
-        thinkingOptionId: "high",
+        thinkingOptionId:
+          input.thinkingOptionId === undefined ? "high" : (input.thinkingOptionId ?? undefined),
         archiveOnFinish: false,
         isolation: "worktree",
       },
@@ -133,13 +150,16 @@ function heartbeatOnHost(cadence: ScheduleSummary["cadence"]): TestSchedule {
   };
 }
 
-function providerSnapshot(models: AgentModelDefinition[]): { entries: ProviderSnapshotEntry[] } {
+function providerSnapshot(
+  models: AgentModelDefinition[],
+  status: ProviderSnapshotEntry["status"] = "ready",
+): { entries: ProviderSnapshotEntry[] } {
   return {
     entries: [
       {
         provider: "mock",
         label: "Mock",
-        status: "ready",
+        status,
         enabled: true,
         fetchedAt: "2026-07-01T00:00:00.000Z",
         models,
@@ -221,6 +241,69 @@ describe("schedule form model", () => {
       providerResolutionByServerId: { "host-b": "complete" },
       providerSnapshotRequest: null,
     });
+  });
+
+  it("reconciles untouched thinking when a loading provider snapshot becomes ready", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+        thinkingOptionId: null,
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    const loadingModel = { ...HOST_B_MODELS[0] };
+    delete loadingModel.thinkingOptions;
+    delete loadingModel.defaultThinkingOptionId;
+
+    form.applyProviderSnapshot("host-b", providerSnapshot([loadingModel], "loading"));
+    expect(form.getState().selectedThinkingOptionId).toBe("");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedModel: "model-b",
+      selectedThinkingOptionId: "high",
+      selectedThinkingDisplay: { label: "High" },
+    });
+
+    form.setThinking("low");
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+  });
+
+  it("preserves per-model thinking across model switches and snapshot updates", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b-legacy",
+        thinkingOptionId: "low",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+
+    form.setThinking("high");
+    form.setModel("mock", "model-c");
+    expect(form.getState().selectedThinkingOptionId).toBe("low");
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.setModel("mock", "model-b");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
   });
 
   it("opens create pristine after an edit instance closes", () => {

@@ -83,6 +83,7 @@ import {
 } from "./daemon/daemon-manager.js";
 import {
   createQuitLifecycle,
+  registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
@@ -461,6 +462,18 @@ ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: u
   if (input) {
     setWorkspaceActivePaseoBrowserId({ ...input, hostWebContentsId: event.sender.id });
   }
+});
+
+ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    return false;
+  }
+  const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+  if (!contents) {
+    return false;
+  }
+  contents.focus();
+  return true;
 });
 
 ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
@@ -1069,6 +1082,7 @@ const quitLifecycle = createQuitLifecycle({
 // electron-updater forwards this event through Electron's built-in autoUpdater.
 electronAutoUpdater.on("before-quit-for-update", quitLifecycle.handleBeforeQuitForUpdate);
 app.on("before-quit", quitLifecycle.handleBeforeQuit);
+registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

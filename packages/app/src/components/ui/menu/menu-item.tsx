@@ -103,13 +103,25 @@ export function MenuSeparator({
 
 export function MenuHint({
   children,
+  trailing,
   style,
   testID,
-}: PropsWithChildren<{ style?: ViewStyle | ViewStyle[]; testID?: string }>): ReactElement {
+}: PropsWithChildren<{
+  trailing?: ReactNode;
+  style?: ViewStyle | ViewStyle[];
+  testID?: string;
+}>): ReactElement {
   const hintContainerStyle = useMemo(() => [styles.hintContainer, style], [style]);
   return (
     <View style={hintContainerStyle} testID={testID}>
-      <Text style={styles.hintText}>{children}</Text>
+      <Text style={styles.hintText} numberOfLines={1}>
+        {children}
+      </Text>
+      {trailing === undefined ? null : (
+        <Text style={styles.hintText} numberOfLines={1}>
+          {trailing}
+        </Text>
+      )}
     </View>
   );
 }
@@ -310,13 +322,20 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: theme.spacing[1],
     backgroundColor: theme.colors.borderAccent,
   },
+  // A hint with `trailing` is a key on the left edge and its value on the right, so the values
+  // line up down the menu's right rail instead of ragging with the length of each key.
   hintContainer: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
   },
   hintText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+    flexShrink: 1,
   },
   tooltipText: {
     fontSize: theme.fontSize.sm,

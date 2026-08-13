@@ -17,15 +17,18 @@ export interface GithubRepositoryChoice {
   updatedAt: string | null;
 }
 
-interface SearchPageState {
-  query: string;
+interface PageState {
   activeIndex: number;
   error: string | null;
 }
 
+interface SearchPageState extends PageState {
+  query: string;
+}
+
 export type AddProjectPage =
   | ({ kind: "host" } & SearchPageState)
-  | ({ kind: "method"; hostId: string } & SearchPageState)
+  | ({ kind: "method"; hostId: string; isSubmitting: boolean } & PageState)
   | ({ kind: "directory-search"; hostId: string; isSubmitting: boolean } & SearchPageState)
   | ({ kind: "github-search"; hostId: string } & SearchPageState)
   | ({
@@ -57,12 +60,14 @@ export interface OpenAddProjectFlowInput {
   preferredHostId?: string;
 }
 
-function searchPage<TKind extends AddProjectPage["kind"]>(kind: TKind) {
+type SearchPageKind = Extract<AddProjectPage, { query: string }>["kind"];
+
+function searchPage<TKind extends SearchPageKind>(kind: TKind) {
   return { kind, query: "", activeIndex: 0, error: null } as const;
 }
 
 function methodPage(hostId: string): AddProjectPage {
-  return { ...searchPage("method"), hostId };
+  return { kind: "method", hostId, activeIndex: 0, error: null, isSubmitting: false };
 }
 
 export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFlowState {
@@ -209,6 +214,7 @@ export function setAddProjectPageInput(
     if (current.kind === "new-directory-name") {
       return { ...current, name: value, activeIndex: 0, error: null };
     }
+    if (current.kind === "method") return current;
     return { ...current, query: value, activeIndex: 0, error: null };
   });
   if (page.kind !== "github-location") return updated;

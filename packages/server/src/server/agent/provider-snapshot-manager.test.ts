@@ -69,6 +69,84 @@ async function withEnv(key: string, value: string, run: () => Promise<void>): Pr
 }
 
 describe("ProviderSnapshotManager public surface", () => {
+  test("validates complete Hub agent configurations through the current provider contract", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [
+              {
+                provider: "codex",
+                id: "gpt-5.5",
+                aliases: ["gpt-latest"],
+                label: "GPT 5.5",
+                thinkingOptions: [{ id: "xhigh", label: "Extra high" }],
+              },
+            ],
+            modes: [{ id: "auto-review", label: "Auto review" }],
+          }),
+        }),
+      },
+    });
+
+    try {
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "codex",
+          model: "gpt-latest",
+          modeId: "auto-review",
+          thinkingOptionId: "xhigh",
+          providerOptions: {
+            sandbox_workspace_write: {
+              writable_roots: ["/var/cache/npm"],
+              network_access: false,
+            },
+          },
+        }),
+      ).resolves.toEqual([]);
+
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "codex",
+          model: "missing",
+          modeId: "missing",
+          thinkingOptionId: "missing",
+          providerOptions: {
+            sandbox_workspace_write: { network_access: "sometimes" },
+          },
+        }),
+      ).resolves.toEqual([
+        { path: ["model"], message: "Model 'missing' is not available for provider 'codex'" },
+        { path: ["modeId"], message: "Mode 'missing' is not available for provider 'codex'" },
+        {
+          path: ["thinkingOptionId"],
+          message: "Thinking option 'missing' is not available for provider 'codex'",
+        },
+        {
+          path: ["providerOptions", "sandbox_workspace_write", "network_access"],
+          message: "Invalid input: expected boolean, received string",
+        },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("reports an unavailable Hub agent provider at the authored provider field", async () => {
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    try {
+      await expect(
+        manager.validateAgentConfiguration({ provider: "not-installed" }),
+      ).resolves.toEqual([
+        { path: ["provider"], message: "Provider 'not-installed' is not configured" },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("listRegisteredProviderIds includes the built-in providers", () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
@@ -435,6 +513,38 @@ describe("ProviderSnapshotManager public surface", () => {
       await expect(
         manager.listModels({ cwd: "/tmp/project", provider: "codex", wait: true }),
       ).rejects.toThrow(/disabled/);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("listModels excludes compatibility-only catalog entries", async () => {
+    const client = createExtraClient("codex", {
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({
+        models: [
+          { provider: "codex", id: "gpt-5.4", label: "GPT 5.4" },
+          {
+            provider: "codex",
+            id: "gpt-5.4-legacy",
+            label: "GPT 5.4 legacy",
+            isSelectable: false,
+          },
+        ],
+        modes: [],
+      }),
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: client },
+    });
+    try {
+      const models = await manager.listModels({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(models.map((model) => model.id)).toEqual(["gpt-5.4"]);
     } finally {
       manager.destroy();
     }

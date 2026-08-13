@@ -50,9 +50,10 @@ export class CreateAgentPreferencesService {
     await previousWrite;
     const current = await this.load();
     const next = typeof update === "function" ? update(current) : { ...current, ...update };
-    this.preferences = parseFormPreferences(next);
+    const parsed = parseFormPreferences(next);
+    await this.storage.write(parsed);
+    this.preferences = parsed;
     this.isLoaded = true;
-    await this.storage.write(this.preferences);
     return this.preferences;
   }
 }

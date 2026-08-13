@@ -4,6 +4,7 @@ import type {
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
 import { isPipelineActiveStatus, mapPipelineStatus } from "@/git/forges/gitlab";
+import { IDENTITY_COLOR_NAMES, identityColor } from "@/styles/identity-colors";
 import {
   deriveAvatarColor,
   formatAge,
@@ -663,21 +664,11 @@ describe("mapPipelineStatus", () => {
 });
 
 describe("deriveAvatarColor", () => {
-  it("returns a deterministic color from the PR pane avatar palette", () => {
-    const palette = [
-      "#8b5cf6",
-      "#f97316",
-      "#0ea5e9",
-      "#10b981",
-      "#ef4444",
-      "#eab308",
-      "#ec4899",
-      "#6366f1",
-    ];
+  it("returns a shared identity color, matched case-insensitively", () => {
+    const palette = IDENTITY_COLOR_NAMES.map(identityColor);
 
-    expect(deriveAvatarColor("alice")).toBe(deriveAvatarColor("alice"));
     expect(palette).toContain(deriveAvatarColor("alice"));
-    expect(palette).toContain(deriveAvatarColor("Alice"));
+    expect(deriveAvatarColor("Alice")).toBe(deriveAvatarColor("alice"));
   });
 });
 

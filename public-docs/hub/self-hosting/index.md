@@ -2,7 +2,7 @@
 title: Self-hosting Hub
 description: Deploy Paseo Hub with PostgreSQL and a public HTTPS origin, using Docker Compose or Fly.
 nav: Self-hosting
-order: 73
+order: 74
 category: Hub
 ---
 
@@ -20,11 +20,11 @@ Migrations run automatically at startup. Hub does not start listening when a mig
 
 Hub has one public URL and one persistent application secret:
 
-| Variable                | Purpose                                                            |
-| ----------------------- | ------------------------------------------------------------------ |
-| `PASEO_HUB_APP_URL`     | Public origin used by the dashboard, authentication, and callbacks |
-| `PASEO_HUB_AUTH_SECRET` | Protects browser sessions and derives execution credentials        |
-| `DATABASE_URL`          | PostgreSQL connection string                                       |
+| Variable                | Purpose                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `PASEO_HUB_APP_URL`     | Public origin used by the dashboard, authentication, callbacks, and webhooks |
+| `PASEO_HUB_AUTH_SECRET` | Protects browser sessions and derives execution credentials                  |
+| `DATABASE_URL`          | PostgreSQL connection string                                                 |
 
 Generate `PASEO_HUB_AUTH_SECRET` once and keep it across restarts:
 
@@ -89,7 +89,26 @@ docker compose up -d
 
 The stack publishes Hub on port `3000` and stores PostgreSQL data in a named volume. The Hub image is `ghcr.io/getpaseo/hub:latest`.
 
-When a reverse proxy terminates HTTPS, set `PASEO_HUB_TRUSTED_CLIENT_IP_HEADER` to the header carrying the original client IP.
+### HTTPS with Caddy
+
+Compose serves plain HTTP on port `3000`. Run Caddy on the same host to terminate TLS:
+
+```caddyfile
+hub.example.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+Point `hub.example.com` at the host and open ports 80 and 443. Caddy [obtains and renews the certificate](https://caddyserver.com/docs/automatic-https).
+
+Then set in `.env`:
+
+```dotenv
+PASEO_HUB_APP_URL=https://hub.example.com
+PASEO_HUB_TRUSTED_CLIENT_IP_HEADER=x-forwarded-for
+```
+
+To keep port `3000` off the public interface, change the `hub` port in `compose.yml` to `"127.0.0.1:3000:3000"`.
 
 ## Fly
 
@@ -121,6 +140,23 @@ fly deploy -a your-hub \
 ```
 
 Keep one machine running. Hub holds the Discord gateway connection and dispatches events to daemons, so a stopped machine misses events.
+
+## Provider URLs
+
+Slack and GitHub call Hub at `PASEO_HUB_APP_URL`:
+
+| Provider setting             | URL                                                    |
+| ---------------------------- | ------------------------------------------------------ |
+| GitHub webhook               | `<PASEO_HUB_APP_URL>/webhook`                          |
+| GitHub OAuth callback        | `<PASEO_HUB_APP_URL>/api/integrations/github/callback` |
+| Slack Events API request URL | `<PASEO_HUB_APP_URL>/api/integrations/slack/events`    |
+| Slack OAuth callback         | `<PASEO_HUB_APP_URL>/api/integrations/slack/callback`  |
+
+Slack requires the Events API request URL to be publicly reachable over HTTPS with a valid certificate, and its [OAuth redirect URL](https://docs.slack.dev/authentication/installing-with-oauth/) must use HTTPS. See Slack's [HTTP request URL](https://docs.slack.dev/apis/events-api/using-http-request-urls/) requirements.
+
+GitHub must reach the webhook URL and [verifies SSL certificates](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-https-and-ssl-verification) by default.
+
+A Hub on `localhost` or a LAN address still runs manual and daemon workflows, but Slack and GitHub cannot reach it. To test provider setup locally, point `PASEO_HUB_APP_URL` at an HTTPS tunnel before starting Hub. A changed tunnel origin requires updated provider settings and a Hub restart.
 
 ## Upgrades
 

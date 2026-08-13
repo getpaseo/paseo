@@ -304,7 +304,9 @@ test.describe("Half-screen desktop layout", () => {
     await gotoAppShell(page);
 
     const openToggle = page.getByTestId("menu-button");
-    const openBounds = await openToggle.locator("svg").first().boundingBox();
+    const openIcon = openToggle.locator("svg").first();
+    await expect(openIcon).toBeVisible();
+    const openBounds = await openIcon.boundingBox();
     expect(openBounds).not.toBeNull();
     expect(openBounds?.x).toBeGreaterThan(12);
 
@@ -312,7 +314,9 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
 
     const closedToggle = page.getByTestId("menu-button");
-    const closedBounds = await closedToggle.locator("svg").first().boundingBox();
+    const closedIcon = closedToggle.locator("svg").first();
+    await expect(closedIcon).toBeVisible();
+    const closedBounds = await closedIcon.boundingBox();
     expect(closedBounds).not.toBeNull();
     expect(closedBounds?.x).toBeCloseTo(12, 0);
     expect(closedBounds?.y).toBe(openBounds?.y);

@@ -1,5 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fsPromises } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,18 +39,49 @@ function writeCodexAuth(dir: string, accessToken: string, refreshToken = "rt_cod
   );
 }
 
-function writeKimiCredentials(dir: string, accessToken: string): void {
+function kimiCredentialPath(dir: string): string {
+  return join(dir, "credentials", "kimi-code.json");
+}
+
+function writeKimiCredentials(dir: string, accessToken: string, overrides: object = {}): void {
   mkdirSync(join(dir, "credentials"), { recursive: true });
   writeFileSync(
-    join(dir, "credentials", "kimi-code.json"),
+    kimiCredentialPath(dir),
     JSON.stringify({
       access_token: accessToken,
       refresh_token: "rt_kimi",
       expires_at: 1_798_812_800,
+      expires_in: 900,
       scope: "kimi-code",
       token_type: "Bearer",
+      ...overrides,
     }),
   );
+}
+
+// node:sqlite has no @types/node@20 typings; require it with a narrow local type.
+const testRequire = createRequire(import.meta.url);
+interface TestSqliteDb {
+  exec(sql: string): void;
+  prepare(sql: string): { run(...params: unknown[]): void };
+  close(): void;
+}
+
+// Cursor builds have stored ItemTable values as both TEXT and BLOB. Keys map to the
+// real layouts: a plain modern token or the legacy JSON object.
+function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8Array>): void {
+  const dir = join(homeDir, ".config", "Cursor", "User", "globalStorage");
+  mkdirSync(dir, { recursive: true });
+  const { DatabaseSync } = testRequire("node:sqlite") as {
+    DatabaseSync: new (path: string) => TestSqliteDb;
+  };
+  const db = new DatabaseSync(join(dir, "state.vscdb"));
+  db.exec("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)");
+  const insert = db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)");
+  for (const [key, value] of Object.entries(rows)) {
+    insert.run(key, value);
+  }
+  db.close();
 }
 
 function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
@@ -365,6 +398,7 @@ describe("real provider usage fetchers", () => {
       platform?: typeof process.platform;
       keychain?: () => Promise<unknown | null>;
       kimiHomeDir?: string;
+      cursorHomeDir?: string;
       miniMaxConfigPath?: string;
       miniMaxCredentialsPath?: string;
     } = {},
@@ -385,7 +419,11 @@ describe("real provider usage fetchers", () => {
         }),
         new CodexQuotaProvider({ logger, codexHome, fetch: fetchThroughTestDouble }),
         new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new CursorQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+        new CursorQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          homeDir: options.cursorHomeDir,
+        }),
         new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new GrokQuotaProvider({
           logger,
@@ -397,7 +435,9 @@ describe("real provider usage fetchers", () => {
         new KimiQuotaProvider({
           logger,
           fetch: fetchThroughTestDouble,
-          homeDir: options.kimiHomeDir,
+          // Never leave this undefined: the provider would fall back to os.homedir() and
+          // read — and now write — the developer's real Kimi credentials.
+          homeDir: options.kimiHomeDir ?? homeDir,
         }),
         new MiniMaxQuotaProvider({
           logger,
@@ -693,6 +733,75 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("reads the Cursor token from the modern cursorAuth/accessToken key in state.vscdb", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_state_jwt" });
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        planUsage: {
+          totalSpend: "1500",
+          includedSpend: "1000",
+          bonusSpend: "500",
+          remaining: "2500",
+          limit: "4000",
+        },
+        billingCycleStart: "2026-01-14T12:42:14.000Z",
+        billingCycleEnd: "2026-02-14T12:42:14.000Z",
+      });
+    }) as unknown as typeof fetch;
+
+    const cursor = findProvider(await service({ cursorHomeDir: homeDir }).listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer cursor_state_jwt");
+    expect(cursor).toMatchObject({
+      status: "available",
+      balances: [expect.objectContaining({ id: "plan_usage", used: 15, remaining: 25, limit: 40 })],
+    });
+  });
+
+  it("falls back to the legacy cursorAuthStatus JSON blob when the modern key is absent", async () => {
+    writeCursorStateDb(homeDir, {
+      cursorAuthStatus: Buffer.from(JSON.stringify({ accessToken: "cursor_legacy_jwt" }), "utf8"),
+    });
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        planUsage: { totalSpend: "0", remaining: "100", limit: "100" },
+        billingCycleStart: null,
+        billingCycleEnd: null,
+      });
+    }) as unknown as typeof fetch;
+
+    const cursor = findProvider(await service({ cursorHomeDir: homeDir }).listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer cursor_legacy_jwt");
+    expect(cursor.status).toBe("available");
+  });
+
+  it("logs a debug diagnostic and stays unavailable when state.vscdb is unreadable", async () => {
+    const dir = join(homeDir, ".config", "Cursor", "User", "globalStorage");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "state.vscdb"), "not a sqlite database");
+    const logger = createLogger();
+    const provider = new CursorQuotaProvider({
+      logger,
+      fetch: (() => {
+        throw new Error("usage API should not be called without a token");
+      }) as unknown as typeof fetch,
+      homeDir,
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.status).toBe("unavailable");
+    expect((logger as unknown as { debug: ReturnType<typeof vi.fn> }).debug).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining("state.vscdb") }),
+      expect.stringContaining("Failed to read Cursor token"),
+    );
+  });
+
   it("fetches Z.ai usage from ZAI_API_KEY", async () => {
     process.env["ZAI_API_KEY"] = "zai_test_token";
     fetchApi = mockFetch(
@@ -919,6 +1028,226 @@ describe("real provider usage fetchers", () => {
         }),
       ],
     });
+  });
+
+  it("reads Kimi credentials whose optional fields are null", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_cli_token", {
+      expires_at: null,
+      expires_in: null,
+      scope: null,
+      token_type: null,
+    });
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.kimi.com/coding/v1/usages",
+          () => jsonResponse({ usage: { limit: "100", remaining: "60" } }),
+        ],
+      ]),
+    );
+
+    const kimi = findProvider(await service({ kimiHomeDir: homeDir }).listUsage(), "kimi");
+
+    expect(kimi.status).toBe("available");
+  });
+
+  it("persists refreshed Kimi tokens to the credential file that was read", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired", {
+      preserved_field: "keep-me",
+    });
+    const authorization: Array<string | null> = [];
+    let usageCalls = 0;
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = url.toString();
+      if (endpoint === "https://api.kimi.com/coding/v1/usages") {
+        usageCalls += 1;
+        authorization.push(
+          (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+        );
+        if (usageCalls === 1) return new Response(null, { status: 401 });
+        return jsonResponse({ usage: { limit: "100", remaining: "74" } });
+      }
+      if (endpoint === "https://auth.kimi.com/api/oauth/token") {
+        expect(init?.method).toBe("POST");
+        expect(init?.body?.toString()).toContain("grant_type=refresh_token");
+        expect(init?.body?.toString()).toContain("refresh_token=rt_kimi");
+        return jsonResponse({
+          access_token: "at_kimi_fresh",
+          refresh_token: "rt_kimi_rotated",
+          expires_in: 900,
+        });
+      }
+      throw new Error(`Unmocked fetch: ${endpoint}`);
+    }) as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(
+      readFileSync(kimiCredentialPath(join(homeDir, ".kimi-code")), "utf8"),
+    );
+
+    expect(findProvider(result, "kimi").status).toBe("available");
+    expect(authorization).toEqual(["Bearer at_kimi_expired", "Bearer at_kimi_fresh"]);
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_fresh",
+      refresh_token: "rt_kimi_rotated",
+      expires_in: 900,
+      scope: "kimi-code",
+      preserved_field: "keep-me",
+    });
+    expect(persisted.expires_at).toBeGreaterThan(Date.now() / 1000);
+  });
+
+  it("prefers a Kimi token rewritten on disk over refreshing again", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_old");
+    let usageCalls = 0;
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = url.toString();
+      if (endpoint === "https://api.kimi.com/coding/v1/usages") {
+        usageCalls += 1;
+        if (usageCalls === 1) {
+          writeKimiCredentials(kimiHome, "at_kimi_rewritten");
+          return new Response(null, { status: 401 });
+        }
+        expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(
+          "Bearer at_kimi_rewritten",
+        );
+        return jsonResponse({ usage: { limit: "100", remaining: "50" } });
+      }
+      throw new Error(`Unmocked fetch: ${endpoint}`);
+    }) as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("available");
+    expect(usageCalls).toBe(2);
+  });
+
+  it("keeps Kimi credentials rotated by the CLI during the refresh", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () => {
+            writeKimiCredentials(kimiHome, "at_kimi_cli", { refresh_token: "rt_kimi_cli" });
+            return jsonResponse({
+              access_token: "at_kimi_fresh",
+              refresh_token: "rt_kimi_rotated",
+              expires_in: 900,
+            });
+          },
+        ],
+      ]),
+    );
+
+    await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(readFileSync(kimiCredentialPath(kimiHome), "utf8"));
+
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_cli",
+      refresh_token: "rt_kimi_cli",
+    });
+  });
+
+  it("discards a refreshed Kimi merge if the CLI rotates credentials after the guard but before the rename", async () => {
+    const kimiHome = join(homeDir, ".kimi-code");
+    writeKimiCredentials(kimiHome, "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () =>
+            jsonResponse({
+              access_token: "at_kimi_fresh",
+              refresh_token: "rt_kimi_fresh",
+              expires_in: 900,
+            }),
+        ],
+      ]),
+    );
+
+    // The credential-file guard runs, passes, and only then does the CLI rotate the file
+    // — simulated by mutating the file as a side effect of the temp-file write, which is
+    // the async I/O step that sits between the guard read and the final rename.
+    const realWriteFile = fsPromises.writeFile;
+    const writeFileSpy = vi
+      .spyOn(fsPromises, "writeFile")
+      .mockImplementationOnce(async (...args: Parameters<typeof fsPromises.writeFile>) => {
+        writeKimiCredentials(kimiHome, "at_kimi_cli", { refresh_token: "rt_kimi_cli" });
+        return realWriteFile(...args);
+      });
+
+    await service({ kimiHomeDir: homeDir }).listUsage();
+    const persisted = JSON.parse(readFileSync(kimiCredentialPath(kimiHome), "utf8"));
+
+    expect(persisted).toMatchObject({
+      access_token: "at_kimi_cli",
+      refresh_token: "rt_kimi_cli",
+    });
+
+    writeFileSpy.mockRestore();
+  });
+
+  it("does not recreate a Kimi credential file deleted during the refresh", async () => {
+    const credentialPath = kimiCredentialPath(join(homeDir, ".kimi-code"));
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        [
+          "https://auth.kimi.com/api/oauth/token",
+          () => {
+            rmSync(credentialPath, { force: true });
+            return jsonResponse({ access_token: "at_kimi_fresh", expires_in: 900 });
+          },
+        ],
+      ]),
+    );
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(existsSync(credentialPath)).toBe(false);
+  });
+
+  it("returns unavailable Kimi usage when the token refresh is rejected", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_expired");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.kimi.com/coding/v1/usages", () => new Response(null, { status: 401 })],
+        ["https://auth.kimi.com/api/oauth/token", () => new Response(null, { status: 400 })],
+      ]),
+    );
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+  });
+
+  it("does not refresh Kimi tokens read from the environment", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const usageFetch = vi.fn(async () => new Response(null, { status: 401 }));
+    fetchApi = usageFetch as never;
+
+    const result = await service().listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(usageFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh Kimi tokens on a 403", async () => {
+    writeKimiCredentials(join(homeDir, ".kimi-code"), "at_kimi_forbidden");
+    const usageFetch = vi.fn(async () => new Response(null, { status: 403 }));
+    fetchApi = usageFetch as never;
+
+    const result = await service({ kimiHomeDir: homeDir }).listUsage();
+
+    expect(findProvider(result, "kimi").status).toBe("unavailable");
+    expect(usageFetch).toHaveBeenCalledTimes(1);
   });
 
   it("fetches MiniMax usage from MINIMAX_API_KEY against the global endpoint", async () => {
@@ -1485,6 +1814,148 @@ describe("ClaudeQuotaProvider scoped limit reconciliation", () => {
       "weekly",
       "weekly_model_opus",
       "weekly_model_fable",
+    ]);
+  });
+});
+
+describe("KimiQuotaProvider usage windows", () => {
+  afterEach(() => {
+    delete process.env["KIMI_TOKEN"];
+    vi.restoreAllMocks();
+  });
+
+  it("normalizes weekly and enforced rolling usage windows", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        limited: true,
+        usage: {
+          limit: "100",
+          used: "61",
+          remaining: "39",
+          resetTime: "2026-08-05T00:01:45Z",
+        },
+        limits: [
+          {
+            window: {
+              duration: 300,
+              timeUnit: "TIME_UNIT_MINUTE",
+            },
+            detail: {
+              limit: "100",
+              used: "100",
+              resetTime: "2026-07-31T17:01:45Z",
+            },
+          },
+        ],
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage).toMatchObject({
+      status: "available",
+      windows: [
+        {
+          id: "coding_usage",
+          label: "Weekly limit",
+          usedPct: 61,
+          remainingPct: 39,
+          resetsAt: "2026-08-05T00:01:45Z",
+          tone: "ok",
+        },
+        {
+          id: "coding_limit_300_time_unit_minute",
+          label: "5-hour limit",
+          usedPct: 100,
+          remainingPct: 0,
+          resetsAt: "2026-07-31T17:01:45Z",
+          tone: "danger",
+        },
+      ],
+    });
+  });
+
+  it("keeps valid windows when another limits entry is malformed", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const logger = createLogger() as unknown as { debug: ReturnType<typeof vi.fn> };
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        usage: {
+          limit: "100",
+          remaining: "75",
+          resetTime: "2026-08-05T00:01:45Z",
+        },
+        limits: [
+          { window: { duration: "invalid" }, detail: {} },
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "100", remaining: "50" },
+          },
+        ],
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: logger as never, fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toHaveLength(2);
+    expect(usage.windows[1]).toMatchObject({
+      label: "5-hour limit",
+      usedPct: 50,
+      remainingPct: 50,
+    });
+    expect(logger.debug).toHaveBeenCalledWith(
+      { index: 0 },
+      "Ignoring malformed Kimi usage limit window",
+    );
+  });
+
+  it("accepts direct limit fields, alternate reset keys, and provider labels", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const fetchApi = vi.fn(async () =>
+      jsonResponse({
+        usage: null,
+        limits: [
+          {
+            name: "Burst quota",
+            limit: "80",
+            remaining: "20",
+            reset_at: "2026-08-01T00:00:00Z",
+          },
+        ],
+      }),
+    );
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows).toEqual([
+      expect.objectContaining({
+        id: "coding_limit_burst_quota",
+        label: "Burst quota",
+        usedPct: 75,
+        remainingPct: 25,
+        resetsAt: "2026-08-01T00:00:00Z",
+      }),
+    ]);
+  });
+
+  it("keeps window ids unique when Kimi returns duplicate limit descriptors", async () => {
+    process.env["KIMI_TOKEN"] = "kimi_test_token";
+    const duplicate = {
+      window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+      detail: { limit: "100", used: "10" },
+    };
+    const fetchApi = vi.fn(async () => jsonResponse({ limits: [duplicate, duplicate] }));
+    const provider = new KimiQuotaProvider({ logger: createLogger(), fetch: fetchApi });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.windows.map((window) => window.id)).toEqual([
+      "coding_limit_300_time_unit_minute",
+      "coding_limit_300_time_unit_minute_2",
     ]);
   });
 });

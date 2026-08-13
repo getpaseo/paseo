@@ -1,22 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
-import { DEFAULT_UI_FONT_STACK } from "@/styles/theme";
+import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply-appearance";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
 // UnistylesRuntime.updateTheme is a spy that records (themeName, updater) calls.
-const { updateTheme } = vi.hoisted(() => ({ updateTheme: vi.fn() }));
-vi.mock("react-native-unistyles", () => ({ UnistylesRuntime: { updateTheme } }));
+const { runtime, updateTheme } = vi.hoisted(() => {
+  const updateThemeSpy = vi.fn();
+  return {
+    runtime: { themeName: undefined as string | undefined, updateTheme: updateThemeSpy },
+    updateTheme: updateThemeSpy,
+  };
+});
+vi.mock("react-native-unistyles", () => ({ UnistylesRuntime: runtime }));
 
-// The six registered Unistyles theme keys, in the order applyAppearance patches them.
-const ALL_THEME_KEYS = [
-  "light",
-  "dark",
-  "darkZinc",
-  "darkMidnight",
-  "darkClaude",
-  "darkGhostty",
-] as const;
+const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES);
 
 // The signature of the updater passed to UnistylesRuntime.updateTheme.
 type ThemeUpdater = (theme: FakeTheme) => FakeTheme;
@@ -82,13 +80,25 @@ function runCapturedUpdater(call = 0): FakeTheme {
 describe("applyAppearance", () => {
   beforeEach(() => {
     updateTheme.mockClear();
+    runtime.themeName = undefined;
   });
 
   it("patches every registered Unistyles theme exactly once", () => {
     applyAppearance(makeInput());
 
-    expect(updateTheme).toHaveBeenCalledTimes(6);
+    expect(updateTheme).toHaveBeenCalledTimes(ALL_THEME_KEYS.length);
     expect(updateTheme.mock.calls.map((call) => call[0])).toEqual([...ALL_THEME_KEYS]);
+  });
+
+  it("patches the active theme before inactive registry entries", () => {
+    runtime.themeName = "darkPureBlack";
+
+    applyAppearance(makeInput({ uiFontSize: 17 }));
+
+    expect(updateTheme.mock.calls.map((call) => call[0])).toEqual([
+      "darkPureBlack",
+      ...ALL_THEME_KEYS.filter((key) => key !== "darkPureBlack"),
+    ]);
   });
 
   it("resolves an empty UI font family to the default stack", () => {

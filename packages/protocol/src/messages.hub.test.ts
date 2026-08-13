@@ -66,6 +66,34 @@ const PreviousHubAgentCreateWithAutoArchiveRequestSchema =
   });
 
 describe("Hub session protocol", () => {
+  test("round-trips named-agent validation", () => {
+    const request = {
+      type: "hub.execution.agent.validate.request" as const,
+      requestId: "validate-codex",
+      provider: "codex",
+      model: "gpt-5.5",
+      thinkingOptionId: "xhigh",
+      providerOptions: {
+        sandbox_workspace_write: {
+          writable_roots: ["/var/cache/npm"],
+          network_access: false,
+        },
+      },
+    };
+    const response = {
+      type: "hub.execution.agent.validate.response" as const,
+      payload: {
+        requestId: request.requestId,
+        valid: true,
+        issues: [],
+        error: null,
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
   test("accepts the Hub execution create request", () => {
     const message = {
       type: "hub.execution.agent.create.request",
@@ -75,6 +103,20 @@ describe("Hub session protocol", () => {
       cwd: "/workspace",
       prompt: "Implement the requested change",
       modeId: "code",
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test("keeps the retired Hub workspace selector wire-compatible", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-retired-workspace",
+      executionId: "execution-retired-workspace",
+      provider: "codex",
+      cwd: "/workspace",
+      workspaceId: "caller-owned-workspace",
+      prompt: "Implement the requested change",
     };
 
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
@@ -106,6 +148,43 @@ describe("Hub session protocol", () => {
       cwd: "/workspace",
       prompt: "Implement the requested change",
     });
+  });
+
+  test("round-trips native provider options and structured MCP preapproval", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-policy",
+      executionId: "execution-policy",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Classify and finish",
+      providerOptions: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
+      },
+      mcpServers: {
+        hub: { type: "http", url: "https://hub.example/executions/policy" },
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test.each(["Bash", "Edit", "Write"])("cannot encode native %s tool preapproval", (tool) => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-native-tool",
+      executionId: "execution-native-tool",
+      provider: "claude",
+      cwd: "/workspace",
+      prompt: "Do work",
+      toolPolicy: { preapproved: [{ kind: "native", server: "claude", tool }] },
+    };
+
+    expect(SessionInboundMessageSchema.safeParse(message).success).toBe(false);
   });
 
   test.each([

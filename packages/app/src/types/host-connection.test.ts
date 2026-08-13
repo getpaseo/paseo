@@ -175,6 +175,35 @@ describe("upsertHostConnectionInProfiles", () => {
 
     expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
   });
+
+  it("replaces a direct connection when its settings change", () => {
+    const existingConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+      password: "old-secret",
+    };
+    const existing: HostProfile = {
+      ...makeHost("srv_known"),
+      connections: [existingConnection],
+      preferredConnectionId: existingConnection.id,
+    };
+    const replacement: HostConnection = {
+      ...existingConnection,
+      useTls: true,
+      password: "new-secret",
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: replacement,
+    });
+
+    expect(profile.connections).toEqual([replacement]);
+    expect(profile.preferredConnectionId).toBe(replacement.id);
+  });
 });
 
 describe("resolveActiveHostServerId", () => {

@@ -57,10 +57,17 @@ const MODELS: AgentModelDefinition[] = [
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
+    aliases: ["legacy-five-minute-stream"],
     label: "Five minute stream",
     description:
       "Realistic agent flow streamed as sub-word tokens for five minutes (good for scroll/coalesce debugging).",
     isDefault: true,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: MOCK_LOAD_TEST_DURATION_MS,
       intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
@@ -78,6 +85,22 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "legacy-five-minute-stream",
+    label: "Legacy five minute stream",
+    isSelectable: false,
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
+    metadata: {
+      durationMs: MOCK_LOAD_TEST_DURATION_MS,
+      intervalMs: MOCK_LOAD_TEST_INTERVAL_MS,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "one-minute-stream",
     label: "One minute stream",
     description: "Shorter realistic stream for quick manual checks.",
@@ -91,6 +114,12 @@ const MODELS: AgentModelDefinition[] = [
     id: "ten-second-stream",
     label: "Ten second stream",
     description: "Fast realistic stream for tests and smoke checks.",
+    thinkingOptions: [
+      { id: "low", label: "Low", isDefault: true },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ],
+    defaultThinkingOptionId: "low",
     metadata: {
       durationMs: 10_000,
       intervalMs: 5,
@@ -615,6 +644,8 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly streamingAssistantResponse: string | null;
+  private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
 
@@ -627,6 +658,18 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.streamingAssistantResponse =
+      typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
+        ? options.config.featureValues.mockStreamingAssistantResponse
+        : null;
+    const requestedStreamingInterval =
+      options.config.featureValues?.mockStreamingAssistantIntervalMs;
+    this.streamingAssistantIntervalMs =
+      typeof requestedStreamingInterval === "number" &&
+      Number.isFinite(requestedStreamingInterval) &&
+      requestedStreamingInterval >= 1
+        ? Math.min(requestedStreamingInterval, 1_000)
+        : MOCK_LOAD_TEST_INTERVAL_MS;
     this.rewindError =
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
@@ -692,6 +735,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
+      } else if (this.streamingAssistantResponse !== null) {
+        this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
       } else if (this.assistantResponse !== null) {
         this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
       } else if (structuredBranchName) {
@@ -1008,6 +1053,32 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer = setTimeout(() => {
       this.emitSettledAssistantTurn(turn, finalText);
     }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleStreamingAssistantTurn(turn: ActiveTurn, finalText: string): void {
+    const tokens = tokenize(finalText);
+    const emitNext = () => {
+      if (this.activeTurn !== turn) {
+        return;
+      }
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      const token = tokens.shift();
+      if (token === undefined) {
+        this.finishTurnWithText(turn, finalText);
+        return;
+      }
+      turn.emittedTokens += 1;
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: token,
+        messageId: turn.assistantMessageId,
+      });
+      turn.timer = setTimeout(emitNext, this.streamingAssistantIntervalMs);
+      turn.timer.unref?.();
+    };
+    turn.timer = setTimeout(emitNext, 0);
     turn.timer.unref?.();
   }
 

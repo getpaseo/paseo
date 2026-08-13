@@ -1,16 +1,21 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { Check } from "lucide-react-native";
+import { Check, CircleAlert } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
-import { SyncedLoader } from "@/components/synced-loader";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
-import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
+import { getStatusDotColor } from "@/utils/status-dot-color";
+import { StatusRing } from "@/components/status-ring";
+import { getStatusRingOffset } from "@/components/status-ring/geometry";
+import {
+  STATUS_INDICATOR_ALERT_SIZE,
+  STATUS_INDICATOR_DOT_SIZE,
+} from "@/utils/status-indicator-geometry";
 import type { Theme } from "@/styles/theme";
 import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
@@ -26,10 +31,8 @@ export interface WorkspaceTabPresentation {
   statusBucket: SidebarStateBucket | null;
 }
 
-const DEFAULT_STATUS_DOT_SIZE = 7;
-const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = -2;
-const EMPHASIZED_STATUS_DOT_OFFSET = -3;
+const STATUS_ALERT_OFFSET = -3;
 
 interface WorkspaceTabPresentationResolverProps {
   tab: WorkspaceTabDescriptor;
@@ -112,34 +115,37 @@ interface WorkspaceTabIconProps {
   active?: boolean;
   size?: number;
   statusDotBorderColor?: string;
+  /**
+   * The surface this icon is sitting on, so the running ring can knock out of it. This icon is
+   * shared by the desktop tab strip, the tab switcher trigger, the split drag chip and the
+   * subagents track, which are on different surfaces and some of which change surface on hover —
+   * it cannot work the colour out for itself.
+   */
+  backdrop: SurfaceBackdrop;
 }
 
 const ThemedCheckIcon = withUnistyles(Check);
+const ThemedCircleAlert = withUnistyles(CircleAlert);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const needsInputAlertMapping = (theme: Theme) => ({
+  color: theme.colors.surface0,
+  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+});
 
 export function WorkspaceTabIcon({
   presentation,
   active = false,
   size = 14,
   statusDotBorderColor,
+  backdrop,
 }: WorkspaceTabIconProps): ReactElement {
   const iconColor = active ? styles.iconActive.color : styles.iconInactive.color;
   const bucket = presentation.statusBucket;
-  let statusDotColor: string | null = null;
-  if (bucket === "needs_input") statusDotColor = styles.statusDotNeedsInput.color;
-  else if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
-  else if (bucket === "running") statusDotColor = styles.statusDotRunning.color;
+  const isRunning = bucket === "running";
+  let statusDotColor: string | undefined;
+  if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
-  const statusDotSize = isEmphasizedStatusDotBucket(presentation.statusBucket)
-    ? EMPHASIZED_STATUS_DOT_SIZE
-    : DEFAULT_STATUS_DOT_SIZE;
-  const statusDotOffset =
-    statusDotSize === EMPHASIZED_STATUS_DOT_SIZE
-      ? EMPHASIZED_STATUS_DOT_OFFSET
-      : DEFAULT_STATUS_DOT_OFFSET;
-  const shouldShowLoader = shouldRenderSyncedStatusLoader({
-    bucket: presentation.statusBucket,
-  });
+  const showNeedsInputAlert = bucket === "needs_input";
   const Icon = presentation.icon;
   const agentIconWrapperStyle = useMemo(
     () => [styles.agentIconWrapper, { width: size, height: size }],
@@ -149,33 +155,31 @@ export function WorkspaceTabIcon({
     () => [
       styles.statusDot,
       {
-        backgroundColor: statusDotColor ?? undefined,
+        backgroundColor: statusDotColor,
         borderColor: statusDotBorderColor ?? styles.statusDotBorderDefault.borderColor,
-        width: statusDotSize,
-        height: statusDotSize,
-        right: statusDotOffset,
-        bottom: statusDotOffset,
       },
     ],
-    [statusDotColor, statusDotBorderColor, statusDotSize, statusDotOffset],
+    [statusDotColor, statusDotBorderColor],
   );
-
-  if (shouldShowLoader) {
-    return (
-      <View
-        style={agentIconWrapperStyle}
-        accessibilityRole="progressbar"
-        accessibilityLabel="Agent running"
-      >
-        <SyncedLoader size={size - 1} color={styles.syncedLoader.color} />
-      </View>
-    );
-  }
 
   return (
     <View style={agentIconWrapperStyle}>
       <Icon size={size} color={iconColor} />
+      {isRunning ? (
+        <View
+          style={styles.statusRing}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Agent running"
+        >
+          <StatusRing backdrop={backdrop} />
+        </View>
+      ) : null}
       {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {showNeedsInputAlert ? (
+        <View style={styles.statusAlertOverlay}>
+          <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -196,12 +200,17 @@ export function WorkspaceTabOptionRow({
   trailingAccessory,
 }: WorkspaceTabOptionRowProps): ReactElement {
   const { t } = useTranslation();
-  const pressableStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.optionMainPressable,
-      (Boolean(hovered) || pressed || active) && styles.optionRowActive,
-    ],
+  const isOptionActive = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) =>
+      Boolean(hovered) || pressed || active,
     [active],
+  );
+  const pressableStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.optionMainPressable,
+      isOptionActive(state) && styles.optionRowActive,
+    ],
+    [isOptionActive],
   );
   const optionRowStyle = useMemo(
     () => [styles.optionRow, active && styles.optionRowActive],
@@ -210,16 +219,27 @@ export function WorkspaceTabOptionRow({
   return (
     <View style={optionRowStyle}>
       <Pressable onPress={onPress} style={pressableStyle}>
-        <View style={styles.optionLeadingSlot}>
-          <WorkspaceTabIcon presentation={presentation} active={selected || active} />
-        </View>
-        <View style={styles.optionContent}>
-          <Text numberOfLines={1} style={styles.optionLabel}>
-            {presentation.titleState === "loading"
-              ? t("workspace.tabs.loading")
-              : presentation.label}
-          </Text>
-        </View>
+        {(state) => {
+          const optionActive = isOptionActive(state);
+          return (
+            <>
+              <View style={styles.optionLeadingSlot}>
+                <WorkspaceTabIcon
+                  presentation={presentation}
+                  active={selected || active}
+                  backdrop={optionActive ? "surface1" : "surface0"}
+                />
+              </View>
+              <View style={styles.optionContent}>
+                <Text numberOfLines={1} style={styles.optionLabel}>
+                  {presentation.titleState === "loading"
+                    ? t("workspace.tabs.loading")
+                    : presentation.label}
+                </Text>
+              </View>
+            </>
+          );
+        }}
       </Pressable>
       {presentation.modified ? (
         <View style={styles.optionModifiedDot} accessibilityLabel={t("workspace.tabs.modified")} />
@@ -246,37 +266,38 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     right: DEFAULT_STATUS_DOT_OFFSET,
     bottom: DEFAULT_STATUS_DOT_OFFSET,
-    width: DEFAULT_STATUS_DOT_SIZE,
-    height: DEFAULT_STATUS_DOT_SIZE,
+    width: STATUS_INDICATOR_DOT_SIZE,
+    height: STATUS_INDICATOR_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
+  },
+  statusRing: {
+    position: "absolute",
+    right: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
+    bottom: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
   },
   statusDotBorderDefault: {
     borderColor: theme.colors.surface0,
   },
-  statusDotNeedsInput: {
-    color: theme.colors.palette.amber[500],
+  statusAlertOverlay: {
+    position: "absolute",
+    right: STATUS_ALERT_OFFSET,
+    bottom: STATUS_ALERT_OFFSET,
   },
   statusDotFailed: {
-    color: theme.colors.palette.red[500],
+    color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
   },
   statusDotRunning: {
-    color: theme.colors.palette.blue[500],
+    color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
   },
   statusDotAttention: {
-    color: theme.colors.palette.green[500],
+    color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   iconActive: {
     color: theme.colors.foreground,
   },
   iconInactive: {
     color: theme.colors.foregroundMuted,
-  },
-  syncedLoader: {
-    color:
-      theme.colorScheme === "light"
-        ? theme.colors.palette.amber[700]
-        : theme.colors.palette.amber[500],
   },
   optionRow: {
     flexDirection: "row",
