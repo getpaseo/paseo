@@ -236,6 +236,7 @@ function useWindowControlsOverlayGeometry(): WindowControlsOverlayGeometry | nul
   useEffect(() => {
     const api = getWindowControlsOverlayApi();
     if (!api) return;
+    let frame: number | null = null;
 
     function read() {
       const rect = api?.getTitlebarAreaRect();
@@ -260,12 +261,25 @@ function useWindowControlsOverlayGeometry(): WindowControlsOverlayGeometry | nul
       });
     }
 
+    // A drag-resize fires geometrychange and resize together, and Chromium fires geometrychange
+    // more than once per resize as intermediate layout passes report intermediate rectangles.
+    // The rectangle itself is a cached read, but window.innerWidth below is not, and each
+    // distinct result re-renders every header row. One read per frame is enough.
+    function schedule() {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        read();
+      });
+    }
+
     read();
-    api.addEventListener("geometrychange", read);
-    window.addEventListener("resize", read);
+    api.addEventListener("geometrychange", schedule);
+    window.addEventListener("resize", schedule);
     return () => {
-      api.removeEventListener("geometrychange", read);
-      window.removeEventListener("resize", read);
+      if (frame !== null) cancelAnimationFrame(frame);
+      api.removeEventListener("geometrychange", schedule);
+      window.removeEventListener("resize", schedule);
     };
   }, []);
 

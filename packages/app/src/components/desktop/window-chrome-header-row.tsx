@@ -17,6 +17,15 @@ interface WindowChromeHeaderRowProps {
   testID?: string;
 }
 
+/** Reads the width a child wants when the row has stretched it past its own content. */
+function measureMaxContentWidth(element: HTMLElement): number {
+  const previousWidth = element.style.width;
+  element.style.width = "max-content";
+  const width = element.scrollWidth;
+  element.style.width = previousWidth;
+  return width;
+}
+
 /**
  * A header row that clears the native window controls, whichever corner they occupy.
  *
@@ -39,29 +48,36 @@ export function WindowChromeHeaderRow({
   testID,
 }: WindowChromeHeaderRowProps) {
   const rowRef = useRef<View>(null);
+  const frameRef = useRef<number | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
   const [contentWidth, setContentWidth] = useState<number | null>(null);
   const [previousPlacement, setPreviousPlacement] = useState<"inline" | "below">("inline");
 
   const measureContentWidth = useCallback(() => {
-    if (!isWeb) return;
-    requestAnimationFrame(() => {
+    // Coalesce to one measurement per frame: several observers firing together read the same
+    // layout, and the reads below flush it.
+    if (!isWeb || frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
       const content = rowRef.current as unknown as HTMLElement | null;
       if (!content) return;
-      // Read each child at max-content so a child the row stretched reports the width it
-      // actually wants; resolveHeaderRowContentWidth decides which of them can collide.
       const gap = Number.parseFloat(window.getComputedStyle(content).columnGap) || 0;
       const childBoxes = Array.from(content.children).map((child) => {
         const childStyle = window.getComputedStyle(child);
-        const element = child as HTMLElement;
-        const previousChildWidth = element.style.width;
-        element.style.width = "max-content";
-        const intrinsicWidth = element.scrollWidth;
-        element.style.width = previousChildWidth;
+        const isAbsolute = childStyle.position === "absolute";
+        const canShrink = childStyle.flexShrink !== "0";
+        // resolveHeaderRowContentWidth ignores a child that can shrink or is out of flow, so
+        // don't pay to measure one. A child that can neither shrink nor grow is already laid
+        // out at the width it wants; only a stretched one needs the max-content read, which
+        // costs a reflow.
+        if (isAbsolute || canShrink) return { isAbsolute, canShrink, intrinsicWidth: 0 };
         return {
-          isAbsolute: childStyle.position === "absolute",
-          canShrink: childStyle.flexShrink !== "0",
-          intrinsicWidth,
+          isAbsolute,
+          canShrink,
+          intrinsicWidth:
+            childStyle.flexGrow === "0"
+              ? child.getBoundingClientRect().width
+              : measureMaxContentWidth(child as HTMLElement),
         };
       });
       const measuredWidth = resolveHeaderRowContentWidth({
@@ -83,11 +99,29 @@ export function WindowChromeHeaderRow({
     setPreviousPlacement((current) => (current === placement ? current : placement));
   }, [placement]);
 
-  // Measure after every commit, not only on layout. A row that never fires onLayout again --
-  // the common case once the window settles -- would otherwise keep its first-paint placement
-  // no matter what its content did, and only correct itself the next time something resized.
-  // measureContentWidth writes the same number back when nothing moved, so this converges.
-  useEffect(measureContentWidth);
+  // Measure when the child tree changes, when the row moves between placements, and whenever a
+  // child's own box changes. Measuring after every commit instead re-ran the whole reflow for
+  // state this row set itself, and once per frame of a window resize -- an intrinsic width does
+  // not depend on the width the row was given. A child that updates its own text without
+  // re-rendering this row never reaches the render path at all, which is what the observer is
+  // for: the children that count are the ones that cannot shrink, and those lay out at their
+  // intrinsic width, so their box moves with their content.
+  useEffect(() => {
+    measureContentWidth();
+    if (!isWeb || typeof ResizeObserver === "undefined") return;
+    const content = rowRef.current as unknown as HTMLElement | null;
+    if (!content) return;
+    const observer = new ResizeObserver(measureContentWidth);
+    for (const child of Array.from(content.children)) observer.observe(child);
+    return () => observer.disconnect();
+  }, [children, measureContentWidth, placement]);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
 
   const handleRowLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -95,9 +129,8 @@ export function WindowChromeHeaderRow({
         current === event.nativeEvent.layout.width ? current : event.nativeEvent.layout.width,
       );
       onLayout?.(event);
-      measureContentWidth();
     },
-    [measureContentWidth, onLayout],
+    [onLayout],
   );
   if (placement === "inline") {
     return (
