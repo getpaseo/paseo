@@ -2018,6 +2018,61 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("ignore events during a refresh trigger a trailing recomputation", async () => {
+    const watcher = createWatcherHarness();
+    const blockedRefresh = createDeferred<{
+      stdout: string;
+      stderr: string;
+      truncated: boolean;
+      exitCode: number;
+      signal: null;
+    }>();
+    let lsFilesCallCount = 0;
+    const runGitCommand = vi.fn(async (args: string[]) => {
+      if (args[0] === "rev-parse") {
+        return {
+          stdout: `${REPO_CWD}\n`,
+          stderr: "",
+          truncated: false,
+          exitCode: 0,
+          signal: null,
+        };
+      }
+      lsFilesCallCount += 1;
+      if (lsFilesCallCount === 2) return blockedRefresh.promise;
+      return {
+        stdout: lsFilesCallCount === 1 ? "node_modules/\n" : "node_modules/\nbuild/\n",
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    });
+    const service = createService(watcher, { runGitCommand });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    const checkoutWatcher = getWatcherRecordsForDirectory(watcher, REPO_CWD)[0];
+    checkoutWatcher?.callback(null, [{ path: path.join(REPO_CWD, ".gitignore"), type: "update" }]);
+    await vi.waitFor(() => expect(lsFilesCallCount).toBe(2));
+    checkoutWatcher?.callback(null, [{ path: path.join(REPO_CWD, ".gitignore"), type: "update" }]);
+    blockedRefresh.resolve({
+      stdout: "node_modules/\n",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    });
+
+    await vi.waitFor(() => expect(lsFilesCallCount).toBe(3));
+    expect(checkoutWatcher?.ignore).toContain(path.join(REPO_CWD, "build"));
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("ignore watcher update failure enters polling with a distinct reason", async () => {
     const watcher = createWatcherHarness();
     const logger = createLogger();

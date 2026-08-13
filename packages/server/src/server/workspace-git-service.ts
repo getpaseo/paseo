@@ -446,6 +446,7 @@ interface WorkingTreeWatchTarget {
   subscription: FileObserverSubscription | null;
   ignoredDirectories: Set<string>;
   ignoredDirectoriesRefreshPromise: Promise<void> | null;
+  ignoredDirectoriesRefreshRequested: boolean;
   aliases: Set<string>;
   workspaceKeys: Set<string>;
   fallbackPolling: boolean;
@@ -1296,6 +1297,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       subscription: null,
       ignoredDirectories,
       ignoredDirectoriesRefreshPromise: null,
+      ignoredDirectoriesRefreshRequested: false,
       aliases: new Set([cwd]),
       workspaceKeys: new Set(),
       fallbackPolling: false,
@@ -1633,22 +1635,28 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.closed || target.repoRoot === null) {
       return Promise.resolve();
     }
+    target.ignoredDirectoriesRefreshRequested = true;
     if (target.ignoredDirectoriesRefreshPromise) {
       return target.ignoredDirectoriesRefreshPromise;
     }
 
-    const refreshPromise = this.replaceWorkingTreeIgnoredDirectories(target)
-      .catch((error) => {
-        this.logger.warn(
-          { err: error, cwd: target.cwd },
-          "Failed to refresh working tree watcher ignore paths",
-        );
-      })
-      .finally(() => {
-        if (target.ignoredDirectoriesRefreshPromise === refreshPromise) {
-          target.ignoredDirectoriesRefreshPromise = null;
+    const refreshPromise = (async () => {
+      while (!target.closed && target.ignoredDirectoriesRefreshRequested) {
+        target.ignoredDirectoriesRefreshRequested = false;
+        try {
+          await this.replaceWorkingTreeIgnoredDirectories(target);
+        } catch (error) {
+          this.logger.warn(
+            { err: error, cwd: target.cwd },
+            "Failed to refresh working tree watcher ignore paths",
+          );
         }
-      });
+      }
+    })().finally(() => {
+      if (target.ignoredDirectoriesRefreshPromise === refreshPromise) {
+        target.ignoredDirectoriesRefreshPromise = null;
+      }
+    });
     target.ignoredDirectoriesRefreshPromise = refreshPromise;
     return refreshPromise;
   }
