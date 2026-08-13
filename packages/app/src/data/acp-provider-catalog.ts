@@ -188,6 +188,16 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@google/gemini-cli@0.52.0", "--acp"],
   },
   {
+    id: "gjc",
+    title: "Gajae Code",
+    description:
+      "External coding-agent harness with structured planning, persistent evidence, tmux-backed workers, and ACP support",
+    version: "manual",
+    iconId: "gjc",
+    installLink: "https://github.com/Yeachan-Heo/gajae-code",
+    command: ["gjc", "acp"],
+  },
+  {
     id: "glm-acp-agent",
     title: "GLM Agent",
     description:

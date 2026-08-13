@@ -34,6 +34,12 @@ describe("ACP provider catalog", () => {
     }
   });
 
+  it("uses the lobster emoji for the Gajae Code catalog icon", () => {
+    const iconSvg = findProvider("gjc").iconSvg;
+    expect(iconSvg).toContain("🦞");
+    expect(iconSvg).not.toContain("&#x1F99E;");
+  });
+
   it("does not offer Pi's unsupported ACP adapter", () => {
     expect(ACP_PROVIDER_CATALOG.some((entry) => entry.id === "pi-acp")).toBe(false);
   });
@@ -43,6 +49,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("cursor").command).toEqual(["cursor-agent", "acp"]);
     expect(findProvider("codewhale").command).toEqual(["codewhale", "serve", "--acp"]);
     expect(findProvider("devin").command).toEqual(["devin", "acp"]);
+    expect(findProvider("gjc").command).toEqual(["gjc", "acp"]);
     expect(findProvider("goose").command).toEqual(["goose", "acp"]);
     expect(findProvider("junie").command).toEqual(["junie", "--acp", "true"]);
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
