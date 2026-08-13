@@ -52,9 +52,9 @@ describe("Hub init planning", () => {
     });
   });
 
-  it("reuses a same-Hub daemon relationship and rejects a different Hub", () => {
+  it("reuses a connected daemon, waits for reconnect, and rejects a different Hub", () => {
     const status = {
-      state: "reconnecting",
+      state: "connected",
       daemonId: "daemon-1",
       hubOrigin: "https://hub.test",
       scopes: ["hub.execution.*"],
@@ -69,6 +69,9 @@ describe("Hub init planning", () => {
       kind: "conflict",
       origin: "https://hub.test",
     });
+    expect(
+      resolveHubInitConnection({ ...status, state: "reconnecting" }, "https://hub.test"),
+    ).toEqual({ kind: "pending", state: "reconnecting" });
     expect(
       resolveHubInitConnection(
         { ...status, state: "not_connected", daemonId: null, hubOrigin: null },

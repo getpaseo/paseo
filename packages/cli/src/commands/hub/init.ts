@@ -188,6 +188,11 @@ async function ensureDaemonConnection(
     log.success(`Daemon ${connection.daemonId} is connected to ${origin}`);
     return;
   }
+  if (connection.kind === "pending") {
+    throw new HubInitCancelledError(
+      `This daemon is ${connection.state} to ${origin}. Wait for \`paseo hub status\` to show connected, then run Hub init again.`,
+    );
+  }
   if (connection.kind === "conflict") {
     throw new HubCommandError(
       "HUB_DAEMON_ALREADY_CONNECTED",
@@ -241,7 +246,14 @@ async function chooseProject(origin: string, environment: HubInitEnvironment): P
       hint: project.slug,
     })),
   });
-  return resolution.projects.find((project) => project.slug === slug)!;
+  const project = resolution.projects.find((candidate) => candidate.slug === slug);
+  if (project === undefined) {
+    throw new HubCommandError(
+      "HUB_PROJECT_SELECTION_INVALID",
+      "The selected Hub project is unavailable.",
+    );
+  }
+  return project;
 }
 
 async function chooseProvider(): Promise<HubInitProvider> {

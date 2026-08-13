@@ -12,6 +12,7 @@ export type HubInitProjectResolution =
 
 export type HubInitConnectionResolution =
   | { kind: "connected"; daemonId: string }
+  | { kind: "pending"; state: "connecting" | "reconnecting" }
   | { kind: "connect" }
   | { kind: "conflict"; origin: string };
 
@@ -57,9 +58,14 @@ export function resolveHubInitConnection(
   status: HubStatus,
   origin: string,
 ): HubInitConnectionResolution {
-  const relationshipIsUsable = ["connecting", "connected", "reconnecting"].includes(status.state);
-  if (relationshipIsUsable && status.hubOrigin === origin && status.daemonId !== null) {
+  if (status.state === "connected" && status.hubOrigin === origin && status.daemonId !== null) {
     return { kind: "connected", daemonId: status.daemonId };
+  }
+  if (
+    (status.state === "connecting" || status.state === "reconnecting") &&
+    status.hubOrigin === origin
+  ) {
+    return { kind: "pending", state: status.state };
   }
   if (status.hubOrigin !== null && status.state !== "not_connected" && status.state !== "revoked") {
     return { kind: "conflict", origin: status.hubOrigin };
