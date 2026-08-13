@@ -17,6 +17,8 @@
  * - provider models opencode lists opencode models
  * - provider models unknown fails with error
  * - provider models --json outputs valid JSON
+ * - provider diagnostic shows the daemon's provider diagnostic
+ * - provider diagnostic --json returns structured output
  */
 
 import assert from "node:assert";
@@ -42,6 +44,11 @@ interface ProviderListRow {
   label: string;
   status: string;
   enabled: string;
+}
+
+interface ProviderDiagnostic {
+  provider: string;
+  diagnostic: string;
 }
 
 const EXPECTED_CLAUDE_MODELS = [
@@ -190,6 +197,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "provider --help should exit 0");
     assert(result.stdout.includes("ls"), "help should mention ls");
     assert(result.stdout.includes("models"), "help should mention models");
+    assert(result.stdout.includes("diagnostic"), "help should mention diagnostic");
     console.log("✓ provider --help shows subcommands\n");
   }
 
@@ -423,6 +431,39 @@ try {
       "captured --json output should include the current Claude everyday model id",
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
+  }
+
+  // Test 12: provider diagnostic shows the daemon's provider diagnostic
+  {
+    console.log("Test 12: provider diagnostic shows the daemon's provider diagnostic");
+    const result = await ctx.paseo([
+      "provider",
+      "diagnostic",
+      " Claude ",
+      "--host",
+      `127.0.0.1:${ctx.port}`,
+    ]);
+    assert.strictEqual(result.exitCode, 0, "provider diagnostic should exit 0");
+    assert(result.stdout.includes("Claude Code"), "diagnostic should identify the provider");
+    assert(result.stdout.includes("Daemon PATH:"), "diagnostic should include the daemon PATH");
+    assert(result.stdout.includes("Resolved path:"), "diagnostic should include binary resolution");
+    assert(result.stdout.includes("Version:"), "diagnostic should include the provider version");
+    assert(result.stdout.includes("Status:"), "diagnostic should include provider status");
+    console.log("✓ provider diagnostic shows the daemon's provider diagnostic\n");
+  }
+
+  // Test 13: provider diagnostic --json returns structured output
+  {
+    console.log("Test 13: provider diagnostic --json returns structured output");
+    const result = await ctx.paseo(["provider", "diagnostic", "claude", "--json"]);
+    assert.strictEqual(result.exitCode, 0, "provider diagnostic --json should exit 0");
+    const data = JSON.parse(result.stdout.trim()) as ProviderDiagnostic;
+    assert.strictEqual(data.provider, "claude", "JSON should identify the provider");
+    assert(data.diagnostic.includes("Daemon PATH:"), "JSON should include the daemon PATH");
+    assert(data.diagnostic.includes("Resolved path:"), "JSON should include binary resolution");
+    assert(data.diagnostic.includes("Version:"), "JSON should include the provider version");
+    assert(data.diagnostic.includes("Status:"), "JSON should include provider status");
+    console.log("✓ provider diagnostic --json returns structured output\n");
   }
 } finally {
   await ctx.stop();

@@ -28,46 +28,18 @@ Your daemons keep running agents where they always did. Hub decides when to ask 
 
 ## What you write
 
-A file in your repository at `.paseo/hub.yml` says which events start an agent, and where it runs. This one answers a Slack mention in the thread it came from:
+One project resource file names environments and complete agent configurations. Each discovered workflow file keeps one trigger beside its ordered steps:
 
-```yaml
-environments:
-  - name: development
-    kind: daemon
-    daemon: my-macbook
-    cwd: /Users/you/code/project
-
-triggers:
-  - name: slack-help
-    on: slack.mention
-    max_runtime: 2h
-    filters:
-      workspace: T01234567
-      channels: [C01234567]
-      from_users: [U01234567]
-    steps:
-      - id: answer
-        environment: development
-        max_runtime: 30m
-        idle_timeout: 5m
-        agent:
-          provider: codex
-          mode: full-access
-        prompt:
-          - text: |
-              Help with this request.
-
-              Call hub.reply to send your response to the originating conversation.
-              Call hub.finish_execution when the step is complete.
-          - text: |
-              <user-prompt>
-              ${{ paseo.prompt }}
-              </user-prompt>
-        allow_outputs:
-          - type: slack.reply
+```text
+.paseo/
+├── hub.yml
+└── workflows/
+    ├── slack-help.yml
+    └── partials/
+        └── answer.md
 ```
 
-Push it, mention the bot, and an agent starts on your machine. [Workflows](/docs/hub/workflows) builds from here through progress updates, typed inputs, and agents that choose their own model or repository.
+Push the bundle, mention the bot, and an agent starts on your machine. [Quickstart](/docs/hub/quickstart) builds the first bundle; [Workflows](/docs/hub/workflows) covers routing and provider-specific replies.
 
 ## Reading order
 

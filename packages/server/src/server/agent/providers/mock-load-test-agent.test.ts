@@ -68,6 +68,47 @@ describe("MockLoadTestAgentClient", () => {
     await session.interrupt();
   });
 
+  test("streams a configured assistant response through the normal timeline", async () => {
+    vi.useFakeTimers();
+    const response = [
+      "```mermaid",
+      "flowchart LR",
+      "  Start --> Middle",
+      '  Middle --> End["<i>Done</i>"]',
+      "```",
+    ].join("\n");
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: {
+        mockStreamingAssistantResponse: response,
+        mockStreamingAssistantIntervalMs: 20,
+      },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("Render a diagram while streaming.");
+    await vi.runAllTimersAsync();
+
+    await expect(resultPromise).resolves.toMatchObject({ finalText: response, canceled: false });
+    const streamedText = events
+      .flatMap((event) =>
+        event.type === "timeline" && event.item.type === "assistant_message"
+          ? [event.item.text]
+          : [],
+      )
+      .join("");
+    expect(streamedText).toBe(response);
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
+        .length,
+    ).toBeGreaterThan(5);
+    expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "mock" });
+  });
+
   test("can withhold the provider user-message echo until an immediate interrupt", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

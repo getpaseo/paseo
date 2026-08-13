@@ -111,6 +111,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
+const OPENCODE_DEFAULT_VARIANT_ID = "default";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
@@ -580,6 +581,14 @@ function normalizeOpenCodeModeId(modeId: string | null | undefined): string | nu
   return trimmed;
 }
 
+function normalizeOpenCodeVariantId(variantId: string | null | undefined): string | null {
+  const trimmed = typeof variantId === "string" ? variantId.trim() : "";
+  if (!trimmed || trimmed === OPENCODE_DEFAULT_VARIANT_ID) {
+    return null;
+  }
+  return trimmed;
+}
+
 function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): string | undefined {
   const normalizedModeId = normalizeOpenCodeModeId(modeId);
   if (normalizedModeId === null) {
@@ -591,15 +600,19 @@ function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): strin
 }
 
 function normalizeOpenCodeConfig(config: OpenCodeAgentConfig): OpenCodeAgentConfig {
-  if (normalizeOpenCodeModeId(config.modeId) !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
-    return { ...config };
+  const normalized = {
+    ...config,
+    thinkingOptionId: normalizeOpenCodeVariantId(config.thinkingOptionId) ?? undefined,
+  };
+  if (normalizeOpenCodeModeId(normalized.modeId) !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
+    return normalized;
   }
 
   return {
-    ...config,
+    ...normalized,
     modeId: OPENCODE_BUILD_MODE_ID,
     featureValues: {
-      ...config.featureValues,
+      ...normalized.featureValues,
       [OPENCODE_AUTO_ACCEPT_FEATURE_ID]: true,
     },
   };
@@ -723,11 +736,13 @@ function buildOpenCodeModelDefinition(
   },
 ): AgentModelDefinition {
   const rawVariants = model.variants ? Object.keys(model.variants) : [];
-  const thinkingOptions = rawVariants.map((id, index) => ({
-    id,
-    label: id,
-    isDefault: index === 0,
-  }));
+  // OpenCode lists only overrides; its base model behavior is selected by omitting `variant`.
+  const thinkingOptions = rawVariants.length
+    ? [
+        { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
+        ...rawVariants.map((id) => ({ id, label: id })),
+      ]
+    : [];
 
   return {
     provider: "opencode",
@@ -1905,11 +1920,18 @@ function mapOpenCodeTodosToTimelineItems(
       return [
         {
           text,
+          status: normalizeOpenCodeTodoStatus(todo.status),
           completed: todo.status === "completed",
         },
       ];
     }),
   };
+}
+
+function normalizeOpenCodeTodoStatus(status?: string | null) {
+  if (status === "completed") return "completed" as const;
+  if (status === "in_progress" || status === "inProgress") return "in_progress" as const;
+  return "pending" as const;
 }
 
 function createCompactionTimelineItem(
@@ -3188,10 +3210,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
-    const normalizedThinkingOptionId =
-      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
-        ? thinkingOptionId
-        : null;
+    const normalizedThinkingOptionId = normalizeOpenCodeVariantId(thinkingOptionId);
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
   }
 

@@ -9,6 +9,7 @@ import {
   parseBindingChord,
   resolveKeyboardShortcut,
   resolveShortcutKeysForAction,
+  SHORTCUT_HELP_ROW_ORDER,
   UNASSIGNED_COMBO,
   type ChordState,
   type KeyboardShortcutContext,
@@ -149,16 +150,16 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.new",
     },
     {
-      name: "matches Cmd+P to switch project on mac",
+      name: "matches Cmd+P to search workspace files on mac",
       event: { key: "p", code: "KeyP", metaKey: true },
       context: { isMac: true, commandCenterOpen: false },
-      action: "workspace.project.pick",
+      action: "command-center.files",
     },
     {
-      name: "matches Ctrl+P to switch project on non-mac",
+      name: "matches Ctrl+P to search workspace files on non-mac",
       event: { key: "p", code: "KeyP", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
-      action: "workspace.project.pick",
+      action: "command-center.files",
     },
     {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
@@ -402,6 +403,13 @@ describe("keyboard-shortcuts", () => {
       });
     },
   );
+
+  it("leaves Escape to an editable field", () => {
+    expectNoShortcutResolution({
+      event: { key: "Escape", code: "Escape" },
+      context: { focusScope: "editable" },
+    });
+  });
 
   const nonMatchingCases: NonMatchingShortcutCase[] = [
     {
@@ -781,18 +789,61 @@ describe("keyboard-shortcut help sections", () => {
 
   it("returns stable i18n keys for section titles and help rows", () => {
     const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
-    const projects = sections.find((section) => section.id === "projects");
-    const panels = sections.find((section) => section.id === "panels");
+    const workspaces = sections.find((section) => section.id === "workspaces");
+    const layout = sections.find((section) => section.id === "layout");
     const openProject = findRow(sections, "new-agent");
     const cycleAgentMode = findRow(sections, "cycle-agent-mode");
     const showShortcuts = findRow(sections, "show-shortcuts");
 
-    expect(projects?.titleKey).toBe("settings.shortcuts.sections.projects");
-    expect(panels?.titleKey).toBe("settings.shortcuts.sections.panels");
+    expect(workspaces?.titleKey).toBe("settings.shortcuts.sections.workspaces");
+    expect(layout?.titleKey).toBe("settings.shortcuts.sections.layout");
     expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
     expect(openProject?.label).toBe("Open project");
     expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
+  });
+
+  it("gives every help row an explicit place in its section's order", () => {
+    const platforms = [
+      { isMac: true, isDesktop: true },
+      { isMac: false, isDesktop: true },
+      { isMac: true, isDesktop: false },
+      { isMac: false, isDesktop: false },
+    ];
+    const unplaced: string[] = [];
+    for (const platform of platforms) {
+      for (const section of buildKeyboardShortcutHelpSections(platform)) {
+        for (const row of section.rows) {
+          if (SHORTCUT_HELP_ROW_ORDER[section.id].includes(row.id)) continue;
+          unplaced.push(`${section.id}:${row.id}`);
+        }
+      }
+    }
+
+    expect(unplaced).toEqual([]);
+  });
+
+  it("leads the general section with the command center and file search", () => {
+    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+
+    expect(sections[0]?.id).toBe("general");
+    expect(sections[0]?.rows.slice(0, 2).map((row) => row.id)).toEqual([
+      "toggle-command-center",
+      "search-files",
+    ]);
+  });
+
+  it("reuses the project-picker binding ids for rebindable file search", () => {
+    expect(getBindingIdForAction("search-files", { isMac: true, isDesktop: true })).toBe(
+      "workspace-project-pick-cmd-p-mac",
+    );
+    expect(getBindingIdForAction("search-files", { isMac: false, isDesktop: true })).toBe(
+      "workspace-project-pick-ctrl-p-non-mac",
+    );
+    expect(
+      findRow(buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true }), "search-files")
+        ?.chord,
+    ).not.toBeNull();
   });
 
   it("does not expose Enter send behavior as rebindable shortcut rows", () => {

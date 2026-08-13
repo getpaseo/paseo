@@ -257,6 +257,7 @@ Services additionally get:
 ```bash
 paseo workspace ls
 paseo run --workspace <workspace-id> "implement auth"
+paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace archive <workspace-id>
 ```
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import {
@@ -15,12 +15,14 @@ const LRU_SERVER_IDS = ["host-a", "host-b", "host-c"] as const;
 
 class MemoryStorage implements ReplicaCacheStorage {
   readonly values = new Map<string, string>();
+  writes = 0;
 
   async getItem(key: string): Promise<string | null> {
     return this.values.get(key) ?? null;
   }
 
   async setItem(key: string, value: string): Promise<void> {
+    this.writes += 1;
     this.values.set(key, value);
   }
 }
@@ -154,12 +156,39 @@ function seedTimeline(serverId: string, text: string): void {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   const store = useSessionStore.getState();
   store.clearSession(SERVER_ID);
   for (const serverId of LRU_SERVER_IDS) store.clearSession(serverId);
 });
 
 describe("ReplicaCache", () => {
+  it("persists focused replica changes without writing transient stream head updates", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    await cache.flush();
+    cache.start();
+    const writesBeforeStream = storage.writes;
+
+    useSessionStore
+      .getState()
+      .setAgentStreamHead(SERVER_ID, new Map([["agent-1", [message("live", "Streaming")]]]));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(storage.writes).toBe(writesBeforeStream);
+
+    useSessionStore
+      .getState()
+      .setAgentStreamTail(SERVER_ID, new Map([["agent-1", [message("saved", "Committed")]]]));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(storage.writes).toBe(writesBeforeStream + 1);
+    cache.setHosts([]);
+  });
+
   it("restores a displayable stale replica without claiming remote hydration", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);
@@ -243,7 +272,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
@@ -302,12 +331,12 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 1 cache data and overwrites it on flush", async () => {
+  it("rejects version 3 cache data and overwrites it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@paseo:replica-cache",
       JSON.stringify({
-        version: 1,
+        version: 3,
         hosts: [
           {
             serverId: SERVER_ID,
@@ -332,7 +361,7 @@ describe("ReplicaCache", () => {
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 3,
+      version: 4,
       hosts: [],
     });
   });

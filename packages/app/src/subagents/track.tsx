@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
@@ -20,8 +21,6 @@ import {
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedUnlink = withUnistyles(Unlink);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -70,17 +69,11 @@ export function SubagentsTrack({
     [expanded],
   );
 
-  const headerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.headerToggle,
-      (hovered || pressed) && styles.headerActive,
-    ],
-    [],
-  );
   const headerContainerStyle = useMemo(
     () => [styles.header, expanded ? styles.headerDivider : styles.headerCollapsed],
     [expanded],
   );
+  const headerAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
 
   if (rows.length === 0) {
     return null;
@@ -94,22 +87,19 @@ export function SubagentsTrack({
       <View style={styles.track}>
         <View style={surfaceStyle}>
           <View style={headerContainerStyle}>
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              variant="ghost"
+              size="xs"
               accessibilityLabel={headerLabel}
+              accessibilityState={headerAccessibilityState}
               testID="subagents-track-header"
               onPress={toggleExpanded}
-              style={headerStyle}
+              leftIcon={expanded ? ChevronDown : ChevronRight}
+              style={styles.headerToggle}
+              textStyle={styles.headerLabel}
             >
-              {expanded ? (
-                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-              ) : (
-                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-              )}
-              <Text style={styles.headerLabel} numberOfLines={1}>
-                {headerLabel}
-              </Text>
-            </Pressable>
+              {headerLabel}
+            </Button>
             {finishedCount > 0 && onArchiveFinished ? (
               <View style={styles.headerAction}>
                 <SubagentActionButton
@@ -346,9 +336,8 @@ const styles = StyleSheet.create((theme) => ({
   headerToggle: {
     flex: 1,
     minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
+    justifyContent: "flex-start",
+    borderRadius: 0,
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[1],
     paddingVertical: theme.spacing[2],
@@ -358,9 +347,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerCollapsed: {
     paddingBottom: theme.spacing[4],
-  },
-  headerActive: {
-    backgroundColor: theme.colors.surface2,
   },
   headerDivider: {
     borderBottomWidth: theme.borderWidth[1],
