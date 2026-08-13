@@ -16,7 +16,9 @@
  */
 
 import assert from "node:assert";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
@@ -29,6 +31,19 @@ const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
 
 function daemonCommand(args: string[]) {
   return runLocalPaseo(["daemon", ...args], { PASEO_HOME: paseoHome });
+}
+
+async function stopChildProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
+  const exited = once(child, "exit");
+  child.kill("SIGTERM");
+  const forceKill = setTimeout(() => child.kill("SIGKILL"), 5_000);
+  try {
+    await exited;
+  } finally {
+    clearTimeout(forceKill);
+  }
 }
 
 try {
@@ -132,56 +147,97 @@ try {
       process.platform === "win32"
         ? `\\\\.\\pipe\\paseo-status-${process.pid}-${Date.now()}`
         : join(paseoHome, "status.sock");
-    const start = await daemonCommand(["start", "--listen", listen, "--relay"]);
-    assert.strictEqual(start.exitCode, 0, `IPC daemon should start: ${start.stderr}`);
-
     const configPath = join(paseoHome, "config.json");
     const config = JSON.parse(await readFile(configPath, "utf-8"));
-    config.daemon = { ...config.daemon, listen };
+    config.daemon = {
+      ...config.daemon,
+      listen,
+      relay: { ...config.daemon?.relay, enabled: false },
+    };
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-    const pidPath = join(paseoHome, "paseo.pid");
-    const pidContents = await readFile(pidPath, "utf-8");
-    await unlink(pidPath);
-    const status = await daemonCommand(["status", "--json"]);
-    const pairing = await daemonCommand(["pair", "--json"]);
-    await writeFile(pidPath, pidContents, "utf-8");
-    assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
-    const payload = JSON.parse(status.stdout);
-    assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
-    assert.strictEqual(payload.localDaemon, "stopped", "missing PID should report stopped locally");
-    assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
-    assert.strictEqual(pairing.exitCode, 0, `IPC daemon pairing should succeed: ${pairing.stderr}`);
-    const pairingPayload = JSON.parse(pairing.stdout);
-    assert.strictEqual(pairingPayload.relayEnabled, true, "pairing should use live relay state");
-    assert.match(pairingPayload.url, /#offer=/, "pairing should use the live daemon offer");
+    // A supervised daemon owns and heartbeats paseo.pid. Launch the worker
+    // directly so this fixture naturally has a reachable daemon without a PID file.
+    const worker = spawn(
+      process.execPath,
+      ["--import", "tsx", "../server/src/server/daemon-worker.ts", "--relay"],
+      {
+        cwd: join(import.meta.dirname, ".."),
+        env: {
+          ...process.env,
+          PASEO_HOME: paseoHome,
+          PASEO_LISTEN: listen,
+          PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0",
+          PASEO_DICTATION_ENABLED: "0",
+          PASEO_VOICE_MODE_ENABLED: "0",
+          CI: "true",
+        },
+        stdio: "ignore",
+      },
+    );
 
-    const foreignHome = await mkdtemp(join(tmpdir(), "paseo-test-foreign-home-"));
     try {
-      await writeFile(
-        join(foreignHome, "config.json"),
-        `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
-        "utf-8",
-      );
-      const foreignPairing = await runLocalPaseo(
-        ["daemon", "pair", "--home", foreignHome, "--json"],
-        { PASEO_HOME: foreignHome },
-      );
-      assert.notStrictEqual(
-        foreignPairing.exitCode,
-        0,
-        "pairing should reject a daemon owned by another home",
-      );
-      assert(
-        foreignPairing.stderr.includes("different Paseo home"),
-        "pairing should explain the daemon identity mismatch",
-      );
-      assert(!foreignPairing.stdout.includes("#offer="), "pairing should not expose another offer");
-    } finally {
-      await rm(foreignHome, { recursive: true, force: true });
-    }
+      const deadline = Date.now() + 120_000;
+      let status = await daemonCommand(["status", "--json"]);
+      let payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
+      while (payload?.connectedDaemon !== "reachable" || payload.relay === "disabled") {
+        assert(
+          worker.exitCode === null && worker.signalCode === null,
+          "IPC daemon exited before becoming reachable",
+        );
+        assert(Date.now() < deadline, `IPC daemon did not become reachable: ${status.stderr}`);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        status = await daemonCommand(["status", "--json"]);
+        payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
+      }
 
-    const cleanup = await daemonCommand(["stop", "--force"]);
-    assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after IPC status");
+      const pairing = await daemonCommand(["pair", "--json"]);
+      assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
+      assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
+      assert.strictEqual(
+        payload.localDaemon,
+        "stopped",
+        "missing PID should report stopped locally",
+      );
+      assert.notStrictEqual(payload.relay, "disabled", "status should use live relay state");
+      assert.strictEqual(
+        pairing.exitCode,
+        0,
+        `IPC daemon pairing should succeed: ${pairing.stderr}`,
+      );
+      const pairingPayload = JSON.parse(pairing.stdout);
+      assert.strictEqual(pairingPayload.relayEnabled, true, "pairing should use live relay state");
+      assert.match(pairingPayload.url, /#offer=/, "pairing should use the live daemon offer");
+
+      const foreignHome = await mkdtemp(join(tmpdir(), "paseo-test-foreign-home-"));
+      try {
+        await writeFile(
+          join(foreignHome, "config.json"),
+          `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
+          "utf-8",
+        );
+        const foreignPairing = await runLocalPaseo(
+          ["daemon", "pair", "--home", foreignHome, "--json"],
+          { PASEO_HOME: foreignHome },
+        );
+        assert.notStrictEqual(
+          foreignPairing.exitCode,
+          0,
+          "pairing should reject a daemon owned by another home",
+        );
+        assert(
+          foreignPairing.stderr.includes("different Paseo home"),
+          "pairing should explain the daemon identity mismatch",
+        );
+        assert(
+          !foreignPairing.stdout.includes("#offer="),
+          "pairing should not expose another offer",
+        );
+      } finally {
+        await rm(foreignHome, { recursive: true, force: true });
+      }
+    } finally {
+      await stopChildProcess(worker);
+    }
     console.log("✓ daemon status probes live relay state over local IPC\n");
   }
 
