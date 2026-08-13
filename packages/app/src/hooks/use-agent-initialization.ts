@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore } from "@/stores/session-store";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import {
   createInitDeferred,
   getInitDeferred,
@@ -11,7 +11,7 @@ import {
   refreshInitTimeout,
 } from "@/utils/agent-initialization";
 import { getHostRuntimeStore, type HostRuntimeStore } from "@/runtime/host-runtime";
-import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
+import { planTimelineResumeFetch, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
 export type SetAgentInitializing = (agentId: string, initializing: boolean) => void;
@@ -51,7 +51,10 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return existing.promise;
   }
 
-  const timelineRequest = planTimelineTailFetch();
+  const timeline = selectAgentTimelineState(useSessionStore.getState().sessions[serverId], agentId);
+  const timelineRequest = planTimelineResumeFetch(
+    timeline.status === "synced" ? timeline.range : null,
+  );
 
   const deferred = createInitDeferred(key, timelineRequest.direction);
   refreshAgentInitializationTimeout({ key, agentId, setAgentInitializing });

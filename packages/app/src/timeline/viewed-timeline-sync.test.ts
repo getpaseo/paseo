@@ -33,6 +33,7 @@ interface TimelineFetch {
 
 class TimelineWorld {
   readonly errors: string[] = [];
+  readonly cursors = new Map<string, { epoch: string; endSeq: number }>();
   readonly sync = createViewedTimelineSync({
     initialDeliveryMode: "selective",
     setSubscription: async (agentIds) => {
@@ -45,6 +46,7 @@ class TimelineWorld {
       this.releaseMembershipWaiter();
       return result.promise;
     },
+    readCursor: (agentId) => this.cursors.get(agentId),
     fetchPage: async (agentId, request) => {
       const result = deferred<{
         hasNewer: boolean;
@@ -163,6 +165,24 @@ test("uses a tail fetch when an agent becomes visible", async () => {
 
   const fetch = await world.nextFetch("agent-a");
   expect(fetch.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
+  fetch.respond({ hasNewer: false });
+});
+
+test("catches up after the restored cursor when an agent becomes visible", async () => {
+  const world = new TimelineWorld();
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42 });
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+
+  const fetch = await world.nextFetch("agent-a");
+  expect(fetch.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 42 },
+    limit: 40,
+    projection: "projected",
+  });
   fetch.respond({ hasNewer: false });
 });
 

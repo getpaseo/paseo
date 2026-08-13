@@ -85,16 +85,19 @@ recomposition while the runtime still owns the same directory snapshot and timel
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
 
-The durable replica cache is a display cache, not a synchronization checkpoint. Its timeline record
-contains only the focused `agentId` and a truncated item tail. It never persists a cursor, epoch,
-older-history availability, authority status, or sync generation because those facts would describe
-the complete source dataset rather than the truncated display dataset.
+The durable replica cache persists synchronization authority only when it can store the complete
+current canonical window losslessly. The stored range describes those exact items: `startSeq` drives
+older pagination and `endSeq` drives forward catch-up. Restore paints the items immediately, requests
+`after endSeq`, and requests `before startSeq` when the user loads older history.
 
-Restoring that cache produces a painted timeline: the items may render immediately, but the first
-daemon timeline request is still `tail`. A successful tail response atomically establishes canonical
-items, range, and older-history availability. Live rows received between cache paint and that tail
-response stay in the separate live head, do not advance a cursor or trigger gap recovery, and are
-reconciled with the authoritative tail and subsequent catch-up.
+If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
+live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
+range and keeps a display-only tail. Restore then uses the ordinary bounded `tail` bootstrap. Never
+slice items while retaining the pre-slice range; that falsely certifies discarded source rows.
+
+Live rows received between cache paint and catch-up stay in the separate live head and reconcile with
+the authoritative range through the existing forward-page path. The cache does not persist sync
+generation or unreconciled local submissions.
 
 Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
 replacement keeps only positioned rows newer than the page it installs, while unresolved local

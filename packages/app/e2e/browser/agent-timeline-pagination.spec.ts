@@ -27,8 +27,71 @@ import {
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
+import { trackAgentTimelineRequests } from "../support/helpers/agent-timeline-gate";
+import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+
+interface PersistedTimelineRange {
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
+}
+
+async function readPersistedTimelineRange(
+  page: import("@playwright/test").Page,
+  agentId: string,
+): Promise<PersistedTimelineRange | null> {
+  return page.evaluate((targetAgentId) => {
+    const raw = localStorage.getItem("@paseo:replica-cache");
+    if (!raw) return null;
+    const cache = JSON.parse(raw) as {
+      version?: number;
+      hosts?: Array<{
+        timeline?: {
+          agentId?: string;
+          range?: PersistedTimelineRange | null;
+        } | null;
+      }>;
+    };
+    if (cache.version !== 6) return null;
+    for (const host of cache.hosts ?? []) {
+      if (host.timeline?.agentId === targetAgentId) return host.timeline.range ?? null;
+    }
+    return null;
+  }, agentId);
+}
 
 test.describe("Agent timeline pagination", () => {
+  test("resumes a persisted canonical timeline after its exact end", async ({ page }) => {
+    const prompt = "timeline persisted range resumes without tail replay";
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "timeline-persisted-range-",
+      title: "Persisted timeline range",
+      initialPrompt: prompt,
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, prompt);
+      await expect.poll(() => readPersistedTimelineRange(page, agent.agentId)).not.toBeNull();
+      const range = await readPersistedTimelineRange(page, agent.agentId);
+      if (!range) throw new Error("Persisted canonical timeline range is missing");
+
+      const tracker = await trackAgentTimelineRequests(page, agent.agentId);
+      await page.reload();
+      await expectTimelinePromptVisible(page, prompt);
+
+      const request = await tracker.nextRequest();
+      expect(request).toEqual({
+        direction: "after",
+        cursor: { epoch: range.epoch, seq: range.endSeq },
+      });
+      await tracker.waitForResponse();
+      expect(tracker.requests().some((entry) => entry.direction === "tail")).toBe(false);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps a fixed history-start gutter before, during, and after pagination", async ({
     page,
   }) => {

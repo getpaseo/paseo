@@ -1,6 +1,6 @@
 import {
   planTimelineCatchUpAfter,
-  planTimelineTailFetch,
+  planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
 
@@ -12,6 +12,7 @@ interface TimelinePageResult {
 interface ViewedTimelineSyncPorts {
   initialDeliveryMode: TimelineDeliveryMode;
   setSubscription(agentIds: string[]): Promise<void>;
+  readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
@@ -230,7 +231,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       if (request) pendingCatchUps.set(agentId, request);
       return;
     }
-    const nextRequest = request ?? planTimelineTailFetch();
+    const nextRequest = request ?? planTimelineResumeFetch(ports.readCursor(agentId));
     const current = catchUps.get(agentId);
     const decision = decideCatchUp({ current, request: nextRequest, supersede });
     if (decision === "keep-and-park") {
