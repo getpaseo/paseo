@@ -1,141 +1,178 @@
-import type pino from "pino";
 import { existsSync, readFileSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
+import type pino from "pino";
+import { z } from "zod";
 
-import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.js";
+import { hasLegacyImportMarker, recordLegacyImportMarker } from "../db/legacy-imports.js";
+import { runInTransaction } from "../db/transaction.js";
+import { ensurePrivateFile } from "../private-files.js";
 
-/**
- * Store for Expo push tokens.
- *
- * Tokens are persisted to disk so pushes still work after daemon restarts.
- */
+const LEGACY_IMPORT_STORE = "push_tokens";
+const DEFAULT_LEASE_MS = 48 * 60 * 60 * 1000;
+const PushTokenRecordSchema = z.object({
+  token: z.string().trim().min(1),
+  expiresAt: z.string().refine((value) => Number.isFinite(Date.parse(value))),
+});
+
+interface PushTokenStoreOptions {
+  database: DatabaseSync;
+  legacyFilePath: string;
+  logger: pino.Logger;
+  now?: () => number;
+  leaseMs?: number;
+}
+
+interface PushTokenRow {
+  payload: string;
+}
+
+/** Store for leased Expo push-token subscriptions. */
 export class PushTokenStore {
+  private readonly database: DatabaseSync;
   private readonly logger: pino.Logger;
-  private subscriptions = new Map<string, number>();
-  private readonly filePath: string;
+  private readonly legacyFilePath: string;
   private readonly now: () => number;
   private readonly leaseMs: number;
-  private readonly write: typeof writePrivateFileAtomicSync;
 
-  constructor(
-    logger: pino.Logger,
-    filePath: string,
-    now: () => number,
-    leaseMs: number,
-    write: typeof writePrivateFileAtomicSync = writePrivateFileAtomicSync,
-  ) {
-    this.logger = logger.child({ component: "token-store" });
-    this.filePath = filePath;
-    this.now = now;
-    this.leaseMs = leaseMs;
-    this.write = write;
-    this.loadFromDisk();
+  constructor(options: PushTokenStoreOptions) {
+    this.database = options.database;
+    this.logger = options.logger.child({ component: "token-store" });
+    this.legacyFilePath = options.legacyFilePath;
+    this.now = options.now ?? Date.now;
+    this.leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
+    this.importLegacyTokens();
   }
 
   renewToken(token: string): void {
     const normalized = token.trim();
     if (!normalized) return;
+
+    const current = this.readToken(normalized);
     const now = this.now();
-    const currentExpiry = this.subscriptions.get(normalized);
-    if (currentExpiry !== undefined && currentExpiry - now > this.leaseMs / 2) return;
-    const next = new Map(this.subscriptions);
-    next.set(normalized, now + this.leaseMs);
-    this.persist(next);
-    this.subscriptions = next;
-    this.logger.debug({ total: this.subscriptions.size }, "Renewed token");
+    if (current && Date.parse(current.expiresAt) - now > this.leaseMs / 2) return;
+
+    const record = {
+      token: normalized,
+      expiresAt: new Date(now + this.leaseMs).toISOString(),
+    };
+    this.database
+      .prepare(
+        "INSERT INTO push_tokens (token, payload) VALUES (?, ?) " +
+          "ON CONFLICT(token) DO UPDATE SET payload = excluded.payload",
+      )
+      .run(record.token, JSON.stringify(record));
+    this.logger.debug({ total: this.count() }, "Renewed token");
   }
 
   revokeToken(token: string): void {
     const normalized = token.trim();
     if (!normalized) return;
-    if (!this.subscriptions.has(normalized)) return;
-    const next = new Map(this.subscriptions);
-    next.delete(normalized);
-    this.persist(next);
-    this.subscriptions = next;
-    this.logger.debug({ total: this.subscriptions.size }, "Revoked token");
+    const result = this.database.prepare("DELETE FROM push_tokens WHERE token = ?").run(normalized);
+    if (result.changes > 0) {
+      this.logger.debug({ total: this.count() }, "Revoked token");
+    }
   }
 
   getActiveTokens(): string[] {
     const now = this.now();
-    const active = new Map(this.subscriptions);
-    for (const [token, expiresAt] of this.subscriptions) {
-      if (expiresAt <= now) {
-        active.delete(token);
+    const rows = this.database
+      .prepare("SELECT payload FROM push_tokens ORDER BY rowid")
+      .all() as unknown as PushTokenRow[];
+    const active: string[] = [];
+    const expired: string[] = [];
+    for (const row of rows) {
+      const record = PushTokenRecordSchema.parse(JSON.parse(row.payload));
+      if (Date.parse(record.expiresAt) <= now) {
+        expired.push(record.token);
+      } else {
+        active.push(record.token);
       }
     }
-    if (active.size !== this.subscriptions.size) {
+    if (expired.length > 0) {
       try {
-        this.persist(active);
-        this.subscriptions = active;
+        runInTransaction(this.database, () => {
+          const remove = this.database.prepare("DELETE FROM push_tokens WHERE token = ?");
+          for (const token of expired) remove.run(token);
+        });
       } catch {
-        // Keep the previous state so a later send retries pruning. Expired tokens
-        // are still excluded from this delivery.
+        // Expired tokens stay excluded and a later delivery retries pruning them.
       }
     }
-    return Array.from(active.keys());
+    return active;
   }
 
-  private loadFromDisk(): void {
-    try {
-      if (!existsSync(this.filePath)) {
-        return;
-      }
-      ensurePrivateFile(this.filePath);
-      const raw = readFileSync(this.filePath, "utf-8");
-      const parsed = JSON.parse(raw) as { subscriptions?: unknown; tokens?: unknown };
-      const loaded = new Map<string, number>();
-      const subscriptions = Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [];
-      for (const value of subscriptions) {
-        if (!value || typeof value !== "object") continue;
-        const candidate = value as { token?: unknown; expiresAt?: unknown };
-        if (typeof candidate.token !== "string" || typeof candidate.expiresAt !== "string")
-          continue;
-        const token = candidate.token.trim();
-        const expiresAt = Date.parse(candidate.expiresAt);
-        if (token && Number.isFinite(expiresAt)) {
-          loaded.set(token, expiresAt);
-        }
-      }
-      this.subscriptions = loaded;
-
-      const legacyTokens = Array.isArray(parsed.tokens)
-        ? parsed.tokens.filter((token): token is string => typeof token === "string")
-        : [];
-      if (legacyTokens.length > 0) {
-        const migrated = new Map(loaded);
-        const expiresAt = this.now() + this.leaseMs;
-        for (const token of legacyTokens) {
-          const normalized = token.trim();
-          if (normalized) migrated.set(normalized, expiresAt);
-        }
-        this.persist(migrated);
-        this.subscriptions = migrated;
-      }
-      this.logger.info({ total: this.subscriptions.size }, "Loaded push tokens");
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.warn({ err }, "Failed to load push tokens");
-    }
+  private readToken(token: string): z.infer<typeof PushTokenRecordSchema> | null {
+    const row = this.database
+      .prepare("SELECT payload FROM push_tokens WHERE token = ?")
+      .get(token) as PushTokenRow | undefined;
+    return row ? PushTokenRecordSchema.parse(JSON.parse(row.payload)) : null;
   }
 
-  private persist(subscriptions: ReadonlyMap<string, number>): void {
+  private count(): number {
+    const row = this.database.prepare("SELECT count(*) AS count FROM push_tokens").get() as {
+      count: number;
+    };
+    return row.count;
+  }
+
+  private importLegacyTokens(): void {
+    if (hasLegacyImportMarker(this.database, LEGACY_IMPORT_STORE)) return;
+
     try {
-      const payload =
-        JSON.stringify(
-          {
-            subscriptions: Array.from(subscriptions, ([token, expiresAt]) => ({
-              token,
-              expiresAt: new Date(expiresAt).toISOString(),
-            })),
-          },
-          null,
-          2,
-        ) + "\n";
-      this.write(this.filePath, payload);
+      runInTransaction(this.database, () => {
+        let importedCount = 0;
+        let skippedCount = 0;
+        if (this.count() === 0 && existsSync(this.legacyFilePath)) {
+          ensurePrivateFile(this.legacyFilePath);
+          const raw = readFileSync(this.legacyFilePath, "utf-8");
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch (error) {
+            this.logger.warn(
+              { err: error, filePath: this.legacyFilePath },
+              "Skipping invalid legacy push token file",
+            );
+            skippedCount += 1;
+          }
+
+          const source = parsed && typeof parsed === "object" ? parsed : {};
+          const subscriptions = Array.isArray((source as { subscriptions?: unknown }).subscriptions)
+            ? (source as { subscriptions: unknown[] }).subscriptions
+            : [];
+          const tokens = Array.isArray((source as { tokens?: unknown }).tokens)
+            ? (source as { tokens: unknown[] }).tokens.map((token) => ({
+                token,
+                expiresAt: new Date(this.now() + this.leaseMs).toISOString(),
+              }))
+            : [];
+
+          for (const candidate of [...subscriptions, ...tokens]) {
+            const record = PushTokenRecordSchema.safeParse(candidate);
+            if (!record.success) {
+              skippedCount += 1;
+              this.logger.warn(
+                { filePath: this.legacyFilePath, err: record.error },
+                "Skipping invalid legacy push token",
+              );
+              continue;
+            }
+            const result = this.database
+              .prepare("INSERT OR IGNORE INTO push_tokens (token, payload) VALUES (?, ?)")
+              .run(record.data.token, JSON.stringify(record.data));
+            importedCount += Number(result.changes);
+          }
+        }
+        recordLegacyImportMarker(this.database, LEGACY_IMPORT_STORE, {
+          importedCount,
+          skippedCount,
+        });
+        this.logger.info({ importedCount, skippedCount }, "Legacy push token import complete");
+      });
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.logger.warn({ err }, "Failed to persist push tokens");
-      throw err;
+      throw new Error(`Failed to import legacy push tokens from ${this.legacyFilePath}`, {
+        cause: error,
+      });
     }
   }
 }

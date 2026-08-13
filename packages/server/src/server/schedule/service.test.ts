@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
@@ -41,6 +42,7 @@ import {
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
+import { openDatabase } from "../db/open.js";
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
@@ -75,10 +77,15 @@ const TEST_CLAUDE_PROVIDER_DEFINITION = {
 };
 
 let workspaceArchiveInProgress = false;
+let database: DatabaseSync;
 
 type TestScheduleServiceOptions = Omit<
   ScheduleServiceOptions,
-  "createAgent" | "createDirectoryWorkspace" | "createPaseoWorktreeWorkspace" | "archiveWorkspace"
+  | "database"
+  | "createAgent"
+  | "createDirectoryWorkspace"
+  | "createPaseoWorktreeWorkspace"
+  | "archiveWorkspace"
 > & {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
@@ -159,6 +166,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
   };
   return new ScheduleService({
     ...options,
+    database,
     createAgent:
       options.createAgent ??
       ((input) =>
@@ -300,6 +308,7 @@ describe("ScheduleService", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "schedule-service-test-"));
+    database = openDatabase(tempDir);
     await mkdir(join(tempDir, "agents"), { recursive: true });
     agentStorage = new AgentStorage(join(tempDir, "agents"), createTestLogger());
     await agentStorage.initialize();
@@ -310,6 +319,7 @@ describe("ScheduleService", () => {
     // Drain pending background persists before deleting the dir to avoid
     // ENOTEMPTY races when AgentManager flushes a snapshot mid-cleanup.
     await agentStorage.flush();
+    database.close();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -768,7 +778,11 @@ describe("ScheduleService", () => {
     const runStarted = new Promise<void>((resolve) => {
       releaseRun = resolve;
     });
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore({
+      database,
+      legacyDir: join(tempDir, "schedules"),
+      logger: createTestLogger(),
+    });
     const legacy = await store.create({
       name: null,
       prompt: "finish/update race",
@@ -1891,7 +1905,11 @@ describe("ScheduleService", () => {
     const interruptedAt = now.toISOString();
     const associatedAgentId = "11111111-1111-4111-8111-111111111111";
     const workspaceId = "wks_interrupted_with_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore({
+      database,
+      legacyDir: join(tempDir, "schedules"),
+      logger: createTestLogger(),
+    });
     await store.update(created.id, (schedule) => ({
       ...schedule,
       runs: [
@@ -1959,7 +1977,11 @@ describe("ScheduleService", () => {
 
     const interruptedAt = now.toISOString();
     const workspaceId = "wks_interrupted_without_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore({
+      database,
+      legacyDir: join(tempDir, "schedules"),
+      logger: createTestLogger(),
+    });
     await store.update(created.id, (schedule) => ({
       ...schedule,
       runs: [

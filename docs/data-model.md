@@ -30,7 +30,20 @@ Workspace archive runs lifecycle teardown from the exact `cwd` but removes only 
 `worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
 checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
 
-Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
+Paseo stores schedules and push tokens in `$PASEO_HOME/paseo.db`. The remaining record stores use
+JSON files. SQLite migrations are ordered SQL scripts tracked by `PRAGMA user_version`. Record
+tables keep identity and queried fields in columns and the complete record in a JSON `payload`
+column. Reads validate that payload with the same Zod schema used at the store boundary.
+
+Each SQLite-backed store owns a one-way import from its legacy JSON path. On first open, an empty
+table imports valid legacy records in one transaction and writes a marker to `legacy_imports`.
+Invalid records are skipped and logged. Once the marker exists, SQLite is the only authority for
+that store: the daemon does not read from or write to the legacy path. Legacy files remain untouched
+so downgrading resumes from the state captured when the import ran; there is no automatic
+down-migration.
+
+JSON stores rely on optional fields with defaults for forward compatibility. Most write atomically
+with a temporary file and rename; see each section for exceptions.
 
 All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
@@ -49,11 +62,12 @@ $PASEO_HOME/
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
 ├── daemon.log                           # Default log file (path configurable)
+├── paseo.db                             # SQLite schedules, push tokens, and import markers
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
-├── schedules/
-│   └── {scheduleId}.json                # One file per schedule
+├── schedules/                           # Legacy schedule import source, left untouched
+│   └── {scheduleId}.json
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
@@ -61,10 +75,10 @@ $PASEO_HOME/
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
-└── push-tokens.json                     # Expo push notification tokens
+└── push-tokens.json                     # Legacy push token import source, left untouched
 ```
 
-The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
+The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). File-backed record stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
 ---
 
@@ -325,9 +339,11 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 ## 3. Schedule
 
-**Path:** `$PASEO_HOME/schedules/{id}.json`
+**Table:** `paseo.db:schedules`
 
-One file per schedule. ID is 8 hex characters.
+Each row stores `id`, `created_at`, the active name-and-target `identity_key`, and the validated
+schedule JSON in `payload`. ID is 8 hex characters. The legacy
+`$PASEO_HOME/schedules/{id}.json` files are import sources only.
 
 | Field       | Type                                  | Description                      |
 | ----------- | ------------------------------------- | -------------------------------- |
@@ -442,15 +458,20 @@ than treating it as valid.
 
 ## 6. Push Token Store
 
-**Path:** `$PASEO_HOME/push-tokens.json`
+**Table:** `paseo.db:push_tokens`
+
+Legacy import source:
 
 ```json
 {
-  "tokens": ["ExponentPushToken[...]", ...]
+  "subscriptions": [{ "token": "ExponentPushToken[...]", "expiresAt": "2026-08-12T00:00:00.000Z" }]
 }
 ```
 
-Simple set of Expo push notification tokens. Loaded with permissive parsing (filters non-string entries). Persisted with atomic temp-file rename.
+The older `{ "tokens": [...] }` shape is imported with a fresh lease. Each token is a row keyed by
+its normalized string, with the validated subscription record in `payload`.
+`$PASEO_HOME/push-tokens.json` is read once as an import source. Non-string and empty legacy entries
+are skipped and logged.
 
 ---
 

@@ -1,19 +1,43 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { DatabaseSync } from "node:sqlite";
+import type pino from "pino";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { openDatabase } from "../db/open.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleStore } from "./store.js";
 
 describe("ScheduleStore", () => {
   let tempDir: string;
+  let database: DatabaseSync;
   let store: ScheduleStore;
+
+  function createStore(logger = createTestLogger()): ScheduleStore {
+    return new ScheduleStore({
+      database,
+      legacyDir: join(tempDir, "schedules"),
+      logger,
+    });
+  }
+
+  function createRecordingLogger(warn: pino.Logger["warn"]): pino.Logger {
+    const logger = {
+      child: () => logger,
+      info: () => undefined,
+      warn,
+    };
+    return logger as unknown as pino.Logger;
+  }
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "schedule-store-test-"));
-    store = new ScheduleStore(tempDir);
+    database = openDatabase(tempDir);
+    store = createStore();
   });
 
   afterEach(async () => {
+    database.close();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -40,7 +64,7 @@ describe("ScheduleStore", () => {
       runs: [],
     });
 
-    const reloaded = new ScheduleStore(tempDir);
+    const reloaded = createStore();
     const listed = await reloaded.list();
 
     expect(created.id).toHaveLength(8);
@@ -81,7 +105,7 @@ describe("ScheduleStore", () => {
     };
     await store.update(created.id, () => updated);
 
-    const reloaded = await new ScheduleStore(tempDir).get(created.id);
+    const reloaded = await createStore().get(created.id);
     expect(reloaded).toEqual(updated);
   });
 
@@ -182,7 +206,7 @@ describe("ScheduleStore", () => {
       prompt: "after",
       runs: [{ id: "run-1" }],
     });
-    await expect(new ScheduleStore(tempDir).get(created.id)).resolves.toMatchObject({
+    await expect(createStore().get(created.id)).resolves.toMatchObject({
       prompt: "after",
       runs: [{ id: "run-1" }],
     });
@@ -211,7 +235,11 @@ describe("ScheduleStore", () => {
       }
     }
 
-    const gatedStore = new GatedListScheduleStore(tempDir);
+    const gatedStore = new GatedListScheduleStore({
+      database,
+      legacyDir: join(tempDir, "schedules"),
+      logger: createTestLogger(),
+    });
     const target = {
       type: "new-agent" as const,
       config: { provider: "claude" as const, cwd: tempDir },
@@ -303,5 +331,100 @@ describe("ScheduleStore", () => {
       prompt: "before",
     });
     expect(await gatedStore.list()).toHaveLength(2);
+  });
+
+  test("imports legacy schedules once and records the marker", async () => {
+    const legacyDir = join(tempDir, "schedules");
+    await mkdir(legacyDir, { recursive: true });
+    const legacy = {
+      id: "legacy01",
+      name: "Legacy",
+      prompt: "Imported",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      target: {
+        type: "new-agent" as const,
+        config: { provider: "claude" as const, cwd: tempDir },
+      },
+      status: "active" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    };
+    await writeFile(join(legacyDir, "legacy01.json"), JSON.stringify(legacy));
+    database.prepare("DELETE FROM legacy_imports WHERE store = ?").run("schedules");
+
+    const imported = createStore();
+    await expect(imported.get(legacy.id)).resolves.toEqual(legacy);
+    await imported.delete(legacy.id);
+
+    createStore();
+    await expect(imported.get(legacy.id)).resolves.toBeNull();
+    expect(
+      database
+        .prepare("SELECT imported_count FROM legacy_imports WHERE store = ?")
+        .get("schedules"),
+    ).toMatchObject({ imported_count: 1 });
+  });
+
+  test("skips and logs invalid legacy schedule records", async () => {
+    const legacyDir = join(tempDir, "schedules");
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(join(legacyDir, "invalid.json"), "{not-json");
+    database.prepare("DELETE FROM legacy_imports WHERE store = ?").run("schedules");
+    const warn = vi.fn();
+
+    createStore(createRecordingLogger(warn));
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: join(legacyDir, "invalid.json") }),
+      "Skipping invalid legacy schedule record",
+    );
+    expect(
+      database.prepare("SELECT skipped_count FROM legacy_imports WHERE store = ?").get("schedules"),
+    ).toMatchObject({ skipped_count: 1 });
+  });
+
+  test("rolls back the whole legacy schedule import on failure", async () => {
+    const legacyDir = join(tempDir, "schedules");
+    await mkdir(legacyDir, { recursive: true });
+    const legacy = {
+      id: "duplicate",
+      name: null,
+      prompt: "Imported",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      target: {
+        type: "new-agent" as const,
+        config: { provider: "claude" as const, cwd: tempDir },
+      },
+      status: "active" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    };
+    await Promise.all([
+      writeFile(join(legacyDir, "one.json"), JSON.stringify(legacy)),
+      writeFile(join(legacyDir, "two.json"), JSON.stringify(legacy)),
+    ]);
+    database.prepare("DELETE FROM legacy_imports WHERE store = ?").run("schedules");
+
+    expect(() => createStore()).toThrow("Failed to import legacy schedules");
+    expect(database.prepare("SELECT count(*) AS count FROM schedules").get()).toMatchObject({
+      count: 0,
+    });
+    expect(
+      database
+        .prepare("SELECT count(*) AS count FROM legacy_imports WHERE store = ?")
+        .get("schedules"),
+    ).toMatchObject({ count: 0 });
   });
 });

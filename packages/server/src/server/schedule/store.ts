@@ -1,12 +1,17 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import {
   StoredScheduleSchema,
   type ScheduleTarget,
   type StoredSchedule,
 } from "@getpaseo/protocol/schedule/types";
-import { writeJsonFileAtomic } from "../atomic-file.js";
+import type { Logger } from "pino";
+import { hasLegacyImportMarker, recordLegacyImportMarker } from "../db/legacy-imports.js";
+import { runInTransaction } from "../db/transaction.js";
+
+const LEGACY_IMPORT_STORE = "schedules";
 
 function generateScheduleId(): string {
   return randomBytes(4).toString("hex");
@@ -17,6 +22,16 @@ type ScheduleUpdater = (schedule: StoredSchedule) => StoredSchedule | Promise<St
 interface ScheduleNameTargetUpsert {
   create: () => Omit<StoredSchedule, "id"> | Promise<Omit<StoredSchedule, "id">>;
   update: ScheduleUpdater;
+}
+
+interface ScheduleStoreOptions {
+  database: DatabaseSync;
+  legacyDir: string;
+  logger: Logger;
+}
+
+interface ScheduleRow {
+  payload: string;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -90,42 +105,29 @@ function matchesNameAndTarget(
 export class ScheduleStore {
   private readonly scheduleMutations = new Map<string, Promise<unknown>>();
   private readonly identityMutations = new Map<string, Promise<unknown>>();
+  private readonly database: DatabaseSync;
+  private readonly legacyDir: string;
+  private readonly logger: Logger;
 
-  constructor(private readonly dir: string) {}
-
-  private filePath(id: string): string {
-    return join(this.dir, `${id}.json`);
-  }
-
-  private async ensureDir(): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
+  constructor(options: ScheduleStoreOptions) {
+    this.database = options.database;
+    this.legacyDir = options.legacyDir;
+    this.logger = options.logger.child({ component: "schedule-store" });
+    this.importLegacySchedules();
   }
 
   async list(): Promise<StoredSchedule[]> {
-    await this.ensureDir();
-    const entries = await readdir(this.dir, { withFileTypes: true });
-    const schedules = await Promise.all(
-      entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-        .map(async (entry) => {
-          const content = await readFile(join(this.dir, entry.name), "utf-8");
-          return StoredScheduleSchema.parse(JSON.parse(content));
-        }),
-    );
-    return schedules.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const rows = this.database
+      .prepare("SELECT payload FROM schedules ORDER BY created_at, id")
+      .all() as unknown as ScheduleRow[];
+    return rows.map((row) => StoredScheduleSchema.parse(JSON.parse(row.payload)));
   }
 
   async get(id: string): Promise<StoredSchedule | null> {
-    await this.ensureDir();
-    try {
-      const content = await readFile(this.filePath(id), "utf-8");
-      return StoredScheduleSchema.parse(JSON.parse(content));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw error;
-    }
+    const row = this.database.prepare("SELECT payload FROM schedules WHERE id = ?").get(id) as
+      | ScheduleRow
+      | undefined;
+    return row ? StoredScheduleSchema.parse(JSON.parse(row.payload)) : null;
   }
 
   async create(schedule: Omit<StoredSchedule, "id">): Promise<StoredSchedule> {
@@ -184,15 +186,39 @@ export class ScheduleStore {
     });
   }
 
-  private async write(schedule: StoredSchedule): Promise<void> {
-    await this.ensureDir();
-    await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
+  private write(schedule: StoredSchedule): void {
+    const identityKey =
+      schedule.status !== "completed" && normalizeOptionalScheduleName(schedule.name) !== null
+        ? nameTargetIdentityKey(schedule.name!, schedule.target)
+        : null;
+    this.database
+      .prepare(
+        `INSERT INTO schedules (id, created_at, identity_key, payload)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           created_at = excluded.created_at,
+           identity_key = excluded.identity_key,
+           payload = excluded.payload`,
+      )
+      .run(schedule.id, schedule.createdAt, identityKey, JSON.stringify(schedule));
+  }
+
+  private insert(schedule: StoredSchedule): void {
+    const identityKey =
+      schedule.status !== "completed" && normalizeOptionalScheduleName(schedule.name) !== null
+        ? nameTargetIdentityKey(schedule.name!, schedule.target)
+        : null;
+    this.database
+      .prepare(
+        `INSERT INTO schedules (id, created_at, identity_key, payload)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(schedule.id, schedule.createdAt, identityKey, JSON.stringify(schedule));
   }
 
   async delete(id: string): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
-      await this.ensureDir();
-      await rm(this.filePath(id), { force: true });
+      this.database.prepare("DELETE FROM schedules WHERE id = ?").run(id);
     });
   }
 
@@ -249,5 +275,61 @@ export class ScheduleStore {
       await this.write(updated);
       return updated;
     });
+  }
+
+  private count(): number {
+    const row = this.database.prepare("SELECT count(*) AS count FROM schedules").get() as {
+      count: number;
+    };
+    return row.count;
+  }
+
+  private importLegacySchedules(): void {
+    if (hasLegacyImportMarker(this.database, LEGACY_IMPORT_STORE)) {
+      return;
+    }
+
+    try {
+      runInTransaction(this.database, () => {
+        let importedCount = 0;
+        let skippedCount = 0;
+        if (this.count() === 0 && existsSync(this.legacyDir)) {
+          const entries = readdirSync(this.legacyDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!entry.isFile() || !entry.name.endsWith(".json")) {
+              continue;
+            }
+            const filePath = join(this.legacyDir, entry.name);
+            const content = readFileSync(filePath, "utf-8");
+            let json: unknown;
+            try {
+              json = JSON.parse(content);
+            } catch (error) {
+              skippedCount += 1;
+              this.logger.warn({ err: error, filePath }, "Skipping invalid legacy schedule record");
+              continue;
+            }
+            const parsed = StoredScheduleSchema.safeParse(json);
+            if (!parsed.success) {
+              skippedCount += 1;
+              this.logger.warn(
+                { err: parsed.error, filePath },
+                "Skipping invalid legacy schedule record",
+              );
+              continue;
+            }
+            this.insert(parsed.data);
+            importedCount += 1;
+          }
+        }
+        recordLegacyImportMarker(this.database, LEGACY_IMPORT_STORE, {
+          importedCount,
+          skippedCount,
+        });
+        this.logger.info({ importedCount, skippedCount }, "Legacy schedule import complete");
+      });
+    } catch (error) {
+      throw new Error(`Failed to import legacy schedules from ${this.legacyDir}`, { cause: error });
+    }
   }
 }

@@ -79,6 +79,32 @@ export function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
+type ShutdownStep = readonly [name: string, run: () => void | Promise<void>];
+
+export async function runShutdownSequence(
+  steps: readonly ShutdownStep[],
+  onFailure: (name: string, error: unknown) => void,
+): Promise<void> {
+  let failed = false;
+  let firstFailure: unknown;
+
+  for (const [name, run] of steps) {
+    try {
+      await run();
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        firstFailure = error;
+      }
+      onFailure(name, error);
+    }
+  }
+
+  if (failed) {
+    throw firstFailure;
+  }
+}
+
 function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget) {
     return null;
@@ -216,6 +242,8 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
+import { openDatabase } from "./db/open.js";
+import { PushTokenStore } from "./push/token-store.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -552,6 +580,21 @@ export async function createPaseoDaemon(
 ): Promise<PaseoDaemon> {
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
+  const database = openDatabase(config.paseoHome);
+  try {
+    return await createPaseoDaemonWithDatabase(config, logger, dependencies, database);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+async function createPaseoDaemonWithDatabase(
+  config: PaseoDaemonConfig,
+  logger: Logger,
+  dependencies: PaseoDaemonDependencies,
+  database: ReturnType<typeof openDatabase>,
+): Promise<PaseoDaemon> {
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
@@ -1205,6 +1248,7 @@ export async function createPaseoDaemon(
   };
   const scheduleService = new ScheduleService({
     paseoHome: config.paseoHome,
+    database,
     logger,
     agentManager,
     agentStorage,
@@ -1222,6 +1266,11 @@ export async function createPaseoDaemon(
     }
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  const pushTokenStore = new PushTokenStore({
+    database,
+    legacyFilePath: path.join(config.paseoHome, "push-tokens.json"),
+    logger,
+  });
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
   const persistedRecords = await agentStorage.list();
   logger.info(
@@ -1504,6 +1553,7 @@ export async function createPaseoDaemon(
               agentManager,
               agentStorage,
               downloadTokenStore,
+              pushTokenStore,
               config.paseoHome,
               daemonConfigStore,
               mcpBaseUrl,
@@ -1613,40 +1663,46 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await hubRelationships.stop();
-    workspaceReconciliation.dispose();
-    scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
-    await agentManager.flushForShutdown().catch(() => undefined);
-    detachAgentStoragePersistence();
-    await agentStorage.flush().catch(() => undefined);
-    await providerSnapshotManager.shutdown();
-    terminalManager.killAll();
-    speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
-    await relayRuntime?.stop().catch(() => undefined);
-    if (wsServer) {
-      await wsServer.close();
-    }
-    await serviceProxy.stopStandalone();
-    // Force-drop remaining sockets so httpServer.close() resolves promptly.
-    // We've already closed wsServer (which sent ws-layer close frames) and
-    // stopped every other service, so anything still attached is a TCP
-    // socket whose higher-level shutdown hasn't fully released it (e.g.
-    // upgraded WS sockets in the closing handshake, or HTTP keep-alive
-    // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
-    // upgraded sockets, so we use closeAllConnections() here.
-    httpServer.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-    });
-    // Clean up socket files
-    if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-      unlinkSync(listenTarget.path);
-    }
+    await runShutdownSequence(
+      [
+        ["hub relationships", () => hubRelationships.stop()],
+        ["workspace reconciliation", () => workspaceReconciliation.dispose()],
+        ["script health monitor", () => scriptHealthMonitor.stop()],
+        // Freeze both ingress and registration before taking the agent closure snapshot.
+        ["WebSocket ingress", () => wsServer?.prepareForShutdown()],
+        ["agent ingress", () => agentManager.prepareForShutdown()],
+        ["agents", () => closeAllAgents(logger, agentManager)],
+        ["agent manager persistence", () => agentManager.flushForShutdown()],
+        ["agent storage persistence hook", () => detachAgentStoragePersistence()],
+        ["agent storage", () => agentStorage.flush()],
+        ["provider snapshots", () => providerSnapshotManager.shutdown()],
+        ["terminals", () => terminalManager.killAll()],
+        ["speech", () => speechService.stop()],
+        ["schedules", () => scheduleService.stop()],
+        ["relay", () => relayRuntime?.stop()],
+        ["WebSocket server", () => wsServer?.close()],
+        ["service proxy", () => serviceProxy.stopStandalone()],
+        // Force-drop remaining sockets so httpServer.close() resolves promptly.
+        // We've already closed wsServer (which sent ws-layer close frames) and
+        // stopped every other service, so anything still attached is a TCP
+        // socket whose higher-level shutdown hasn't fully released it (e.g.
+        // upgraded WS sockets in the closing handshake, or HTTP keep-alive
+        // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
+        // upgraded sockets, so we use closeAllConnections() here.
+        ["HTTP connections", () => httpServer.closeAllConnections()],
+        ["HTTP server", () => new Promise<void>((resolve) => httpServer.close(() => resolve()))],
+        [
+          "socket file",
+          () => {
+            if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+              unlinkSync(listenTarget.path);
+            }
+          },
+        ],
+        ["database", () => database.close()],
+      ],
+      (name, error) => logger.warn({ err: error, step: name }, "Daemon shutdown step failed"),
+    );
   };
 
   return {

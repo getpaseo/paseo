@@ -51,6 +51,7 @@
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
+    "db:query": "../../scripts/dev-home.sh tsx scripts/db-query.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --fileParallelism --exclude \"**/*.e2e.test.ts\"",
     "test:integration": "vitest run --maxWorkers=1 src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts && vitest run --maxWorkers=1 src/server/session.create-agent-worktree-autoarchive.e2e.test.ts -t \"creates a worktree and auto-archives both\"",
@@ -107,7 +108,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/express": "^4.17.20",
-    "@types/node": "^20.9.0",
+    "@types/node": "^22.20.1",
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.5.8",
@@ -119,5 +120,8 @@
   },
   "overrides": {
     "lightningcss": "1.30.1"
+  },
+  "engines": {
+    "node": ">=22.20.0"
   }
 }
