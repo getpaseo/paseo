@@ -11,6 +11,7 @@ describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
     expect(resolveProviderIconName("kiro")).toEqual({ kind: "builtin", id: "kiro" });
     expect(resolveProviderIconName("claude")).toEqual({ kind: "builtin", id: "claude" });
+    expect(resolveProviderIconName("jcode")).toEqual({ kind: "builtin", id: "jcode" });
     expect(resolveProviderIconName("omp")).toEqual({ kind: "builtin", id: "omp" });
     expect(resolveProviderIconName("minimax")).toEqual({ kind: "builtin", id: "minimax" });
   });
