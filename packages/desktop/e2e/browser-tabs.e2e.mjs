@@ -682,6 +682,46 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
   if (JSON.parse(selectorResult.resultJson) !== true) {
     failures.push("reused loaded browser remains ready for element annotation after remount");
   }
+  await clickGuestElement(page, client, browserId, "#bridge-target");
+  const annotationInput = page.getByRole("textbox", {
+    name: "Message to the agent about this element…",
+  });
+  await annotationInput.waitFor({ state: "attached", timeout: 5_000 });
+  const annotationPresentation = await annotationInput.evaluate((input) => {
+    const rect = input.getBoundingClientRect();
+    const centerTarget = document.elementFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    return {
+      visible:
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.bottom > 0 &&
+        rect.top < window.innerHeight &&
+        getComputedStyle(input).visibility !== "hidden",
+      targetTag: centerTarget instanceof Element ? centerTarget.tagName : null,
+      targetInsideInput: input === centerTarget || input.contains(centerTarget),
+    };
+  });
+  assert(
+    annotationPresentation.visible,
+    `Browser annotation input has no visible bounds: ${JSON.stringify(annotationPresentation)}`,
+  );
+  assert(
+    annotationPresentation.targetInsideInput,
+    `Browser surface covers the annotation input: ${JSON.stringify(annotationPresentation)}`,
+  );
+  await annotationInput.fill("Visible annotation");
+  const attachButton = page.getByRole("button", { name: "Attach" });
+  await attachButton.waitFor({ state: "visible", timeout: 5_000 });
+  await page.waitForFunction(
+    (button) => button?.getAttribute("aria-busy") !== "true" && !button?.hasAttribute("disabled"),
+    await attachButton.elementHandle(),
+    { timeout: 5_000 },
+  );
+  await attachButton.click();
+  await annotationInput.waitFor({ state: "detached", timeout: 5_000 });
 
   if (failures.length > 0) {
     throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);

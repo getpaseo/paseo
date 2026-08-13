@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { collectRetainedAttachmentIds } from "./gc-retention";
 import type { WorkspaceComposerAttachment } from "./types";
 import {
   appendWorkspaceAttachment,
@@ -45,6 +46,32 @@ function reviewAttachment(body: string): WorkspaceComposerAttachment {
           },
         },
       ],
+    },
+  };
+}
+
+function browserElementAttachment(screenshotId: string): WorkspaceComposerAttachment {
+  return {
+    kind: "browser_element",
+    attachment: {
+      url: "https://example.com",
+      selector: "#target",
+      tag: "button",
+      text: "Target",
+      outerHTML: '<button id="target">Target</button>',
+      computedStyles: {},
+      boundingRect: { x: 0, y: 0, width: 100, height: 40 },
+      reactSource: null,
+      parentChain: [],
+      children: [],
+      screenshot: {
+        id: screenshotId,
+        mimeType: "image/png",
+        storageType: "desktop-file",
+        storageKey: `/tmp/${screenshotId}.png`,
+        createdAt: 1,
+      },
+      formatted: "selector: #target",
     },
   };
 }
@@ -147,6 +174,24 @@ describe("workspace attachments store", () => {
     const replacement = chatHistoryAttachment("chat_history:draft-1", "Updated chat.");
 
     expect(appendWorkspaceAttachment([original], replacement)).toEqual([replacement]);
+  });
+
+  it("retains browser screenshots while their workspace attachment exists", () => {
+    resetWorkspaceAttachmentsStore();
+    const scopeKey = buildWorkspaceAttachmentScopeKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+    });
+    const attachment = browserElementAttachment("screenshot-1");
+
+    useWorkspaceAttachmentsStore.getState().addWorkspaceAttachment({ scopeKey, attachment });
+
+    expect(collectRetainedAttachmentIds()).toContain("screenshot-1");
+
+    useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
+
+    expect(collectRetainedAttachmentIds()).not.toContain("screenshot-1");
   });
 
   it("adds a workspace attachment against the current scope state", () => {
