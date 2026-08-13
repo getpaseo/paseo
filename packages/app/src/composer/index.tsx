@@ -1154,7 +1154,7 @@ export function Composer({
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
-  const [isPastingImage, setIsPastingImage] = useState(false);
+  const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
@@ -1501,7 +1501,7 @@ export function Composer({
 
   const handleNativePasteImages = useCallback(
     (files: readonly NativePastedFile[]) => {
-      setIsPastingImage(true);
+      setPendingNativeImagePastes((pending) => pending + 1);
       void pickAndPersistImages({
         pickImages: async () => normalizeNativePastedImages(files),
         persister: composerImageAttachmentPersister,
@@ -1517,7 +1517,7 @@ export function Composer({
           toastErrorRef.current(t("composer.errors.pasteImageFailed"));
         })
         .finally(() => {
-          setIsPastingImage(false);
+          setPendingNativeImagePastes((pending) => Math.max(0, pending - 1));
         });
     },
     [addImages, t],
@@ -2113,7 +2113,7 @@ export function Composer({
   const messageInputContainerRef = useRef<View>(null);
 
   const isSubmitLoadingVisible =
-    isProcessing || isSubmitLoading || isUploadingFile || isPastingImage;
+    isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
     isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
