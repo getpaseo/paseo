@@ -84,6 +84,28 @@ async function tailDaemonLog(): Promise<string> {
   }
 }
 
+async function retryWhileWorkerRuns<T>(
+  worker: ChildProcess,
+  probe: () => Promise<T>,
+  accepts: (result: T) => boolean,
+  failureDetails: (result: T) => string | Promise<string>,
+): Promise<T> {
+  const deadline = Date.now() + 120_000;
+  let result = await probe();
+
+  while (!accepts(result)) {
+    assert(
+      worker.exitCode === null && worker.signalCode === null,
+      "IPC daemon exited before the probe completed",
+    );
+    assert(Date.now() < deadline, await failureDetails(result));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    result = await probe();
+  }
+
+  return result;
+}
+
 try {
   // Test 1: daemon --help shows subcommands
   {
@@ -214,33 +236,28 @@ try {
     });
 
     try {
-      const deadline = Date.now() + 120_000;
-      let status = await daemonCommand(["status", "--json"]);
-      let payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
-      let pairing = await daemonCommand(["pair", "--json"]);
-      while (
-        payload?.connectedDaemon !== "reachable" ||
-        payload.relay === "disabled" ||
-        pairing.exitCode !== 0
-      ) {
-        assert(
-          worker.exitCode === null && worker.signalCode === null,
-          "IPC daemon exited before becoming reachable",
-        );
-        assert(
-          Date.now() < deadline,
+      const relayProbe = await retryWhileWorkerRuns(
+        worker,
+        async () => {
+          const statusResult = await daemonCommand(["status", "--json"]);
+          const statusPayload =
+            statusResult.exitCode === 0 ? JSON.parse(statusResult.stdout) : null;
+          const pairingResult = await daemonCommand(["pair", "--json"]);
+          return { statusResult, statusPayload, pairingResult };
+        },
+        (result) =>
+          result.statusPayload?.connectedDaemon === "reachable" &&
+          result.statusPayload.relay !== "disabled" &&
+          result.pairingResult.exitCode === 0,
+        async (result) =>
           [
             "IPC daemon did not expose live relay state",
-            `status: ${status.stdout || status.stderr}`,
-            `pairing: ${pairing.stdout || pairing.stderr}`,
+            `status: ${result.statusResult.stdout || result.statusResult.stderr}`,
+            `pairing: ${result.pairingResult.stdout || result.pairingResult.stderr}`,
             `daemon log:\n${await tailDaemonLog()}`,
           ].join("\n"),
-        );
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        status = await daemonCommand(["status", "--json"]);
-        payload = status.exitCode === 0 ? JSON.parse(status.stdout) : null;
-        pairing = await daemonCommand(["pair", "--json"]);
-      }
+      );
+      const { statusResult: status, statusPayload: payload, pairingResult: pairing } = relayProbe;
 
       assert.strictEqual(status.exitCode, 0, `IPC daemon status should succeed: ${status.stderr}`);
       assert.strictEqual(payload.connectedDaemon, "reachable", "IPC daemon should be reachable");
@@ -266,26 +283,15 @@ try {
           `${JSON.stringify({ daemon: { listen } }, null, 2)}\n`,
           "utf-8",
         );
-        let foreignPairing = await runLocalPaseo(
-          ["daemon", "pair", "--home", foreignHome, "--json"],
-          { PASEO_HOME: foreignHome },
+        const foreignPairing = await retryWhileWorkerRuns(
+          worker,
+          () =>
+            runLocalPaseo(["daemon", "pair", "--home", foreignHome, "--json"], {
+              PASEO_HOME: foreignHome,
+            }),
+          (result) => result.stderr.includes("different Paseo home"),
+          (result) => `Pairing did not report the daemon identity mismatch: ${result.stderr}`,
         );
-        const foreignDeadline = Date.now() + 120_000;
-        while (!foreignPairing.stderr.includes("different Paseo home")) {
-          assert(
-            worker.exitCode === null && worker.signalCode === null,
-            "IPC daemon exited before the identity check completed",
-          );
-          assert(
-            Date.now() < foreignDeadline,
-            `Pairing did not report the daemon identity mismatch: ${foreignPairing.stderr}`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          foreignPairing = await runLocalPaseo(
-            ["daemon", "pair", "--home", foreignHome, "--json"],
-            { PASEO_HOME: foreignHome },
-          );
-        }
         assert.notStrictEqual(
           foreignPairing.exitCode,
           0,
