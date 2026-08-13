@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
@@ -38,6 +38,7 @@ import {
   type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
+import { expandUserPath } from "../../../path-utils.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
@@ -528,16 +529,7 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
 
 function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
-  if (!configured) {
-    return join(homedir(), ".pi", "agent");
-  }
-  if (configured === "~") {
-    return homedir();
-  }
-  if (configured.startsWith("~/")) {
-    return resolvePath(homedir(), configured.slice(2));
-  }
-  return resolvePath(configured);
+  return configured ? expandUserPath(configured) : join(homedir(), ".pi", "agent");
 }
 
 function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
