@@ -17,7 +17,10 @@ import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
+import {
+  buildWorkspaceDraftAgentConfig,
+  resolveWorkspaceDraftModeId,
+} from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -88,50 +91,6 @@ function resolveAutoSubmitConfig(
   };
 }
 
-// Reconcile the form's selected mode against the currently discovered modes.
-// The mode picker displays modeOptions[0] when the stored mode isn't in the
-// list (e.g. a globally-remembered "plan" that this workspace's OpenCode config
-// no longer defines), so the submitted mode must match that display — otherwise
-// we'd send a stale mode the provider rejects while the UI showed a valid one.
-function reconcileSelectedMode(modeOptionIds: readonly string[], selectedMode: string): string {
-  if (modeOptionIds.length === 0) {
-    return "";
-  }
-  return modeOptionIds.includes(selectedMode) ? selectedMode : (modeOptionIds[0] ?? "");
-}
-
-function resolveDraftModeIdOverride(input: {
-  autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionIds: readonly string[];
-  selectedMode: string;
-}): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
-  if (autoSubmitConfig?.modeId) {
-    return { modeId: autoSubmitConfig.modeId };
-  }
-  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
-  if (reconciled !== "") {
-    return { modeId: reconciled };
-  }
-  return {};
-}
-
-function resolveDraftModeId(input: {
-  autoSubmitConfig: AutoSubmitConfig | null;
-  modeOptionIds: readonly string[];
-  selectedMode: string;
-}): string | null {
-  const { autoSubmitConfig, modeOptionIds, selectedMode } = input;
-  if (autoSubmitConfig?.modeId !== undefined) {
-    return autoSubmitConfig.modeId;
-  }
-  const reconciled = reconcileSelectedMode(modeOptionIds, selectedMode);
-  if (reconciled !== "") {
-    return reconciled;
-  }
-  return null;
-}
-
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
@@ -176,15 +135,15 @@ async function submitDraftCreateRequest(input: {
   if (!provider) {
     throw new Error(input.selectModelMessage);
   }
-  const modeIdOverride = resolveDraftModeIdOverride({
-    autoSubmitConfig,
+  const modeId = resolveWorkspaceDraftModeId({
+    requestedModeId: autoSubmitConfig?.modeId,
     modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
-    selectedMode: composerState.selectedMode,
+    selectedModeId: composerState.selectedMode,
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd,
-    ...modeIdOverride,
+    modeId,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
@@ -230,10 +189,10 @@ function buildDraftAgentSnapshot(input: {
   const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
   const thinkingOptionId =
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
-  const modeId = resolveDraftModeId({
-    autoSubmitConfig,
+  const modeId = resolveWorkspaceDraftModeId({
+    requestedModeId: autoSubmitConfig?.modeId,
     modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
-    selectedMode: composerState.selectedMode,
+    selectedModeId: composerState.selectedMode,
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {
