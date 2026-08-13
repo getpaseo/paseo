@@ -40,6 +40,12 @@ interface TimelineViewportSnapshot {
   scrollTop: number;
 }
 
+interface PersistedCanonicalTimelineRange {
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
+}
+
 export interface TimelinePresentationSnapshot {
   marker: string;
   position: TimelinePromptPositionSnapshot;
@@ -296,6 +302,49 @@ export async function reloadAgentTimelineFromPersistedReplica(
 
   await page.reload();
   await expectTimelinePromptVisible(page, agent.newestPrompt);
+}
+
+export async function waitForPersistedCanonicalTimelineRange(
+  page: Page,
+  agentId: string,
+): Promise<PersistedCanonicalTimelineRange> {
+  const readRange = () =>
+    page.evaluate((targetAgentId) => {
+      const raw = localStorage.getItem("@paseo:replica-cache");
+      if (!raw) return null;
+      const cache = JSON.parse(raw) as {
+        version?: number;
+        hosts?: Array<{
+          timeline?: {
+            agentId?: string;
+            range?: unknown;
+          } | null;
+        }>;
+      };
+      if (cache.version !== 6) return null;
+      const range = cache.hosts?.find((host) => host.timeline?.agentId === targetAgentId)?.timeline
+        ?.range;
+      if (
+        !range ||
+        typeof range !== "object" ||
+        !("epoch" in range) ||
+        typeof range.epoch !== "string" ||
+        !("startSeq" in range) ||
+        typeof range.startSeq !== "number" ||
+        !("endSeq" in range) ||
+        typeof range.endSeq !== "number"
+      ) {
+        return null;
+      }
+      return { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq };
+    }, agentId);
+
+  await expect.poll(readRange).not.toBeNull();
+  const range = await readRange();
+  if (!range) {
+    throw new Error(`Persisted canonical timeline range is missing for ${agentId}`);
+  }
+  return range;
 }
 
 export async function holdNextOlderTimelinePage(
