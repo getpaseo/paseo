@@ -197,11 +197,19 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.clock = options.clock ?? systemClock;
     this.retryPolicy = options.retryPolicy ?? new BoundedExponentialHubRetryPolicy();
     this.record = this.load();
+    if (this.record?.state === "disconnecting") {
+      // COMPAT(hubUnilateralDisconnect): added in v0.4.0, remove after 2027-02-13 once legacy records have aged out.
+      this.options.logger.warn(
+        { daemonId: this.record.relationship.daemonId },
+        "Removed legacy disconnecting Hub relationship during startup",
+      );
+      rmSync(this.filePath, { force: true });
+      this.record = null;
+    }
     if (this.record?.state === "revoked") {
       this.state = "revoked";
       this.lastError = this.record.reason ?? null;
-    } else if (this.record?.state === "disconnecting") this.state = "disconnecting";
-    else if (this.record) this.state = "connecting";
+    } else if (this.record) this.state = "connecting";
   }
 
   async start(): Promise<void> {
@@ -218,7 +226,6 @@ export class HubRelationshipController implements HubRelationshipManagement {
         );
       }
     }
-    if (this.record?.state === "disconnecting") await this.tryRevocation(this.record);
   }
 
   async stop(): Promise<void> {
@@ -291,14 +298,6 @@ export class HubRelationshipController implements HubRelationshipManagement {
       await pendingCreateCleanup;
       return { status: this.status() };
     }
-    if (input.force) {
-      this.remove();
-      await pendingCreateCleanup;
-      return {
-        status: this.status(),
-        warning: "Local Hub credential removed; remote revocation may remain pending.",
-      };
-    }
     const disconnecting: DisconnectingRecord = {
       version: 1,
       state: "disconnecting",
@@ -306,15 +305,30 @@ export class HubRelationshipController implements HubRelationshipManagement {
       credential: this.record.credential,
       ...(this.record.state === "active" ? { transport: this.record.transport } : {}),
     };
-    this.persist(disconnecting);
-    this.record = disconnecting;
     this.state = "disconnecting";
-    if (waitForEnrollment) {
+    if (waitForEnrollment && !input.force) {
       await Promise.all(this.inFlightEnrollments);
     }
-    await this.tryRevocation(disconnecting);
+    let warning: string | undefined;
+    if (!input.force) {
+      try {
+        await this.options.remote.revoke({
+          daemonId: disconnecting.relationship.daemonId,
+          hubOrigin: disconnecting.relationship.hubOrigin,
+          credential: disconnecting.credential.secret,
+        });
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, daemonId: disconnecting.relationship.daemonId },
+          "Failed to notify Hub before removing local relationship",
+        );
+        warning =
+          "Hub could not be reached; local relationship removed, but server-side revocation may remain pending.";
+      }
+    }
+    this.remove();
     await pendingCreateCleanup;
-    return { status: this.status() };
+    return { status: this.status(), ...(warning ? { warning } : {}) };
   }
 
   private async tryEnrollment(pending: PendingRecord, enrollmentGeneration: number): Promise<void> {
@@ -455,24 +469,6 @@ export class HubRelationshipController implements HubRelationshipManagement {
         this.options.logger.error({ err: error }, "Scheduled Hub enrollment retry failed");
       });
     });
-  }
-
-  private async tryRevocation(record: DisconnectingRecord): Promise<void> {
-    const generation = this.generation;
-    try {
-      await this.options.remote.revoke({
-        daemonId: record.relationship.daemonId,
-        hubOrigin: record.relationship.hubOrigin,
-        credential: record.credential.secret,
-      });
-      if (generation !== this.generation) return;
-      this.remove();
-    } catch (error) {
-      if (generation !== this.generation) return;
-      this.lastError = error instanceof Error ? error.message : String(error);
-      this.state = "disconnecting";
-      this.schedule(() => void this.tryRevocation(record));
-    }
   }
 
   private schedule(task: () => void): void {

@@ -510,6 +510,14 @@ export class HubRelationshipHarness {
     }
   }
 
+  async connectionStateBecomes(expected: string): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await this.status()).state === expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Hub connection state did not become ${expected}`);
+  }
+
   async manageRelationshipFromExternalSocket(): Promise<SessionOutboundMessage[]> {
     const address = Object.values(networkInterfaces())
       .flat()

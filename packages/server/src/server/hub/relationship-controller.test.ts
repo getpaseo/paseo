@@ -344,16 +344,18 @@ describe("Hub relationship", () => {
     const credential = relationship.relationshipFile()?.credential?.secret;
     relationship.loseEnrollmentResponse();
     await connecting.result;
-    relationship.failRevocations(2);
+    relationship.failRevocations(1);
 
     const disconnected = await relationship.disconnect();
-    expect(disconnected.state).toBe("disconnecting");
-    expect(relationship.relationshipFile()?.state).toBe("disconnecting");
+    const reconnected = await relationship.beginConnect("fresh-token").result;
 
-    await relationship.restartDaemon();
-    await relationship.retry();
-
-    expect(relationship.revocationAttempts()).toBe(3);
+    expect(disconnected).toMatchObject({
+      state: "not_connected",
+      hub: null,
+      warning: expect.stringContaining("server-side revocation may remain pending"),
+    });
+    expect(reconnected.state).toBe("connecting");
+    expect(relationship.revocationAttempts()).toBe(1);
     expect(relationship.latestRevocation()).toEqual(
       expect.objectContaining({
         daemonId: enrollment.daemonId,
@@ -361,7 +363,10 @@ describe("Hub relationship", () => {
         credential,
       }),
     );
-    expect(relationship.relationshipFile()).toBeNull();
+    expect(relationship.pendingRelationshipRetries()).toBe(0);
+    expect(relationship.loggableValues(disconnected)).toContain(
+      "Failed to notify Hub before removing local relationship",
+    );
   });
 
   test("disconnect revokes only after an in-flight enrollment settles", async () => {
@@ -371,7 +376,8 @@ describe("Hub relationship", () => {
     const enrollment = await relationship.enrollmentBegins();
 
     const disconnecting = relationship.beginDisconnect();
-    await relationship.relationshipStateBecomes("disconnecting");
+    await relationship.connectionStateBecomes("disconnecting");
+    expect(relationship.relationshipFile()?.state).toBe("pending");
     expect(relationship.revocationAttempts()).toBe(0);
 
     relationship.completeEnrollment();
@@ -383,6 +389,24 @@ describe("Hub relationship", () => {
     expect(relationship.revocationAttempts()).toBe(1);
     expect(relationship.socketAttempts()).toBe(0);
     expect(relationship.relationshipFile()).toBeNull();
+  });
+
+  test("force disconnect does not wait for or notify an in-flight enrollment", async () => {
+    relationship = await HubRelationshipHarness.start();
+    relationship.holdEnrollment();
+    const connecting = relationship.beginConnect("one-time-token");
+    await relationship.enrollmentBegins();
+
+    const disconnected = await relationship.disconnect(true);
+
+    expect(disconnected).toMatchObject({ state: "not_connected", hub: null });
+    expect(relationship.revocationAttempts()).toBe(0);
+    expect(relationship.relationshipFile()).toBeNull();
+
+    relationship.completeEnrollment();
+    await connecting.result;
+    expect(relationship.socketAttempts()).toBe(0);
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
   });
 
   test("daemon restart reconnects the same durable relationship", async () => {
@@ -729,46 +753,71 @@ describe("Hub relationship", () => {
     expect(loggable).not.toContain(enrollment.idempotencyKey);
   });
 
-  test("offline disconnect retries across runtime and restart without opening a socket", async () => {
+  test("offline disconnect removes local authority after one notify attempt", async () => {
     relationship = await HubRelationshipHarness.start();
     await relationship.beginConnect().result;
     relationship.connectLatestSocket();
     relationship.failRevocations(3);
 
-    const disconnecting = await relationship.disconnect();
-    await relationship.retry();
+    const disconnected = await relationship.disconnect();
     await relationship.restartDaemon();
-    await relationship.retry();
 
-    expect(disconnecting.state).toBe("disconnecting");
-    expect(relationship.revocationAttempts()).toBe(4);
+    expect(disconnected).toMatchObject({
+      state: "not_connected",
+      hub: null,
+      warning: expect.stringContaining("server-side revocation may remain pending"),
+    });
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
+    expect(relationship.revocationAttempts()).toBe(1);
     expect(relationship.socketAttempts()).toBe(1);
+    expect(relationship.pendingRelationshipRetries()).toBe(0);
     expect(relationship.relationshipFile()).toBeNull();
   });
 
-  test("successful disconnect clears a transient revocation error", async () => {
+  test("successful disconnect notifies the Hub and returns clean local status", async () => {
     relationship = await HubRelationshipHarness.start();
     await relationship.beginConnect().result;
-    relationship.failRevocations(1);
 
-    const disconnecting = await relationship.disconnect();
-    await relationship.retry();
+    const disconnected = await relationship.disconnect();
 
-    expect(disconnecting).toMatchObject({ state: "disconnecting", error: expect.any(String) });
+    expect(disconnected).toMatchObject({ state: "not_connected", hub: null, error: null });
+    expect(disconnected).not.toHaveProperty("warning");
+    expect(relationship.revocationAttempts()).toBe(1);
     expect(await relationship.status()).toMatchObject({ state: "not_connected", error: null });
   });
 
-  test("force disconnect removes local authority and reports the remote warning", async () => {
+  test("force disconnect removes local authority without notifying the Hub", async () => {
     relationship = await HubRelationshipHarness.start();
     await relationship.beginConnect().result;
-    relationship.failRevocations(1);
-    await relationship.disconnect();
 
     const forced = await relationship.disconnect(true);
 
-    expect(forced.state).toBe("not_connected");
-    expect(forced.warning).toContain("remote revocation");
+    expect(forced).toMatchObject({ state: "not_connected", hub: null });
+    expect(forced).not.toHaveProperty("warning");
+    expect(relationship.revocationAttempts()).toBe(0);
+    expect(relationship.loggableValues(forced)).not.toContain(
+      "Failed to notify Hub before removing local relationship",
+    );
     expect(relationship.relationshipFile()).toBeNull();
+  });
+
+  test("startup removes a legacy persisted disconnecting relationship", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    const active = relationship.relationshipFile();
+    await relationship.corruptRelationshipFile(
+      JSON.stringify({ ...active, state: "disconnecting" }),
+    );
+
+    await relationship.startStoppedDaemon();
+
+    expect(await relationship.status()).toMatchObject({ state: "not_connected", hub: null });
+    expect(relationship.relationshipFile()).toBeNull();
+    expect(relationship.revocationAttempts()).toBe(0);
+    expect(relationship.pendingRelationshipRetries()).toBe(0);
+    expect(relationship.loggableValues(await relationship.status())).toContain(
+      "Removed legacy disconnecting Hub relationship during startup",
+    );
   });
 
   test("disconnect leaves no intent artifacts and shutdown closes the owned agent", async () => {
