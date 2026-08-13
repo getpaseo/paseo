@@ -33,9 +33,41 @@ const LegacyGithubPrAttachmentSchema = z.strictObject({
   item: LegacyPullRequestItemSchema,
   owner: z.literal("new-workspace-picker").optional(),
 });
+const LegacyReviewAttachmentContextLineSchema = z.strictObject({
+  oldLineNumber: z.number().int().positive().nullable(),
+  newLineNumber: z.number().int().positive().nullable(),
+  type: z.enum(["add", "remove", "context"]),
+  content: z.string(),
+});
+const LegacyReviewAttachmentSchema = z.strictObject({
+  kind: z.literal("review"),
+  reviewDraftKey: z.string(),
+  commentCount: z.number().int().nonnegative(),
+  attachment: z.strictObject({
+    type: z.literal("review"),
+    mimeType: z.literal("application/paseo-review"),
+    cwd: z.string(),
+    mode: z.enum(["uncommitted", "base"]),
+    baseRef: z.string().nullable().optional(),
+    comments: z.array(
+      z.strictObject({
+        filePath: z.string(),
+        side: z.enum(["old", "new"]),
+        lineNumber: z.number().int().positive(),
+        body: z.string(),
+        context: z.strictObject({
+          hunkHeader: z.string(),
+          targetLine: LegacyReviewAttachmentContextLineSchema,
+          lines: z.array(LegacyReviewAttachmentContextLineSchema),
+        }),
+      }),
+    ),
+  }),
+});
 const PersistedComposerAttachmentSchema = z.union([
   UserComposerAttachmentSchema,
   LegacyGithubPrAttachmentSchema,
+  LegacyReviewAttachmentSchema,
 ]);
 type PersistedComposerAttachment = z.infer<typeof PersistedComposerAttachmentSchema>;
 const LegacyAttachmentMetadataSchema = AttachmentMetadataSchema.extend({
@@ -97,7 +129,10 @@ function legacyImagesToAttachments(
 
 function normalizePersistedComposerAttachment(
   attachment: PersistedComposerAttachment,
-): UserComposerAttachment {
+): UserComposerAttachment | null {
+  if (attachment.kind === "review") {
+    return null;
+  }
   if (attachment.kind === "github_pr" && attachment.item.kind === "pr") {
     return {
       kind: "github_pr",
@@ -118,7 +153,9 @@ export async function migrateDraftInput(
 ): Promise<CanonicalDraftInput> {
   const result = RawDraftInputSchema.safeParse(input.rawInput);
   const rawInput = result.success ? result.data : {};
-  const attachments = (rawInput.attachments ?? []).map(normalizePersistedComposerAttachment);
+  const attachments = (rawInput.attachments ?? [])
+    .map(normalizePersistedComposerAttachment)
+    .filter((attachment): attachment is UserComposerAttachment => attachment !== null);
   const legacyImages = (rawInput.images ?? []).map(normalizePersistedImage);
   const migratedImages = await ports.migrateLegacyImages(legacyImages);
 

@@ -286,25 +286,35 @@ describe("draft-store migration", () => {
     });
   });
 
-  it("rejects the complete persisted state containing a workspace review attachment", async () => {
-    const migrated = await migratePersistedState(
-      {
-        drafts: {
-          "agent:server:agent": {
-            input: {
-              text: "hello",
-              attachments: [workspaceReviewAttachment()],
-            },
-            lifecycle: "active",
-            updatedAt: 1700000000001,
-            version: 2,
+  it("drops a legacy workspace review attachment without deleting its draft", async () => {
+    const backing = createMemoryStorage();
+    const persistedState = {
+      drafts: {
+        "agent:server:agent": {
+          input: {
+            text: "hello",
+            attachments: [workspaceReviewAttachment()],
           },
+          lifecycle: "active",
+          updatedAt: 1700000000001,
+          version: 2,
         },
-        createModalDraft: null,
       },
-      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000002 },
-    );
+      createModalDraft: null,
+    };
+    backing.values.set("paseo-drafts", JSON.stringify({ state: persistedState, version: 4 }));
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
 
-    expect(migrated.drafts).toEqual({});
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 1700000000002,
+    });
+
+    expect(migrated.drafts["agent:server:agent"]?.input).toEqual({
+      text: "hello",
+      attachments: [],
+    });
+    expect(backing.values.has("paseo-drafts")).toBe(true);
   });
 });
