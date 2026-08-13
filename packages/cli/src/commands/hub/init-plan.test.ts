@@ -12,6 +12,7 @@ import {
   resolveHubInitProjects,
   type HubInitProvider,
 } from "./init-plan.js";
+import { githubRepositoryFromRemote } from "./init.js";
 
 const directories: string[] = [];
 const project = (slug: string) => ({
@@ -26,18 +27,21 @@ afterEach(async () => {
 
 describe("Hub init planning", () => {
   it("includes login only when there is no active login", () => {
-    expect(
-      planHubInitOpening({ loggedIn: false, paseoDirectoryExists: false, cwd: "/repo" }),
-    ).toEqual({ kind: "continue", steps: ["login", "connect", "project", "scaffold"] });
-    expect(
-      planHubInitOpening({ loggedIn: true, paseoDirectoryExists: false, cwd: "/repo" }),
-    ).toEqual({ kind: "continue", steps: ["connect", "project", "scaffold"] });
+    expect(planHubInitOpening({ loggedIn: false, paseoDirectoryExists: false })).toEqual({
+      replaceExisting: false,
+      steps: ["login", "connect", "project", "scaffold"],
+    });
+    expect(planHubInitOpening({ loggedIn: true, paseoDirectoryExists: false })).toEqual({
+      replaceExisting: false,
+      steps: ["connect", "project", "scaffold"],
+    });
   });
 
-  it("refuses to touch an existing .paseo directory", () => {
-    expect(
-      planHubInitOpening({ loggedIn: true, paseoDirectoryExists: true, cwd: "/repo" }),
-    ).toEqual({ kind: "refuse-existing", path: path.join("/repo", ".paseo") });
+  it("plans a confirmed replacement for an existing .paseo directory", () => {
+    expect(planHubInitOpening({ loggedIn: true, paseoDirectoryExists: true })).toEqual({
+      replaceExisting: true,
+      steps: ["connect", "project", "scaffold"],
+    });
   });
 
   it("stops, defaults, or asks according to the project count", () => {
@@ -84,8 +88,8 @@ describe("Hub init planning", () => {
 describe("Hub init scaffold", () => {
   it.each([
     ["github", { repo: "getpaseo/paseo", user: "boudra" }],
-    ["slack", { workspace: "T0123", channel: "C0123", user: "U0123" }],
-    ["discord", { guild: "1234", channel: "2345", user: "3456" }],
+    ["slack", { workspace: "paseo", user: "boudra" }],
+    ["discord", { guild: "paseo", user: "boudra" }],
   ] satisfies readonly [HubInitProvider, Record<string, string>][])(
     "creates a closed %s trigger that the deploy discovery path accepts",
     async (provider, providerFilters) => {
@@ -107,9 +111,10 @@ describe("Hub init scaffold", () => {
         scaffold.workflowPath,
       ]);
       const parsed = YAML.parse(scaffold.workflow) as {
-        filters: { from_users: string[] };
+        filters: { from_users: string[]; channels?: string[] };
       };
       expect(parsed.filters.from_users).toEqual([providerFilters.user]);
+      expect(parsed.filters.channels).toBeUndefined();
 
       let validatedPaths: readonly string[] = [];
       const result = await runHubDeploy(
@@ -134,6 +139,17 @@ describe("Hub init scaffold", () => {
       expect(validatedPaths).toEqual([".paseo/hub.yml", scaffold.workflowPath]);
     },
   );
+});
+
+describe("GitHub origin detection", () => {
+  it.each([
+    ["git@github.com:getpaseo/paseo.git", "getpaseo/paseo"],
+    ["ssh://git@github.com/getpaseo/paseo.git", "getpaseo/paseo"],
+    ["https://github.com/getpaseo/paseo.git", "getpaseo/paseo"],
+    ["https://gitlab.com/getpaseo/paseo.git", undefined],
+  ])("resolves %s", (remote, expected) => {
+    expect(githubRepositoryFromRemote(remote)).toBe(expected);
+  });
 });
 
 async function temporaryDirectory(): Promise<string> {

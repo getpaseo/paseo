@@ -11,17 +11,19 @@ import {
   text,
 } from "@clack/prompts";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, rm, rmdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Command } from "commander";
-import { DEFAULT_HUB_ORIGIN } from "./authority.js";
+import { DEFAULT_HUB_ORIGIN, resolveHubCredential } from "./authority.js";
 import type { HubCredentialStore } from "./credentials.js";
 import type { HubDaemonConnection } from "./daemon-client.js";
 import { withHubDaemon } from "./daemon-client.js";
 import { HubCommandError } from "./error.js";
-import type { HubHttpClient, HubProject } from "./hub-client/index.js";
+import type { HubConfigurationResources, HubHttpClient, HubProject } from "./hub-client/index.js";
 import {
+  createHubInitBundle,
   createHubInitScaffold,
   planHubInitOpening,
   resolveHubInitConnection,
@@ -31,7 +33,7 @@ import {
 import type { CliLoginFlow } from "./login-flow.js";
 import { runHubLogin } from "./login.js";
 import { runHubConnect } from "./connect.js";
-import { runHubDeploy } from "./deploy.js";
+import { runHubDeployBundle } from "./deploy.js";
 import { runHubProjects } from "./projects.js";
 import type { HubReporter } from "./reporter.js";
 import { normalizeHubOrigin } from "./origin.js";
@@ -52,6 +54,13 @@ interface HubInitEnvironment {
 
 class HubInitCancelledError extends Error {}
 
+function initErrorMessage(error: unknown): string {
+  if (error instanceof HubCommandError && error.details) {
+    return `${error.message}\n${error.details}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function addHubInitCommand(parent: Command, environment: HubInitEnvironment): void {
   parent
     .command("init")
@@ -64,7 +73,7 @@ export function addHubInitCommand(parent: Command, environment: HubInitEnvironme
           cancel(error.message);
           return;
         }
-        cancel(error instanceof Error ? error.message : String(error));
+        cancel(initErrorMessage(error));
         process.exitCode = 1;
       }
     });
@@ -79,62 +88,62 @@ export async function runHubInit(environment: HubInitEnvironment): Promise<void>
   const opening = planHubInitOpening({
     loggedIn: activeLogin !== null,
     paseoDirectoryExists: await pathExists(path.join(cwd, ".paseo")),
-    cwd,
   });
-  if (opening.kind === "refuse-existing") {
-    throw new HubInitCancelledError(
-      `${opening.path} already exists. Hub init will not change an existing bundle.`,
-    );
+  if (
+    opening.replaceExisting &&
+    !(await requiredConfirm("Replace the existing .paseo/ Hub bundle?", false))
+  ) {
+    throw new HubInitCancelledError("Existing .paseo/ bundle left unchanged.");
   }
 
   const origin = await ensureLogin(activeLogin?.origin, environment);
-  await ensureDaemonConnection(origin, environment);
-  const daemonSlug = await requiredText({
-    message: "Daemon slug shown in Hub",
-    placeholder: "my-daemon",
-  });
+  const daemonId = await ensureDaemonConnection(origin, environment);
   const project = await chooseProject(origin, environment);
+  const resources = await loadConfigurationResources(origin, environment);
+  const daemon = resources.daemons.find(({ id }) => id === daemonId);
+  if (daemon === undefined) {
+    throw new HubCommandError(
+      "HUB_DAEMON_RESOURCE_MISSING",
+      "The connected daemon is not available in this Hub organization. Reconnect it and try again.",
+    );
+  }
+  log.success(`Connected as ${daemon.slug}`);
   const provider = await chooseProvider();
-  const providerFilters = await collectProviderFilters(provider);
+  const providerFilters = await collectProviderFilters(provider, resources, cwd);
   const scaffold = createHubInitScaffold({
     cwd,
-    daemonSlug,
+    daemonSlug: daemon.slug,
     provider,
     providerFilters,
   });
 
-  await writeScaffold(cwd, scaffold);
+  const bundle = createHubInitBundle(project.slug, scaffold);
+
+  await withSpinner("Validating bundle", async () => {
+    await runHubDeployBundle({ project: project.slug, hub: origin, dryRun: true }, bundle, {
+      cwd,
+      env: environment.env,
+      credentials: environment.credentials,
+      hub: environment.hub,
+      reporter: { progress() {} },
+    });
+  });
+  log.success("Dry run passed");
+  await writeScaffold(cwd, scaffold, opening.replaceExisting);
   log.success(`Created .paseo/hub.yml and ${scaffold.workflowPath}`);
 
-  await withSpinner("Validating bundle", async (reporter) => {
-    await runHubDeploy(
-      { project: project.slug, hub: origin, dryRun: true },
-      {
+  const deploy = await requiredConfirm("Deploy now?", true);
+  if (deploy) {
+    await withSpinner("Deploying bundle", async () => {
+      await runHubDeployBundle({ project: project.slug, hub: origin }, bundle, {
         cwd,
         env: environment.env,
         credentials: environment.credentials,
         hub: environment.hub,
-        reporter,
-      },
-    );
-  });
-  log.success("Dry run passed");
-
-  const deploy = await requiredConfirm("Deploy now?", true);
-  if (deploy) {
-    await withSpinner("Deploying bundle", async (reporter) => {
-      await runHubDeploy(
-        { project: project.slug, hub: origin },
-        {
-          cwd,
-          env: environment.env,
-          credentials: environment.credentials,
-          hub: environment.hub,
-          reporter,
-        },
-      );
+        reporter: { progress() {} },
+      });
     });
-    log.success(`Deployed to ${project.name}`);
+    log.success("Deployed");
   } else {
     log.message(`Skipped deployment. Run: paseo hub deploy -p ${project.slug}`);
   }
@@ -148,24 +157,40 @@ async function ensureLogin(
   activeOrigin: string | undefined,
   environment: HubInitEnvironment,
 ): Promise<string> {
-  if (activeOrigin !== undefined) {
-    log.success(`Logged in to ${activeOrigin}`);
-    return activeOrigin;
-  }
-  const origin = await requiredText({
-    message: "Hub URL",
-    initialValue: DEFAULT_HUB_ORIGIN,
-    validate(value) {
-      try {
-        normalizeHubOrigin(value ?? "");
-      } catch {
-        return "Enter a valid Hub URL";
-      }
-      return undefined;
-    },
+  const endpoint = await requiredSelect({
+    message: "Hub endpoint",
+    initialValue:
+      activeOrigin === undefined || activeOrigin === DEFAULT_HUB_ORIGIN ? "hosted" : "custom",
+    options: [
+      { value: "hosted", label: "hub.paseo.sh" },
+      { value: "custom", label: "Custom endpoint…" },
+    ],
   });
+  const origin =
+    endpoint === "hosted"
+      ? DEFAULT_HUB_ORIGIN
+      : await requiredText({
+          message: "Custom Hub URL",
+          initialValue:
+            activeOrigin === undefined || activeOrigin === DEFAULT_HUB_ORIGIN
+              ? environment.env.PASEO_HUB_URL
+              : activeOrigin,
+          validate(value) {
+            try {
+              normalizeHubOrigin(value ?? "");
+            } catch {
+              return "Enter a valid Hub URL";
+            }
+            return undefined;
+          },
+        });
+  const normalizedOrigin = normalizeHubOrigin(origin);
+  if (environment.credentials.get(normalizedOrigin) !== null) {
+    log.success(`Logged in to ${normalizedOrigin}`);
+    return normalizedOrigin;
+  }
   await runHubLogin(
-    origin,
+    normalizedOrigin,
     {},
     {
       env: environment.env,
@@ -174,25 +199,23 @@ async function ensureLogin(
       reporter: environment.reporter,
     },
   );
-  log.success(`Logged in to ${origin}`);
-  return environment.credentials.active()?.origin ?? origin;
+  log.success(`Logged in to ${normalizedOrigin}`);
+  return normalizedOrigin;
 }
 
 async function ensureDaemonConnection(
   origin: string,
   environment: HubInitEnvironment,
-): Promise<void> {
+): Promise<string> {
   const status = await withHubDaemon(environment.daemon, undefined, async (daemon) =>
     daemon.getHubStatus().then((response) => response.status),
   );
   const connection = resolveHubInitConnection(status, origin);
   if (connection.kind === "connected") {
-    log.success(`Daemon ${connection.daemonId} is connected to ${origin}`);
-    return;
+    return connection.daemonId;
   }
   if (connection.kind === "pending") {
-    await waitForDaemonReady(origin, environment.daemon);
-    return;
+    return waitForDaemonReady(origin, environment.daemon);
   }
   if (connection.kind === "conflict") {
     throw new HubCommandError(
@@ -214,11 +237,14 @@ async function ensureDaemonConnection(
       reporter: environment.reporter,
     },
   );
-  await waitForDaemonReady(origin, environment.daemon);
+  return waitForDaemonReady(origin, environment.daemon);
 }
 
-async function waitForDaemonReady(origin: string, connection: HubDaemonConnection): Promise<void> {
-  const daemonId = await withSpinner("Waiting for the daemon to connect", async (reporter) =>
+async function waitForDaemonReady(
+  origin: string,
+  connection: HubDaemonConnection,
+): Promise<string> {
+  return withSpinner("Waiting for the daemon to connect", async (reporter) =>
     withHubDaemon(connection, undefined, async (daemon) => {
       const deadline = Date.now() + DAEMON_READY_TIMEOUT_MS;
       while (true) {
@@ -248,20 +274,17 @@ async function waitForDaemonReady(origin: string, connection: HubDaemonConnectio
       }
     }),
   );
-  log.success(`Daemon ${daemonId} is connected to ${origin}`);
 }
 
 async function chooseProject(origin: string, environment: HubInitEnvironment): Promise<HubProject> {
-  const result = await withSpinner("Loading Hub projects", (reporter) =>
-    runHubProjects(
-      { hub: origin },
-      {
-        env: environment.env,
-        credentials: environment.credentials,
-        hub: environment.hub,
-        reporter,
-      },
-    ),
+  const result = await runHubProjects(
+    { hub: origin },
+    {
+      env: environment.env,
+      credentials: environment.credentials,
+      hub: environment.hub,
+      reporter: { progress() {} },
+    },
   );
   const resolution = resolveHubInitProjects(result.data.projects);
   if (resolution.kind === "none") {
@@ -270,7 +293,6 @@ async function chooseProject(origin: string, environment: HubInitEnvironment): P
     );
   }
   if (resolution.kind === "selected") {
-    log.success(`Using the only project: ${resolution.project.name} (${resolution.project.slug})`);
     return resolution.project;
   }
   const slug = await requiredSelect({
@@ -304,61 +326,132 @@ async function chooseProvider(): Promise<HubInitProvider> {
 
 async function collectProviderFilters(
   provider: HubInitProvider,
+  resources: HubConfigurationResources,
+  cwd: string,
 ): Promise<Readonly<Record<string, string>>> {
   if (provider === "github") {
-    const [login, repo] = await Promise.all([
+    const [login, originRemote] = await Promise.all([
       readGhValue(["api", "user", "--jq", ".login"]),
-      readGhValue(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]),
+      readCommandValue("git", ["remote", "get-url", "origin"], cwd),
     ]);
+    const repo = originRemote === undefined ? undefined : githubRepositoryFromRemote(originRemote);
+    if (repo === undefined) {
+      throw new HubCommandError(
+        "HUB_GITHUB_REPOSITORY_UNDETECTED",
+        "Could not detect a GitHub repository from the origin remote.",
+      );
+    }
+    if (!resources.github.some(({ repositories }) => repositories.includes(repo))) {
+      const connected = resources.github.flatMap(({ repositories }) => repositories);
+      throw new HubCommandError(
+        "HUB_GITHUB_REPOSITORY_NOT_CONNECTED",
+        `${repo} is not connected to this Hub organization. Connected repositories: ${connected.join(", ") || "none"}.`,
+      );
+    }
     return {
-      user: await requiredText({ message: "Allowed GitHub login", initialValue: login }),
-      repo: await requiredText({ message: "GitHub repository", initialValue: repo }),
+      user: await requiredText({
+        message: "Your GitHub username (only this user can trigger the bot)",
+        initialValue: login,
+      }),
+      repo,
     };
   }
   if (provider === "slack") {
     return {
-      workspace: await requiredText({ message: "Slack workspace ID", placeholder: "T01234567" }),
-      channel: await requiredText({ message: "Slack channel ID", placeholder: "C01234567" }),
-      user: await requiredText({ message: "Allowed Slack user ID", placeholder: "U01234567" }),
+      workspace: await chooseConnection(
+        "Slack workspace",
+        resources.slack.map(({ slug, teamName }) => ({ slug, label: teamName })),
+      ),
+      user: await requiredText({
+        message: "Your Slack username (only this user can trigger the bot)",
+      }),
     };
   }
   return {
-    guild: await requiredText({ message: "Discord guild ID", placeholder: "123456789012345678" }),
-    channel: await requiredText({
-      message: "Discord channel ID",
-      placeholder: "234567890123456789",
-    }),
+    guild: await chooseConnection(
+      "Discord server",
+      resources.discord.map(({ slug, guildName }) => ({ slug, label: guildName })),
+    ),
     user: await requiredText({
-      message: "Allowed Discord user ID",
-      placeholder: "345678901234567890",
+      message: "Your Discord username (only this user can trigger the bot)",
     }),
   };
+}
+
+async function loadConfigurationResources(
+  origin: string,
+  environment: HubInitEnvironment,
+): Promise<HubConfigurationResources> {
+  try {
+    return await withSpinner("Loading Hub connections", () =>
+      environment.hub.listConfigurationResources(
+        origin,
+        resolveHubCredential({
+          options: { origin },
+          env: environment.env,
+          credentials: environment.credentials,
+          origin,
+        }),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof HubCommandError && error.code === "HUB_NOT_FOUND") {
+      throw new HubCommandError(
+        "HUB_UPDATE_REQUIRED",
+        "This Hub does not support guided setup. Update the Hub and try again.",
+      );
+    }
+    throw error;
+  }
+}
+
+async function chooseConnection(
+  message: string,
+  connections: readonly { slug: string; label: string }[],
+): Promise<string> {
+  if (connections.length === 0) {
+    throw new HubCommandError(
+      "HUB_PROVIDER_CONNECTION_REQUIRED",
+      `No ${message.toLowerCase()} is connected in this Hub organization. Connect one and try again.`,
+    );
+  }
+  if (connections.length === 1) return connections[0]!.slug;
+  return requiredSelect({
+    message,
+    options: connections.map(({ slug, label }) => ({ value: slug, label })),
+  });
 }
 
 async function writeScaffold(
   cwd: string,
   scaffold: ReturnType<typeof createHubInitScaffold>,
+  replaceExisting: boolean,
 ): Promise<void> {
   const root = path.join(cwd, ".paseo");
+  const staging = path.join(cwd, `.paseo-init-${randomUUID()}`);
+  const backup = path.join(cwd, `.paseo-backup-${randomUUID()}`);
+  let movedExisting = false;
   try {
-    await mkdir(root);
-  } catch (error) {
-    if (errorCode(error) === "EEXIST") {
-      throw new HubInitCancelledError(
-        `${root} now exists. Hub init will not change an existing bundle.`,
-      );
+    await mkdir(path.join(staging, "workflows"), { recursive: true });
+    await writeFile(path.join(staging, "hub.yml"), scaffold.hub, { flag: "wx" });
+    await writeFile(
+      path.join(staging, "workflows", path.basename(scaffold.workflowPath)),
+      scaffold.workflow,
+      {
+        flag: "wx",
+      },
+    );
+    if (replaceExisting) {
+      await rename(root, backup);
+      movedExisting = true;
     }
-    throw error;
-  }
-  try {
-    await mkdir(path.join(root, "workflows"));
-    await writeFile(path.join(root, "hub.yml"), scaffold.hub, { flag: "wx" });
-    await writeFile(path.join(cwd, scaffold.workflowPath), scaffold.workflow, { flag: "wx" });
+    await rename(staging, root);
+    if (movedExisting) await rm(backup, { recursive: true, force: true });
   } catch (error) {
-    await rm(path.join(cwd, scaffold.workflowPath), { force: true });
-    await rm(path.join(root, "hub.yml"), { force: true });
-    await rmdir(path.join(root, "workflows")).catch(() => undefined);
-    await rmdir(root).catch(() => undefined);
+    await rm(staging, { recursive: true, force: true });
+    if (movedExisting) {
+      await rename(backup, root).catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -384,9 +477,31 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 async function readGhValue(args: readonly string[]): Promise<string | undefined> {
+  return readCommandValue("gh", args);
+}
+
+async function readCommandValue(
+  command: string,
+  args: readonly string[],
+  cwd?: string,
+): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync("gh", [...args], { encoding: "utf8" });
+    const { stdout } = await execFileAsync(command, [...args], { encoding: "utf8", cwd });
     return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function githubRepositoryFromRemote(remote: string): string | undefined {
+  const trimmed = remote.trim().replace(/\.git$/u, "");
+  const ssh = /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+\/[^/]+)$/u.exec(trimmed);
+  if (ssh?.[1] !== undefined) return ssh[1];
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname !== "github.com") return undefined;
+    const repository = url.pathname.replace(/^\//u, "");
+    return /^[^/]+\/[^/]+$/u.test(repository) ? repository : undefined;
   } catch {
     return undefined;
   }

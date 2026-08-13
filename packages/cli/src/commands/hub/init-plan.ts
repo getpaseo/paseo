@@ -1,5 +1,6 @@
 import path from "node:path";
 import YAML from "yaml";
+import type { HubDeployBundle } from "./deploy-bundle.js";
 import type { HubProject } from "./hub-client/index.js";
 import type { HubStatus } from "./daemon-client.js";
 
@@ -16,9 +17,10 @@ export type HubInitConnectionResolution =
   | { kind: "connect" }
   | { kind: "conflict"; origin: string };
 
-export type HubInitOpeningPlan =
-  | { kind: "refuse-existing"; path: string }
-  | { kind: "continue"; steps: readonly ("login" | "connect" | "project" | "scaffold")[] };
+export interface HubInitOpeningPlan {
+  replaceExisting: boolean;
+  steps: readonly ("login" | "connect" | "project" | "scaffold")[];
+}
 
 export interface HubInitScaffoldInput {
   cwd: string;
@@ -37,14 +39,24 @@ export interface HubInitScaffold {
 export function planHubInitOpening(input: {
   loggedIn: boolean;
   paseoDirectoryExists: boolean;
-  cwd: string;
 }): HubInitOpeningPlan {
-  if (input.paseoDirectoryExists) {
-    return { kind: "refuse-existing", path: path.join(input.cwd, ".paseo") };
-  }
   return {
-    kind: "continue",
+    replaceExisting: input.paseoDirectoryExists,
     steps: [...(input.loggedIn ? [] : (["login"] as const)), "connect", "project", "scaffold"],
+  };
+}
+
+export function createHubInitBundle(
+  projectSlug: string,
+  scaffold: HubInitScaffold,
+): HubDeployBundle {
+  return {
+    projectSlug,
+    workflowCount: 1,
+    files: [
+      { path: ".paseo/hub.yml", content: scaffold.hub },
+      { path: scaffold.workflowPath, content: scaffold.workflow },
+    ],
   };
 }
 
@@ -122,18 +134,17 @@ function providerScaffold(
   }
 
   const user = requireFilter(filters, "user");
-  const channel = requireFilter(filters, "channel");
   if (provider === "slack") {
     const workspace = requireFilter(filters, "workspace");
     return {
       workflow: workflow({
         name: "slack-help",
         on: "slack.mention",
-        filters: { workspace, channels: [channel], from_users: [user] },
+        filters: { workspace, from_users: [user] },
         environment,
         reply: "slack.reply",
       }),
-      testAction: `Mention \`@Paseo have a look\` in Slack channel ${channel}.`,
+      testAction: "Mention `@Paseo have a look` in Slack.",
     };
   }
 
@@ -142,11 +153,11 @@ function providerScaffold(
     workflow: workflow({
       name: "discord-help",
       on: "discord.mention",
-      filters: { guild, channels: [channel], from_users: [user] },
+      filters: { guild, from_users: [user] },
       environment,
       reply: "discord.reply",
     }),
-    testAction: `Mention \`@Paseo have a look\` in Discord channel ${channel}.`,
+    testAction: "Mention `@Paseo have a look` in Discord.",
   };
 }
 
