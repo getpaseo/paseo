@@ -3,6 +3,11 @@ import { TextInput } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { ComposerTextInputHandle, ComposerTextInputProps } from "./text-input-types";
 
+type WebTextInputElement = TextInput & {
+  value?: string;
+  setSelectionRange?: (start: number, end: number) => void;
+};
+
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.surface4,
 }));
@@ -29,9 +34,12 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
       getText: () => textRef.current,
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
-        inputRef.current?.setNativeProps({ text: nextText });
-        if (selection) {
-          inputRef.current?.setSelection(selection.start, selection.end);
+        const input = inputRef.current as WebTextInputElement | null;
+        if (input && "value" in input) {
+          input.value = nextText;
+        }
+        if (selection && typeof input?.setSelectionRange === "function") {
+          input.setSelectionRange(selection.start, selection.end);
         }
       },
       getNativeRef: () => inputRef.current,
