@@ -30,8 +30,6 @@ function createQueryMock(events: unknown[]): Query {
 
 describe("Claude SDK env", () => {
   test("forwards launch-context env through Claude process env", async () => {
-    vi.stubEnv("MCP_TIMEOUT", "claude-startup-timeout");
-    vi.stubEnv("MCP_TOOL_TIMEOUT", "claude-tool-timeout");
     let capturedEnv: Record<string, string | undefined> | undefined;
     const launchContext: AgentLaunchContext = {
       env: {
@@ -70,6 +68,12 @@ describe("Claude SDK env", () => {
       logger: createTestLogger(),
       queryFactory,
       resolveBinary: async () => "/test/claude/bin",
+      runtimeSettings: {
+        env: {
+          MCP_TIMEOUT: "claude-startup-timeout",
+          MCP_TOOL_TIMEOUT: "claude-tool-timeout",
+        },
+      },
     });
     const session = await client.createSession(
       {
@@ -88,7 +92,6 @@ describe("Claude SDK env", () => {
       expect(capturedEnv?.MCP_TOOL_TIMEOUT).toBe("claude-tool-timeout");
     } finally {
       await session.close();
-      vi.unstubAllEnvs();
     }
   });
 
