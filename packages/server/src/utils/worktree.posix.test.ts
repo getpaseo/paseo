@@ -40,6 +40,9 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  lstatSync,
+  readlinkSync,
+  symlinkSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -1231,6 +1234,46 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
         worktree: { setup: "echo new" },
       });
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
+    });
+
+    it("preserves a dangling paseo.json symlink from the selected ref", async () => {
+      const externalConfigPath = join(tempDir, "outside-paseo.json");
+      execFileSync("git", ["checkout", "-b", "symlink-config"], { cwd: repoDir });
+      symlinkSync(externalConfigPath, join(repoDir, "paseo.json"));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json symlink"],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo source" } }),
+      );
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "symlink-config",
+        source: {
+          kind: "branch-off",
+          baseBranch: "symlink-config",
+          branchName: "feature/symlink-config",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+      expect(lstatSync(worktreeConfigPath).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(worktreeConfigPath)).toBe(externalConfigPath);
+      expect(existsSync(externalConfigPath)).toBe(false);
       expect(
         execFileSync("git", ["status", "--porcelain"], {
           cwd: result.worktreePath,
