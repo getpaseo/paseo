@@ -55,34 +55,50 @@ function workspace(
 }
 
 function agent(id: string, workspaceId = "workspace-1", cwd = "/repo/paseo") {
-  return normalizeAgentSnapshot(
-    {
-      id,
-      provider: "codex",
-      cwd,
-      workspaceId,
-      model: null,
-      createdAt: "2026-07-18T08:00:00.000Z",
-      updatedAt: "2026-07-18T08:01:00.000Z",
-      lastUserMessageAt: "2026-07-18T08:01:00.000Z",
-      status: "idle",
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: true,
-        supportsDynamicModes: true,
-        supportsMcpServers: true,
-        supportsReasoningStream: true,
-        supportsToolInvocations: true,
+  return {
+    ...normalizeAgentSnapshot(
+      {
+        id,
+        provider: "codex",
+        cwd,
+        workspaceId,
+        model: null,
+        createdAt: "2026-07-18T08:00:00.000Z",
+        updatedAt: "2026-07-18T08:01:00.000Z",
+        lastUserMessageAt: "2026-07-18T08:01:00.000Z",
+        status: "idle",
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        currentModeId: null,
+        availableModes: [],
+        pendingPermissions: [],
+        persistence: null,
+        title: `Agent ${id}`,
+        labels: {},
       },
-      currentModeId: null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: null,
-      title: `Agent ${id}`,
-      labels: {},
+      SERVER_ID,
+    ),
+    projectPlacement: {
+      projectKey: cwd,
+      projectName: cwd.split("/").at(-1) ?? cwd,
+      workspaceName: workspaceId,
+      checkout: {
+        cwd,
+        isGit: false as const,
+        currentBranch: null,
+        remoteUrl: null,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false as const,
+        mainRepoRoot: null,
+      },
     },
-    SERVER_ID,
-  );
+  };
 }
 
 function message(id: string, text: string): StreamItem {
@@ -217,6 +233,7 @@ describe("ReplicaCache", () => {
     expect(Array.from(session.workspaces.keys())).toEqual(["workspace-1"]);
     expect(Array.from(session.projects.keys())).toEqual(["project-1", "empty-project"]);
     expect(session.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
+    expect(session.agents.get("agent-1")?.projectPlacement?.checkout.cwd).toBe("/repo/paseo");
     expect(session.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
     expect(session.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);

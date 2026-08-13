@@ -126,16 +126,13 @@ test.describe("Rewind sheet", () => {
       title: "Rewind cache upgrade e2e",
       initialPrompt: prompt,
     });
-    let heldTimelineRequest = false;
 
     try {
       await openAgentRoute(page, session);
       await expectUserMessageVisible(page, prompt);
+      await gate.drop();
       await rewriteCachedMessageAsLegacyRow(page, prompt);
-      gate.holdNextClientRequest("fetch_agent_timeline_request");
       await page.reload();
-      await gate.waitForHeldClientRequest();
-      heldTimelineRequest = true;
 
       const restoredMessage = userMessage(page, prompt);
       await expect(restoredMessage).toBeVisible();
@@ -143,7 +140,6 @@ test.describe("Rewind sheet", () => {
       await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
       await waitForCachedMessageWithoutProviderId(page, prompt);
     } finally {
-      if (heldTimelineRequest) gate.releaseHeldClientRequest();
       gate.restore();
       await session.cleanup();
     }

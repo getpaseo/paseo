@@ -106,6 +106,43 @@ const AgentCapabilitiesSchema = z.strictObject({
   supportsRewindBoth: z.boolean().optional(),
 });
 
+const StoredProjectCheckoutSchema = z.union([
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(false),
+    currentBranch: z.null(),
+    remoteUrl: z.null(),
+    worktreeRoot: z.null(),
+    isPaseoOwnedWorktree: z.literal(false),
+    mainRepoRoot: z.null(),
+  }),
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(true),
+    currentBranch: z.string().nullable(),
+    remoteUrl: z.string().nullable(),
+    worktreeRoot: z.string(),
+    isPaseoOwnedWorktree: z.literal(false),
+    mainRepoRoot: z.string().nullable(),
+  }),
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(true),
+    currentBranch: z.string().nullable(),
+    remoteUrl: z.string().nullable(),
+    worktreeRoot: z.string(),
+    isPaseoOwnedWorktree: z.literal(true),
+    mainRepoRoot: z.string(),
+  }),
+]);
+
+const StoredProjectPlacementSchema = z.strictObject({
+  projectKey: z.string(),
+  projectName: z.string(),
+  workspaceName: z.string().nullable().optional(),
+  checkout: StoredProjectCheckoutSchema,
+});
+
 const StoredAgentSnapshotSchema = z.strictObject({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -140,7 +177,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
 
 const StoredAgentSchema = z.strictObject({
   snapshot: StoredAgentSnapshotSchema,
-  projectPlacement: z.null(),
+  projectPlacement: StoredProjectPlacementSchema.nullable(),
   lastActivityAt: IsoDateSchema,
 });
 
@@ -370,6 +407,10 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   }
 }
 
+function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"] {
+  return agent.projectPlacement ?? null;
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -424,7 +465,7 @@ function serializeAgent(agent: Agent): StoredAgent {
   };
   return {
     snapshot,
-    projectPlacement: null,
+    projectPlacement: serializeProjectPlacement(agent),
     lastActivityAt: agent.lastActivityAt.toISOString(),
   };
 }
