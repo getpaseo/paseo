@@ -61,7 +61,9 @@ describe("JcodeACPAgentClient", () => {
       supportsSessionListing: false,
       supportsDynamicModes: false,
       supportsMcpServers: false,
-      supportsReasoningStream: false,
+      // jcode streams reasoning inline via `<think>` markers, which the adapter
+      // splits into reasoning timeline items.
+      supportsReasoningStream: true,
       supportsToolInvocations: true,
       supportsRewindConversation: false,
       supportsRewindFiles: false,

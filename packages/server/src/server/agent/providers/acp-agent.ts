@@ -120,6 +120,12 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import {
+  createInlineReasoningState,
+  flushInlineReasoning,
+  splitInlineReasoning,
+  type InlineReasoningState,
+} from "./inline-reasoning.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
@@ -431,6 +437,11 @@ interface ACPAgentClientOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  /**
+   * Agents that stream reasoning inline in `agent_message_chunk` text using
+   * `<think>` markers instead of emitting `agent_thought_chunk` updates.
+   */
+  parsesInlineReasoning?: boolean;
 }
 
 interface ACPAgentSessionOptions {
@@ -464,6 +475,7 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  parsesInlineReasoning?: boolean;
 }
 
 export interface SpawnedACPProcess {
@@ -818,6 +830,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  protected readonly parsesInlineReasoning: boolean;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -845,6 +858,7 @@ export class ACPAgentClient implements AgentClient {
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.parsesInlineReasoning = options.parsesInlineReasoning ?? false;
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
@@ -878,6 +892,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        parsesInlineReasoning: this.parsesInlineReasoning,
       },
     );
     await session.initializeNewSession();
@@ -929,6 +944,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      parsesInlineReasoning: this.parsesInlineReasoning,
     });
     await session.initializeResumedSession();
     return session;
@@ -1433,6 +1449,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly parsesInlineReasoning: boolean;
+  private readonly inlineReasoning: InlineReasoningState = createInlineReasoningState();
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1473,6 +1491,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.parsesInlineReasoning = options.parsesInlineReasoning ?? false;
   }
 
   get id(): string | null {
@@ -2617,6 +2636,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const pendingUserEvents = this.flushPendingUserMessage();
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
+        if (this.parsesInlineReasoning) {
+          return [...pendingUserEvents, ...this.handleInlineReasoningMessageChunk(update)];
+        }
         const item = this.createMessageTimelineItem("assistant_message", update);
         return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
@@ -2761,6 +2783,51 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return { type: "reasoning", text: chunkText };
   }
 
+  /**
+   * Splits an inline-reasoning agent message chunk into reasoning and assistant
+   * text timeline items so `<think>` blocks render as reasoning instead of
+   * leaking their markers into the assistant message.
+   */
+  private handleInlineReasoningMessageChunk(
+    update: Extract<SessionUpdate, { sessionUpdate: "agent_message_chunk" }>,
+  ): AgentStreamEvent[] {
+    const chunkText = contentBlockToText(update.content);
+    if (!chunkText) {
+      return [];
+    }
+    const events: AgentStreamEvent[] = [];
+    for (const segment of splitInlineReasoning(this.inlineReasoning, chunkText)) {
+      if (segment.kind === "reasoning") {
+        this.fallbackAssistantMessageId = null;
+        events.push(this.wrapTimeline({ type: "reasoning", text: segment.text }));
+        continue;
+      }
+      events.push(
+        this.wrapTimeline({
+          type: "assistant_message",
+          text: segment.text,
+          messageId: this.resolveAssistantMessageId(update.messageId),
+        }),
+      );
+    }
+    return events;
+  }
+
+  private flushInlineReasoningTail(): AgentStreamEvent[] {
+    if (!this.parsesInlineReasoning) {
+      return [];
+    }
+    return flushInlineReasoning(this.inlineReasoning).map((segment) =>
+      segment.kind === "reasoning"
+        ? this.wrapTimeline({ type: "reasoning", text: segment.text })
+        : this.wrapTimeline({
+            type: "assistant_message",
+            text: segment.text,
+            messageId: this.resolveAssistantMessageId(undefined),
+          }),
+    );
+  }
+
   private resolveAssistantMessageId(messageId: string | null | undefined): string {
     if (messageId) {
       this.fallbackAssistantMessageId = null;
@@ -2827,6 +2894,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    // A turn can end while an inline `<think>` marker candidate is still held
+    // back; emit it now so no assistant text is dropped.
+    this.deliverTranslatedEvents(this.flushInlineReasoningTail());
 
     switch (response.stopReason) {
       case "cancelled":

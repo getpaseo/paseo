@@ -30,8 +30,10 @@ const JCODE_CAPABILITIES: AgentCapabilityFlags = {
   // jcode's ACP adapter tolerates but ignores `mcpServers` (session-scoped MCP is
   // not implemented server-side yet), so Paseo must not inject its MCP server.
   supportsMcpServers: false,
-  // jcode does not emit agent_thought_chunk updates.
-  supportsReasoningStream: false,
+  // jcode streams reasoning inline in agent_message_chunk text using `<think>`
+  // markers rather than agent_thought_chunk updates; the adapter splits those
+  // out into reasoning timeline items (see parsesInlineReasoning).
+  supportsReasoningStream: true,
   // jcode streams tool_call and tool_call_update events through session/update.
   supportsToolInvocations: true,
   supportsRewindConversation: false,
@@ -53,6 +55,7 @@ export class JcodeACPAgentClient extends ACPAgentClient {
       defaultCommand: ["jcode", "acp"],
       defaultModes: JCODE_MODES,
       capabilities: JCODE_CAPABILITIES,
+      parsesInlineReasoning: true,
     });
   }
 
