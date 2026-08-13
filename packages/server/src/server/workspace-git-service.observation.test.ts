@@ -503,6 +503,15 @@ describe("WorkspaceGitService checkout observation", () => {
       ...current,
       upstreamStatus: facts.upstreamStatus,
     }));
+    const runGitFetch = vi.fn(async (_cwd, observer) => {
+      observer?.onRefSnapshot("before");
+      await releaseFetch.promise;
+      observer?.onRefSnapshot("after");
+      return {
+        changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+        error: null,
+      };
+    });
     const service = createService(watcher, {
       getCheckoutSnapshotFacts,
       getCheckoutRefDerivedState,
@@ -515,22 +524,16 @@ describe("WorkspaceGitService checkout observation", () => {
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
-      runGitFetch: vi.fn(async (_cwd, observer) => {
-        observer?.onRefSnapshot("before");
-        await releaseFetch.promise;
-        observer?.onRefSnapshot("after");
-        return {
-          changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
-          error: null,
-        };
-      }),
+      runGitFetch,
     });
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    await service.getSnapshot(REPO_CWD);
     await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
       expect(service.getMetrics().fetchInFlightCount).toBe(1);
-      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
+    expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     listener.mockClear();
 
     watcher.records
@@ -539,7 +542,9 @@ describe("WorkspaceGitService checkout observation", () => {
         { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "create" },
       ]);
     releaseFetch.resolve();
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
@@ -798,6 +803,10 @@ describe("WorkspaceGitService checkout observation", () => {
         ...current,
         upstreamStatus: facts.upstreamStatus,
       }));
+    const runGitFetch = vi.fn(async () => ({
+      changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+      error: null,
+    }));
     const service = createService(watcher, {
       getCheckoutSnapshotFacts,
       getCheckoutRefDerivedState,
@@ -810,13 +819,16 @@ describe("WorkspaceGitService checkout observation", () => {
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
-      runGitFetch: vi.fn(async () => ({
-        changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
-        error: null,
-      })),
+      runGitFetch,
     });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
 
+    await service.getSnapshot(REPO_CWD);
+    await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
