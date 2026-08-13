@@ -663,6 +663,21 @@ function createRegistryEntry(
         return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
+      if (typeof catalogClient.fetchCatalog !== "function") {
+        const models = mergeModelAdditions(provider, profileModels, additionalModels);
+        const defaultModeId = await catalogClient.resolveDefaultModeId?.({
+          config: {
+            provider,
+            cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+          },
+        });
+        return {
+          models,
+          modes: decorateModes(resolved.definition.modes),
+          defaultModeId,
+        };
+      }
+
       const catalog = await catalogClient.fetchCatalog(options);
       return {
         ...catalog,
@@ -724,7 +739,7 @@ function buildResolvedBuiltinProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
-      profileModelsAreAdditive: false,
+      profileModelsAreAdditive: true,
       enabled: override?.enabled ?? definition.enabledByDefault ?? true,
       derivedFromProviderId: null,
       providerParams: override?.params,
@@ -778,7 +793,7 @@ function addDerivedProviders(
         runtimeSettings: toRuntimeSettings(override),
         profileModels: override.models ?? [],
         additionalModels: override.additionalModels ?? [],
-        profileModelsAreAdditive: false,
+        profileModelsAreAdditive: true,
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerParams: override.params,
@@ -834,7 +849,7 @@ function addDerivedProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
-      profileModelsAreAdditive: false,
+      profileModelsAreAdditive: true,
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
       providerParams,

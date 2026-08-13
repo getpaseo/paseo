@@ -1547,14 +1547,17 @@ export class ClaudeAgentClient implements AgentClient {
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to resolve Claude Code version for model catalog");
     }
+    const providerEnv = createProviderEnv({
+      baseEnv: process.env,
+      runtimeSettings: this.runtimeSettings,
+    });
     const models = await getClaudeModelsWithSettings(
       this.logger,
       this.configDir,
       claudeCodeVersion,
+      providerEnv,
     );
-    const modes = detectIneligibleAutoModeTransport(
-      createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
-    )
+    const modes = detectIneligibleAutoModeTransport(providerEnv)
       ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
       : DEFAULT_MODES;
     return {

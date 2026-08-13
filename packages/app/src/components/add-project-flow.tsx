@@ -405,6 +405,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         query: debouncedQuery,
         includeDirectories: true,
         includeFiles: false,
+        includeHiddenDirectories: true,
         limit: 30,
       });
       return {

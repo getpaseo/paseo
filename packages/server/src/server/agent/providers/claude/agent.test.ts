@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -400,6 +400,13 @@ describe("convertClaudeHistoryEntry", () => {
 
 describe("ClaudeAgentClient.fetchCatalog", () => {
   const logger = createTestLogger();
+
+  beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "");
+    vi.stubEnv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "");
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+  });
 
   test("returns hardcoded claude models", async () => {
     const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));

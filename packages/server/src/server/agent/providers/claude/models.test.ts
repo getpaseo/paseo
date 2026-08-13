@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
@@ -19,6 +19,7 @@ const createdClaudeConfigDirs: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await Promise.all(
     createdClaudeConfigDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -189,6 +190,15 @@ describe("getClaudeModels", () => {
 });
 
 describe("ClaudeAgentClient.fetchCatalog", () => {
+  // Gateway discovery keys leak from the host shell; neutralize so catalog
+  // tests are hermetic (no live ANTHROPIC_BASE_URL model fetch).
+  beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "");
+    vi.stubEnv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "");
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+  });
+
   it("appends concrete models from Claude settings.json", async () => {
     const configDir = await createClaudeConfigDir({
       model: "us.anthropic.claude-opus-4-7[1m]",
@@ -353,6 +363,52 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
     expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
+  });
+
+  it("discovers models from an Anthropic-compatible gateway when discovery is enabled", async () => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.example.test");
+    vi.stubEnv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "tok");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        return new Response(
+          JSON.stringify({
+            data: [{ id: "glm-5.2" }, { id: "deepseek-v4-flash" }, { id: "" }, { id: 9 }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+        void headers;
+      }),
+    );
+
+    const client = createCatalogClient();
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.map((model) => model.id)).toContain("glm-5.2");
+    expect(models.map((model) => model.id)).toContain("deepseek-v4-flash");
+  });
+
+  it("does not call the gateway when discovery is disabled", async () => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.example.test");
+    vi.stubEnv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "");
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const client = createCatalogClient();
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(models.some((model) => model.description?.startsWith("From gateway"))).toBe(false);
   });
 });
 

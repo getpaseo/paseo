@@ -4125,6 +4125,7 @@ export class DaemonClient {
       cwd?: string;
       includeFiles?: boolean;
       includeDirectories?: boolean;
+      includeHiddenDirectories?: boolean;
       matchMode?: "fuzzy" | "suffix";
     },
     requestId?: string,
@@ -4137,6 +4138,7 @@ export class DaemonClient {
         cwd: options.cwd,
         includeFiles: options.includeFiles,
         includeDirectories: options.includeDirectories,
+        includeHiddenDirectories: options.includeHiddenDirectories,
         matchMode: options.matchMode,
         limit: options.limit,
       },

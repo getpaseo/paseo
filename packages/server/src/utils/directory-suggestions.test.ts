@@ -889,6 +889,20 @@ describe("relative typed-entry configuration", () => {
     });
   });
 
+  it("suggests hidden directories when explicitly requested", async () => {
+    mkdirSync(path.join(workspaceDir, ".hidden-project"), { recursive: true });
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "hidden-project",
+      limit: 20,
+      includeDirectories: true,
+      includeHiddenDirectories: true,
+    });
+
+    expect(results).toEqual([{ path: ".hidden-project", kind: "directory" }]);
+  });
+
   it("supports slash-style path queries", async () => {
     const results = await searchRelativeDirectoryEntries({
       cwd: workspaceDir,

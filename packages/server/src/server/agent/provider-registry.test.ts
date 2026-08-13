@@ -1207,7 +1207,7 @@ describe("model merging", () => {
     expect(models.map((model) => model.id)).toEqual(["codex-auto-review", "gpt-5.4"]);
   });
 
-  test("profile models replace runtime models", async () => {
+  test("profile models merge with runtime models", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1235,10 +1235,10 @@ describe("model merging", () => {
       force: false,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
+    expect(models.map((model) => model.id)).toEqual(["runtime-pro", "profile-fast"]);
   });
 
-  test("profile models exclude runtime models entirely", async () => {
+  test("profile models override matching runtime models and retain other models", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1277,10 +1277,15 @@ describe("model merging", () => {
         id: "shared-model",
         label: "Profile Label",
       },
+      {
+        provider: "codex",
+        id: "runtime-only",
+        label: "Runtime Only",
+      },
     ]);
   });
 
-  test("profile isDefault preserved without runtime models", async () => {
+  test("profile isDefault takes precedence over runtime defaults", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1311,6 +1316,12 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
+      {
+        provider: "codex",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: false,
+      },
       {
         provider: "codex",
         id: "profile-default",
@@ -1403,7 +1414,7 @@ describe("model merging", () => {
     ]);
   });
 
-  test("built-in Claude profile models replace runtime models (issue #1299)", async () => {
+  test("built-in Claude profile models merge with runtime models (issue #1299)", async () => {
     mockState.runtimeModels.set("claude", [
       {
         provider: "claude",
@@ -1443,6 +1454,11 @@ describe("model merging", () => {
     expect(models).toEqual([
       {
         provider: "claude",
+        id: "runtime-model",
+        label: "Runtime Model",
+      },
+      {
+        provider: "claude",
         id: "shared-model",
         label: "Profile Label",
         ...CLAUDE_CUSTOM_THINKING_FIELDS,
@@ -1456,7 +1472,7 @@ describe("model merging", () => {
     ]);
   });
 
-  test("additional models merge onto profile replacement models", async () => {
+  test("additional models merge onto profile models", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1490,7 +1506,11 @@ describe("model merging", () => {
       force: false,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["profile-curated", "profile-extra"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "runtime-pro",
+      "profile-curated",
+      "profile-extra",
+    ]);
   });
 
   test("additional models override matching runtime models in place", async () => {
@@ -1673,7 +1693,7 @@ describe("model merging", () => {
     });
   });
 
-  test("built-in createClient().fetchCatalog() honors profile model replacement (issue #579)", async () => {
+  test("built-in createClient().fetchCatalog() honors profile model merging (issue #579)", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1704,7 +1724,7 @@ describe("model merging", () => {
       force: false,
     });
 
-    expect(catalog.models.map((model) => model.id)).toEqual(["profile-fast"]);
+    expect(catalog.models.map((model) => model.id)).toEqual(["runtime-default", "profile-fast"]);
     expect(catalog.models.find((model) => model.isDefault)?.id).toBe("profile-fast");
   });
 
@@ -1776,7 +1796,7 @@ describe("model merging", () => {
     ]);
   });
 
-  test("built-in Claude models override replaces hardcoded first-party models (issue #1299)", async () => {
+  test("built-in Claude models merge with hardcoded first-party models (issue #1299)", async () => {
     mockState.runtimeModels.set("claude", [
       { provider: "claude", id: "claude-opus-4-8", label: "Opus 4.8", isDefault: true },
       { provider: "claude", id: "claude-opus-4-7", label: "Opus 4.7" },
@@ -1801,7 +1821,14 @@ describe("model merging", () => {
       force: false,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["MiniMax-M2.7", "MiniMax-M3"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
+      "MiniMax-M2.7",
+      "MiniMax-M3",
+    ]);
     expect(models.find((model) => model.isDefault)?.id).toBe("MiniMax-M3");
   });
 });
@@ -1823,7 +1850,7 @@ describe("fetchCatalog", () => {
     expect(catalog.modes).toEqual([]);
   });
 
-  test("replacement models skip runtime model discovery but preserve additionalModels", async () => {
+  test("profile models retain runtime discovery and additional models", async () => {
     mockState.runtimeModels.set("codex", [
       { provider: "codex", id: "codex-runtime", label: "Codex Runtime" },
     ]);
@@ -1843,7 +1870,11 @@ describe("fetchCatalog", () => {
       force: false,
     });
 
-    expect(catalog.models.map((model) => model.id)).toEqual(["profile-model", "extra-model"]);
+    expect(catalog.models.map((model) => model.id)).toEqual([
+      "codex-runtime",
+      "profile-model",
+      "extra-model",
+    ]);
   });
 
   test("replacement models still resolve the provider's capability-aware default mode", async () => {

@@ -609,9 +609,11 @@ Models and modes are discovered dynamically at runtime from the agent process. I
 }
 ```
 
-Profile models (defined in config.json) completely replace runtime-discovered models when present.
+Profile models (defined in config.json) merge with runtime-discovered models. Matching IDs use the
+profile label and metadata; runtime models not listed in the profile remain available.
 
-If you want to keep runtime-discovered models and add or relabel a few entries, use `additionalModels` instead.
+Use `additionalModels` when you want to add or relabel models without changing the profile's model
+defaults or other profile-specific entries.
 
 Example: add an experimental model while keeping every model the provider discovers at runtime:
 

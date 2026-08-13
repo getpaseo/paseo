@@ -52,16 +52,16 @@ export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,
   claudeCodeVersion?: string,
+  env?: NodeJS.ProcessEnv,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<AgentModelDefinition[]> {
   const hardcodedModels = getClaudeModels(claudeCodeVersion);
   const settingsModels = await readClaudeSettingsModels(logger, configDir);
-  if (settingsModels.length === 0) {
-    return hardcodedModels;
-  }
+  const gatewayModels = await fetchClaudeGatewayModels(logger, env, fetchImpl);
 
   const models = [...hardcodedModels];
 
-  for (const model of settingsModels) {
+  for (const model of [...settingsModels, ...gatewayModels]) {
     const existingIndex = models.findIndex((candidate) => candidate.id === model.id);
     if (existingIndex !== -1) {
       const existing = models[existingIndex];
@@ -74,6 +74,57 @@ export async function getClaudeModelsWithSettings(
   }
 
   return models;
+}
+
+/**
+ * Discover models from an Anthropic-compatible gateway configured via
+ * `ANTHROPIC_BASE_URL` (e.g. cliproxy). Mirrors Claude Code's
+ * `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`: only runs when the flag is set,
+ * so vanilla Anthropic setups are untouched. Models the gateway exposes that
+ * are not Anthropic's (GLM, deepseek ids behind the proxy) are intentionally
+ * surfaced — Claude Code is an Anthropic-compatible client (see the note on
+ * resolveObservedClaudeModelId). Returns [] on any miss so catalog never breaks.
+ */
+async function fetchClaudeGatewayModels(
+  logger: Logger,
+  env: NodeJS.ProcessEnv | undefined,
+  fetchImpl: typeof fetch,
+): Promise<AgentModelDefinition[]> {
+  const baseUrl = env?.ANTHROPIC_BASE_URL?.trim();
+  const discoveryEnabled = env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY;
+  if (!baseUrl || !discoveryEnabled || !/^(1|true)$/i.test(discoveryEnabled.trim())) {
+    return [];
+  }
+
+  const url = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const authToken = env.ANTHROPIC_AUTH_TOKEN?.trim();
+  const apiKey = env.ANTHROPIC_API_KEY?.trim();
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (apiKey) headers["x-api-key"] = apiKey;
+
+  try {
+    const res = await fetchImpl(url, { headers });
+    if (!res.ok) {
+      logger.debug({ url, status: res.status }, "Claude gateway model discovery returned non-OK");
+      return [];
+    }
+    const parsed = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const ids = Array.isArray(parsed?.data)
+      ? parsed.data
+          .map((entry) => (typeof entry?.id === "string" ? entry.id.trim() : ""))
+          .filter(Boolean)
+      : [];
+    return ids.map((id) => ({
+      provider: "claude",
+      id,
+      label: id,
+      description: `From gateway ${baseUrl}`,
+    }));
+  } catch (error) {
+    logger.debug({ err: error, url }, "Failed to discover Claude gateway models");
+    return [];
+  }
 }
 
 async function readClaudeSettingsModels(

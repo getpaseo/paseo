@@ -592,6 +592,13 @@ export function ProviderDiagnosticSheet({
     () => config?.providers?.[provider]?.additionalModels ?? [],
     [config?.providers, provider],
   );
+  const configuredModels = useMemo(() => {
+    const providerConfig = config?.providers?.[provider];
+    const profileModels = Array.isArray(providerConfig?.models)
+      ? (providerConfig.models as ProviderProfileModel[])
+      : [];
+    return [...profileModels, ...additionalModels];
+  }, [additionalModels, config?.providers, provider]);
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error"
@@ -607,6 +614,7 @@ export function ProviderDiagnosticSheet({
     currentModels,
     providerSnapshotRefreshing,
     previousCache: stableDiscoveredRef.current,
+    configuredModels,
   });
   stableDiscoveredRef.current = nextDiscoveredCache;
 

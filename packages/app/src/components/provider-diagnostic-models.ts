@@ -1,4 +1,5 @@
-import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
 export interface ProviderDiscoveredModelsCache {
@@ -13,6 +14,7 @@ export interface ResolveProviderDiscoveredModelsInput {
   currentModels: AgentModelDefinition[] | undefined;
   providerSnapshotRefreshing: boolean;
   previousCache: ProviderDiscoveredModelsCache | null;
+  configuredModels?: ProviderProfileModel[];
 }
 
 export interface ResolveProviderDiscoveredModelsResult {
@@ -26,11 +28,22 @@ export function resolveProviderDiscoveredModels({
   currentModels,
   providerSnapshotRefreshing,
   previousCache,
+  configuredModels = [],
 }: ResolveProviderDiscoveredModelsInput): ResolveProviderDiscoveredModelsResult {
   const selectableModels = filterSelectableModels(currentModels ?? null) ?? [];
-  if (selectableModels.length > 0) {
-    const cache = { serverId, provider, models: selectableModels };
-    return { models: selectableModels, cache };
+  const mergedById = new Map(selectableModels.map((model) => [model.id, model]));
+  for (const model of configuredModels) {
+    const existing = mergedById.get(model.id);
+    mergedById.set(model.id, {
+      ...(existing ?? { provider: provider as AgentProvider }),
+      ...model,
+      provider: existing?.provider ?? (provider as AgentProvider),
+    });
+  }
+  const mergedModels = [...mergedById.values()];
+  if (mergedModels.length > 0) {
+    const cache = { serverId, provider, models: mergedModels };
+    return { models: mergedModels, cache };
   }
 
   if (
