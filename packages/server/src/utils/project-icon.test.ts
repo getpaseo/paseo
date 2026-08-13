@@ -125,11 +125,11 @@ describe("findProjectIcon", () => {
   });
 
   it("prioritizes favicon over logo", async () => {
-    writeFileSync(join(tempDir, "favicon.ico"), "favicon");
+    writeFileSync(join(tempDir, "favicon.png"), "favicon");
     writeFileSync(join(tempDir, "logo.png"), "logo");
 
     const result = await findProjectIcon(tempDir);
-    expect(result).toBe(join(tempDir, "favicon.ico"));
+    expect(result).toBe(join(tempDir, "favicon.png"));
   });
 
   it("prioritizes priority dirs over root", async () => {
@@ -180,11 +180,32 @@ describe("findProjectIcon", () => {
     expect(result).toBe(join(tempDir, "apple-touch-icon.png"));
   });
 
+  it("prefers an Apple touch PNG over ICO", async () => {
+    writeFileSync(join(tempDir, "favicon.ico"), "ico");
+    writeFileSync(join(tempDir, "apple-touch-icon.png"), "apple icon");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, "apple-touch-icon.png"));
+  });
+
   it("finds icon-*.png patterns", async () => {
     writeFileSync(join(tempDir, "icon-192.png"), "192 icon");
 
     const result = await findProjectIcon(tempDir);
     expect(result).toBe(join(tempDir, "icon-192.png"));
+  });
+
+  it.each([
+    "favicon-32x32.png",
+    "apple-touch-icon-180x180.png",
+    "android-chrome-192x192.png",
+    "safari-pinned-tab.svg",
+    "mstile-150x150.png",
+  ])("finds common sized icon %s", async (fileName) => {
+    writeFileSync(join(tempDir, fileName), "icon");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, fileName));
   });
 
   it("handles non-existent directory gracefully", async () => {

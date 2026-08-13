@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import {
@@ -17,12 +17,14 @@ import {
   type ReviewDraftSide,
   type ReviewDraftStoreState,
   serializeReviewDraftState,
+  SerializedReviewDraftStateSchema,
   setDiffModeOverrideInState,
   updateCommentInState,
 } from "@/review/state";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type {
   DiffModeOverride,
@@ -168,7 +170,7 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
     {
       name: "@paseo:review-draft-store",
       version: STORE_VERSION,
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createValidatedPersistStorage(AsyncStorage, SerializedReviewDraftStateSchema),
       partialize: (state) => serializeReviewDraftState(state),
       migrate: async (state) => normalizePersistedState(state),
     },

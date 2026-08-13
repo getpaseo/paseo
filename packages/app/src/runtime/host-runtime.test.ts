@@ -445,6 +445,9 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     setItem: async (key, value) => {
       values.set(key, value);
     },
+    removeItem: async (key) => {
+      values.delete(key);
+    },
   };
 }
 

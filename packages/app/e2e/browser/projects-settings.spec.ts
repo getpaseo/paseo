@@ -9,12 +9,14 @@ import {
   clickReloadProjectSettings,
   clickRetryProjectSettingsSave,
   clickSaveProjectSettings,
+  commitPaseoConfig,
   corruptPaseoConfig,
   editWorktreeSetup,
   expectEmptyScriptList,
   expectProjectHostContextHidden,
   expectNoEditableTarget,
   expectNoProjectSettingsError,
+  expectNoUncommittedSetupWarning,
   expectProjectEditFailed,
   expectProjectEditName,
   expectProjectEditSaved,
@@ -27,6 +29,7 @@ import {
   expectSaveButtonDisabled,
   expectScriptRowCount,
   expectWriteFailedCalloutActions,
+  expectUncommittedSetupWarning,
   fillProjectIconUrl,
   fillProjectName,
   installDaemonConnectionGate,
@@ -216,9 +219,16 @@ test.describe("Projects settings", () => {
   test("user edits worktree setup from the projects page", async ({ page, editableProject }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
+    await expectNoUncommittedSetupWarning(page);
     await editWorktreeSetup(page, updatedSetup);
     await clickSaveProjectSettings(page);
     await expectProjectConfigSaved(editableProject);
+    await expectUncommittedSetupWarning(page);
+
+    commitPaseoConfig(editableProject.path);
+    await returnToProjectsList(page);
+    await openProjectSettings(page, editableProject.name);
+    await expectNoUncommittedSetupWarning(page);
   });
 
   test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
@@ -439,5 +449,7 @@ test.describe("Projects settings — error UX", () => {
 
     await expectScriptRowCount(page, 0);
     await expectEmptyScriptList(page);
+    await clickSaveProjectSettings(page);
+    await expectNoUncommittedSetupWarning(page);
   });
 });

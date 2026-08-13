@@ -292,9 +292,7 @@ export function useModelBrowser({
     setSearchQuery(value);
   }, []);
 
-  // A pinned profiles section makes the root worth returning to, so the back
-  // affordance stays even when the drill-down was the only provider.
-  const singleProviderView = providers.length === 1 && !hasProfiles;
+  const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
       return {
