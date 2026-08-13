@@ -23,7 +23,7 @@ import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream"
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 1024 * 1024;

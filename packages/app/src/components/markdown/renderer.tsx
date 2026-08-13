@@ -31,6 +31,7 @@ import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isNative } from "@/constants/platform";
 import {
   splitHtmlishMarkdown,
   type MarkdownDisplayPart,
@@ -38,6 +39,8 @@ import {
 } from "./html-ish";
 import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
 import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
+import { colorMarkdownLinkChildren } from "./link-children";
+import { MarkdownLinkText } from "./link-text";
 
 export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
@@ -478,6 +481,15 @@ function SharedMarkdownLink({
     if (onLinkPress?.(href) === false) return;
     void openExternalUrl(href);
   }, [href, onLinkPress]);
+  const style = useMemo(() => [inheritedStyles, linkStyle], [inheritedStyles, linkStyle]);
+
+  if (!isNative) {
+    return (
+      <MarkdownLinkText style={style} onPress={handlePress}>
+        {children}
+      </MarkdownLinkText>
+    );
+  }
 
   return (
     <MarkdownInheritedText
@@ -715,7 +727,7 @@ export function createSharedMarkdownRules(): RenderRules {
         linkStyle={styles.link}
         onLinkPress={onLinkPress}
       >
-        {children}
+        {colorMarkdownLinkChildren(children, styles.link.color)}
       </SharedMarkdownLink>
     ),
   };
