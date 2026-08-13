@@ -38,6 +38,11 @@ const mockState = vi.hoisted(() => {
         env?: Record<string, string>;
         providerParams?: unknown;
       }>,
+      gjc: [] as Array<{
+        command: string[];
+        env?: Record<string, string>;
+        providerParams?: unknown;
+      }>,
       trae: [] as Array<{
         command: string[];
         env?: Record<string, string>;
@@ -65,6 +70,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.codex = [];
       this.constructorArgs.copilot = [];
       this.constructorArgs.cursor = [];
+      this.constructorArgs.gjc = [];
       this.constructorArgs.trae = [];
       this.constructorArgs.kimi = [];
       this.constructorArgs.pi = [];
@@ -331,6 +337,59 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
         env: options.env,
         providerId: options.providerId,
         label: options.label,
+        providerParams: options.providerParams,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+  },
+}));
+
+vi.mock("./providers/gjc-acp-agent.js", () => ({
+  GjcACPAgentClient: class GjcACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "acp";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerParams?: unknown;
+    }) {
+      this.runtimeSettings = {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
+        env: options.env,
+      };
+      mockState.constructorArgs.gjc.push({
+        command: options.command,
+        env: options.env,
         providerParams: options.providerParams,
       });
     }
@@ -823,6 +882,40 @@ test("ACP provider params can disable MCP support", () => {
       },
     },
   ]);
+});
+
+test("gjc provider extending acp uses GjcACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      gjc: {
+        extends: "acp",
+        label: "Gajae Code",
+        command: ["gjc", "acp"],
+        env: {
+          GJC_LOG: "debug",
+        },
+      },
+    },
+  });
+
+  expect(registry.gjc.createClient(logger).provider).toBe("gjc");
+  expect(mockState.constructorArgs.gjc).toEqual([
+    {
+      command: ["gjc", "acp"],
+      env: {
+        GJC_LOG: "debug",
+      },
+      providerParams: undefined,
+    },
+    {
+      command: ["gjc", "acp"],
+      env: {
+        GJC_LOG: "debug",
+      },
+      providerParams: undefined,
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
 test("cursor provider extending acp uses CursorACPAgentClient", () => {

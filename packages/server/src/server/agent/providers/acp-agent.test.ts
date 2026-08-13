@@ -82,6 +82,28 @@ describe("buildACPClientCapabilities", () => {
       _meta: { source: "provider" },
     });
   });
+
+  test("can delegate terminal execution while keeping filesystem execution with the agent", () => {
+    expect(
+      buildACPClientCapabilities(
+        { gjc: { permissionHandling: "prompt" } },
+        {
+          terminal: true,
+        },
+      ),
+    ).toEqual({
+      fs: {
+        readTextFile: false,
+        writeTextFile: false,
+      },
+      terminal: true,
+      _meta: {
+        gjc: {
+          permissionHandling: "prompt",
+        },
+      },
+    });
+  });
 });
 
 interface ACPSessionInternals {

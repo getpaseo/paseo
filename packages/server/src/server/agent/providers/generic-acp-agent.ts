@@ -47,6 +47,7 @@ interface GenericACPAgentClientOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
+  clientCapabilities?: GenericACPProviderParams["clientCapabilities"];
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -61,6 +62,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
 
   constructor(options: GenericACPAgentClientOptions) {
     const providerParams = parseGenericACPProviderParams(options.providerParams);
+    const clientCapabilities = mergeGenericACPClientCapabilities(
+      options.clientCapabilities,
+      providerParams.clientCapabilities,
+    );
     super({
       provider: "acp",
       logger: options.logger,
@@ -69,13 +74,25 @@ export class GenericACPAgentClient extends ACPAgentClient {
       },
       defaultCommand: options.command,
       capabilities: buildGenericACPCapabilities(providerParams),
-      waitForInitialCommands: options.waitForInitialCommands,
-      initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
-      clientCapabilities: providerParams.clientCapabilities,
-      clientCapabilityMeta: options.clientCapabilityMeta,
-      configFeatureOptions: options.configFeatureOptions,
-      extensionCommandsParser: options.extensionCommandsParser,
-      catalogModelResolver: options.catalogModelResolver,
+      ...(options.waitForInitialCommands !== undefined
+        ? { waitForInitialCommands: options.waitForInitialCommands }
+        : {}),
+      ...(options.initialCommandsWaitTimeoutMs !== undefined
+        ? { initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs }
+        : {}),
+      ...(clientCapabilities ? { clientCapabilities } : {}),
+      ...(options.clientCapabilityMeta
+        ? { clientCapabilityMeta: options.clientCapabilityMeta }
+        : {}),
+      ...(options.configFeatureOptions
+        ? { configFeatureOptions: options.configFeatureOptions }
+        : {}),
+      ...(options.extensionCommandsParser
+        ? { extensionCommandsParser: options.extensionCommandsParser }
+        : {}),
+      ...(options.catalogModelResolver
+        ? { catalogModelResolver: options.catalogModelResolver }
+        : {}),
     });
 
     this.command = options.command;
@@ -165,6 +182,28 @@ function buildGenericACPCapabilities(params: GenericACPProviderParams): AgentCap
   return {
     ...DEFAULT_ACP_CAPABILITIES,
     supportsMcpServers: params.supportsMcpServers ?? DEFAULT_ACP_CAPABILITIES.supportsMcpServers,
+  };
+}
+
+function mergeGenericACPClientCapabilities(
+  defaults: GenericACPProviderParams["clientCapabilities"],
+  overrides: GenericACPProviderParams["clientCapabilities"],
+): GenericACPProviderParams["clientCapabilities"] {
+  if (!defaults && !overrides) {
+    return undefined;
+  }
+
+  return {
+    ...defaults,
+    ...overrides,
+    ...(defaults?.fs || overrides?.fs
+      ? {
+          fs: {
+            ...defaults?.fs,
+            ...overrides?.fs,
+          },
+        }
+      : {}),
   };
 }
 
