@@ -43,6 +43,11 @@ const mockState = vi.hoisted(() => {
         env?: Record<string, string>;
         providerParams?: unknown;
       }>,
+      grok: [] as Array<{
+        command: string[];
+        env?: Record<string, string>;
+        providerParams?: unknown;
+      }>,
       kimi: [] as Array<{
         command: string[];
         env?: Record<string, string>;
@@ -66,6 +71,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.copilot = [];
       this.constructorArgs.cursor = [];
       this.constructorArgs.trae = [];
+      this.constructorArgs.grok = [];
       this.constructorArgs.kimi = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
@@ -448,6 +454,59 @@ vi.mock("./providers/trae-acp-agent.js", () => ({
         env: options.env,
       };
       mockState.constructorArgs.trae.push({
+        command: options.command,
+        env: options.env,
+        providerParams: options.providerParams,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+  },
+}));
+
+vi.mock("./providers/grok-acp-agent.js", () => ({
+  GrokACPAgentClient: class GrokACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "acp";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerParams?: unknown;
+    }) {
+      this.runtimeSettings = {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
+        env: options.env,
+      };
+      mockState.constructorArgs.grok.push({
         command: options.command,
         env: options.env,
         providerParams: options.providerParams,
@@ -941,6 +1000,33 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
     },
     {
       command: ["kimi", "acp"],
+      env: undefined,
+      providerParams: undefined,
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("grok provider extending acp uses GrokACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      grok: {
+        extends: "acp",
+        label: "Grok",
+        command: ["grok", "agent", "stdio"],
+      },
+    },
+  });
+
+  expect(registry.grok.createClient(logger).provider).toBe("grok");
+  expect(mockState.constructorArgs.grok).toEqual([
+    {
+      command: ["grok", "agent", "stdio"],
+      env: undefined,
+      providerParams: undefined,
+    },
+    {
+      command: ["grok", "agent", "stdio"],
       env: undefined,
       providerParams: undefined,
     },
