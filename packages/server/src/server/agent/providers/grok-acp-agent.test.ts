@@ -1,7 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 
-import type { AgentSessionConfig, AgentTimelineItem } from "../agent-sdk-types.js";
-import type { ACPExtMethodContext } from "./acp-agent.js";
+import type {
+  AgentPermissionResponse,
+  AgentSessionConfig,
+  AgentTimelineItem,
+} from "../agent-sdk-types.js";
+import type { ACPClientPermissionResponseHandler, ACPExtMethodContext } from "./acp-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
   GROK_AGENT_MODE_ID,
@@ -29,7 +33,14 @@ function createExtMethodContext(
   return {
     provider: "acp",
     sessionId: "sess-1",
-    requestPermission: async () => ({ behavior: "allow", selectedActionId: "implement" }),
+    requestPermission: async (_request, onResponse) => {
+      const response: AgentPermissionResponse = {
+        behavior: "allow",
+        selectedActionId: "implement",
+      };
+      onResponse?.(response);
+      return response;
+    },
     ...overrides,
     config: overrides.config ?? config,
     emitTimeline:
@@ -204,7 +215,14 @@ describe("Grok exit_plan_mode handling", () => {
 
   test("does not record a completed plan when the user dismisses approval", async () => {
     const context = createExtMethodContext({
-      requestPermission: async () => ({ behavior: "deny", selectedActionId: "dismiss" }),
+      requestPermission: async (_request, onResponse) => {
+        const response: AgentPermissionResponse = {
+          behavior: "deny",
+          selectedActionId: "dismiss",
+        };
+        onResponse?.(response);
+        return response;
+      },
     });
 
     await expect(
@@ -221,6 +239,52 @@ describe("Grok exit_plan_mode handling", () => {
 
     expect(context.config.featureValues).toEqual({ [GROK_PLAN_MODE_FEATURE_ID]: true });
     expect(context.timeline).toEqual([]);
+  });
+
+  test("turns plan mode off when Implement is resolved, before the handler resumes", async () => {
+    let resolvePermission!: (response: AgentPermissionResponse) => void;
+    let onResponse: ACPClientPermissionResponseHandler | undefined;
+    const context = createExtMethodContext({
+      requestPermission: (_request, handler) => {
+        onResponse = handler;
+        return new Promise((resolve) => {
+          resolvePermission = resolve;
+        });
+      },
+    });
+
+    const pending = handleGrokExtMethod(
+      "x.ai/exit_plan_mode",
+      {
+        sessionId: "sess-1",
+        toolCallId: "tc-plan",
+        planContent: "- add tests",
+      },
+      context,
+    );
+
+    expect(context.config.featureValues).toEqual({ [GROK_PLAN_MODE_FEATURE_ID]: true });
+    expect(context.timeline).toEqual([]);
+
+    const response: AgentPermissionResponse = {
+      behavior: "allow",
+      selectedActionId: "implement",
+    };
+    onResponse?.(response);
+    expect(context.config.featureValues).toEqual({ [GROK_PLAN_MODE_FEATURE_ID]: false });
+    expect(context.timeline).toEqual([
+      {
+        type: "tool_call",
+        callId: "tc-plan",
+        name: "plan",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: "- add tests" },
+      },
+    ]);
+
+    resolvePermission(response);
+    await expect(pending).resolves.toEqual({ outcome: "approved" });
   });
 
   test("rejects an exit_plan_mode request for a different session", async () => {

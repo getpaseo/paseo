@@ -203,18 +203,28 @@ export async function handleGrokExtMethod(
     provider: context.provider,
     planContent: request.planContent,
   });
-  const response = await context.requestPermission(permission);
-  if (response.behavior === "allow") {
-    const timelineItem = buildGrokPlanTimelineItem({
-      toolCallId: request.toolCallId,
-      planContent: request.planContent,
-    });
-    if (timelineItem) {
-      context.emitTimeline(timelineItem);
-    }
-    syncGrokPlanModeFromCurrentMode(GROK_AGENT_MODE_ID, context.config);
-  }
+  const response = await context.requestPermission(permission, (resolved) => {
+    applyGrokPlanApproval(resolved, request, context);
+  });
   return { ...mapGrokPlanPermissionResponse(response) };
+}
+
+function applyGrokPlanApproval(
+  response: AgentPermissionResponse,
+  request: GrokExitPlanModeRequest,
+  context: ACPExtMethodContext,
+): void {
+  if (response.behavior !== "allow") {
+    return;
+  }
+  const timelineItem = buildGrokPlanTimelineItem({
+    toolCallId: request.toolCallId,
+    planContent: request.planContent,
+  });
+  if (timelineItem) {
+    context.emitTimeline(timelineItem);
+  }
+  syncGrokPlanModeFromCurrentMode(GROK_AGENT_MODE_ID, context.config);
 }
 
 export class GrokACPAgentClient extends GenericACPAgentClient {

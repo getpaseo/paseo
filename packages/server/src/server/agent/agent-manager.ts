@@ -4207,8 +4207,28 @@ export class AgentManager {
   }
 
   private syncFeaturesFromSession(agent: ManagedAgent): void {
-    if ("session" in agent && agent.session?.features) {
-      agent.features = agent.session.features;
+    if (!("session" in agent) || !agent.session?.features) {
+      return;
+    }
+    agent.features = agent.session.features;
+    const current = agent.config.featureValues;
+    if (current == null) {
+      return;
+    }
+    let changed = false;
+    const next = { ...current };
+    for (const feature of agent.features) {
+      if (!Object.prototype.hasOwnProperty.call(next, feature.id)) {
+        continue;
+      }
+      if (next[feature.id] === feature.value) {
+        continue;
+      }
+      next[feature.id] = feature.value;
+      changed = true;
+    }
+    if (changed) {
+      agent.config.featureValues = next;
     }
   }
 

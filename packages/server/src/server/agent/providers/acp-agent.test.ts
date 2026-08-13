@@ -1169,6 +1169,76 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("applies client-permission feature updates before respondToPermission returns", async () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "acp",
+        cwd: "/tmp/paseo-acp-test",
+        featureValues: { plan_mode: true },
+      },
+      {
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: ["grok", "agent", "stdio"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        staticToggleFeatures: [{ id: "plan_mode", label: "Plan" }],
+        extMethodHandler: async (_method, _params, context) => {
+          const response = await context.requestPermission(
+            {
+              id: "perm-plan-1",
+              provider: "acp",
+              name: "PlanApproval",
+              kind: "plan",
+              input: { plan: "- add tests" },
+            },
+            (resolved) => {
+              if (resolved.behavior === "allow") {
+                context.config.featureValues = {
+                  ...context.config.featureValues,
+                  plan_mode: false,
+                };
+              }
+            },
+          );
+          return { outcome: response.behavior };
+        },
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const extMethod = session.extMethod("test/exit_plan_mode", { sessionId: "session-1" });
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+    expect(session.features).toContainEqual(
+      expect.objectContaining({ type: "toggle", id: "plan_mode", value: true }),
+    );
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    expect(session.features).toContainEqual(
+      expect.objectContaining({ type: "toggle", id: "plan_mode", value: false }),
+    );
+    await expect(extMethod).resolves.toEqual({ outcome: "allow" });
+  });
+
   test("preserves ACP chooser actions and returns the selected option", async () => {
     const session = createSessionWithConfig({
       provider: "kimi-acp",

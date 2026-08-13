@@ -515,6 +515,7 @@ interface PendingPermission {
 interface PendingClientPermission {
   request: AgentPermissionRequest;
   resolve: (response: AgentPermissionResponse) => void;
+  onResponse?: ACPClientPermissionResponseHandler;
   turnId: string | null;
 }
 
@@ -578,11 +579,16 @@ export interface ACPFeatureWriterContext {
 
 export type ACPFeatureWriter = (context: ACPFeatureWriterContext) => Promise<boolean>;
 
+export type ACPClientPermissionResponseHandler = (response: AgentPermissionResponse) => void;
+
 export interface ACPExtMethodContext {
   provider: string;
   sessionId: string | null;
   config: AgentSessionConfig;
-  requestPermission: (request: AgentPermissionRequest) => Promise<AgentPermissionResponse>;
+  requestPermission: (
+    request: AgentPermissionRequest,
+    onResponse?: ACPClientPermissionResponseHandler,
+  ) => Promise<AgentPermissionResponse>;
   emitTimeline: (item: AgentTimelineItem) => void;
 }
 
@@ -2210,6 +2216,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const clientPending = this.pendingClientPermissions.get(requestId);
     if (clientPending) {
       this.pendingClientPermissions.delete(requestId);
+      // Ext-method handlers apply feature/timeline side effects here so
+      // session.features is current before AgentManager refreshes and persists.
+      clientPending.onResponse?.(response);
       clientPending.resolve(response);
       this.pushEvent({
         type: "permission_resolved",
@@ -2460,7 +2469,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       provider: this.provider,
       sessionId: this.sessionId,
       config: this.config,
-      requestPermission: (request) => this.enqueueClientPermission(request),
+      requestPermission: (request, onResponse) => this.enqueueClientPermission(request, onResponse),
       emitTimeline: (item) => {
         this.pushEvent({ type: "timeline", provider: this.provider, item });
       },
@@ -2473,11 +2482,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private enqueueClientPermission(
     request: AgentPermissionRequest,
+    onResponse?: ACPClientPermissionResponseHandler,
   ): Promise<AgentPermissionResponse> {
     return new Promise((resolve) => {
       this.pendingClientPermissions.set(request.id, {
         request,
         resolve,
+        onResponse,
         turnId: this.activeForegroundTurnId,
       });
       this.pushEvent({
