@@ -375,6 +375,17 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+export type ACPExtensionNotificationHandler = (
+  method: string,
+  params: Record<string, unknown>,
+  context: { sessionId: string | null; cwd: string; provider: string },
+) => AgentStreamEvent[];
+
+export type ACPSessionNotificationUsage = (
+  params: SessionNotification,
+  context: { sessionId: string | null; cwd: string },
+) => AgentUsage | undefined;
+
 /**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
@@ -428,6 +439,8 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
+  sessionNotificationUsage?: ACPSessionNotificationUsage;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -458,6 +471,8 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
+  sessionNotificationUsage?: ACPSessionNotificationUsage;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -600,6 +615,36 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
     outputTokens: usage.outputTokens ?? undefined,
     cachedInputTokens: usage.cachedReadTokens ?? undefined,
   };
+}
+
+export function sameAgentUsage(current: AgentUsage | undefined, next: AgentUsage): boolean {
+  if (!current) return false;
+  return (
+    current.inputTokens === next.inputTokens &&
+    current.outputTokens === next.outputTokens &&
+    current.cachedInputTokens === next.cachedInputTokens &&
+    current.totalCostUsd === next.totalCostUsd &&
+    current.contextWindowMaxTokens === next.contextWindowMaxTokens &&
+    current.contextWindowUsedTokens === next.contextWindowUsedTokens
+  );
+}
+
+export function mapACPUsageUpdate(update: UsageUpdate): AgentUsage | undefined {
+  const usage: AgentUsage = {};
+  if (Number.isFinite(update.size) && update.size > 0) {
+    usage.contextWindowMaxTokens = update.size;
+  }
+  if (Number.isFinite(update.used) && update.used >= 0) {
+    usage.contextWindowUsedTokens = update.used;
+  }
+  if (
+    update.cost &&
+    update.cost.currency.toUpperCase() === "USD" &&
+    Number.isFinite(update.cost.amount)
+  ) {
+    usage.totalCostUsd = update.cost.amount;
+  }
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 export function resolveACPModeSelection({
@@ -818,6 +863,8 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
+  private readonly sessionNotificationUsage?: ACPSessionNotificationUsage;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -846,6 +893,8 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
+    this.sessionNotificationUsage = options.sessionNotificationUsage;
   }
 
   async createSession(
@@ -876,6 +925,8 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        extensionNotificationHandler: this.extensionNotificationHandler,
+        sessionNotificationUsage: this.sessionNotificationUsage,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -927,6 +978,8 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      extensionNotificationHandler: this.extensionNotificationHandler,
+      sessionNotificationUsage: this.sessionNotificationUsage,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1433,6 +1486,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
+  private readonly sessionNotificationUsage?: ACPSessionNotificationUsage;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1473,6 +1528,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
+    this.sessionNotificationUsage = options.sessionNotificationUsage;
   }
 
   get id(): string | null {
@@ -2269,6 +2326,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const events = this.translateSessionUpdate(params.update);
+    const notificationUsage = this.sessionNotificationUsage?.(params, {
+      sessionId: this.sessionId,
+      cwd: this.config.cwd,
+    });
+    if (
+      notificationUsage &&
+      !sameAgentUsage(this.currentTurnUsage, { ...this.currentTurnUsage, ...notificationUsage })
+    ) {
+      events.push(this.applyUsageUpdate(notificationUsage));
+    }
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2298,7 +2365,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    this.handleExtensionMessage(method, params);
+    return {};
+  }
+
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    this.handleExtensionMessage(method, params);
+  }
+
+  private handleExtensionMessage(method: string, params: Record<string, unknown>): void {
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2315,6 +2394,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.applyResolvedCommands(parsedCommands, {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
+    }
+
+    const extensionEvents = this.extensionNotificationHandler?.(method, params, {
+      sessionId: this.sessionId,
+      cwd: this.config.cwd,
+      provider: this.provider,
+    });
+    if (extensionEvents && extensionEvents.length > 0) {
+      const applied = extensionEvents.map((event) =>
+        event.type === "usage_updated" ? this.applyUsageUpdate(event.usage, event.turnId) : event,
+      );
+      this.deliverTranslatedEvents(applied);
     }
   }
 
@@ -2660,8 +2751,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -2821,12 +2911,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    const usage = mapACPUsageUpdate(update);
+    if (!usage) {
+      return [];
+    }
+    return [this.applyUsageUpdate(usage)];
+  }
+
+  private applyUsageUpdate(usage: AgentUsage, turnId?: string): AgentStreamEvent {
+    this.currentTurnUsage = { ...this.currentTurnUsage, ...usage };
+    return {
+      type: "usage_updated",
+      provider: this.provider,
+      usage: this.currentTurnUsage,
+      ...(turnId || this.activeForegroundTurnId
+        ? { turnId: turnId ?? this.activeForegroundTurnId ?? undefined }
+        : {}),
+    };
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    const promptUsage = mapACPUsage(response.usage);
+    if (promptUsage) {
+      this.currentTurnUsage = { ...this.currentTurnUsage, ...promptUsage };
+    }
 
     switch (response.stopReason) {
       case "cancelled":

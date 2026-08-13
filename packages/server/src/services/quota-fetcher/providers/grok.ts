@@ -3,36 +3,65 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageBalance } from "../../../server/messages.js";
+import type {
+  ProviderUsage,
+  ProviderUsageBalance,
+  ProviderUsageWindow,
+} from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
+  ApiOptionalStringSchema,
   toneFromUsedPct,
   usedPctOf,
   fetchProviderApi,
   unavailableUsage,
+  windowFromUsedPct,
 } from "../usage.js";
+
+const GrokWrappedNumberSchema = z
+  .object({
+    val: ApiNumberSchema.optional(),
+  })
+  .nullish();
+
+const GrokPeriodSchema = z
+  .object({
+    type: ApiOptionalStringSchema,
+    start: ApiOptionalStringSchema,
+    end: ApiOptionalStringSchema,
+  })
+  .nullish();
 
 const GrokUsageResponseSchema = z.object({
   config: z
     .object({
-      monthlyLimit: z
-        .object({
-          val: ApiNumberSchema.optional(),
-        })
-        .nullish(),
-      used: z
-        .object({
-          val: ApiNumberSchema.optional(),
-        })
-        .nullish(),
+      monthlyLimit: GrokWrappedNumberSchema,
+      weeklyLimit: GrokWrappedNumberSchema,
+      used: GrokWrappedNumberSchema,
+      weeklyUsed: GrokWrappedNumberSchema,
+      creditUsagePercent: ApiNumberSchema.optional(),
+      currentPeriod: GrokPeriodSchema,
+      prepaidBalance: GrokWrappedNumberSchema,
+      billingPeriodStart: ApiOptionalStringSchema,
+      billingPeriodEnd: ApiOptionalStringSchema,
     })
     .nullish(),
   usage: z
     .object({
       creditUsage: ApiNumberSchema.optional(),
+      weeklyUsage: ApiNumberSchema.optional(),
     })
     .nullish(),
+});
+
+// Grok CLI `/usage` reads this query. Plain `/v1/billing` returns monthly
+// credits only and hides the weekly SuperGrok pool.
+const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const GROK_SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings";
+
+const GrokSettingsResponseSchema = z.object({
+  subscription_tier_display: ApiOptionalStringSchema,
 });
 
 interface GrokQuotaProviderOptions {
@@ -40,6 +69,162 @@ interface GrokQuotaProviderOptions {
   fetch?: ProviderApiFetch;
   /** Override home directory (tests). Production uses os.homedir(). */
   homeDir?: string;
+}
+
+async function readGrokPlanLabel(
+  settingsResult: PromiseSettledResult<Response>,
+): Promise<string | null> {
+  if (settingsResult.status !== "fulfilled" || !settingsResult.value.ok) {
+    return null;
+  }
+  const parsed = GrokSettingsResponseSchema.safeParse(await settingsResult.value.json());
+  const label = parsed.success ? parsed.data.subscription_tier_display : undefined;
+  return label && label.length > 0 ? label : null;
+}
+
+function wrappedNumber(value: { val?: number } | null | undefined): number | null {
+  return value?.val ?? null;
+}
+
+function grokLimitWindow(input: {
+  id: string;
+  label: string;
+  used: number | null;
+  limit: number | null;
+  usedPct?: number | null;
+  resetsAt: string | null;
+}): ProviderUsageWindow | null {
+  const usedPct = input.usedPct ?? usedPctOf(input.used, input.limit);
+  if (usedPct === null) return null;
+  return windowFromUsedPct({
+    id: input.id,
+    label: input.label,
+    utilizationPct: usedPct,
+    resetsAt: input.resetsAt,
+    tone: toneFromUsedPct(usedPct),
+  });
+}
+
+function grokPeriodWindow(
+  percent: number | null | undefined,
+  periodType: string | undefined,
+  resetsAt: string | null,
+): ProviderUsageWindow | null {
+  if (typeof percent !== "number") return null;
+  const weekly = (periodType ?? "").toUpperCase().includes("WEEKLY");
+  return grokLimitWindow({
+    id: weekly ? "weekly" : "monthly",
+    label: weekly ? "Weekly" : "Monthly",
+    used: null,
+    limit: null,
+    usedPct: percent,
+    resetsAt,
+  });
+}
+
+function mergeGrokWindows(
+  periodWindow: ProviderUsageWindow | null,
+  countedWindows: ProviderUsageWindow[],
+): ProviderUsageWindow[] {
+  if (periodWindow && !countedWindows.some((window) => window.id === periodWindow.id)) {
+    return [periodWindow, ...countedWindows];
+  }
+  return countedWindows;
+}
+
+function grokPrepaidBalance(prepaid: number | null): ProviderUsageBalance | null {
+  if (prepaid === null || prepaid <= 0) return null;
+  return {
+    id: "credits",
+    label: "Credits",
+    remaining: prepaid,
+    unit: "credits",
+    tone: "ok",
+  };
+}
+
+interface GrokBillingAmounts {
+  monthlyLimit: number | null;
+  creditUsage: number | null;
+  weeklyLimit: number | null;
+  weeklyUsed: number | null;
+  periodResetsAt: string | null;
+  usagePercent: number | undefined;
+  periodType: string | undefined;
+  prepaid: number | null;
+}
+
+function readGrokBillingAmounts(resp: z.infer<typeof GrokUsageResponseSchema>): GrokBillingAmounts {
+  const config = resp.config;
+  return {
+    monthlyLimit: wrappedNumber(config?.monthlyLimit),
+    // Live CLI billing uses config.used.val; older mocks used usage.creditUsage.
+    creditUsage: wrappedNumber(config?.used) ?? resp.usage?.creditUsage ?? null,
+    weeklyLimit: wrappedNumber(config?.weeklyLimit),
+    weeklyUsed: wrappedNumber(config?.weeklyUsed) ?? resp.usage?.weeklyUsage ?? null,
+    periodResetsAt: config?.currentPeriod?.end ?? config?.billingPeriodEnd ?? null,
+    usagePercent: config?.creditUsagePercent,
+    periodType: config?.currentPeriod?.type,
+    prepaid: wrappedNumber(config?.prepaidBalance),
+  };
+}
+
+interface GrokUsageBars {
+  windows: ProviderUsageWindow[];
+  balances: ProviderUsageBalance[];
+}
+
+function grokWindowsFromBilling(resp: z.infer<typeof GrokUsageResponseSchema>): GrokUsageBars {
+  const amounts = readGrokBillingAmounts(resp);
+  const windows = mergeGrokWindows(
+    grokPeriodWindow(amounts.usagePercent, amounts.periodType, amounts.periodResetsAt),
+    [
+      grokLimitWindow({
+        id: "monthly",
+        label: "Monthly",
+        used: amounts.creditUsage,
+        limit: amounts.monthlyLimit,
+        resetsAt: amounts.periodResetsAt,
+      }),
+      grokLimitWindow({
+        id: "weekly",
+        label: "Weekly",
+        used: amounts.weeklyUsed,
+        limit: amounts.weeklyLimit,
+        resetsAt: amounts.periodResetsAt,
+      }),
+    ].filter((window): window is ProviderUsageWindow => window !== null),
+  );
+
+  const creditBalance =
+    grokCreditBalance({
+      used: amounts.creditUsage,
+      limit: amounts.monthlyLimit,
+      resetsAt: amounts.periodResetsAt,
+    }) ?? grokPrepaidBalance(amounts.prepaid);
+
+  return { windows, balances: creditBalance ? [creditBalance] : [] };
+}
+
+function grokCreditBalance(input: {
+  used: number | null;
+  limit: number | null;
+  resetsAt: string | null;
+}): ProviderUsageBalance | null {
+  const hasCreditQuota = (input.limit !== null && input.limit > 0) || (input.used ?? 0) > 0;
+  if (!hasCreditQuota) return null;
+  const remaining =
+    input.limit !== null && input.used !== null ? Math.max(0, input.limit - input.used) : null;
+  return {
+    id: "credits",
+    label: "Credits",
+    used: input.used,
+    remaining,
+    limit: input.limit,
+    unit: "credits",
+    resetsAt: input.resetsAt,
+    tone: toneFromUsedPct(usedPctOf(input.used, input.limit)),
+  };
 }
 
 /** Resolve a Grok CLI token from ~/.grok/auth.json (legacy or current nested shape). */
@@ -87,50 +272,33 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
     if (!token) return unavailableUsage(this);
 
-    const res = await fetchProviderApi(
-      this.fetchApi,
-      "https://cli-chat-proxy.grok.com/v1/billing",
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-XAI-Token-Auth": "xai-grok-cli",
-          Accept: "application/json",
-        },
-      },
-    );
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "X-XAI-Token-Auth": "xai-grok-cli",
+      Accept: "application/json",
+    };
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Grok usage fetch failed");
+    const [billingResult, settingsResult] = await Promise.allSettled([
+      fetchProviderApi(this.fetchApi, GROK_BILLING_URL, { headers }),
+      fetchProviderApi(this.fetchApi, GROK_SETTINGS_URL, { headers }),
+    ]);
+
+    if (billingResult.status === "rejected" || !billingResult.value.ok) {
+      const status = billingResult.status === "fulfilled" ? billingResult.value.status : undefined;
+      this.logger.debug({ status }, "Grok usage fetch failed");
       return unavailableUsage(this);
     }
 
-    const resp = GrokUsageResponseSchema.parse(await res.json());
-    const monthlyLimit = resp.config?.monthlyLimit?.val ?? null;
-    // Live CLI billing uses config.used.val; older mocks used usage.creditUsage.
-    const creditUsage = resp.config?.used?.val ?? resp.usage?.creditUsage ?? null;
-    const balances: ProviderUsageBalance[] = [];
-    if (monthlyLimit !== null || creditUsage !== null) {
-      const remaining =
-        monthlyLimit !== null && creditUsage !== null
-          ? Math.max(0, monthlyLimit - creditUsage)
-          : null;
-      balances.push({
-        id: "monthly_credits",
-        label: "Monthly credits",
-        used: creditUsage,
-        remaining,
-        limit: monthlyLimit,
-        unit: "credits",
-        tone: toneFromUsedPct(usedPctOf(creditUsage, monthlyLimit)),
-      });
-    }
+    const { windows, balances } = grokWindowsFromBilling(
+      GrokUsageResponseSchema.parse(await billingResult.value.json()),
+    );
 
     return {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
-      planLabel: null,
-      windows: [],
+      planLabel: await readGrokPlanLabel(settingsResult),
+      windows,
       balances,
       details: [],
       error: null,

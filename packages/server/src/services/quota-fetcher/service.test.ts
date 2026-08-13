@@ -837,7 +837,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: { monthlyLimit: { val: 0 }, used: { val: 0 } },
@@ -850,14 +850,9 @@ describe("real provider usage fetchers", () => {
 
     expect(grok).toMatchObject({
       status: "available",
-      balances: [
-        expect.objectContaining({
-          id: "monthly_credits",
-          used: 0,
-          remaining: 0,
-          limit: 0,
-        }),
-      ],
+      planLabel: null,
+      windows: [],
+      balances: [],
     });
   });
 
@@ -866,7 +861,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: {
@@ -884,9 +879,16 @@ describe("real provider usage fetchers", () => {
 
     expect(grok).toMatchObject({
       status: "available",
+      windows: [
+        expect.objectContaining({
+          id: "monthly",
+          label: "Monthly",
+          usedPct: expect.closeTo((37886 / 150000) * 100),
+        }),
+      ],
       balances: [
         expect.objectContaining({
-          id: "monthly_credits",
+          id: "credits",
           used: 37886,
           remaining: 112114,
           limit: 150000,
@@ -923,9 +925,10 @@ describe("real provider usage fetchers", () => {
     expect(authorization).toBe("Bearer nested_jwt_token");
     expect(grok).toMatchObject({
       status: "available",
+      windows: [expect.objectContaining({ id: "monthly", usedPct: 25 })],
       balances: [
         expect.objectContaining({
-          id: "monthly_credits",
+          id: "credits",
           used: 25,
           remaining: 75,
           limit: 100,
@@ -939,7 +942,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: { monthlyLimit: { val: 50 } },
@@ -953,12 +956,117 @@ describe("real provider usage fetchers", () => {
 
     expect(grok).toMatchObject({
       status: "available",
+      windows: [expect.objectContaining({ id: "monthly", usedPct: 20 })],
       balances: [
         expect.objectContaining({
-          id: "monthly_credits",
+          id: "credits",
           used: 10,
           remaining: 40,
           limit: 50,
+        }),
+      ],
+    });
+  });
+
+  it("fetches Grok weekly usage percent from billing?format=credits", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+          () =>
+            jsonResponse({
+              config: {
+                currentPeriod: {
+                  type: "USAGE_PERIOD_TYPE_WEEKLY",
+                  start: "2026-08-08T00:00:00+00:00",
+                  end: "2026-08-15T00:00:00+00:00",
+                },
+                creditUsagePercent: 5,
+                onDemandCap: { val: 0 },
+                onDemandUsed: { val: 0 },
+                productUsage: [{ product: "GrokBuild", usagePercent: 5 }],
+                isUnifiedBillingUser: true,
+                prepaidBalance: { val: 0 },
+                billingPeriodStart: "2026-08-08T00:00:00+00:00",
+                billingPeriodEnd: "2026-08-15T00:00:00+00:00",
+              },
+            }),
+        ],
+        [
+          "https://cli-chat-proxy.grok.com/v1/settings",
+          () => jsonResponse({ subscription_tier_display: "SuperGrok Heavy" }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      planLabel: "SuperGrok Heavy",
+      windows: [
+        expect.objectContaining({
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 5,
+          remainingPct: 95,
+          resetsAt: "2026-08-15T00:00:00+00:00",
+        }),
+      ],
+      balances: [],
+    });
+  });
+
+  it("fetches Grok plan label and weekly/monthly windows", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+          () =>
+            jsonResponse({
+              config: {
+                monthlyLimit: { val: 150000 },
+                used: { val: 37500 },
+                weeklyLimit: { val: 40000 },
+                weeklyUsed: { val: 34800 },
+                billingPeriodEnd: "2026-09-01T00:00:00+00:00",
+              },
+            }),
+        ],
+        [
+          "https://cli-chat-proxy.grok.com/v1/settings",
+          () => jsonResponse({ subscription_tier_display: "SuperGrok Heavy" }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      planLabel: "SuperGrok Heavy",
+      windows: [
+        expect.objectContaining({
+          id: "monthly",
+          label: "Monthly",
+          usedPct: 25,
+          resetsAt: "2026-09-01T00:00:00+00:00",
+        }),
+        expect.objectContaining({
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 87,
+        }),
+      ],
+      balances: [
+        expect.objectContaining({
+          id: "credits",
+          label: "Credits",
+          used: 37500,
+          remaining: 112500,
+          limit: 150000,
         }),
       ],
     });
