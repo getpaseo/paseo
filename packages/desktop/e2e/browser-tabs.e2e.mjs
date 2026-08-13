@@ -351,6 +351,21 @@ async function clickGuestElement(page, client, browserId, selector) {
   );
 }
 
+async function waitForSelectorInstallation(client, browserId) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const evaluated = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => Boolean(globalThis.__paseoSelector)",
+    });
+    if (JSON.parse(evaluated.resultJson) === true) {
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error("Element selector did not install in the guest within 5000ms");
+}
+
 async function selectDeviceSize(page, label) {
   await page.locator('[aria-label="Device size"]').click();
   const item = page.getByText(label, { exact: true });
@@ -514,6 +529,83 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
 
   await selectDeviceSize(page, "Responsive");
   const responsiveViewport = await readViewport(client, browserId);
+
+  await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      const enabled = document.createElement("button");
+      enabled.id = "selector-target";
+      enabled.textContent = "Selector target";
+      enabled.addEventListener("click", () => { globalThis.__selectorTargetActivated = true; });
+      const disabled = document.createElement("button");
+      disabled.id = "disabled-selector-target";
+      disabled.disabled = true;
+      disabled.textContent = "Disabled selector target";
+      disabled.addEventListener("click", () => {
+        globalThis.__disabledSelectorTargetActivated = true;
+      });
+      const decorativeOverlay = document.createElement("div");
+      decorativeOverlay.id = "selector-pointer-events-overlay";
+      decorativeOverlay.style.position = "fixed";
+      decorativeOverlay.style.inset = "0";
+      decorativeOverlay.style.pointerEvents = "none";
+      document.body.append(enabled, disabled, decorativeOverlay);
+      globalThis.__selectorCaptureArmed = true;
+      globalThis.__selectorCaptureActivated = false;
+      globalThis.__selectorTargetActivated = false;
+      globalThis.__disabledSelectorTargetActivated = false;
+      document.addEventListener("click", () => {
+        if (globalThis.__selectorCaptureArmed) globalThis.__selectorCaptureActivated = true;
+      }, true);
+      return true;
+    }`,
+  });
+  const annotateButton = originalDeck.getByRole("button", { name: "Annotate element" });
+  const annotationInput = originalDeck.getByRole("textbox", {
+    name: "Message to the agent about this element…",
+  });
+
+  await annotateButton.click();
+  await waitForSelectorInstallation(client, browserId);
+  await clickGuestElement(page, client, browserId, "#selector-target");
+  await annotationInput.waitFor({ state: "visible", timeout: 5_000 });
+  await originalDeck
+    .getByText("button · Selector target", { exact: true })
+    .waitFor({ state: "visible", timeout: 5_000 });
+  const enabledSelectionEffects = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => ({
+      target: Boolean(globalThis.__selectorTargetActivated),
+      capture: Boolean(globalThis.__selectorCaptureActivated)
+    })`,
+  });
+  assert(
+    enabledSelectionEffects.resultJson === '{"target":false,"capture":false}',
+    `Enabled control selection leaked page actions: ${enabledSelectionEffects.resultJson}`,
+  );
+  await page.keyboard.press("Escape");
+  await annotationInput.waitFor({ state: "hidden", timeout: 5_000 });
+
+  await annotateButton.click();
+  await waitForSelectorInstallation(client, browserId);
+  await clickGuestElement(page, client, browserId, "#disabled-selector-target");
+  await annotationInput.waitFor({ state: "visible", timeout: 5_000 });
+  await originalDeck
+    .getByText("button · Disabled selector target", { exact: true })
+    .waitFor({ state: "visible", timeout: 5_000 });
+  const disabledSelectionEffects = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => ({
+      target: Boolean(globalThis.__disabledSelectorTargetActivated),
+      capture: Boolean(globalThis.__selectorCaptureActivated)
+    })`,
+  });
+  assert(
+    disabledSelectionEffects.resultJson === '{"target":false,"capture":false}',
+    `Disabled control selection leaked page actions: ${disabledSelectionEffects.resultJson}`,
+  );
+  await page.keyboard.press("Escape");
+  await annotationInput.waitFor({ state: "hidden", timeout: 5_000 });
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
   await page.waitForTimeout(500);
