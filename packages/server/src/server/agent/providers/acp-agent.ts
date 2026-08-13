@@ -40,7 +40,6 @@ import {
   type SessionConfigOption,
   type SessionInfoUpdate,
   type SessionMode,
-  type SessionModelState,
   type SessionNotification,
   type SessionUpdate,
   type TerminalOutputRequest,
@@ -511,6 +510,66 @@ interface PendingUserMessage {
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
+// COMPAT(acp-models): added v0.2.0-beta.1, remove after 2027-01-20.
+// cursor-acp@0.1.0 returns only the pre-config-options `models` shape and
+// `session/set_model`; claude-agent-acp@0.31.4 still returns the same shape
+// alongside config options. Keep that legacy wire contract at this shared ACP
+// connection boundary until the supported agent floor no longer needs it.
+interface LegacyACPModelInfo {
+  modelId: string;
+  name: string;
+  description?: string | null;
+}
+
+interface LegacyACPSessionModelState {
+  availableModels: LegacyACPModelInfo[];
+  currentModelId: string;
+}
+
+function adaptLegacyACPModelState(
+  response: SessionStateResponse,
+): LegacyACPSessionModelState | null {
+  const rawResponse: unknown = response;
+  const models = isRecord(rawResponse) ? rawResponse.models : undefined;
+  if (models == null) {
+    return null;
+  }
+  if (
+    !isRecord(models) ||
+    !Array.isArray(models.availableModels) ||
+    typeof models.currentModelId !== "string"
+  ) {
+    throw new Error("ACP legacy models response is invalid");
+  }
+
+  const availableModels = models.availableModels.map((model) => {
+    if (
+      !isRecord(model) ||
+      typeof model.modelId !== "string" ||
+      typeof model.name !== "string" ||
+      (model.description !== undefined &&
+        model.description !== null &&
+        typeof model.description !== "string")
+    ) {
+      throw new Error("ACP legacy models response is invalid");
+    }
+    return {
+      modelId: model.modelId,
+      name: model.name,
+      description: model.description,
+    };
+  });
+
+  return { availableModels, currentModelId: models.currentModelId };
+}
+
+async function requestLegacyACPModelChange(
+  connection: ClientSideConnection,
+  params: { sessionId: string; modelId: string },
+): Promise<void> {
+  await connection.request("session/set_model", params);
+}
+
 interface TerminalExit {
   exitCode?: number | null;
   signal?: string | null;
@@ -554,7 +613,7 @@ interface SelectConfigChoice {
   description?: string | null;
   group?: string;
 }
-type AvailableACPModel = NonNullable<SessionModelState["availableModels"]>[number];
+type AvailableACPModel = LegacyACPSessionModelState["availableModels"][number];
 
 interface ACPModeSelection {
   availableMode: AgentMode | null;
@@ -675,13 +734,13 @@ export function deriveModesFromACP(
 
 export function deriveModelDefinitionsFromACP(
   provider: string,
-  models: SessionModelState | null | undefined,
+  models: LegacyACPSessionModelState | null | undefined,
   configOptions?: SessionConfigOption[] | null,
 ): AgentModelDefinition[] {
   const thinkingOptions = deriveSelectorOptions(configOptions, "thought_level");
   const defaultThinkingOptionId = thinkingOptions.find((option) => option.isDefault)?.id ?? null;
 
-  if (models?.availableModels?.length) {
+  if (models?.availableModels.length) {
     return models.availableModels.map((model) => ({
       provider,
       id: model.modelId,
@@ -956,7 +1015,7 @@ export class ACPAgentClient implements AgentClient {
         const transformed = this.transformSessionResponse(response);
         const derivedModels = deriveModelDefinitionsFromACP(
           this.provider,
-          transformed.models,
+          adaptLegacyACPModelState(transformed),
           transformed.configOptions,
         );
         const models = this.catalogModelResolver
@@ -1293,7 +1352,7 @@ export class ACPAgentClient implements AgentClient {
         const transformed = this.transformSessionResponse(response);
         const models = deriveModelDefinitionsFromACP(
           this.provider,
-          transformed.models,
+          adaptLegacyACPModelState(transformed),
           transformed.configOptions,
         );
         const modeInfo = deriveModesFromACP(
@@ -1504,7 +1563,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /**
    * IMPORTANT: Some ACP providers (e.g., Devin CLI) require all three params
    * (sessionId, cwd, mcpServers) to be present in session/load or
-   * unstable_resumeSession — even when mcpServers is an empty array — and
+   * resumeSession — even when mcpServers is an empty array — and
    * return "Invalid params" if any are omitted. Never drop cwd or mcpServers
    * from these calls regardless of capabilities.
    */
@@ -1538,7 +1597,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
         const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
+          this.connection!.resumeSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
             mcpServers: this.acpMcpServers(),
@@ -1611,7 +1670,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     void this.connection
       .prompt({
         sessionId: this.sessionId,
-        messageId,
         prompt: toACPContentBlocks(prompt),
       })
       .then((response) => {
@@ -1908,12 +1966,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       }
 
-      if (typeof this.connection.unstable_setSessionModel !== "function") {
-        throw new Error(this.modelSelectionUnavailableMessage());
-      }
-
       try {
-        await this.connection.unstable_setSessionModel({
+        await requestLegacyACPModelChange(this.connection, {
           sessionId: this.sessionId,
           modelId,
         });
@@ -1925,7 +1979,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         });
         return;
       } catch {
-        // Fall through to config option path.
+        // Preserve the pre-1.2 SDK behavior for agents that expose both legacy
+        // models and stable config options but reject the legacy request.
       }
     }
 
@@ -2183,7 +2238,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       try {
         if (this.agentCapabilities?.sessionCapabilities?.close) {
-          await this.connection.unstable_closeSession({ sessionId: this.sessionId });
+          await this.connection.closeSession({ sessionId: this.sessionId });
         }
       } catch (error) {
         this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
@@ -2539,9 +2594,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = modeInfo.modes;
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
 
-    this.availableModels = transformed.models?.availableModels ?? null;
+    const legacyModels = adaptLegacyACPModelState(transformed);
+    this.availableModels = legacyModels?.availableModels ?? null;
     this.currentModel =
-      transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
+      legacyModels?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
   }

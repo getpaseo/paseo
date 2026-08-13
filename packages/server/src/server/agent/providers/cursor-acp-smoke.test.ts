@@ -41,7 +41,6 @@ interface Issue560Evidence {
   warnings: unknown[];
   setModeRpc: Array<{ modeId: string; direction: "out" | "in" | "error"; payload: unknown }>;
   setConfigRpc: Array<{ configId: string; value: string; direction: "out" | "in" | "error" }>;
-  setModelRpc: Array<{ modelId: string; direction: "out" | "in" | "error" }>;
   acceptEditsConfigRpcSent: boolean;
   bracketedModelConfigRpcSent: boolean;
   planCurrentMode: string | null;
@@ -97,9 +96,35 @@ afterEach(() => {
 });
 
 runCursorACPSmoke("real cursor-acp@0.1.0 smoke", () => {
+  test("valid advertised model round-trips over legacy session/set_model", async () => {
+    const requestSpy = vi.spyOn(ClientSideConnection.prototype, "request");
+    const logger = createSmokeLogger();
+    let session: ACPAgentSession | null = null;
+
+    try {
+      session = createCursorSessionWithPersistedClaudeValues({ logger, model: "default" });
+      await session.initializeNewSession();
+      const sessionId = session.id;
+      expect(sessionId).toBeTruthy();
+
+      await session.setModel(null);
+      expect((await session.getRuntimeInfo()).model).toBeNull();
+
+      await session.setModel("default");
+
+      expect(requestSpy).toHaveBeenCalledWith("session/set_model", {
+        sessionId,
+        modelId: "default",
+      });
+      expect((await session.getRuntimeInfo()).model).toBe("default");
+    } finally {
+      await session?.close();
+    }
+  }, 120_000);
+
   test("reconnect skips invalid persisted values again on a fresh session", async () => {
     const setModeSpy = vi.spyOn(ClientSideConnection.prototype, "setSessionMode");
-    const setModelSpy = vi.spyOn(ClientSideConnection.prototype, "unstable_setSessionModel");
+    const requestSpy = vi.spyOn(ClientSideConnection.prototype, "request");
     const requestPermissionSpy = vi.spyOn(ACPAgentSession.prototype, "requestPermission");
     const logger = createSmokeLogger();
     const reconnectLogger = createSmokeLogger();
@@ -147,16 +172,17 @@ runCursorACPSmoke("real cursor-acp@0.1.0 smoke", () => {
       expect(evidence.acceptEditsRpcSent).toBe(false);
       expect(evidence.initialCurrentMode).toBe("default");
       expect(logger.warn).toHaveBeenCalledWith(
-        "acceptEdits",
+        { value: "acceptEdits" },
         expect.stringContaining("is not valid cursor-acp mode"),
       );
       expect(reconnectLogger.warn).toHaveBeenCalledWith(
-        "acceptEdits",
+        { value: "acceptEdits" },
         expect.stringContaining("is not valid cursor-acp mode"),
       );
       expect(evidence.reconnectCurrentMode).toBe("default");
       expect(evidence.requestPermissionCalls).toBe(0);
-      expect(setModelSpy).not.toHaveBeenCalledWith(
+      expect(requestSpy).not.toHaveBeenCalledWith(
+        "session/set_model",
         expect.objectContaining({ modelId: cursorClaudeModel }),
       );
     } catch (error) {
@@ -171,13 +197,13 @@ runCursorACPSmoke("real cursor-acp@0.1.0 smoke", () => {
 
   test("issue #560 replay skips invalid Claude selections and allows valid Cursor modes after resume", async () => {
     const logger = createSmokeLogger();
+    const requestSpy = vi.spyOn(ClientSideConnection.prototype, "request");
     const evidence: Issue560Evidence = {
       sessionNewSucceeded: false,
       availableModes: null,
       warnings: [],
       setModeRpc: [],
       setConfigRpc: [],
-      setModelRpc: [],
       acceptEditsConfigRpcSent: false,
       bracketedModelConfigRpcSent: false,
       planCurrentMode: null,
@@ -234,21 +260,6 @@ runCursorACPSmoke("real cursor-acp@0.1.0 smoke", () => {
       },
     );
 
-    const originalSetModel = ClientSideConnection.prototype.unstable_setSessionModel;
-    vi.spyOn(ClientSideConnection.prototype, "unstable_setSessionModel").mockImplementation(
-      async function (params) {
-        evidence.setModelRpc.push({ modelId: params.modelId, direction: "out" });
-        try {
-          const response = await originalSetModel.call(this, params);
-          evidence.setModelRpc.push({ modelId: params.modelId, direction: "in" });
-          return response;
-        } catch (error) {
-          evidence.setModelRpc.push({ modelId: params.modelId, direction: "error" });
-          throw error;
-        }
-      },
-    );
-
     try {
       session = createCursorSessionWithPersistedClaudeValues({
         logger,
@@ -290,16 +301,17 @@ runCursorACPSmoke("real cursor-acp@0.1.0 smoke", () => {
       ]);
       expect(evidence.setModeRpc.some((entry) => entry.modeId === "acceptEdits")).toBe(false);
       expect(evidence.acceptEditsConfigRpcSent).toBe(false);
-      expect(evidence.setModelRpc.some((entry) => entry.modelId === issue560ClaudeModel)).toBe(
-        false,
-      );
       expect(evidence.bracketedModelConfigRpcSent).toBe(false);
+      expect(requestSpy).not.toHaveBeenCalledWith(
+        "session/set_model",
+        expect.objectContaining({ modelId: issue560ClaudeModel }),
+      );
       expect(logger.warn).toHaveBeenCalledWith(
-        "acceptEdits",
+        { value: "acceptEdits" },
         expect.stringContaining("is not valid cursor-acp mode"),
       );
       expect(logger.warn).toHaveBeenCalledWith(
-        issue560ClaudeModel,
+        { value: issue560ClaudeModel },
         expect.stringContaining("is not a valid cursor-acp model"),
       );
       expect(evidence.setModeRpc).toEqual(
