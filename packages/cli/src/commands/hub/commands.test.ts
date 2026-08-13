@@ -21,6 +21,7 @@ describe("Hub commands", () => {
 
     assert.deepEqual(names, [
       "login",
+      "init",
       "connect",
       "status",
       "disconnect",
