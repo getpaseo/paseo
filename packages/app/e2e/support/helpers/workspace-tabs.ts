@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   const tabs = page.locator('[data-testid^="workspace-tab-"]');
@@ -23,6 +23,15 @@ function explorerPaneTabRow(page: Page) {
     .first();
 }
 
+async function selectWorkspaceTab(tab: Locator): Promise<void> {
+  if ((await tab.getAttribute("aria-selected")) !== "true") {
+    // The close action overlays the chip's trailing edge on hover. Click the
+    // leading icon area so Playwright does not target that separate control.
+    await tab.click({ position: { x: 12, y: 13 } });
+  }
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
 export async function ensureExplorerPane(page: Page) {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
@@ -36,7 +45,7 @@ export async function ensureExplorerPane(page: Page) {
 
 export async function openChangesPanel(page: Page): Promise<void> {
   const tabRow = await ensureExplorerPane(page);
-  await tabRow.getByTestId("workspace-tab-working_diff").click();
+  await selectWorkspaceTab(tabRow.getByTestId("workspace-tab-working_diff"));
   await expect(visibleTestId(page, "working-diff-panel").first()).toBeVisible({
     timeout: 30_000,
   });
@@ -49,13 +58,16 @@ export async function openFilesPanel(page: Page): Promise<void> {
     await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
     await visibleTestId(page, "workspace-new-tab-menu-files").first().click();
   }
-  await filesTab.click();
+  await selectWorkspaceTab(filesTab);
+  await expect(visibleTestId(page, "file-explorer-tree-scroll").first()).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function openPullRequestPanel(page: Page): Promise<void> {
   const existingTab = visibleTestId(page, "workspace-tab-pull_request").first();
   if ((await existingTab.count()) > 0) {
-    await existingTab.click();
+    await selectWorkspaceTab(existingTab);
     await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
     return;
   }
@@ -65,7 +77,7 @@ export async function openPullRequestPanel(page: Page): Promise<void> {
     await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
     await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
   }
-  await pullRequestTab.click();
+  await selectWorkspaceTab(pullRequestTab);
   await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
 }
 
