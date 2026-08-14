@@ -14,6 +14,7 @@ export interface TTSConfig {
 }
 
 export class OpenAITTS implements TextToSpeechProvider {
+  public readonly id = "openai" as const;
   private readonly openaiClient: OpenAI;
   private readonly config: TTSConfig;
   private readonly logger: pino.Logger;

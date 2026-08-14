@@ -68,10 +68,20 @@ const LocalSpeechProviderSchema = z
   })
   .strict();
 
+const ElevenLabsProviderSchema = z
+  .object({
+    apiKey: z.string().trim().min(1).optional(),
+    baseUrl: z.string().trim().min(1).optional(),
+    voiceId: z.string().trim().min(1).optional(),
+    modelId: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 const ProvidersSchema = z
   .object({
     openai: OpenAiProviderSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
+    elevenlabs: ElevenLabsProviderSchema.optional(),
   })
   .strict();
 
@@ -96,7 +106,7 @@ const SpeechProviderIdSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .pipe(z.enum(["openai", "local"]));
+  .pipe(z.enum(["openai", "local", "elevenlabs"]));
 
 const FeatureDictationSchema = z
   .object({
@@ -141,7 +151,7 @@ const FeatureVoiceModeSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+        voice: z.string().trim().min(1).optional(),
         speakerId: z.number().int().optional(),
         speed: z.number().optional(),
       })

@@ -64,5 +64,6 @@ export interface SpeechStreamResult {
 }
 
 export interface TextToSpeechProvider {
+  readonly id: string;
   synthesizeSpeech(text: string): Promise<SpeechStreamResult>;
 }
