@@ -1076,6 +1076,8 @@ export const ko: TranslationResources = {
         editFiles: "파일 편집",
         mainCheckout: "Main checkout",
         nestedRepos: "저장소",
+        newSessionInRepo: "{{repo}}에 새 세션",
+        noSessionsInRepo: "아직 세션이 없습니다",
         tabs: "{{count}}개 탭",
         archiving: "보관하는 중...",
         hiding: "숨기는 중...",

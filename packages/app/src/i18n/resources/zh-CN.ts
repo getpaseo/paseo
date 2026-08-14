@@ -1059,6 +1059,8 @@ export const zhCN: TranslationResources = {
         editFiles: "编辑文件",
         mainCheckout: "Main checkout",
         nestedRepos: "仓库",
+        newSessionInRepo: "在 {{repo}} 中新建会话",
+        noSessionsInRepo: "暂无会话",
         tabs: "{{count}}个标签页",
         archiving: "正在归档...",
         hiding: "正在隐藏...",
