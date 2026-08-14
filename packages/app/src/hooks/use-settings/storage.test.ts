@@ -611,6 +611,45 @@ describe("appearance settings", () => {
     expect(result.toolCallDetailLevel).toBe("detailed");
   });
 
+  it("loads thinking display detail enum values or migrates legacy boolean values", async () => {
+    const depsTrue = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: true }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsTrue)).autoExpandReasoning).toBe("expanded");
+
+    const depsFalse = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: false }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsFalse)).autoExpandReasoning).toBe("collapsed");
+
+    const depsActive = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: "expand_active" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsActive)).autoExpandReasoning).toBe(
+      "expand_active",
+    );
+
+    const depsExpanded = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: "expanded" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsExpanded)).autoExpandReasoning).toBe("expanded");
+
+    const depsInvalid = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: "invalid" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsInvalid)).autoExpandReasoning).toBe("collapsed");
+  });
+
   it("migrates the enabled compact tool call preference to overview", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

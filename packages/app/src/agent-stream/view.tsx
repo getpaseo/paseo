@@ -717,6 +717,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderThoughtItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "thought" }>) => {
+        const isThoughtActive = item.status !== "ready";
+        const isExpanded =
+          autoExpandReasoning === "expanded" ||
+          (autoExpandReasoning === "expand_active" && isThoughtActive);
         return (
           <ThoughtSlot
             itemId={item.id}
@@ -724,7 +728,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             text={item.text}
             status={item.status}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            defaultExpanded={autoExpandReasoning}
+            defaultExpanded={isExpanded}
           />
         );
       },

@@ -1943,8 +1943,14 @@ export const zhCN: TranslationResources = {
         accessibilityLabel: "终端回滚行数",
       },
       autoExpandReasoning: {
-        label: "始终展开推理过程",
-        description: "默认情况下完全展开 AI 的思考和推理过程",
+        label: "思考过程显示",
+        description: "智能体思考过程在时间线中的显示方式",
+        accessibilityLabel: "选择思考过程显示方式（{{value}}）",
+        options: {
+          collapsed: "折叠",
+          expandActive: "仅展开当前活动",
+          expanded: "始终展开",
+        },
       },
       toolCallDetail: {
         label: "工具调用显示",

@@ -33,6 +33,7 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
+export type ThinkingDisplayDetail = "collapsed" | "expand_active" | "expanded";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
 const ThemePreferenceSchema = z.enum([
@@ -82,7 +83,7 @@ export interface AppSettings {
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
-  autoExpandReasoning: boolean;
+  autoExpandReasoning: ThinkingDisplayDetail;
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
@@ -130,7 +131,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarWorkspaceTrailing: "diff",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
-  autoExpandReasoning: false,
+  autoExpandReasoning: "collapsed",
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
@@ -218,7 +219,12 @@ const StoredAppSettingsSchema = z
       .enum(["iconAndText", "icon", "none"])
       .optional()
       .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
-    autoExpandReasoning: z.boolean().catch(false),
+    autoExpandReasoning: z
+      .enum(["collapsed", "expand_active", "expanded"])
+      .or(
+        z.boolean().transform((value) => (value ? ("expanded" as const) : ("collapsed" as const))),
+      )
+      .catch("collapsed"),
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])
       .or(z.literal("concise").transform(() => "overview" as const))

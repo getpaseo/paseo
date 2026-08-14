@@ -2000,9 +2000,14 @@ export const ru: TranslationResources = {
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
       },
       autoExpandReasoning: {
-        label: "Всегда разворачивать размышления",
-        description:
-          "По умолчанию полностью разворачивать блоки размышлений и хода рассуждений агента",
+        label: "Отображение мышления",
+        description: "Как блоки рассуждений агента отображаются в таймлайне",
+        accessibilityLabel: "Выбор отображения мышления ({{value}})",
+        options: {
+          collapsed: "Свернуто",
+          expandActive: "Разворачивать активный",
+          expanded: "Всегда разворачивать",
+        },
       },
       toolCallDetail: {
         label: "Отображение вызовов инструментов",

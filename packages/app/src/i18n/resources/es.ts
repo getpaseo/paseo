@@ -2016,9 +2016,14 @@ export const es: TranslationResources = {
         accessibilityLabel: "Líneas del historial de terminal",
       },
       autoExpandReasoning: {
-        label: "Siempre expandir razonamiento",
-        description:
-          "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+        label: "Visualización de pensamiento",
+        description: "Cómo aparecen los bloques de pensamiento del agente en la cronología",
+        accessibilityLabel: "Seleccionar visualización de pensamiento ({{value}})",
+        options: {
+          collapsed: "Plegado",
+          expandActive: "Expandir activo",
+          expanded: "Expandir siempre",
+        },
       },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",

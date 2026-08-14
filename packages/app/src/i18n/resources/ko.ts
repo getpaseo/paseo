@@ -1978,8 +1978,14 @@ export const ko: TranslationResources = {
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
       autoExpandReasoning: {
-        label: "추론 항상 펼치기",
-        description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
+        label: "사고 과정 표시",
+        description: "타임라인에 에이전트 사고 블록이 표시되는 방식",
+        accessibilityLabel: "사고 과정 표시 선택({{value}})",
+        options: {
+          collapsed: "접음",
+          expandActive: "실행 중일 때만 펼치기",
+          expanded: "항상 펼치기",
+        },
       },
       toolCallDetail: {
         label: "도구 호출 표시",

@@ -2066,8 +2066,14 @@ export const en = {
         accessibilityLabel: "Terminal scrollback lines",
       },
       autoExpandReasoning: {
-        label: "Always expand reasoning",
-        description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+        label: "Thinking display",
+        description: "How agent thinking and chain-of-thought blocks appear in the timeline",
+        accessibilityLabel: "Select thinking display ({{value}})",
+        options: {
+          collapsed: "Collapsed",
+          expandActive: "Expand Active",
+          expanded: "Always expand",
+        },
       },
       toolCallDetail: {
         label: "Tool call display",

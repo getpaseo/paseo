@@ -2000,9 +2000,14 @@ export const ptBR: TranslationResources = {
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
       autoExpandReasoning: {
-        label: "Sempre expandir raciocínio",
-        description:
-          "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+        label: "Exibição de pensamento",
+        description: "Como os blocos de pensamento aparecem na linha do tempo",
+        accessibilityLabel: "Selecionar exibição de pensamento ({{value}})",
+        options: {
+          collapsed: "Recolhido",
+          expandActive: "Expandir ativo",
+          expanded: "Sempre expandir",
+        },
       },
       toolCallDetail: {
         label: "Exibição de chamadas de ferramentas",

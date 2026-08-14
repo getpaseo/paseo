@@ -225,13 +225,44 @@ function ThemeRow({
   );
 }
 
+const THINKING_DISPLAY_DETAILS: readonly AppSettings["autoExpandReasoning"][] = [
+  "collapsed",
+  "expand_active",
+  "expanded",
+];
+
+function getThinkingDisplayDetailLabel(
+  t: TFunction,
+  value: AppSettings["autoExpandReasoning"],
+): string {
+  const optionKey = value === "expand_active" ? "expandActive" : value;
+  return t(`settings.general.autoExpandReasoning.options.${optionKey}`);
+}
+
+interface ThinkingDisplayMenuItemProps {
+  value: AppSettings["autoExpandReasoning"];
+  selected: boolean;
+  onChange: (value: AppSettings["autoExpandReasoning"]) => void;
+}
+
+function ThinkingDisplayMenuItem({ value, selected, onChange }: ThinkingDisplayMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(value), [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getThinkingDisplayDetailLabel(t, value)}
+    </DropdownMenuItem>
+  );
+}
+
 interface AutoExpandReasoningRowProps {
-  value: boolean;
-  onChange: (value: boolean) => void;
+  value: AppSettings["autoExpandReasoning"];
+  onChange: (value: AppSettings["autoExpandReasoning"]) => void;
 }
 
 function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
   const { t } = useTranslation();
+  const selectedLabel = getThinkingDisplayDetailLabel(t, value);
   return (
     <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
@@ -242,7 +273,27 @@ function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps
           {t("settings.general.autoExpandReasoning.description")}
         </Text>
       </View>
-      <Switch value={value} onValueChange={onChange} />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          style={dropdownTriggerStyle}
+          accessibilityLabel={t("settings.general.autoExpandReasoning.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+        >
+          <Text style={styles.triggerText}>{selectedLabel}</Text>
+          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {THINKING_DISPLAY_DETAILS.map((option) => (
+            <ThinkingDisplayMenuItem
+              key={option}
+              value={option}
+              selected={value === option}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </View>
   );
 }
@@ -568,7 +619,7 @@ export function AppearanceSection() {
   );
 
   const handleAutoExpandReasoningChange = useCallback(
-    (autoExpandReasoning: boolean) => {
+    (autoExpandReasoning: AppSettings["autoExpandReasoning"]) => {
       void updateSettings({ autoExpandReasoning });
     },
     [updateSettings],

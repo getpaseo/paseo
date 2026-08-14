@@ -2020,8 +2020,14 @@ export const fr: TranslationResources = {
         accessibilityLabel: "Lignes de défilementTerminal",
       },
       autoExpandReasoning: {
-        label: "Toujours afficher le raisonnement",
-        description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+        label: "Affichage de la réflexion",
+        description: "Comment les blocs de réflexion apparaissent dans la chronologie",
+        accessibilityLabel: "Sélectionner l'affichage de la réflexion ({{value}})",
+        options: {
+          collapsed: "Réduit",
+          expandActive: "Développer si actif",
+          expanded: "Toujours développer",
+        },
       },
       toolCallDetail: {
         label: "Affichage des appels d’outils",

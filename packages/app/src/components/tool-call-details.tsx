@@ -21,6 +21,8 @@ import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
+import { formatThinkingText } from "@/utils/thinking-text-formatter";
+import { MarkdownRenderer } from "./markdown/renderer";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
@@ -506,6 +508,21 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
   );
 }
 
+function ScrollableMarkdownSection({ text, ds }: { text: string; ds: DetailStyles }) {
+  return (
+    <View style={styles.section}>
+      <ScrollView
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <MarkdownRenderer text={text} compact enableHtmlish={false} />
+      </ScrollView>
+    </View>
+  );
+}
+
 interface SearchDetail {
   query?: string;
   content?: string;
@@ -582,7 +599,13 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
   if (plainInputText !== null) {
-    return [<ScrollablePlainTextSection key="unknown-plain-text" text={plainInputText} ds={ds} />];
+    return [
+      <ScrollableMarkdownSection
+        key="unknown-markdown-text"
+        text={formatThinkingText(plainInputText)}
+        ds={ds}
+      />,
+    ];
   }
 
   const sectionsFromTopLevel = [
