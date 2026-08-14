@@ -55,4 +55,12 @@ describe("canonical CLI surface", () => {
     expect(open?.helpInformation()).toContain("<agent-id>");
     expect(open?.helpInformation()).toContain("--server <server-id>");
   });
+
+  it("offers unarchive at the top level and under agent", () => {
+    const cli = createCli();
+    const agent = cli.commands.find((command) => command.name() === "agent");
+
+    expect(cli.commands.some((command) => command.name() === "unarchive")).toBe(true);
+    expect(agent?.commands.some((command) => command.name() === "unarchive")).toBe(true);
+  });
 });

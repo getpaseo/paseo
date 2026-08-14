@@ -24,6 +24,7 @@ import { addSendOptions, runSendCommand } from "./commands/agent/send.js";
 import { addInspectOptions, runInspectCommand } from "./commands/agent/inspect.js";
 import { addWaitOptions, runWaitCommand } from "./commands/agent/wait.js";
 import { addArchiveOptions, runArchiveCommand } from "./commands/agent/archive.js";
+import { addUnarchiveOptions, runUnarchiveCommand } from "./commands/agent/unarchive.js";
 import { addAttachOptions, runAttachCommand } from "./commands/agent/attach.js";
 import { addImportOptions, runImportCommand } from "./commands/agent/import.js";
 import { withOutput } from "./output/index.js";
@@ -109,6 +110,10 @@ export function createCli(): Command {
 
   addJsonAndDaemonHostOptions(addArchiveOptions(program.command("archive"))).action(
     withOutput(runArchiveCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addUnarchiveOptions(program.command("unarchive"))).action(
+    withOutput(runUnarchiveCommand),
   );
 
   // Top-level local daemon shortcuts
