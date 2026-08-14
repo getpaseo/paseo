@@ -20,24 +20,9 @@ describe("formatThinkingText", () => {
     expect(formatThinkingText("**title1**   **title2**")).toBe("**title1**\n\n**title2**");
   });
 
-  it("separates bold headers preceded by sentence punctuation without a newline", () => {
-    expect(formatThinkingText("I am thinking about this.**Next step**")).toBe(
-      "I am thinking about this.\n\n**Next step**",
-    );
-    expect(formatThinkingText("Let's see. **Finding files**")).toBe(
-      "Let's see.\n\n**Finding files**",
-    );
-  });
-
   it("separates numbered headers", () => {
     expect(formatThinkingText("**1. Analyze goal****2. Execute plan**")).toBe(
       "**1. Analyze goal**\n\n**2. Execute plan**",
-    );
-  });
-
-  it("separates bold header from immediately following text", () => {
-    expect(formatThinkingText("**Searching codebase**I will look for files.")).toBe(
-      "**Searching codebase**\n\nI will look for files.",
     );
   });
 
@@ -52,6 +37,21 @@ describe("formatThinkingText", () => {
 
     const uppercaseProse = "I need to inspect **AgentStreamView** before editing it.";
     expect(formatThinkingText(uppercaseProse)).toBe(uppercaseProse);
+
+    const afterPunctuation =
+      'I looked at config.json, which had key "version". **Note** that this is deprecated.';
+    expect(formatThinkingText(afterPunctuation)).toBe(afterPunctuation);
+  });
+
+  it("preserves fenced code blocks and inline code completely intact", () => {
+    const codeWithBold = "```python\ndef foo():\n\n\n    # check **a****b**\n```";
+    expect(formatThinkingText(codeWithBold)).toBe(codeWithBold);
+
+    const inlineCode = "Use `**bold**` inside inline code.";
+    expect(formatThinkingText(inlineCode)).toBe(inlineCode);
+
+    const streamingCodeBlock = "```typescript\nconst x = **test**;\n";
+    expect(formatThinkingText(streamingCodeBlock)).toBe(streamingCodeBlock);
   });
 
   it("preserves already well-spaced thinking blocks without adding excess newlines", () => {
