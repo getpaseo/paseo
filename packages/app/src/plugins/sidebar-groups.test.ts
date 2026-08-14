@@ -6,6 +6,7 @@ import { groupPluginSidebarContributions } from "./sidebar-groups";
 function installed(serverId: string, contributionId = "main"): InstalledPlugin {
   return {
     id: "example",
+    cleanup: () => undefined,
     serverId,
     clientBundle: serverId,
     queryClient: new QueryClient(),

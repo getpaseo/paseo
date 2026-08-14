@@ -106,15 +106,28 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   if (typeof setup !== "function") {
     throw new Error(`Plugin ${id} must default export a function`);
   }
-  setup(pluginContext);
+  const cleanup = setup(pluginContext);
+  if (typeof cleanup !== "function") {
+    throw new Error(`Plugin ${id} contribution must return a cleanup function`);
+  }
 
-  for (const item of collector.sidebarItems) {
-    if (!surfaceIds.has(item.surface)) {
-      throw new Error(`Sidebar item ${item.id} references missing surface ${item.surface}`);
+  try {
+    for (const item of collector.sidebarItems) {
+      if (!surfaceIds.has(item.surface)) {
+        throw new Error(`Sidebar item ${item.id} references missing surface ${item.surface}`);
+      }
     }
+  } catch (error) {
+    try {
+      cleanup();
+    } catch (cleanupError) {
+      console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+    }
+    throw error;
   }
   return {
     id,
+    cleanup,
     surfaces: collector.surfaces,
     sidebarItems: collector.sidebarItems,
     attachmentSources: collector.attachmentSources,

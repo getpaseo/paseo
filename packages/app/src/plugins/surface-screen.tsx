@@ -3,16 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import type { PluginSurfaceProps } from "@paseo/plugin";
 import { PluginRpcProvider } from "@paseo/plugin/host";
 import { ChevronDown, X } from "lucide-react-native";
-import {
-  Component,
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
@@ -28,6 +19,7 @@ import { resolvePluginIcon } from "./icons";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
 import { rememberPluginContributionHost } from "./sidebar-groups";
+import { SurfaceErrorBoundary } from "./surface-error-boundary";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const EMPTY_THEME_DTO: Record<string, unknown> = {};
@@ -79,29 +71,6 @@ function SurfaceRenderer({
 }
 
 const ThemedSurfaceRenderer = withUnistyles(SurfaceRenderer);
-
-interface SurfaceErrorBoundaryState {
-  error: string | null;
-}
-
-class SurfaceErrorBoundary extends Component<{ children: ReactNode }, SurfaceErrorBoundaryState> {
-  state: SurfaceErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: unknown): SurfaceErrorBoundaryState {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.warn("[Plugins] Surface render failed", error, info.componentStack);
-  }
-
-  render() {
-    if (this.state.error) {
-      return <Text style={styles.errorText}>Plugin failed: {this.state.error}</Text>;
-    }
-    return this.props.children;
-  }
-}
 
 function resolvePlatform(): PluginSurfaceProps["layout"]["platform"] {
   if (Platform.OS === "ios") return "ios";
@@ -249,7 +218,11 @@ export function PluginSurfaceScreen() {
       <ScreenHeader left={headerLeft} right={headerRight} />
       <View style={styles.body}>
         {plugin && surface ? (
-          <SurfaceErrorBoundary key={`${serverId}/${pluginId}/${contributionId}`}>
+          <SurfaceErrorBoundary
+            key={`${serverId}/${pluginId}/${contributionId}`}
+            installation={plugin}
+            Surface={surface.Component}
+          >
             <ThemedSurfaceRenderer
               Surface={surface.Component}
               invoke={invoke}

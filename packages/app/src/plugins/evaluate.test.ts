@@ -4,7 +4,7 @@ import { evaluatePluginClientBundle } from "./evaluate";
 function bundle(body: string): string {
   return `(function() {
     const module = { exports: {} };
-    module.exports.default = function(plugin) { ${body} };
+    module.exports.default = function(plugin) { ${body}; return function() {}; };
     return module.exports;
   })`;
 }
@@ -89,5 +89,23 @@ describe("evaluatePluginClientBundle", () => {
     expect(() => evaluatePluginClientBundle("example", `(function() { return {}; })`)).toThrow(
       "must default export a function",
     );
+  });
+
+  it("requires a cleanup function", () => {
+    expect(() =>
+      evaluatePluginClientBundle("example", `(function() { return { default: function() {} }; })`),
+    ).toThrow("must return a cleanup function");
+  });
+
+  it("does not publish partial contributions when setup fails", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function() { return { default: function(plugin) {
+          plugin.addSurface("main", function() { return null; });
+          throw new Error("setup exploded");
+        } }; })`,
+      ),
+    ).toThrow("setup exploded");
   });
 });

@@ -221,7 +221,7 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
-import { PluginRuntime } from "./plugins/runtime.js";
+import { PluginService } from "./plugins/index.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -573,7 +573,7 @@ export async function createPaseoDaemon(
   );
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
-  const pluginRuntime = new PluginRuntime(logger);
+  const pluginRuntime = new PluginService(logger, daemonConfigStore);
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
@@ -1442,11 +1442,7 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
-      const pluginConfig = daemonConfigStore.get();
-      await pluginRuntime.start({
-        enabled: pluginConfig.pluginsEnabled ?? false,
-        sources: pluginConfig.plugins ?? {},
-      });
+      await pluginRuntime.start();
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,
@@ -1620,7 +1616,7 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
-      await pluginRuntime.stop().catch(() => undefined);
+      await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       if (mainStarted) {
         httpServer.closeAllConnections();
@@ -1631,7 +1627,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await pluginRuntime.stop();
+    await pluginRuntime.stopAllPlugins();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

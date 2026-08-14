@@ -1,19 +1,15 @@
 import { fork } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
-import { z } from "zod";
-import { PluginIdSchema, type PluginSource } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
+import { readPluginManifest } from "./manifest.js";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 
-const MANIFEST_FILENAME = "paseo-plugin.json";
 const ENTRY_FILENAME = "index.tsx";
 const REQUEST_TIMEOUT_MS = 30_000;
-
-const PluginManifestSchema = z.object({ id: PluginIdSchema }).strict();
 
 interface PluginChild {
   connected: boolean;
@@ -37,11 +33,6 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   child: PluginChild;
   pending: Map<string, PendingInvocation>;
-}
-
-interface PluginRuntimeConfig {
-  enabled: boolean;
-  sources: Record<string, PluginSource>;
 }
 
 interface PluginRuntimeDependencies {
@@ -100,32 +91,43 @@ async function requireRegularFile(filePath: string, label: string): Promise<void
   if (!info?.isFile()) throw new Error(`${label} is missing: ${filePath}`);
 }
 
-async function readManifest(directory: string): Promise<{ id: string }> {
-  const manifestPath = path.join(directory, MANIFEST_FILENAME);
-  await requireRegularFile(manifestPath, "Plugin manifest");
-  return PluginManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
-}
-
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
+  private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
 
   constructor(logger: pino.Logger, dependencies: PluginRuntimeDependencies = {}) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
   }
 
-  async start(config: PluginRuntimeConfig): Promise<void> {
-    if (!config.enabled) return;
+  subscribe(listener: (pluginId: string, error?: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
-    for (const [pluginId, source] of Object.entries(config.sources)) {
-      try {
-        await this.loadDirectoryPlugin(pluginId, source.path);
-      } catch (error) {
-        this.logger.error({ err: error, pluginId, source }, "Failed to load plugin");
-      }
+  async startPlugin(
+    pluginId: string,
+    configuredPath: string,
+    canPublish: () => boolean = () => true,
+  ): Promise<void> {
+    if (this.plugins.has(pluginId)) throw new Error(`Plugin is already running: ${pluginId}`);
+    const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath);
+    if (!canPublish()) {
+      await this.stopPlugin(loaded);
+      throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
+    this.plugins.set(pluginId, loaded);
+  }
+
+  async stopPluginById(pluginId: string): Promise<boolean> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) return false;
+    this.plugins.delete(pluginId);
+    this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
+    await this.stopPlugin(loaded);
+    return true;
   }
 
   catalog(): Array<{ id: string; clientBundle: string }> {
@@ -154,17 +156,21 @@ export class PluginRuntime {
     });
   }
 
-  async stop(): Promise<void> {
-    await Promise.all([...this.plugins.values()].map((loaded) => this.stopPlugin(loaded)));
+  async stopAll(): Promise<void> {
+    const loaded = [...this.plugins.values()];
     this.plugins.clear();
+    for (const plugin of loaded) {
+      this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
+    }
+    await Promise.all(loaded.map((plugin) => this.stopPlugin(plugin)));
   }
 
-  private async loadDirectoryPlugin(pluginId: string, configuredPath: string): Promise<void> {
+  private async loadDirectoryPlugin(
+    pluginId: string,
+    configuredPath: string,
+  ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
-    const manifest = await readManifest(directory);
-    if (manifest.id !== pluginId) {
-      throw new Error(`Configured plugin "${pluginId}" points to manifest "${manifest.id}"`);
-    }
+    await readPluginManifest(directory);
     const entryPath = path.join(directory, ENTRY_FILENAME);
     await requireRegularFile(entryPath, "Plugin entry point");
     const bundles = await compilePlugin(entryPath);
@@ -210,8 +216,8 @@ export class PluginRuntime {
     };
     child.on("message", (message) => this.handleChildMessage(loaded, message));
     child.on("close", () => this.handleChildClose(loaded));
-    this.plugins.set(pluginId, loaded);
     this.logger.info({ pluginId, methods }, "Loaded plugin");
+    return loaded;
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
@@ -225,18 +231,39 @@ export class PluginRuntime {
   }
 
   private handleChildClose(loaded: LoadedPlugin): void {
-    if (this.plugins.get(loaded.id) === loaded) this.plugins.delete(loaded.id);
+    if (this.plugins.get(loaded.id) === loaded) {
+      this.plugins.delete(loaded.id);
+      this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
+    }
+    this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`);
+  }
+
+  private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
+    if (loaded.child.killed) return;
+    let didClose = false;
+    const closed = new Promise<void>((resolve) =>
+      loaded.child.on("close", () => {
+        didClose = true;
+        resolve();
+      }),
+    );
+    if (loaded.child.connected) {
+      await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
+    }
+    await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+    if (!didClose) terminatePluginChild(loaded.child);
+    await closed;
+  }
+
+  private rejectPending(loaded: LoadedPlugin, message: string): void {
     for (const invocation of loaded.pending.values()) {
       clearTimeout(invocation.timeout);
-      invocation.reject(new Error(`Plugin process exited: ${loaded.id}`));
+      invocation.reject(new Error(message));
     }
     loaded.pending.clear();
   }
 
-  private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
-    if (loaded.child.connected) {
-      await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
-    }
-    terminatePluginChild(loaded.child);
+  private notify(pluginId: string, error?: string): void {
+    for (const listener of this.listeners) listener(pluginId, error);
   }
 }

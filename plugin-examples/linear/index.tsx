@@ -42,4 +42,5 @@ export default function contribute(plugin: PluginContext) {
     return linear.search(query);
   });
   plugin.addAttachmentSource(issueAttachments);
+  return () => undefined;
 }

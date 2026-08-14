@@ -72,4 +72,5 @@ export default function contribute(plugin: PluginContext) {
     icon: "Blocks",
     surface: "main",
   });
+  return () => undefined;
 }

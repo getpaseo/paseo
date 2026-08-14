@@ -46,3 +46,7 @@ export interface PluginContext {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
 }
+
+export type PluginCleanup = () => void;
+
+export type PluginContribution = (plugin: PluginContext) => PluginCleanup;

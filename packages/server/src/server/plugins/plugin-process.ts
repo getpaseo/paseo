@@ -10,6 +10,7 @@ interface RegisteredRpc {
 }
 
 const handlers = new Map<string, RegisteredRpc>();
+let cleanup: (() => void) | null = null;
 const nodeRequire = createRequire(import.meta.url);
 
 function send(message: PluginProcessMessage): void {
@@ -54,7 +55,11 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  setup({ handle: register });
+  const contributedCleanup = setup({ handle: register });
+  if (typeof contributedCleanup !== "function") {
+    throw new Error("Plugin contribution must return a cleanup function");
+  }
+  cleanup = contributedCleanup;
 }
 
 process.on("message", (message: PluginProcessRequest) => {
@@ -68,6 +73,15 @@ process.on("message", (message: PluginProcessRequest) => {
     return;
   }
   if (message.type === "shutdown") {
+    const currentCleanup = cleanup;
+    cleanup = null;
+    if (currentCleanup) {
+      try {
+        currentCleanup();
+      } catch (error) {
+        console.error("Plugin cleanup failed", error);
+      }
+    }
     process.disconnect();
     return;
   }

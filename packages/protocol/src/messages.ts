@@ -180,6 +180,7 @@ export const DirectoryPluginSourceSchema = z
   .object({
     source: z.literal("directory"),
     path: z.string().min(1),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -1324,6 +1325,33 @@ export const PluginCatalogGetRequestSchema = z.object({
   type: z.literal("plugin.catalog.get.request"),
   requestId: z.string(),
 });
+
+export const PluginListRequestSchema = z.object({
+  type: z.literal("plugin.list.request"),
+  requestId: z.string(),
+});
+
+export const PluginDirectoryInstallRequestSchema = z.object({
+  type: z.literal("plugin.directory.install.request"),
+  requestId: z.string(),
+  path: z.string().min(1),
+  id: PluginIdSchema.optional(),
+});
+
+export const PluginDirectoryInspectRequestSchema = z.object({
+  type: z.literal("plugin.directory.inspect.request"),
+  requestId: z.string(),
+  path: z.string().min(1),
+});
+
+function pluginIdRequest<const Type extends string>(type: Type) {
+  return z.object({ type: z.literal(type), requestId: z.string(), pluginId: PluginIdSchema });
+}
+
+export const PluginReloadRequestSchema = pluginIdRequest("plugin.reload.request");
+export const PluginEnableRequestSchema = pluginIdRequest("plugin.enable.request");
+export const PluginDisableRequestSchema = pluginIdRequest("plugin.disable.request");
+export const PluginRemoveRequestSchema = pluginIdRequest("plugin.remove.request");
 
 export const PluginRpcInvokeRequestSchema = z.object({
   type: z.literal("plugin.rpc.invoke.request"),
@@ -2803,6 +2831,13 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonDisconnectRequestSchema,
   DiagnosticsRequestSchema,
   PluginCatalogGetRequestSchema,
+  PluginListRequestSchema,
+  PluginDirectoryInstallRequestSchema,
+  PluginDirectoryInspectRequestSchema,
+  PluginReloadRequestSchema,
+  PluginEnableRequestSchema,
+  PluginDisableRequestSchema,
+  PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
@@ -3128,6 +3163,8 @@ export const ServerInfoStatusPayloadSchema = z
         pushTokenRevocation: z.boolean().optional(),
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: z.boolean().optional(),
+        // COMPAT(pluginManagement): added in v0.4.0, remove gate after 2027-08-14.
+        pluginManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -3314,6 +3351,11 @@ export const DaemonConfigChangedStatusPayloadSchema = z
   })
   .passthrough();
 
+export const PluginCatalogChangedStatusPayloadSchema = z.object({
+  status: z.literal("plugin_catalog_changed"),
+  pluginId: PluginIdSchema,
+});
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3322,6 +3364,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
+  PluginCatalogChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -5766,6 +5809,48 @@ export const PluginCatalogGetResponseSchema = z.object({
   }),
 });
 
+export const PluginStatusSchema = z.enum(["running", "disabled", "failed"]);
+export type PluginStatus = z.infer<typeof PluginStatusSchema>;
+
+export const PluginListItemSchema = z.object({
+  id: PluginIdSchema,
+  path: z.string(),
+  enabled: z.boolean(),
+  status: PluginStatusSchema,
+  error: z.string().optional(),
+});
+export type PluginListItem = z.infer<typeof PluginListItemSchema>;
+
+export const PluginListResponseSchema = z.object({
+  type: z.literal("plugin.list.response"),
+  payload: z.object({ requestId: z.string(), plugins: z.array(PluginListItemSchema) }),
+});
+
+export const PluginDirectoryInstallResponseSchema = z.object({
+  type: z.literal("plugin.directory.install.response"),
+  payload: z.object({ requestId: z.string(), plugin: PluginListItemSchema }),
+});
+
+export const PluginDirectoryInspectResponseSchema = z.object({
+  type: z.literal("plugin.directory.inspect.response"),
+  payload: z.object({ requestId: z.string(), id: PluginIdSchema }),
+});
+
+function pluginActionResponse<const Type extends string>(type: Type) {
+  return z.object({
+    type: z.literal(type),
+    payload: z.object({ requestId: z.string(), plugin: PluginListItemSchema }),
+  });
+}
+
+export const PluginReloadResponseSchema = pluginActionResponse("plugin.reload.response");
+export const PluginEnableResponseSchema = pluginActionResponse("plugin.enable.response");
+export const PluginDisableResponseSchema = pluginActionResponse("plugin.disable.response");
+export const PluginRemoveResponseSchema = z.object({
+  type: z.literal("plugin.remove.response"),
+  payload: z.object({ requestId: z.string() }).strict(),
+});
+
 export const PluginRpcInvokeResponseSchema = z.object({
   type: z.literal("plugin.rpc.invoke.response"),
   payload: z.object({
@@ -5782,6 +5867,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
   PluginCatalogGetResponseSchema,
+  PluginListResponseSchema,
+  PluginDirectoryInstallResponseSchema,
+  PluginDirectoryInspectResponseSchema,
+  PluginReloadResponseSchema,
+  PluginEnableResponseSchema,
+  PluginDisableResponseSchema,
+  PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,

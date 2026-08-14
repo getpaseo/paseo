@@ -4,9 +4,22 @@ Local plugins contribute daemon RPCs, native app surfaces, and composer attachme
 `index.tsx`. Paseo executes the server contribution in a subprocess and evaluates the client
 contribution in the app runtime. Plugin code is trusted code; this first slice does not sandbox it.
 
-## Configure a directory source
+## Install a directory source
 
-Enable local plugins and add the plugin to the root `plugins` object in `$PASEO_HOME/config.json`:
+Create a typecheckable plugin project, install its development dependencies, then install it into
+the daemon. `init` only writes the project files; it does not run the package manager.
+
+```bash
+paseo plugin init /absolute/path/to/my-plugin
+cd /absolute/path/to/my-plugin
+npm install
+npm run typecheck
+paseo plugin install /absolute/path/to/my-plugin
+paseo plugin install /absolute/path/to/my-plugin --id another-runtime-id
+paseo plugin ls
+```
+
+The daemon stores directory sources under the root `plugins` object:
 
 ```json
 {
@@ -14,7 +27,8 @@ Enable local plugins and add the plugin to the root `plugins` object in `$PASEO_
   "plugins": {
     "my-plugin": {
       "source": "directory",
-      "path": "/absolute/path/to/my-plugin"
+      "path": "/absolute/path/to/my-plugin",
+      "enabled": true
     }
   }
 }
@@ -22,13 +36,20 @@ Enable local plugins and add the plugin to the root `plugins` object in `$PASEO_
 
 The plugin system is disabled unless `pluginsEnabled` is `true`.
 
-The directory contains an identity-only manifest and one entry point:
+The directory contains an identity-only manifest, one entry point, and local typechecking support:
 
 ```text
 my-plugin/
   paseo-plugin.json
   index.tsx
+  paseo-plugin.d.ts
+  package.json
+  tsconfig.json
 ```
+
+Paseo compiles TSX when loading the plugin, so these packages are development dependencies only.
+The generated declaration file supplies `@paseo/plugin` types until the SDK is distributed as a
+public package. Regenerate new plugins with the matching Paseo CLI when the SDK contract changes.
 
 ```json
 {
@@ -36,8 +57,15 @@ my-plugin/
 }
 ```
 
-The manifest ID must match the config key. Restart the development daemon after changing plugin
-source or configuration; directory watching is outside the first slice.
+The config key is the runtime plugin ID. The manifest ID is the default selected during install;
+`--id` overrides it. Existing configuration is not renamed when the manifest changes, and the
+runtime does not compare the two IDs. The same directory can be installed under several config
+keys.
+
+Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully tear down the old
+plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
+the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Remove deletes only its
+configuration, never its source directory. The global `pluginsEnabled` switch remains available.
 
 ## Contribute behavior and UI
 
@@ -75,8 +103,14 @@ export default function contribute(plugin: PluginContext) {
     icon: "MessageCircle",
     surface: "main",
   });
+  return () => undefined;
 }
 ```
+
+The contribution function must return cleanup. Paseo invokes it once when the plugin is reloaded,
+disabled, removed, disconnected, or shut down. Cleanup is for resources created by plugin code.
+Paseo removes registered contributions, unmounts surfaces, clears query state, rejects pending RPCs,
+and stops the subprocess. Cleanup errors are logged and do not interrupt host teardown.
 
 Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
@@ -126,6 +160,7 @@ const issues = defineAttachmentSource({
 export default function contribute(plugin: PluginContext) {
   plugin.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
   plugin.addAttachmentSource(issues);
+  return () => undefined;
 }
 ```
 

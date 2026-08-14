@@ -6,6 +6,8 @@ export {
 } from "./attachments.js";
 export type {
   PluginAttachmentSourceContribution,
+  PluginCleanup,
+  PluginContribution,
   PluginContext,
   PluginSidebarContribution,
   PluginSurfaceContribution,

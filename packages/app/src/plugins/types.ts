@@ -7,6 +7,7 @@ import type {
 
 export interface EvaluatedPlugin {
   id: string;
+  cleanup: () => void;
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];

@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   common: {
@@ -1832,8 +1833,10 @@ export const fr: TranslationResources = {
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Aperçu",
     },
+    plugins: pluginSettings.fr,
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:

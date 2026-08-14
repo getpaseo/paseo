@@ -16,6 +16,48 @@ async function createPlugin(id: string, source: string): Promise<string> {
   return directory;
 }
 
+function createReloadChild(name: string, events: string[], methods: string[] = []) {
+  const listeners = new Map<string, Array<(message: never) => void>>();
+  const emit = (event: string, message: unknown) => {
+    for (const listener of listeners.get(event) ?? []) listener(message as never);
+  };
+  return {
+    connected: true,
+    killed: false,
+    send(message: { type: string }, callback?: (error: Error | null) => void) {
+      callback?.(null);
+      if (message.type === "initialize") {
+        events.push(`start:${name}`);
+        queueMicrotask(() => emit("message", { type: "ready", methods }));
+      }
+      if (message.type === "shutdown") {
+        events.push(`shutdown:${name}`);
+        this.connected = false;
+        queueMicrotask(() => {
+          events.push(`exit:${name}`);
+          emit("close", null);
+        });
+      }
+      return true;
+    },
+    kill() {
+      this.killed = true;
+      this.connected = false;
+      queueMicrotask(() => emit("close", null));
+      return true;
+    },
+    disconnect() {
+      this.connected = false;
+    },
+    on(event: string, listener: (message: never) => void) {
+      const registered = listeners.get(event) ?? [];
+      registered.push(listener);
+      listeners.set(event, registered);
+      return this;
+    },
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
@@ -23,10 +65,52 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("waits for the old subprocess to exit before starting its replacement", async () => {
+    const directory = await createPlugin(
+      "reloadable",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const events: string[] = [];
+    const children = [createReloadChild("old", events), createReloadChild("new", events)];
+    const runtime = new PluginRuntime(pino({ level: "silent" }), {
+      spawnChild: () => {
+        const child = children.shift();
+        if (!child) throw new Error("Unexpected extra child");
+        return child;
+      },
+    });
+    await runtime.startPlugin("configured-id", directory);
+
+    await runtime.stopPluginById("configured-id");
+    await runtime.startPlugin("configured-id", directory);
+
+    expect(events).toEqual(["start:old", "shutdown:old", "exit:old", "start:new"]);
+    await runtime.stopAll();
+  });
+
+  it("rejects pending RPCs when the plugin stops", async () => {
+    const directory = await createPlugin(
+      "pending",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("pending", [], ["wait"]);
+    const runtime = new PluginRuntime(pino({ level: "silent" }), {
+      spawnChild: () => child,
+    });
+    await runtime.startPlugin("pending", directory);
+
+    const rejection = expect(runtime.invoke("pending", "wait", {})).rejects.toThrow(
+      "Plugin stopped: pending",
+    );
+    await runtime.stopPluginById("pending");
+
+    await rejection;
+  });
+
   it("kills a plugin child that fails initialization", async () => {
     const directory = await createPlugin(
       "broken",
-      `export default function contribute(plugin: unknown) { void plugin; }`,
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const listeners = new Map<string, Array<(message: never) => void>>();
     const child = {
@@ -62,27 +146,24 @@ describe("PluginRuntime", () => {
       spawnChild: () => child,
     });
 
-    await runtime.start({
-      enabled: true,
-      sources: { broken: { source: "directory", path: directory } },
-    });
+    await expect(runtime.startPlugin("broken", directory)).rejects.toThrow("broken plugin");
 
     expect(child.killed).toBe(true);
-    await runtime.stop();
+    await runtime.stopAll();
   });
 
-  it("does not inspect configured plugin sources while disabled", async () => {
+  it("rejects a server contribution without cleanup", async () => {
+    const directory = await createPlugin(
+      "missing-cleanup",
+      `export default function contribute(plugin: unknown) { void plugin; }`,
+    );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({
-      enabled: false,
-      sources: {
-        missing: { source: "directory", path: "/plugin-source-does-not-exist" },
-      },
-    });
-
+    await expect(runtime.startPlugin("missing-cleanup", directory)).rejects.toThrow(
+      "must return a cleanup function",
+    );
     expect(runtime.catalog()).toEqual([]);
-    await runtime.stop();
+    await runtime.stopAll();
   });
 
   it("loads the official Linear attachment extension", async () => {
@@ -92,16 +173,13 @@ describe("PluginRuntime", () => {
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({
-      enabled: true,
-      sources: { linear: { source: "directory", path: directory } },
-    });
+    await runtime.startPlugin("linear", directory);
 
     expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["linear"]);
     expect(runtime.catalog()[0]?.clientBundle).toContain("Attach Linear issue");
     expect(runtime.catalog()[0]?.clientBundle).not.toContain("LINEAR_API_KEY");
     expect(runtime.catalog()[0]?.clientBundle).not.toContain("api.linear.app");
-    await runtime.stop();
+    await runtime.stopAll();
   });
 
   it("loads one index.tsx, exposes its client bundle, and invokes its server RPC", async () => {
@@ -140,14 +218,12 @@ export default function contribute(plugin: any) {
   plugin.addSurface("main", HelloSurface);
   plugin.addSidebarItem({ id: "hello", title: "Hello", icon: "Sparkles", surface: "main" });
   plugin.addAttachmentSource(attachments);
+  return () => undefined;
 }`,
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({
-      enabled: true,
-      sources: { hello: { source: "directory", path: directory } },
-    });
+    await runtime.startPlugin("hello", directory);
 
     const catalog = runtime.catalog();
     expect(catalog).toHaveLength(1);
@@ -161,7 +237,7 @@ export default function contribute(plugin: any) {
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
 
-    await runtime.stop();
+    await runtime.stopAll();
   });
 
   it("rejects a handler result that does not match its RPC output schema", async () => {
@@ -176,29 +252,68 @@ const brokenRpc = defineRpc({
 });
 export default function contribute(plugin: any) {
   plugin.handle(brokenRpc, async () => ({ value: "wrong" }));
+  return () => undefined;
 }`,
     );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({
-      enabled: true,
-      sources: { "invalid-output": { source: "directory", path: directory } },
-    });
+    await runtime.startPlugin("invalid-output", directory);
 
     await expect(runtime.invoke("invalid-output", "broken", {})).rejects.toThrow();
-    await runtime.stop();
+    await runtime.stopAll();
   });
 
-  it("rejects a configured id that does not match the manifest", async () => {
-    const directory = await createPlugin("actual", `export default function contribute() {}`);
+  it("uses the config key as runtime identity without comparing the manifest id", async () => {
+    const directory = await createPlugin(
+      "actual",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
     const runtime = new PluginRuntime(pino({ level: "silent" }));
 
-    await runtime.start({
-      enabled: true,
-      sources: { configured: { source: "directory", path: directory } },
-    });
+    await runtime.startPlugin("configured", directory);
+
+    expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["configured"]);
+    await runtime.stopAll();
+  });
+
+  it("does not publish a plugin when lifecycle intent changes while it starts", async () => {
+    const directory = await createPlugin(
+      "blocked",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const events: string[] = [];
+    const child = createReloadChild("blocked", events);
+    const runtime = new PluginRuntime(pino({ level: "silent" }), { spawnChild: () => child });
+
+    await expect(runtime.startPlugin("blocked", directory, () => false)).rejects.toThrow(
+      "Plugin start cancelled: blocked",
+    );
 
     expect(runtime.catalog()).toEqual([]);
-    await runtime.stop();
+    expect(events).toEqual(["start:blocked", "shutdown:blocked", "exit:blocked"]);
+  });
+
+  it("reports an unexpected subprocess crash and removes its catalog entry", async () => {
+    const directory = await createPlugin(
+      "crashing",
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  setTimeout(() => process.exit(17), 20);
+  return () => undefined;
+}`,
+    );
+    const runtime = new PluginRuntime(pino({ level: "silent" }));
+    const crashed = new Promise<string>((resolve) => {
+      runtime.subscribe((pluginId, error) => {
+        if (pluginId === "crashing" && error) resolve(error);
+      });
+    });
+    await runtime.startPlugin("crashing", directory);
+
+    await expect(crashed).resolves.toBe("Plugin process exited: crashing");
+    expect(runtime.catalog()).toEqual([]);
+    await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
+      "Plugin is not available",
+    );
   });
 });
