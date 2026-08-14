@@ -383,13 +383,14 @@ export function upsertUserMessageAcrossStream(
   };
 }
 
-function placeCanonicalUserMessageAtTail(
+function upsertCanonicalUserMessageInTail(
   tail: StreamItem[],
   message: UserMessageItem,
   insertWhenUnmatched: boolean,
+  placement: "preserve-existing" | "event-order",
 ): Pick<UserMessageProductionResult, "items" | "message" | "matched"> {
   const produced = produceUserMessage(tail, message, null, "existing");
-  if (!produced.matched && !insertWhenUnmatched) {
+  if ((produced.matched && placement === "preserve-existing") || !insertWhenUnmatched) {
     return produced;
   }
   const preceding = produced.matched
@@ -1776,9 +1777,10 @@ function applyCanonicalUserMessageEvent(params: {
   event: AgentStreamEventPayload;
   timestamp: Date;
   timelineCursor?: TimelinePosition;
+  source: StreamUpdateSource;
   unmatchedInsert?: "tail" | "head";
 }): ApplyStreamEventResult | null {
-  const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
+  const { tail, head, event, timestamp, timelineCursor, source, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
   const normalized = normalizeChunk(event.item.text);
 
@@ -1813,7 +1815,14 @@ function applyCanonicalUserMessageEvent(params: {
           : [],
     };
   }
-  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
+  // A live echo acknowledges the submitted row and may arrive after response output.
+  // Canonical replay, unlike that acknowledgement, follows event sequence.
+  const reconciled = upsertCanonicalUserMessageInTail(
+    flushedTail,
+    canonical,
+    normalized.hasContent,
+    source === "live" ? "preserve-existing" : "event-order",
+  );
   return {
     tail: reconciled.items,
     head: flushedHead,
@@ -1847,16 +1856,17 @@ export function applyStreamEvent(params: {
   unmatchedUserMessageInsert?: "tail" | "head";
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
+  const source = params.source ?? "live";
   const canonicalUserResult = applyCanonicalUserMessageEvent({
     tail,
     head,
     event,
     timestamp,
     timelineCursor: params.timelineCursor,
+    source,
     unmatchedInsert: params.unmatchedUserMessageInsert,
   });
   if (canonicalUserResult) return canonicalUserResult;
-  const source = params.source ?? "live";
   let nextTail = tail;
   let nextHead = head;
   let changedTail = false;

@@ -116,6 +116,9 @@ class PiCliRuntimeSession implements PiRuntimeSession {
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      // Pi can stay active for compaction or retry after emitting agent_end.
+      // Queue a prompt sent in that settlement gap instead of rejecting it.
+      streamingBehavior: "followUp",
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {

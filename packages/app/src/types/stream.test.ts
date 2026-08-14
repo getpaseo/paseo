@@ -1413,6 +1413,45 @@ describe("turn lifecycle events", () => {
     },
   );
 
+  it("keeps a submitted prompt before assistant output when its canonical echo arrives late", () => {
+    const submitted = createUserMessage({
+      clientMessageId: "msg_submitted_late_echo",
+      text: "continue after compaction",
+      timestamp: new Date("2025-01-01T15:02:00Z"),
+    });
+    const response = applyStreamEvent({
+      tail: [submitted],
+      head: [],
+      event: assistantTimeline("new response", "pi", "response-after-compaction"),
+      timestamp: new Date("2025-01-01T15:02:01Z"),
+      source: "live",
+      timelineCursor: { epoch: "epoch-1", seq: 2 },
+    });
+
+    const canonical = applyStreamEvent({
+      tail: response.tail,
+      head: response.head,
+      event: {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "user_message",
+          text: submitted.text,
+          messageId: "provider-owned-late-echo",
+          clientMessageId: submitted.clientMessageId,
+        },
+      },
+      timestamp: new Date("2025-01-01T15:02:02Z"),
+      source: "live",
+      timelineCursor: { epoch: "epoch-1", seq: 1 },
+    });
+
+    expect([...canonical.tail, ...canonical.head].map((item) => item.kind)).toEqual([
+      "user_message",
+      "assistant_message",
+    ]);
+  });
+
   it("replaces one submitted plain-text user message with the next live server user message", () => {
     const submittedTimestamp = new Date("2025-01-01T15:03:00Z");
     const serverTimestamp = new Date("2025-01-01T15:03:01Z");

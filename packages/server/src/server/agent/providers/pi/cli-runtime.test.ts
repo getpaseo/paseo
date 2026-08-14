@@ -150,6 +150,27 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("queues prompts as follow-ups while Pi is still settling", async () => {
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const prompt = session.prompt("continue after compaction");
+    const promptCommand = await pendingPrompt;
+
+    expect(promptCommand).toMatchObject({
+      type: "prompt",
+      message: "continue after compaction",
+      streamingBehavior: "followUp",
+      id: expect.any(String),
+    });
+
+    writePiResponse(child, promptCommand);
+    await expect(prompt).resolves.toEqual({
+      requestId: promptCommand.id,
+    });
+  });
+
   test("passes an MCP config path to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));
