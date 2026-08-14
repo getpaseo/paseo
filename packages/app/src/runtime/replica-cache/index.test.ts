@@ -25,6 +25,10 @@ class MemoryStorage implements ReplicaCacheStorage {
     this.writes += 1;
     this.values.set(key, value);
   }
+
+  async removeItem(key: string): Promise<void> {
+    this.values.delete(key);
+  }
 }
 
 function workspace(
@@ -51,34 +55,50 @@ function workspace(
 }
 
 function agent(id: string, workspaceId = "workspace-1", cwd = "/repo/paseo") {
-  return normalizeAgentSnapshot(
-    {
-      id,
-      provider: "codex",
-      cwd,
-      workspaceId,
-      model: null,
-      createdAt: "2026-07-18T08:00:00.000Z",
-      updatedAt: "2026-07-18T08:01:00.000Z",
-      lastUserMessageAt: "2026-07-18T08:01:00.000Z",
-      status: "idle",
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: true,
-        supportsDynamicModes: true,
-        supportsMcpServers: true,
-        supportsReasoningStream: true,
-        supportsToolInvocations: true,
+  return {
+    ...normalizeAgentSnapshot(
+      {
+        id,
+        provider: "codex",
+        cwd,
+        workspaceId,
+        model: null,
+        createdAt: "2026-07-18T08:00:00.000Z",
+        updatedAt: "2026-07-18T08:01:00.000Z",
+        lastUserMessageAt: "2026-07-18T08:01:00.000Z",
+        status: "idle",
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        currentModeId: null,
+        availableModes: [],
+        pendingPermissions: [],
+        persistence: null,
+        title: `Agent ${id}`,
+        labels: {},
       },
-      currentModeId: null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: null,
-      title: `Agent ${id}`,
-      labels: {},
+      SERVER_ID,
+    ),
+    projectPlacement: {
+      projectKey: cwd,
+      projectName: cwd.split("/").at(-1) ?? cwd,
+      workspaceName: workspaceId,
+      checkout: {
+        cwd,
+        isGit: false as const,
+        currentBranch: null,
+        remoteUrl: null,
+        worktreeRoot: null,
+        isPaseoOwnedWorktree: false as const,
+        mainRepoRoot: null,
+      },
     },
-    SERVER_ID,
-  );
+  };
 }
 
 function message(id: string, text: string): StreamItem {
@@ -208,10 +228,12 @@ describe("ReplicaCache", () => {
     expect(session.client).toBeNull();
     expect(session.hasHydratedAgents).toBe(false);
     expect(session.hasHydratedWorkspaces).toBe(false);
+    expect(session.hasWorkspaceDirectorySnapshot).toBe(true);
     expect(Array.from(session.agents.keys())).toEqual(["agent-1"]);
     expect(Array.from(session.workspaces.keys())).toEqual(["workspace-1"]);
-    expect(Array.from(session.projects.keys())).toEqual(["project-1"]);
+    expect(Array.from(session.projects.keys())).toEqual(["project-1", "empty-project"]);
     expect(session.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
+    expect(session.agents.get("agent-1")?.projectPlacement?.checkout.cwd).toBe("/repo/paseo");
     expect(session.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
     expect(session.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
@@ -226,7 +248,7 @@ describe("ReplicaCache", () => {
     });
   });
 
-  it("persists only the focused agent view with a short timeline tail", async () => {
+  it("persists the complete directory with only the focused timeline tail", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage);
     cache.setHosts([SERVER_ID]);
@@ -262,9 +284,13 @@ describe("ReplicaCache", () => {
 
     const session = useSessionStore.getState().sessions[SERVER_ID];
     const timelines = session?.agentStreamTail;
-    expect(Array.from(session?.agents.keys() ?? [])).toEqual(["agent-2"]);
-    expect(Array.from(session?.workspaces.keys() ?? [])).toEqual(["workspace-2"]);
-    expect(Array.from(session?.projects.keys() ?? [])).toEqual(["project-2"]);
+    expect(Array.from(session?.agents.keys() ?? [])).toEqual(["agent-1", "agent-2"]);
+    expect(Array.from(session?.workspaces.keys() ?? [])).toEqual(["workspace-1", "workspace-2"]);
+    expect(Array.from(session?.projects.keys() ?? [])).toEqual([
+      "project-1",
+      "project-2",
+      "empty-project",
+    ]);
     expect(Array.from(timelines?.keys() ?? [])).toEqual(["agent-2"]);
     expect(timelines?.get("agent-2")).toEqual(secondTimeline.slice(-50));
 
@@ -272,7 +298,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
@@ -306,6 +332,53 @@ describe("ReplicaCache", () => {
     ]);
   });
 
+  it("persists monotonic directory cursors with the complete host replica", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    await cache.flush();
+
+    cache.writeDirectoryCheckpoint(SERVER_ID, {
+      agents: { generation: "daemon-generation", afterSeq: 7 },
+    });
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set("agent-1", { ...current, title: "Updated agent" });
+    });
+    await cache.flush();
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+    expect(reader.readDirectoryCheckpoint(SERVER_ID)).toEqual({
+      agents: { generation: "daemon-generation", afterSeq: 7 },
+    });
+  });
+
+  it("restores every registered host directory before any host reconnects", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts(LRU_SERVER_IDS);
+    for (const serverId of LRU_SERVER_IDS) seedTimeline(serverId, `cached-${serverId}`);
+    await writer.flush();
+    for (const serverId of LRU_SERVER_IDS) useSessionStore.getState().clearSession(serverId);
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts(LRU_SERVER_IDS);
+    await reader.restore();
+
+    for (const serverId of LRU_SERVER_IDS) {
+      const session = useSessionStore.getState().sessions[serverId];
+      expect(Array.from(session?.agents.keys() ?? [])).toEqual([`agent-${serverId}`]);
+      expect(Array.from(session?.workspaces.keys() ?? [])).toEqual([`workspace-${serverId}`]);
+      expect(session?.hasHydratedAgents).toBe(false);
+      expect(session?.hasHydratedWorkspaces).toBe(false);
+      expect(session?.hasWorkspaceDirectorySnapshot).toBe(true);
+    }
+  });
+
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage, { maxBytes: 7_000 });
@@ -331,12 +404,12 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 3 cache data and overwrites it on flush", async () => {
+  it("rejects and clears version 4 cache data before overwriting it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@paseo:replica-cache",
       JSON.stringify({
-        version: 3,
+        version: 4,
         hosts: [
           {
             serverId: SERVER_ID,
@@ -357,11 +430,12 @@ describe("ReplicaCache", () => {
     cache.setHosts([SERVER_ID]);
 
     await cache.restore();
+    expect(storage.values.has("@paseo:replica-cache")).toBe(false);
     await cache.flush();
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 4,
+      version: 5,
       hosts: [],
     });
   });

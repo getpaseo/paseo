@@ -105,6 +105,13 @@ Daemon bootstrap reconciles that ledger in the background, without blocking star
 
 The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
 
+`ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
+availability check and covers that check plus the complete catalog probe. Providers that make
+multiple catalog requests must not apply this deadline separately to each request. The manager
+aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
+that were still active when the deadline expired.
+
 Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
 
 Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.

@@ -51,9 +51,14 @@ export async function hubRequestFailure(
     );
   }
   const title = parsed.data.title ?? `${failureMessage} with HTTP ${response.status}`;
-  const message = parsed.data.detail === undefined ? title : `${title}: ${parsed.data.detail}`;
   const details = formatFieldIssues(parsed.data.errors, parsed.data.issues);
-  const code = response.status === 422 ? "HUB_VALIDATION_FAILED" : "HUB_REQUEST_FAILED";
+  const message =
+    details !== undefined || parsed.data.detail === undefined
+      ? title
+      : `${title}: ${parsed.data.detail}`;
+  let code = "HUB_REQUEST_FAILED";
+  if (response.status === 422) code = "HUB_VALIDATION_FAILED";
+  if (response.status === 404) code = "HUB_NOT_FOUND";
   return new HubCommandError(
     code,
     redactSecret(message, apiKey),
@@ -82,12 +87,20 @@ function formatFieldIssues(
 
 function formatIssuePath(path: z.infer<typeof issuePathSchema> | undefined): string | undefined {
   if (path === undefined || typeof path === "string") return path;
+  const [file, ...fieldPath] = path;
+  if (typeof file === "string" && file.startsWith(".paseo/") && fieldPath.length > 0) {
+    return `${file}: ${formatPathSegments(fieldPath)}`;
+  }
+  return formatPathSegments(path) || undefined;
+}
+
+function formatPathSegments(path: readonly (string | number)[]): string {
   let formatted = "";
   for (const segment of path) {
     if (typeof segment === "number") formatted += `[${segment}]`;
     else formatted += formatted.length === 0 ? segment : `.${segment}`;
   }
-  return formatted || undefined;
+  return formatted;
 }
 
 function redactSecret(value: string, secret: string | undefined): string {

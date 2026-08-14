@@ -2460,6 +2460,9 @@ export const es: TranslationResources = {
           "Consulte los documentos para obtener más detalles y las variables de entorno disponibles para estos comandos.",
         setup: "Configuración",
         setupAccessibility: "Comandos de configuración del árbol de trabajo",
+        uncommittedTitle: "Confirma los cambios de paseo.json",
+        uncommittedDescription:
+          "Los árboles de trabajo nuevos usan el script de configuración de la rama base que selecciones.",
         teardown: "Demoler",
         teardownAccessibility: "Comandos de desmontaje del árbol de trabajo",
       },

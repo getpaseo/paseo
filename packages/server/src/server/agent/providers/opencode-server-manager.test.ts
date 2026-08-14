@@ -138,6 +138,25 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
+  test("aborted acquisition transfers no reference and leaves startup reusable", async () => {
+    const { manager, runtime } = createTestManager([4477], { autoAnnounce: false });
+    const controller = new AbortController();
+
+    const abortedAcquisition = manager.acquireCurrent(controller.signal);
+    await runtime.settle();
+    controller.abort(new Error("catalog refresh expired"));
+
+    await expect(abortedAcquisition).rejects.toThrow("catalog refresh expired");
+    runtime.processForPort(4477).announceListening();
+
+    const nextAcquisition = await manager.acquireCurrent();
+    expect(nextAcquisition.server.url).toBe("http://127.0.0.1:4477");
+    expect(runtime.launchedPorts).toEqual([4477]);
+
+    await nextAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4477]);
+  });
+
   test("shutdown kills a server that is still starting", async () => {
     const { manager, runtime } = createTestManager([4472], { autoAnnounce: false });
 

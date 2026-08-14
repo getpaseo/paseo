@@ -297,9 +297,7 @@ another remote fails closed until the worktree records an explicit local target.
 the optional field and retain the previous local-first behavior; older worktree metadata without the
 exact ref also resolves through its stored branch name.
 
-Worktrees inherit committed Git state. Before lifecycle setup, Paseo copies the source checkout's
-`paseo.json` over the worktree copy so saved Project Settings apply without a commit. Other
-uncommitted source-checkout changes are not copied.
+Worktrees inherit committed Git state only; uncommitted source-checkout changes are not copied.
 
 ## paseo.json service scripts
 

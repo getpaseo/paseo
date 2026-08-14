@@ -2419,6 +2419,9 @@ export const en = {
           "See docs for more details and the environment variables available to these commands",
         setup: "Setup",
         setupAccessibility: "Worktree setup commands",
+        uncommittedTitle: "Commit paseo.json changes",
+        uncommittedDescription:
+          "New worktrees use the setup script from the base branch you select.",
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown commands",
       },

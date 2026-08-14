@@ -6,6 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
@@ -310,6 +311,7 @@ function WorkspaceRowBody({
           selected,
           isHovered,
         });
+        const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
           <View
             {...(draggable ? dragAttributes : {})}
@@ -353,7 +355,7 @@ function WorkspaceRowBody({
                 workspace={workspace}
                 hostBadge={hostBadge}
                 serviceSummary={serviceSummary}
-                backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
+                backdrop={backdrop}
                 isHovered={isHovered}
                 isLoading={isArchiving || isCreating}
                 isCreating={isCreating}
@@ -362,6 +364,7 @@ function WorkspaceRowBody({
               >
                 <WorkspaceRowTrailingActions
                   workspace={workspace}
+                  backdrop={backdrop}
                   trailing={trailing}
                   isHovered={isHovered}
                   isTouchPlatform={isTouchPlatform}
@@ -389,6 +392,7 @@ function WorkspaceRowBody({
 
 function WorkspaceRowTrailingActions({
   workspace,
+  backdrop,
   trailing,
   isHovered,
   isTouchPlatform,
@@ -406,6 +410,7 @@ function WorkspaceRowTrailingActions({
   onRename,
 }: {
   workspace: SidebarWorkspaceEntry;
+  backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
   isHovered: boolean;
   isTouchPlatform: boolean;
@@ -450,7 +455,10 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
             <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay visible={kebab.showKebab} scrim={showScrim}>
+          <SidebarWorkspaceTrailingActionOverlay
+            visible={kebab.showKebab}
+            scrimBackdrop={showScrim ? backdrop : undefined}
+          >
             {onArchive ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
