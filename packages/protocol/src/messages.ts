@@ -1104,6 +1104,26 @@ export const SendAgentMessageSchema = z.object({
 // Agent RPCs (requestId-correlated)
 // ============================================================================
 
+const DirectorySyncRequestSchema = z.object({
+  generation: z.string().optional(),
+  afterSeq: z.number().int().nonnegative().optional(),
+});
+
+const DirectorySyncRemovalSchema = z.object({
+  id: z.string(),
+  seq: z.number().int().positive(),
+});
+
+const DirectorySyncMetadataSchema = z.object({
+  generation: z.string(),
+  headSeq: z.number().int().nonnegative(),
+  mode: z.enum(["snapshot", "changes"]),
+  reason: z
+    .enum(["no_cursor", "generation_changed", "cursor_expired", "changes_too_large"])
+    .optional(),
+  removals: z.array(DirectorySyncRemovalSchema),
+});
+
 export const FetchAgentsRequestMessageSchema = z.object({
   type: z.literal("fetch_agents_request"),
   requestId: z.string(),
@@ -1128,6 +1148,8 @@ export const FetchAgentsRequestMessageSchema = z.object({
       subscriptionId: z.string().optional(),
     })
     .optional(),
+  // COMPAT(directorySync): added in v0.3.x, remove optional after 2027-02-12.
+  sync: DirectorySyncRequestSchema.optional(),
 });
 
 const WorkspaceStateBucketSchema = z.enum([
@@ -1168,11 +1190,15 @@ export const FetchWorkspacesRequestMessageSchema = z.object({
       subscriptionId: z.string().optional(),
     })
     .optional(),
+  // COMPAT(directorySync): added in v0.3.x, remove optional after 2027-02-12.
+  sync: DirectorySyncRequestSchema.optional(),
 });
 
 export const ProjectListRequestMessageSchema = z.object({
   type: z.literal("project.list.request"),
   requestId: z.string(),
+  // COMPAT(directorySync): added in v0.3.x, remove optional after 2027-02-12.
+  sync: DirectorySyncRequestSchema.optional(),
 });
 
 export const FetchAgentHistoryRequestMessageSchema = z.object({
@@ -3038,6 +3064,8 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
+        // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
+        directorySync: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
         // checkoutGithubSetAutoMerge fallback after 2026-12-28.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
@@ -3457,6 +3485,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // Old daemons omit it; absent means the client falls back to GitHub.
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
+    // COMPAT(directorySync): sequence of this latest directory projection.
+    syncSeq: z.number().int().positive().optional(),
   })
   .transform((workspace) => ({
     ...workspace,
@@ -3470,10 +3500,14 @@ export const AgentUpdateMessageSchema = z.object({
       kind: z.literal("upsert"),
       agent: AgentSnapshotPayloadSchema,
       project: ProjectPlacementPayloadSchema.nullable().optional(),
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
     }),
     z.object({
       kind: z.literal("remove"),
       agentId: z.string(),
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
     }),
   ]),
 });
@@ -3531,6 +3565,8 @@ const AgentDirectoryResponseEntrySchema = z.object({
   // anyway; sending it keeps the client from re-deriving a second opinion that
   // could disagree with the ranking it is explaining.
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
+  // COMPAT(directorySync): sequence of this latest directory projection.
+  syncSeq: z.number().int().positive().optional(),
 });
 
 const AgentDirectoryPageInfoSchema = z.object({
@@ -3546,6 +3582,7 @@ export const FetchAgentsResponseMessageSchema = z.object({
     subscriptionId: z.string().nullable().optional(),
     entries: z.array(AgentDirectoryResponseEntrySchema),
     pageInfo: AgentDirectoryPageInfoSchema,
+    sync: DirectorySyncMetadataSchema.optional(),
   }),
 });
 
@@ -3583,8 +3620,14 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
+  // Fingerprints the effective icon, including automatic discovery and the
+  // absence of an icon. Clients may persist icon results against this value.
+  // COMPAT(projectIconCache): added in v0.2.7, remove optional after 2027-02-12.
+  projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
+  // COMPAT(directorySync): sequence of this latest directory projection.
+  syncSeq: z.number().int().positive().optional(),
 });
 
 export const FetchWorkspacesResponseMessageSchema = z.object({
@@ -3602,6 +3645,7 @@ export const FetchWorkspacesResponseMessageSchema = z.object({
       prevCursor: z.string().nullable(),
       hasMore: z.boolean(),
     }),
+    sync: DirectorySyncMetadataSchema.optional(),
   }),
 });
 
@@ -3611,6 +3655,8 @@ export const WorkspaceUpdateMessageSchema = z.object({
     z.object({
       kind: z.literal("upsert"),
       workspace: WorkspaceDescriptorPayloadSchema,
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
     }),
     z.object({
       kind: z.literal("remove"),
@@ -3625,6 +3671,8 @@ export const WorkspaceUpdateMessageSchema = z.object({
       // Project removal is represented on the existing workspace update channel
       // so old clients can still parse the message and ignore the extra field.
       removedProjectId: z.string().optional(),
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
     }),
   ]),
 });
@@ -3632,8 +3680,18 @@ export const WorkspaceUpdateMessageSchema = z.object({
 export const ProjectUpdateMessageSchema = z.object({
   type: z.literal("project.update"),
   payload: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("upsert"), project: WorkspaceProjectDescriptorPayloadSchema }),
-    z.object({ kind: z.literal("remove"), projectId: z.string() }),
+    z.object({
+      kind: z.literal("upsert"),
+      project: WorkspaceProjectDescriptorPayloadSchema,
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
+    }),
+    z.object({
+      kind: z.literal("remove"),
+      projectId: z.string(),
+      generation: z.string().optional(),
+      seq: z.number().int().positive().optional(),
+    }),
   ]),
 });
 
@@ -3642,6 +3700,7 @@ export const ProjectListResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     projects: z.array(WorkspaceProjectDescriptorPayloadSchema),
+    sync: DirectorySyncMetadataSchema.optional(),
   }),
 });
 

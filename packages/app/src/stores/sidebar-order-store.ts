@@ -6,15 +6,19 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 interface SidebarOrderStoreState {
   projectOrder: string[];
+  pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
+  getPinnedWorkspaceOrder: () => string[];
+  setPinnedWorkspaceOrder: (keys: string[]) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
   setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
 }
 
 interface SidebarOrderPersistedState {
   projectOrder?: string[];
+  pinnedWorkspaceOrder?: string[];
   workspaceOrderByProject?: Record<string, string[]>;
   projectOrderByServerId?: Record<string, string[]>;
   workspaceOrderByServerAndProject?: Record<string, string[]>;
@@ -23,6 +27,7 @@ interface SidebarOrderPersistedState {
 const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const SidebarOrderPersistedStateSchema = z.strictObject({
   projectOrder: z.array(z.string()).optional(),
+  pinnedWorkspaceOrder: z.array(z.string()).optional(),
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
   projectOrderByServerId: StringArrayRecordSchema.optional(),
   workspaceOrderByServerAndProject: StringArrayRecordSchema.optional(),
@@ -79,11 +84,12 @@ function normalizeLegacyWorkspaceKey(serverId: string, rawWorkspaceKey: string):
 
 export function migrateSidebarOrderState(persistedState: unknown): {
   projectOrder: string[];
+  pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
 } {
   const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
-    return { projectOrder: [], workspaceOrderByProject: {} };
+    return { projectOrder: [], pinnedWorkspaceOrder: [], workspaceOrderByProject: {} };
   }
   const state: SidebarOrderPersistedState = result.data;
 
@@ -113,18 +119,28 @@ export function migrateSidebarOrderState(persistedState: unknown): {
     workspaceOrderByProject[scope.projectViewKey] = merged;
   }
 
-  return { projectOrder, workspaceOrderByProject };
+  return {
+    projectOrder,
+    pinnedWorkspaceOrder: normalizeKeys(state.pinnedWorkspaceOrder ?? []),
+    workspaceOrderByProject,
+  };
 }
 
 export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
   persist(
     (set, get) => ({
       projectOrder: [],
+      pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
         const normalized = normalizeKeys(keys);
         set({ projectOrder: normalized });
+      },
+      getPinnedWorkspaceOrder: () => get().pinnedWorkspaceOrder,
+      setPinnedWorkspaceOrder: (keys) => {
+        const normalized = normalizeKeys(keys);
+        set({ pinnedWorkspaceOrder: normalized });
       },
       getWorkspaceOrder: (projectViewKey) => {
         const scope = projectViewKey.trim();
@@ -148,6 +164,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       storage: createValidatedPersistStorage(AsyncStorage, SidebarOrderPersistedStateSchema),
       partialize: (state) => ({
         projectOrder: state.projectOrder,
+        pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,
       }),
       version: 1,

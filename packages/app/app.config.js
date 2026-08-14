@@ -139,7 +139,7 @@ export default {
     },
     plugins: [
       "expo-router",
-      [withAndroidAsyncStorageSize, 10],
+      [withAndroidAsyncStorageSize, 64],
       ...buildProfile.cameraPlugins,
       [
         "expo-splash-screen",

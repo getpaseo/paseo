@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { readReplicaCache } from "./replica-cache-storage";
 import {
   delayAgentBootstrapTailResponse,
   delayAgentOlderTimelineResponse,
@@ -284,22 +285,13 @@ export async function reloadAgentTimelineFromPersistedReplica(
   agent: LongTimelineAgent,
 ): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((agentId) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{
-            timeline?: {
-              agentId?: string;
-              items?: unknown[];
-            } | null;
-          }>;
-        };
-        const timeline = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline;
-        return timeline?.items?.length === 50;
-      }, agent.agentId),
-    )
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      const timeline = cache?.hosts?.find(
+        (host) => host.timeline?.agentId === agent.agentId,
+      )?.timeline;
+      return timeline?.items?.length === 50;
+    })
     .toBe(true);
 
   await page.reload();

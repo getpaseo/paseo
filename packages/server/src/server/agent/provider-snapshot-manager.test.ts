@@ -442,6 +442,40 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("defaults provider refreshes to a two-minute deadline", async () => {
+    vi.useFakeTimers();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable: waitUntilAborted }),
+      },
+    });
+
+    try {
+      const entryPromise = manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      await expect(entryPromise).resolves.toMatchObject({
+        status: "error",
+        error: "Timed out refreshing Codex after 120000ms; pending: availability",
+      });
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   test("one refresh timeout covers availability and catalog discovery", async () => {
     vi.useFakeTimers();
     const manager = new ProviderSnapshotManager({

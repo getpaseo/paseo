@@ -93,6 +93,59 @@ describe("workspace message schemas", () => {
     expect(activeScoped.scope).toBe("active");
   });
 
+  test("parses optional sequenced directory requests and responses", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "project.list.request",
+        requestId: "projects-sync",
+        sync: { generation: "daemon-generation", afterSeq: 7 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 7 } });
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "fetch_workspaces_request",
+        requestId: "workspaces-sync",
+        sync: { generation: "daemon-generation", afterSeq: 11 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 11 } });
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "fetch_agents_request",
+        requestId: "agents-sync",
+        scope: "active",
+        sync: { generation: "daemon-generation", afterSeq: 13 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 13 } });
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "project.list.response",
+      payload: {
+        requestId: "projects-sync",
+        projects: [
+          {
+            projectId: "project-1",
+            projectDisplayName: "Project",
+            projectRootPath: "/repo",
+            projectKind: "git",
+            syncSeq: 12,
+          },
+        ],
+        sync: {
+          generation: "daemon-generation",
+          headSeq: 12,
+          mode: "changes",
+          removals: [{ id: "project-removed", seq: 10 }],
+        },
+      },
+    });
+    expect(response).toMatchObject({
+      payload: {
+        projects: [{ projectId: "project-1", syncSeq: 12 }],
+        sync: { headSeq: 12, removals: [{ id: "project-removed", seq: 10 }] },
+      },
+    });
+  });
+
   test("parses agent_update without project placement", () => {
     const result = SessionOutboundMessageSchema.safeParse({
       type: "agent_update",

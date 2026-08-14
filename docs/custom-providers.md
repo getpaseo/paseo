@@ -17,7 +17,7 @@ Provider definitions live under `agents.providers` in config.json:
 
 Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`).
 
-Each provider catalog refresh waits up to 60 seconds. If a provider loads many plugins or a large
+Each provider catalog refresh waits up to 2 minutes. If a provider loads many plugins or a large
 agent catalog during startup, raise the limit in milliseconds:
 
 ```json

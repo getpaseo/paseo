@@ -39,6 +39,7 @@ describe("splitPinnedSidebarGroups", () => {
         pinnedWorkspaceKeys: ["w1"],
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
+      pinnedWorkspaceOrder: [],
     });
     expect(result.pinnedChats).toHaveLength(1);
     expect(result.unpinnedProjects).toHaveLength(0);
@@ -49,6 +50,7 @@ describe("splitPinnedSidebarGroups", () => {
     const result = splitPinnedSidebarGroups({
       projects,
       keys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      pinnedWorkspaceOrder: [],
     });
     expect(result.unpinnedProjects).toHaveLength(1);
   });
@@ -61,6 +63,7 @@ describe("splitPinnedSidebarGroups", () => {
         pinnedWorkspaceKeys: ["w1"],
         pinnedAtByKey: { w1: "2026-01-01T00:00:00Z" },
       },
+      pinnedWorkspaceOrder: [],
     });
     expect(result.pinnedChats.map((w) => w.workspaceKey)).toEqual(["w1"]);
     expect(result.unpinnedProjects[0]?.workspaces.map((w) => w.workspaceKey)).toEqual(["w2"]);
@@ -77,11 +80,34 @@ describe("splitPinnedSidebarGroups", () => {
           newer: "2026-02-01T00:00:00Z",
         },
       },
+      pinnedWorkspaceOrder: [],
     });
 
     expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
       "newer",
       "older",
+    ]);
+  });
+
+  it("applies the saved order while keeping a newly pinned chat first", () => {
+    const projects = [project("p1", [placement("older"), placement("newer"), placement("new")])];
+    const result = splitPinnedSidebarGroups({
+      projects,
+      keys: {
+        pinnedWorkspaceKeys: ["older", "newer", "new"],
+        pinnedAtByKey: {
+          older: "2026-01-01T00:00:00Z",
+          newer: "2026-02-01T00:00:00Z",
+          new: "2026-03-01T00:00:00Z",
+        },
+      },
+      pinnedWorkspaceOrder: ["older", "newer"],
+    });
+
+    expect(result.pinnedChats.map((workspace) => workspace.workspaceKey)).toEqual([
+      "new",
+      "older",
+      "newer",
     ]);
   });
 });
