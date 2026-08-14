@@ -24,6 +24,8 @@ type NewWorkspaceDaemonClient = Pick<
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
+  | "removePlugin"
+  | "reloadPlugin"
 >;
 
 type CreateWorkspacePayload = Awaited<ReturnType<NewWorkspaceDaemonClient["createWorkspace"]>>;

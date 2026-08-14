@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
   common: {
@@ -1765,8 +1766,10 @@ export const zhCN: TranslationResources = {
       providers: "Providers",
       usage: "使用情况",
       terminals: "Terminals",
+      plugins: "插件",
       host: "概览",
     },
+    plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
       title: "元数据生成",
       description: "选择 Paseo 用于工作区标题、分支名称、提交消息和拉取请求草稿的模型",
