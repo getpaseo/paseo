@@ -1,14 +1,23 @@
+import type {
+  FormPreferences,
+  ProviderPreferences,
+} from "../../../src/create-agent-preferences/preferences";
+
 export const TEST_HOST_LABEL = "localhost";
 
 export const TEST_PROVIDER_PREFERENCES = {
   claude: { model: "haiku" },
-  codex: { model: "gpt-5.4-mini", thinkingOptionId: "low" },
-} as const;
+  codex: { model: "gpt-5.4-mini", thinkingByModel: { "gpt-5.4-mini": "low" } },
+} satisfies Record<string, ProviderPreferences>;
 
-export function buildDirectTcpConnection(endpoint: string) {
+export function buildDirectTcpConnection(endpoint: string): {
+  id: string;
+  type: "directTcp";
+  endpoint: string;
+} {
   return {
     id: `direct:${endpoint}`,
-    type: "directTcp" as const,
+    type: "directTcp",
     endpoint,
   };
 }
@@ -33,12 +42,11 @@ export function buildSeededHost(input: {
 export const TEST_MOCK_PROVIDER_PREFERENCES = {
   ...TEST_PROVIDER_PREFERENCES,
   mock: { model: "ten-second-stream" },
-} as const;
+} satisfies Record<string, ProviderPreferences>;
 
-export function buildCreateAgentPreferences(serverId: string) {
+export function buildCreateAgentPreferences() {
   return {
-    serverId,
-    provider: "mock" as const,
+    provider: "mock",
     providerPreferences: TEST_MOCK_PROVIDER_PREFERENCES,
-  };
+  } satisfies FormPreferences;
 }

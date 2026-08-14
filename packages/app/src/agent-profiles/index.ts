@@ -14,6 +14,7 @@
  * here.
  */
 export type { AgentProfile } from "@getpaseo/protocol/messages";
+export type { MaterializedAgentProfile } from "./internal/materialize-profile";
 export { useAgentProfiles } from "./internal/use-agent-profiles";
 export {
   useAgentProfilePicker,

@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { TaskListRow } from "@/components/task-list-row";
 import {
   View,
   Text,
@@ -23,9 +24,6 @@ import {
   useCallback,
   createContext,
   useContext,
-  isValidElement,
-  Children,
-  cloneElement,
 } from "react";
 import type { ComponentType, ReactNode } from "react";
 import type MarkdownIt from "markdown-it";
@@ -77,6 +75,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -168,7 +167,6 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
 const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
 
 const ThemedMicVocal = withUnistyles(MicVocal);
-const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
@@ -180,9 +178,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 const mutedForegroundColorMapping = (theme: Theme) => ({
   color: theme.colors.mutedForeground,
-});
-const primaryForegroundColorMapping = (theme: Theme) => ({
-  color: theme.colors.primaryForeground,
 });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
@@ -1863,13 +1858,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           source={getMarkdownLinkSource(node)}
           style={styles.link}
         >
-          {Children.map(children, (child) => {
-            if (!isValidElement(child)) return child;
-            const childProps = child.props as { style?: StyleProp<TextStyle> };
-            return cloneElement(child, {
-              style: [childProps.style, { color: styles.link.color }],
-            } as Partial<{ style: StyleProp<TextStyle> }>);
-          })}
+          {colorMarkdownLinkChildren(children, styles.link.color)}
         </AssistantMarkdownLink>
       ),
       image: (
@@ -2247,12 +2236,6 @@ interface TodoListCardProps {
   disableOuterSpacing?: boolean;
 }
 
-interface TodoListItemRowProps {
-  text: string;
-  completed: boolean;
-  status?: TodoEntry["status"];
-}
-
 function taskActivityIcon(activity: TaskActivity) {
   switch (activity.type) {
     case "added":
@@ -2268,74 +2251,12 @@ function taskActivityIcon(activity: TaskActivity) {
   }
 }
 
-function TodoListItemRow({ text, completed, status }: TodoListItemRowProps) {
-  const badgeStyle = useMemo(
-    () => [
-      todoListCardStylesheet.radioBadge,
-      completed
-        ? todoListCardStylesheet.radioBadgeComplete
-        : todoListCardStylesheet.radioBadgeIncomplete,
-    ],
-    [completed],
-  );
-  const textStyle = useMemo(
-    () => [todoListCardStylesheet.itemText, completed && todoListCardStylesheet.itemTextCompleted],
-    [completed],
-  );
-  return (
-    <View style={todoListCardStylesheet.itemRow}>
-      <View
-        style={[badgeStyle, status === "in_progress" && todoListCardStylesheet.radioBadgeActive]}
-      >
-        {completed ? (
-          <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
-        ) : null}
-      </View>
-      <Text style={textStyle}>{text}</Text>
-    </View>
-  );
-}
-
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
   detailsWrapper: {
     padding: theme.spacing[2],
   },
   list: {
     gap: theme.spacing[1],
-  },
-  itemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  radioBadge: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: theme.colors.foregroundMuted,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioBadgeIncomplete: {
-    opacity: 0.55,
-  },
-  radioBadgeComplete: {
-    opacity: 0.95,
-  },
-  radioBadgeActive: {
-    borderWidth: 2,
-    borderColor: theme.colors.primary,
-    backgroundColor: "transparent",
-    opacity: 1,
-  },
-  itemText: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  itemTextCompleted: {
-    color: theme.colors.foregroundMuted,
-    textDecorationLine: "line-through",
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
@@ -2374,14 +2295,7 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
-            items.map((item) => (
-              <TodoListItemRow
-                key={item.id ?? item.text}
-                text={item.text}
-                completed={item.completed}
-                status={item.status}
-              />
-            ))
+            items.map((item) => <TaskListRow key={item.id ?? item.text} task={item} />)
           )}
         </View>
       </View>

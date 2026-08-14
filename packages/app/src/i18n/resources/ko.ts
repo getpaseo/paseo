@@ -524,6 +524,8 @@ export const ko: TranslationResources = {
         screenshotCopied: "스크린샷을 클립보드에 복사했습니다.",
         elementCopied: "요소를 클립보드에 복사했습니다.",
         screenshotFailed: "스크린샷을 복사할 수 없습니다.",
+        selectorLoading: "페이지 로딩이 끝날 때까지 기다려 주세요.",
+        selectorFailed: "요소 선택기를 시작할 수 없습니다.",
       },
       annotate: {
         title: "요소에 주석 달기",
@@ -616,6 +618,7 @@ export const ko: TranslationResources = {
         reloadingAgent: "에이전트 다시 로드 중...",
         reloadedAgent: "에이전트를 다시 로드했습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
+        failedToCloseAgent: "에이전트를 닫지 못했습니다",
       },
       confirmations: {
         close: "닫기",
@@ -2421,6 +2424,8 @@ export const ko: TranslationResources = {
         docsTooltip: "자세한 내용과 이 명령에 사용할 수 있는 환경 변수는 문서를 참조하세요",
         setup: "설정",
         setupAccessibility: "워크트리 설정 명령",
+        uncommittedTitle: "paseo.json 변경 사항을 커밋하세요",
+        uncommittedDescription: "새 워크트리는 선택한 기본 브랜치의 설정 스크립트를 사용합니다.",
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
       },

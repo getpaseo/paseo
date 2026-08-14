@@ -527,6 +527,8 @@ export const ru: TranslationResources = {
         screenshotCopied: "Снимок скопирован в буфер обмена",
         elementCopied: "Элемент скопирован в буфер обмена",
         screenshotFailed: "Не удалось скопировать снимок",
+        selectorLoading: "Дождитесь окончания загрузки страницы",
+        selectorFailed: "Не удалось запустить выбор элемента",
       },
       annotate: {
         title: "Аннотировать элемент",
@@ -618,6 +620,7 @@ export const ru: TranslationResources = {
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Перезагруженный агент",
         failedToReloadAgent: "Не удалось перезагрузить агент",
+        failedToCloseAgent: "Не удалось закрыть агент",
       },
       confirmations: {
         unsavedTitle: "Несохранённые изменения",
@@ -2447,6 +2450,9 @@ export const ru: TranslationResources = {
           "Дополнительную информацию и переменные среды, доступные для этих команд, см. в документации.",
         setup: "Настраивать",
         setupAccessibility: "Команды настройки рабочего дерева",
+        uncommittedTitle: "Закоммитьте изменения paseo.json",
+        uncommittedDescription:
+          "Новые рабочие деревья используют сценарий настройки из выбранной базовой ветки.",
         teardown: "Срывать",
         teardownAccessibility: "Команды разрушения рабочего дерева",
       },

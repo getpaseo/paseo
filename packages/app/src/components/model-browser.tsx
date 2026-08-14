@@ -114,7 +114,7 @@ function AgentProfilesEditAction({ onPress }: { onPress: () => void }) {
           accessibilityLabel={t("modelSelector.editProfilesLabel")}
           testID="model-profiles-edit"
         >
-          <ThemedPencil size={ICON_SIZE.sm} uniProps={foregroundExtraMutedMapping} />
+          <ThemedPencil size={ICON_SIZE.xs} uniProps={foregroundExtraMutedMapping} />
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
@@ -292,9 +292,7 @@ export function useModelBrowser({
     setSearchQuery(value);
   }, []);
 
-  // A pinned profiles section makes the root worth returning to, so the back
-  // affordance stays even when the drill-down was the only provider.
-  const singleProviderView = providers.length === 1 && !hasProfiles;
+  const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
       return {
@@ -675,7 +673,11 @@ function AgentProfilesPickerSection({
     <View style={styles.profilesContainer}>
       <View style={styles.sectionHeading}>
         <Text style={styles.sectionHeadingText}>{t("modelSelector.profiles")}</Text>
-        {onEditProfiles ? <AgentProfilesEditAction onPress={onEditProfiles} /> : null}
+        {onEditProfiles ? (
+          <View style={styles.sectionHeadingAction}>
+            <AgentProfilesEditAction onPress={onEditProfiles} />
+          </View>
+        ) : null}
       </View>
       {rows.map((row) => (
         <AgentProfilePickerRowView key={row.id} row={row} onApply={handleApply} />
@@ -1217,12 +1219,18 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.border,
   },
   sectionHeading: {
+    position: "relative",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: isWeb ? theme.spacing[3] : theme.spacing[6],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[1],
+  },
+  sectionHeadingAction: {
+    position: "absolute",
+    top: theme.spacing[1],
+    right: isWeb ? theme.spacing[3] : theme.spacing[6],
   },
   sectionHeadingText: {
     flex: 1,

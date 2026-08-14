@@ -52,7 +52,9 @@ type DraftComposerState = UseAgentFormStateResult & {
 
 export interface AgentInputDraft {
   text: string;
-  setText: (text: string) => void;
+  editText: (text: string) => void;
+  replaceText: (text: string) => void;
+  textReplacementKey: string;
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
@@ -84,6 +86,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (state) => state.attachmentFocusRequestByDraftKey[draftKey] ?? 0,
   );
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
+  const [textReplacementRevision, setTextReplacementRevision] = useState(0);
   const text = draft?.text ?? "";
   const attachments = draft?.attachments ?? [];
   const isHydrated = hydratedDraftKey === draftKey;
@@ -107,9 +110,17 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
-  const setText = useCallback(
+  const editText = useCallback(
     (nextText: string) => {
       saveDraft((current) => ({ ...current, text: nextText }));
+    },
+    [saveDraft],
+  );
+
+  const replaceText = useCallback(
+    (nextText: string) => {
+      saveDraft((current) => ({ ...current, text: nextText }));
+      setTextReplacementRevision((revision) => revision + 1);
     },
     [saveDraft],
   );
@@ -136,6 +147,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     void (async () => {
       await useDraftStore.getState().hydrateDraftInput({ draftKey });
       if (!cancelled) {
+        setTextReplacementRevision((revision) => revision + 1);
         setHydratedDraftKey(draftKey);
       }
     })();
@@ -190,6 +202,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     features: draftFeatures,
     featureValues: draftFeatureValues,
     setFeatureValue: setDraftFeatureValue,
+    applyProfileFeatureValues,
   } = useDraftAgentFeatures({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
@@ -199,6 +212,14 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     thinkingOptionId: effectiveThinkingOptionId,
     initialFeatureValues: composerOptions?.initialFeatureValues,
   });
+
+  const applyDraftAgentProfile = useCallback(
+    (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
+      formState.applyProfileFromUser(profile);
+      applyProfileFeatureValues(profile.featureValues);
+    },
+    [applyProfileFeatureValues, formState],
+  );
 
   const commandDraftConfig = useMemo(
     () =>
@@ -236,6 +257,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         formState,
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
+        onApplyAgentProfile: applyDraftAgentProfile,
       }),
       commandDraftConfig,
     };
@@ -246,6 +268,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveThinkingOptionId,
     draftFeatures,
     draftFeatureValues,
+    applyDraftAgentProfile,
     formState,
     setDraftFeatureValue,
     workingDir,
@@ -253,7 +276,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
   return {
     text,
-    setText,
+    editText,
+    replaceText,
+    textReplacementKey: `${draftKey}:${textReplacementRevision}`,
     attachments,
     setAttachments,
     clear,

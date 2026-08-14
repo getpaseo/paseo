@@ -18,6 +18,10 @@ class MemoryStorage {
   async setItem(key: string, value: string): Promise<void> {
     this.values.set(key, value);
   }
+
+  async removeItem(key: string): Promise<void> {
+    this.values.delete(key);
+  }
 }
 
 class FakeProfileHost {

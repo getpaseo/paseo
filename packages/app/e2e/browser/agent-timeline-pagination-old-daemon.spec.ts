@@ -66,7 +66,7 @@ test("does not repeat an assistant block when the current app paginates a publis
         localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededHost]));
         localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
       },
-      { seededHost: host, preferences: buildCreateAgentPreferences(serverId) },
+      { seededHost: host, preferences: buildCreateAgentPreferences() },
     );
 
     const history = await holdOlderHistoryPages(page, agent, daemon.port);

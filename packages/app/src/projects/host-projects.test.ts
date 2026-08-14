@@ -7,6 +7,7 @@ import {
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveEquivalentHostProjectCandidate,
 } from "./host-project-model";
 import { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 
@@ -36,6 +37,31 @@ function project(): HostProjectListItem {
 }
 
 describe("host project lookups", () => {
+  test("resolves equivalent projects without Array.prototype.toSorted", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+    Reflect.deleteProperty(Array.prototype, "toSorted");
+    const first = project();
+    first.viewKey = "view:first";
+    first.projectName = "First";
+    const second = project();
+    second.viewKey = "view:second";
+    second.projectName = "Second";
+    const projects = [second, first];
+
+    try {
+      expect(
+        resolveEquivalentHostProjectCandidate({
+          candidate: first,
+          projects,
+          serverId: "host-a",
+        }),
+      ).toBe(first);
+      expect(projects).toEqual([second, first]);
+    } finally {
+      if (descriptor) Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
+    }
+  });
+
   test("returns host-local ids and roots without falling back to the grouping key", () => {
     expect(getHostProjectId(project(), "host-b")).toBe("prj_b");
     expect(getHostProjectSourceDirectory(project(), "host-b")).toBe("/repo/b");

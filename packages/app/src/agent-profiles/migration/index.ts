@@ -2,29 +2,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { z } from "zod";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import { FormPreferencesSchema } from "@/create-agent-preferences/preferences";
+import { readValidatedJson, readValidatedString } from "@/storage/validated-storage";
 
 const PREFERENCES_KEY = "@paseo:create-agent-preferences";
 const COMPLETION_KEY_PREFIX = "@paseo:legacy-favorites-to-agent-profiles:v1:";
 const CATALOG_LOADING_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000, 4_000] as const;
 
-const legacyPreferencesSchema = z.object({
-  favoriteModels: z
-    .array(
-      z.object({
-        provider: z.string().trim().min(1),
-        modelId: z.string().trim().min(1),
-      }),
-    )
-    .optional(),
-});
-
-type LegacyFavorite = NonNullable<
-  z.infer<typeof legacyPreferencesSchema>["favoriteModels"]
->[number];
+type LegacyFavorite = NonNullable<z.infer<typeof FormPreferencesSchema>["favoriteModels"]>[number];
 
 export interface LegacyFavoriteMigrationStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface LegacyFavoriteMigrationHost {
@@ -45,18 +35,6 @@ function supportsMigration(host: LegacyFavoriteMigrationHost): boolean {
 
 function completionKey(serverId: string): string {
   return `${COMPLETION_KEY_PREFIX}${serverId}`;
-}
-
-function parseStoredPreferences(raw: string | null): LegacyFavorite[] {
-  if (!raw) {
-    return [];
-  }
-  try {
-    const result = legacyPreferencesSchema.safeParse(JSON.parse(raw));
-    return result.success ? (result.data.favoriteModels ?? []) : [];
-  } catch {
-    return [];
-  }
 }
 
 function favoriteKey(favorite: Pick<LegacyFavorite, "provider" | "modelId">): string {
@@ -205,11 +183,16 @@ export class LegacyFavoriteProfileMigration {
       return;
     }
     const markerKey = completionKey(serverId);
-    if ((await this.storage.getItem(markerKey)) === "1") {
+    if ((await readValidatedString(this.storage, markerKey, z.literal("1"))) === "1") {
       return;
     }
 
-    const favorites = parseStoredPreferences(await this.storage.getItem(PREFERENCES_KEY));
+    const preferences = await readValidatedJson(
+      this.storage,
+      PREFERENCES_KEY,
+      FormPreferencesSchema,
+    );
+    const favorites = preferences?.favoriteModels ?? [];
     if (favorites.length === 0) {
       await this.storage.setItem(markerKey, "1");
       return;

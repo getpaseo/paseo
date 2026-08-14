@@ -91,6 +91,35 @@ describe("Hub HTTP client", () => {
     );
   });
 
+  it("reads configuration resources in the Hub's slug vocabulary", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body: {
+          daemons: [{ id: "a50e05af-4f20-4c8f-8dcc-58e5ea360663", slug: "macbook" }],
+          github: [
+            {
+              slug: "getpaseo",
+              accountLogin: "getpaseo",
+              accountType: "Organization",
+              repositories: ["getpaseo/paseo"],
+            },
+          ],
+          discord: [{ slug: "paseo", guildName: "Paseo" }],
+          slack: [{ slug: "paseo", teamName: "Paseo" }],
+        },
+      }),
+      requests,
+    );
+
+    const resources = await new HubHttpClient().listConfigurationResources(origin, "secret");
+
+    assert.equal(resources.daemons[0]?.slug, "macbook");
+    assert.equal(resources.discord[0]?.slug, "paseo");
+    assert.equal(requests[0]?.url, "/api/v1/configuration-resources");
+  });
+
   it("renders file-aware Hub validation issues without exposing credentials or response bodies", async () => {
     const requests: Array<{ url: string | undefined; body: string }> = [];
     const origin = await startServer(
@@ -126,10 +155,14 @@ describe("Hub HTTP client", () => {
       (error: unknown) => {
         assert.ok(error instanceof HubCommandError);
         assert.equal(error.message.includes("operator-secret"), false);
+        assert.equal(error.message.includes("Correct the canonical"), false);
         assert.equal(error.details?.includes("operator-secret"), false);
         assert.equal(error.message.includes("sensitive bundle content"), false);
         assert.equal(error.details?.includes("sensitive bundle content"), false);
-        assert.match(error.details ?? "", /\.paseo\/workflows\/answer\.yml\.steps\.work\.agent/u);
+        assert.equal(
+          error.details,
+          ".paseo/workflows/answer.yml: steps.work.agent: unknown named agent [redacted]",
+        );
         return true;
       },
     );

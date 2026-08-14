@@ -1,6 +1,13 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
+import {
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
@@ -799,14 +806,9 @@ export async function seedPaseoConfigFile(options: {
 }): Promise<void> {
   const sourceConfigPath = join(options.sourceCwd, "paseo.json");
   const targetConfigPath = join(options.targetCwd, "paseo.json");
-  try {
-    await stat(targetConfigPath);
-    return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  await copyFile(sourceConfigPath, targetConfigPath).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  await copyFile(sourceConfigPath, targetConfigPath, fsConstants.COPYFILE_EXCL).catch((error) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST" && code !== "ENOENT") throw error;
   });
 }
 

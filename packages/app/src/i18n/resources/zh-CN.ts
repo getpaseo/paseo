@@ -523,6 +523,8 @@ export const zhCN: TranslationResources = {
         screenshotCopied: "已将截图复制到剪贴板",
         elementCopied: "已将元素复制到剪贴板",
         screenshotFailed: "无法复制截图",
+        selectorLoading: "请等待页面加载完成",
+        selectorFailed: "无法启动元素选择器",
       },
       annotate: {
         title: "标注元素",
@@ -614,6 +616,7 @@ export const zhCN: TranslationResources = {
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
+        failedToCloseAgent: "关闭 Agent 失败",
       },
       confirmations: {
         unsavedTitle: "未保存的更改",
@@ -2376,6 +2379,8 @@ export const zhCN: TranslationResources = {
         docsTooltip: "查看命令可用的环境变量和更多细节",
         setup: "Setup",
         setupAccessibility: "Worktree setup 命令",
+        uncommittedTitle: "提交 paseo.json 更改",
+        uncommittedDescription: "新工作树使用所选基础分支中的设置脚本。",
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown 命令",
       },

@@ -36,9 +36,11 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
   checkProviderLaunchAvailable,
@@ -88,7 +90,6 @@ import {
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
-const PI_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
@@ -2478,19 +2479,40 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const runtimeSession = await this.runtime.startSession({
-      cwd: options.scope === "global" ? homedir() : options.cwd,
-    });
+  async fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
+    let runtimeSession: PiRuntimeSession | undefined;
+    let closePromise: Promise<void> | undefined;
+    const closeSession = () => {
+      if (!runtimeSession) return Promise.resolve();
+      closePromise ??= runtimeSession.close();
+      return closePromise;
+    };
+    const handleAbort = () => void closeSession().catch(() => undefined);
+    context?.signal.addEventListener("abort", handleAbort, { once: true });
     try {
+      await runProviderRefreshActivity(context, "runtime.start", async () => {
+        runtimeSession = await this.runtime.startSession({
+          cwd: options.scope === "global" ? homedir() : options.cwd,
+          signal: context?.signal,
+        });
+        if (context?.signal.aborted) await closeSession();
+      });
+      if (!runtimeSession) throw new Error("Pi catalog runtime did not start");
+      const catalogSession = runtimeSession;
       const models = transformPiModels(
-        (await runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapPiModel(model, PI_PROVIDER),
-        ),
+        (
+          await runProviderRefreshActivity(context, "get_available_models", () =>
+            catalogSession.getAvailableModels(null),
+          )
+        ).map((model) => mapPiModel(model, PI_PROVIDER)),
       );
       return { models, modes: [] };
     } finally {
-      await runtimeSession.close();
+      context?.signal.removeEventListener("abort", handleAbort);
+      await closeSession();
     }
   }
 

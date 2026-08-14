@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
 import {
   createQuitLifecycle,
+  registerExternalQuitSignals,
   shouldStopDesktopManagedDaemonOnQuit,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./quit-lifecycle";
@@ -29,6 +30,25 @@ function waitForQuitLifecycle(): Promise<void> {
 }
 
 describe("quit-lifecycle", () => {
+  it("turns external termination signals into one Electron quit", () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const quits: string[] = [];
+
+    registerExternalQuitSignals({
+      signals: {
+        on: (signal, listener) => {
+          listeners.set(signal, listener);
+        },
+      },
+      quit: () => quits.push("quit"),
+    });
+
+    expect(Array.from(listeners.keys())).toEqual(["SIGHUP", "SIGINT", "SIGTERM"]);
+    listeners.get("SIGTERM")?.();
+    listeners.get("SIGHUP")?.();
+    expect(quits).toEqual(["quit"]);
+  });
+
   it("stops by default and only keeps running when keepRunningAfterQuit is enabled", () => {
     expect(shouldStopDesktopManagedDaemonOnQuit(SETTINGS_STOP_ON_QUIT)).toBe(true);
     expect(shouldStopDesktopManagedDaemonOnQuit(SETTINGS_KEEP_RUNNING)).toBe(false);

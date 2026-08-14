@@ -438,7 +438,8 @@ export function WorkspaceSetupDialog() {
           isSubmitLoading={pendingAction === "chat"}
           blurOnSubmit={true}
           value={chatDraft.text}
-          onChangeText={chatDraft.setText}
+          onChangeText={chatDraft.editText}
+          textReplacementKey={chatDraft.textReplacementKey}
           attachments={chatDraft.attachments}
           onChangeAttachments={chatDraft.setAttachments}
           cwd={sourceDirectory}

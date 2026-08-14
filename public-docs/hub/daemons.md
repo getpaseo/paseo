@@ -80,11 +80,13 @@ To keep executions off your working tree, add a worktree:
 ```yaml
 worktree:
   mode: branch-off
-  newBranch: hub/investigation
+  newBranch: trigger-${{ paseo.execution.id }}
   base: origin/main
 ```
 
-See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
+`${{ paseo.execution.id }}` renders the execution's UUID, so every execution gets its own branch off `origin/main`.
+
+[Environment fields](/docs/hub/configuration/hub-yml#environments) lists what `newBranch` accepts. See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
 
 ## What Hub owns
 

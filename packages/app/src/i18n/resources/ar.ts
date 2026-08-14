@@ -523,6 +523,8 @@ export const ar: TranslationResources = {
         screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
         elementCopied: "تم نسخ العنصر إلى الحافظة",
         screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+        selectorLoading: "انتظر حتى ينتهي تحميل الصفحة",
+        selectorFailed: "تعذّر بدء محدد العنصر",
       },
       annotate: {
         title: "التعليق على العنصر",
@@ -614,6 +616,7 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        failedToCloseAgent: "فشل في إغلاق الوكيل",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",
@@ -2404,6 +2407,9 @@ export const ar: TranslationResources = {
         docsTooltip: "راجع المستندات لمزيد من التفاصيل ومتغيرات البيئة المتاحة لهذه الأوامر",
         setup: "يثبت",
         setupAccessibility: "أوامر إعداد شجرة العمل",
+        uncommittedTitle: "ثبّت تغييرات paseo.json",
+        uncommittedDescription:
+          "تستخدم أشجار العمل الجديدة نص الإعداد البرمجي من الفرع الأساسي الذي تحدده.",
         teardown: "هدم",
         teardownAccessibility: "أوامر هدم شجرة العمل",
       },
