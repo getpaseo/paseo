@@ -2008,6 +2008,7 @@ class ClaudeContextUsageState {
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
+  readonly acceptsPromptDuringAutonomousTurn = true;
 
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;

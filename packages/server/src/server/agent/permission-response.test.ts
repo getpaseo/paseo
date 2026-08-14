@@ -12,7 +12,7 @@ import { respondToAgentPermission } from "./permission-response.js";
 
 class FakePermissionAgentManager {
   permissionResult: AgentPermissionResult | void;
-  hasRunInFlight = false;
+  blockingRun = false;
   outOfBandHandled = false;
   permissionResponses: Array<{
     agentId: string;
@@ -40,8 +40,8 @@ class FakePermissionAgentManager {
     return undefined;
   }
 
-  hasInFlightRun(): boolean {
-    return this.hasRunInFlight;
+  hasBlockingRun(): boolean {
+    return this.blockingRun;
   }
 
   streamAgent(
@@ -120,7 +120,7 @@ describe("respondToAgentPermission", () => {
 
   test("replaces an in-flight run for follow-up prompts", async () => {
     const agentManager = new FakePermissionAgentManager();
-    agentManager.hasRunInFlight = true;
+    agentManager.blockingRun = true;
     agentManager.permissionResult = { followUpPrompt: "continue after approval" };
 
     await respondToAgentPermission({

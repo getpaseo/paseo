@@ -14,7 +14,7 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  "getAgent" | "tryRunOutOfBand" | "hasBlockingRun" | "replaceAgentRun" | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
@@ -48,7 +48,7 @@ export async function startAgentRun(
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { outOfBand: true };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasBlockingRun(agentId));
   const runOptions = options?.runOptions;
   const iterator = shouldReplace
     ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)

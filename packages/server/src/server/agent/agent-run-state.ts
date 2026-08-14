@@ -42,6 +42,10 @@ export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
   createPendingRun(agentId: string): PendingForegroundRun {
+    const superseded = this.runs.get(agentId);
+    if (superseded?.kind === "autonomous") {
+      this.clearRun(agentId, superseded);
+    }
     const pendingRun = createPendingForegroundRun();
     this.runs.set(agentId, pendingRun);
     return pendingRun;
@@ -62,6 +66,10 @@ export class AgentRunState {
 
   hasRun(agentId: string): boolean {
     return this.runs.has(agentId);
+  }
+
+  hasForegroundRun(agentId: string): boolean {
+    return this.runs.get(agentId)?.kind === "foreground";
   }
 
   trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {

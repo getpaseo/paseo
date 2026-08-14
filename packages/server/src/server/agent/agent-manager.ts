@@ -836,6 +836,18 @@ export class AgentManager {
     );
   }
 
+  hasBlockingRun(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return false;
+    }
+    if (!agent.session.acceptsPromptDuringAutonomousTurn) {
+      return this.hasInFlightRun(agentId);
+    }
+
+    return Boolean(agent.activeForegroundTurnId) || this.runs.hasForegroundRun(agentId);
+  }
+
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
     const targetAgentId =
       options?.agentId == null ? null : validateAgentId(options.agentId, "subscribe");
@@ -2130,7 +2142,11 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    if (
+      existingAgent.activeForegroundTurnId ||
+      this.runs.hasForegroundRun(agentId) ||
+      (this.runs.hasRun(agentId) && !existingAgent.session.acceptsPromptDuringAutonomousTurn)
+    ) {
       this.logger.trace(
         {
           agentId,

@@ -5497,6 +5497,117 @@ test("failed replacement cancellation preserves an autonomous running state", as
   }
 });
 
+test("prompting an agent whose only run is autonomous starts a turn without interrupting", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class AutonomousSession extends TestAgentSession {
+    readonly acceptsPromptDuringAutonomousTurn = true;
+    interruptCount = 0;
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "foreground-1" };
+    }
+  }
+
+  class AutonomousClient extends TestAgentClient {
+    readonly session = new AutonomousSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new AutonomousClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000131",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous-1" });
+    await running;
+
+    await startAgentRun(manager, agent.id, "follow-up", logger, { replaceRunning: true });
+
+    expect(client.session.interruptCount).toBe(0);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      activeForegroundTurnId: "foreground-1",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prompting during an autonomous turn replaces it when the provider refuses both", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-refuses-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ExclusiveSession extends TestAgentSession {
+    interruptCount = 0;
+    autonomousTurnId: string | null = "autonomous-1";
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+      const turnId = this.autonomousTurnId;
+      if (!turnId) return;
+      this.autonomousTurnId = null;
+      this.pushEvent({ type: "turn_canceled", provider: "codex", turnId, reason: "interrupted" });
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      if (this.autonomousTurnId) {
+        throw new Error("A foreground turn is already active");
+      }
+      return { turnId: "foreground-1" };
+    }
+  }
+
+  class ExclusiveClient extends TestAgentClient {
+    readonly session = new ExclusiveSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new ExclusiveClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous-1" });
+    await running;
+
+    await startAgentRun(manager, agent.id, "follow-up", logger, { replaceRunning: true });
+
+    expect(client.session.interruptCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      activeForegroundTurnId: "foreground-1",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("waitForAgentEvent waitForActive resolves for autonomous live-event run", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-wait-"));
   const storagePath = join(workdir, "agents");
