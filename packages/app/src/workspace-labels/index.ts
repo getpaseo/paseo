@@ -10,11 +10,10 @@ import { mergeWorkspaceLabelCatalogs } from "./internal/merge";
 import { WorkspaceLabelManagerModel, WorkspaceLabelPickerModel } from "./internal/workflow-model";
 import { i18n } from "@/i18n/i18next";
 
-export {
-  buildWorkspaceLabelPicker,
-  shouldCloseWorkspaceLabelPicker,
-} from "./internal/picker-model";
+export { buildWorkspaceLabelPickerRows } from "./internal/picker-model";
+export type { WorkspaceLabelPickerRow } from "./internal/picker-model";
 export { mergeWorkspaceLabelCatalogs } from "./internal/merge";
+export { workspaceLabelErrorMessage } from "./internal/workflow-model";
 export type {
   WorkspaceLabelManagerHost,
   WorkspaceLabelManagerSnapshot,

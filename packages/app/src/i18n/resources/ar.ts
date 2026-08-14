@@ -962,10 +962,10 @@ export const ar: TranslationResources = {
   workspaceLabels: {
     title: "التسميات",
     unlabelled: "بلا تسمية",
-    search: "بحث في التسميات",
     clearSearch: "مسح بحث التسميات",
-    create: "إنشاء تسمية…",
-    createNamed: 'إنشاء تسمية: "{{name}}"',
+    create: "إنشاء تسمية",
+    createConfirm: "إنشاء",
+    creating: "جارٍ الإنشاء…",
     name: "اسم التسمية",
     updateHostUse: "حدّث هذا المضيف لاستخدام التسميات.",
     errors: { update: "تعذّر تحديث التسمية", load: "تعذّر تحميل التسميات" },
@@ -982,8 +982,6 @@ export const ar: TranslationResources = {
       blue: "أزرق",
     },
     accessibility: {
-      addKeepOpen: "إضافة {{name}} وإبقاء التسميات مفتوحة",
-      removeKeepOpen: "إزالة {{name}} وإبقاء التسميات مفتوحة",
       group: "مجموعة {{label}}",
     },
     filter: {

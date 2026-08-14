@@ -992,10 +992,10 @@ export const fr: TranslationResources = {
   workspaceLabels: {
     title: "Étiquettes",
     unlabelled: "Sans étiquette",
-    search: "Rechercher des étiquettes",
     clearSearch: "Effacer la recherche d’étiquettes",
-    create: "Créer une étiquette…",
-    createNamed: "Créer une étiquette : « {{name}} »",
+    create: "Créer une étiquette",
+    createConfirm: "Créer",
+    creating: "Création…",
     name: "Nom de l’étiquette",
     updateHostUse: "Mettez à jour cet hôte pour utiliser les étiquettes.",
     errors: {
@@ -1015,8 +1015,6 @@ export const fr: TranslationResources = {
       blue: "Bleu",
     },
     accessibility: {
-      addKeepOpen: "Ajouter {{name}} et garder les étiquettes ouvertes",
-      removeKeepOpen: "Retirer {{name}} et garder les étiquettes ouvertes",
       group: "Groupe {{label}}",
     },
     filter: {

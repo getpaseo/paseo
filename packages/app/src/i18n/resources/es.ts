@@ -993,10 +993,10 @@ export const es: TranslationResources = {
   workspaceLabels: {
     title: "Etiquetas",
     unlabelled: "Sin etiqueta",
-    search: "Buscar etiquetas",
     clearSearch: "Borrar búsqueda de etiquetas",
-    create: "Crear etiqueta…",
-    createNamed: 'Crear etiqueta: "{{name}}"',
+    create: "Crear etiqueta",
+    createConfirm: "Crear",
+    creating: "Creando…",
     name: "Nombre de la etiqueta",
     updateHostUse: "Actualiza este host para usar etiquetas.",
     errors: {
@@ -1016,8 +1016,6 @@ export const es: TranslationResources = {
       blue: "Azul",
     },
     accessibility: {
-      addKeepOpen: "Añadir {{name}} y mantener las etiquetas abiertas",
-      removeKeepOpen: "Quitar {{name}} y mantener las etiquetas abiertas",
       group: "Grupo {{label}}",
     },
     filter: {

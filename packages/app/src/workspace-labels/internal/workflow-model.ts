@@ -3,7 +3,7 @@ import {
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
 } from "@getpaseo/protocol/workspace-labels";
-import { buildWorkspaceLabelPicker } from "./picker-model";
+import { buildWorkspaceLabelPickerRows, type WorkspaceLabelPickerRow } from "./picker-model";
 import { i18n } from "@/i18n/i18next";
 
 type Listener = () => void;
@@ -22,19 +22,21 @@ class ObservableModel {
 }
 
 export interface WorkspaceLabelPickerModelSnapshot {
-  query: string;
-  creating: boolean;
-  createName: string;
+  rows: readonly WorkspaceLabelPickerRow[];
   error: string | null;
   online: boolean;
   pendingNames: string[];
-  picker: ReturnType<typeof buildWorkspaceLabelPicker>;
 }
 
+/**
+ * Assigning labels to one workspace: a row per catalog entry, and a toggle per row.
+ *
+ * Every press toggles and the menu stays open, so the model has no say in the surface's
+ * lifetime — it holds no `close`, and picking a label is not an answer to a question. What it
+ * does own is the one-in-flight-per-label rule, which is what keeps a double tap from firing two
+ * opposite mutations at the same label.
+ */
 export class WorkspaceLabelPickerModel extends ObservableModel {
-  private query = "";
-  private creating = false;
-  private createName = "";
   private error: string | null = null;
   private online = false;
   private labels: readonly WorkspaceLabelDefinition[] = [];
@@ -45,7 +47,6 @@ export class WorkspaceLabelPickerModel extends ObservableModel {
   constructor(
     private readonly dependencies: {
       mutate: (input: { label: WorkspaceLabelDefinition; assigned: boolean }) => Promise<unknown>;
-      close: () => void;
     },
   ) {
     super();
@@ -65,54 +66,16 @@ export class WorkspaceLabelPickerModel extends ObservableModel {
     this.commit();
   }
 
-  setQuery(query: string): void {
-    this.query = query;
-    this.commit();
-  }
-
-  beginCreate(): void {
-    this.createName = this.currentSnapshot.picker.create.name;
-    this.creating = true;
-    this.error = null;
-    this.commit();
-  }
-
-  setCreateName(name: string): void {
-    this.createName = name;
-    this.commit();
-  }
-
-  create(color: WorkspaceLabelDefinition["color"]): Promise<boolean> {
-    const name = normalizeWorkspaceLabelName(this.createName);
-    if (!name) return Promise.resolve(false);
-    return this.runMutation({ name, color }, true, "row");
-  }
-
-  toggle(
-    label: WorkspaceLabelDefinition,
-    assigned: boolean,
-    source: "row" | "checkbox",
-  ): Promise<boolean> {
-    return this.runMutation(label, assigned, source);
-  }
-
-  private runMutation(
-    label: WorkspaceLabelDefinition,
-    assigned: boolean,
-    source: "row" | "checkbox",
-  ): Promise<boolean> {
+  toggle(label: WorkspaceLabelDefinition, assigned: boolean): Promise<boolean> {
     const key = workspaceLabelKey(label.name);
     const inFlight = this.pending.get(key);
     if (inFlight) return inFlight;
     this.error = null;
     const operation = this.dependencies
       .mutate({ label, assigned })
-      .then(() => {
-        if (source === "row") this.dependencies.close();
-        return true;
-      })
+      .then(() => true)
       .catch((cause: unknown) => {
-        this.error = errorMessage(cause);
+        this.error = workspaceLabelErrorMessage(cause);
         return false;
       })
       .finally(() => {
@@ -131,17 +94,10 @@ export class WorkspaceLabelPickerModel extends ObservableModel {
 
   private buildSnapshot(): WorkspaceLabelPickerModelSnapshot {
     return {
-      query: this.query,
-      creating: this.creating,
-      createName: this.createName,
+      rows: buildWorkspaceLabelPickerRows({ labels: this.labels, assigned: this.assigned }),
       error: this.error,
       online: this.online,
       pendingNames: [...this.pending.keys()],
-      picker: buildWorkspaceLabelPicker({
-        labels: this.labels,
-        assigned: this.assigned,
-        query: this.query,
-      }),
     };
   }
 }
@@ -277,7 +233,7 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
     this.error = null;
     this.operation = action()
       .catch((cause: unknown) => {
-        this.error = errorMessage(cause);
+        this.error = workspaceLabelErrorMessage(cause);
       })
       .finally(() => {
         this.operation = null;
@@ -318,6 +274,7 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
   }
 }
 
-function errorMessage(cause: unknown): string {
+/** One phrasing for a failed label mutation, wherever the failure surfaces. */
+export function workspaceLabelErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : i18n.t("workspaceLabels.errors.update");
 }

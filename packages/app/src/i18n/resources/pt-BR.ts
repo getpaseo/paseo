@@ -984,10 +984,10 @@ export const ptBR: TranslationResources = {
   workspaceLabels: {
     title: "Etiquetas",
     unlabelled: "Sem etiqueta",
-    search: "Buscar etiquetas",
     clearSearch: "Limpar busca de etiquetas",
-    create: "Criar etiqueta…",
-    createNamed: 'Criar etiqueta: "{{name}}"',
+    create: "Criar etiqueta",
+    createConfirm: "Criar",
+    creating: "Criando…",
     name: "Nome da etiqueta",
     updateHostUse: "Atualize este host para usar etiquetas.",
     errors: {
@@ -1007,8 +1007,6 @@ export const ptBR: TranslationResources = {
       blue: "Azul",
     },
     accessibility: {
-      addKeepOpen: "Adicionar {{name}} e manter as etiquetas abertas",
-      removeKeepOpen: "Remover {{name}} e manter as etiquetas abertas",
       group: "Grupo {{label}}",
     },
     filter: {

@@ -1,12 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
-  buildWorkspaceLabelPicker,
+  buildWorkspaceLabelPickerRows,
   createWorkspaceLabelManagerModel,
   createWorkspaceLabelPickerModel,
   mergeWorkspaceLabelCatalogs,
   projectWorkspaceLabels,
   selectWorkspaceLabelDefinitions,
-  shouldCloseWorkspaceLabelPicker,
   type WorkspaceLabelHostSnapshot,
 } from "./index";
 // A label's color is no longer a table of its own: `swatch.tsx` hands every surface the
@@ -107,25 +106,24 @@ describe("workspace label projection", () => {
     ).toEqual([]);
   });
 
-  test("keeps create visible, prefills search, and distinguishes row from checkbox closing", () => {
+  test("ticks a row against the assignment recorded in another case", () => {
     expect(
-      buildWorkspaceLabelPicker({
-        labels: [{ name: "Blocked", color: "red" }],
+      buildWorkspaceLabelPickerRows({
+        labels: [
+          { name: "Blocked", color: "red" },
+          { name: "Needs review", color: "sky" },
+        ],
         assigned: ["blocked"],
-        query: "Needs review",
       }),
-    ).toEqual({
-      rows: [],
-      create: { name: "Needs review" },
-    });
-    expect(shouldCloseWorkspaceLabelPicker("row")).toBe(true);
-    expect(shouldCloseWorkspaceLabelPicker("checkbox")).toBe(false);
+    ).toEqual([
+      { name: "Blocked", color: "red", assigned: true },
+      { name: "Needs review", color: "sky", assigned: false },
+    ]);
   });
 
-  test("picker suppresses repeated taps, keeps checkbox open, and closes row/create only on success", async () => {
+  test("picker holds one mutation per label and keeps the failure on the page", async () => {
     let resolveMutation!: () => void;
     let mutationCount = 0;
-    let closeCount = 0;
     let fail = false;
     const model = createWorkspaceLabelPickerModel({
       mutate: async () => {
@@ -135,9 +133,6 @@ describe("workspace label projection", () => {
         });
         if (fail) throw new Error("disk full");
       },
-      close: () => {
-        closeCount += 1;
-      },
     });
     model.sync({
       labels: [{ name: "Urgent", color: "red" }],
@@ -145,33 +140,24 @@ describe("workspace label projection", () => {
       online: true,
     });
 
-    const first = model.toggle({ name: "Urgent", color: "red" }, true, "checkbox");
-    const repeated = model.toggle({ name: "Urgent", color: "red" }, true, "checkbox");
+    // A double tap is one mutation, not an add racing a remove.
+    const first = model.toggle({ name: "Urgent", color: "red" }, true);
+    const repeated = model.toggle({ name: "Urgent", color: "red" }, false);
     expect(model.snapshot().pendingNames).toEqual(["urgent"]);
     expect(mutationCount).toBe(1);
     resolveMutation();
     await Promise.all([first, repeated]);
-    expect(closeCount).toBe(0);
+    expect(model.snapshot()).toMatchObject({ pendingNames: [], error: null });
 
-    model.beginCreate();
-    model.setCreateName("New label");
     fail = true;
-    const failedCreate = model.create("sky");
+    const failed = model.toggle({ name: "Urgent", color: "red" }, true);
     resolveMutation();
-    await failedCreate;
+    expect(await failed).toBe(false);
     expect(model.snapshot()).toMatchObject({
-      creating: true,
-      createName: "New label",
       error: "disk full",
+      pendingNames: [],
+      rows: [{ name: "Urgent", color: "red", assigned: false }],
     });
-    expect(closeCount).toBe(0);
-
-    fail = false;
-    const row = model.toggle({ name: "Urgent", color: "red" }, true, "row");
-    expect(closeCount).toBe(0);
-    resolveMutation();
-    await row;
-    expect(closeCount).toBe(1);
   });
 
   test("manager owns host selection and preserves selected surfaces on mutation failure", async () => {

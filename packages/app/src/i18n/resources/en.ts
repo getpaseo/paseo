@@ -971,10 +971,10 @@ export const en = {
   workspaceLabels: {
     title: "Labels",
     unlabelled: "Unlabelled",
-    search: "Search labels",
     clearSearch: "Clear label search",
-    create: "Create new label…",
-    createNamed: 'Create new label: "{{name}}"',
+    create: "Create label",
+    createConfirm: "Create",
+    creating: "Creating…",
     name: "Label name",
     updateHostUse: "Update this host to use labels.",
     errors: { update: "Unable to update label", load: "Unable to load labels" },
@@ -991,8 +991,6 @@ export const en = {
       blue: "Blue",
     },
     accessibility: {
-      addKeepOpen: "Add {{name}} and keep labels open",
-      removeKeepOpen: "Remove {{name}} and keep labels open",
       group: "{{label}} group",
     },
     filter: {

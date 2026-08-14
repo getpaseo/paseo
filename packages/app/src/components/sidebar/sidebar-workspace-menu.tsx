@@ -24,7 +24,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-  type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
@@ -39,7 +38,11 @@ import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
-import { WorkspaceLabelPickerPage } from "@/workspace-labels/picker";
+import {
+  useWorkspaceLabelMenuPages,
+  WORKSPACE_LABEL_PAGE_ID,
+  type WorkspaceLabelTarget,
+} from "@/workspace-labels/picker";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -202,7 +205,7 @@ function SidebarWorkspaceMenuItems({
       ) : null}
       {serverId && workspaceId ? (
         <DropdownMenuSubTrigger
-          id="workspaceLabels"
+          id={WORKSPACE_LABEL_PAGE_ID}
           leading={labelLeading}
           testID={`sidebar-workspace-menu-labels-${workspaceKey}`}
         >
@@ -252,32 +255,12 @@ export function SidebarWorkspaceMenu({
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
-  const workspaceTarget = useMemo(
+  const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
     () =>
-      serverId && workspaceId
-        ? { serverId, workspaceId, labels: workspaceLabels ?? [] }
-        : undefined,
+      serverId && workspaceId ? { serverId, workspaceId, labels: workspaceLabels ?? [] } : null,
     [serverId, workspaceId, workspaceLabels],
   );
-  const pages = useMemo<MenuPageDefinition[]>(
-    () =>
-      workspaceTarget
-        ? [
-            {
-              id: "workspaceLabels",
-              title: t("workspaceLabels.title"),
-              content: (
-                <WorkspaceLabelPickerPage
-                  serverId={workspaceTarget.serverId}
-                  workspaceId={workspaceTarget.workspaceId}
-                  assignedLabels={workspaceTarget.labels}
-                />
-              ),
-            },
-          ]
-        : [],
-    [t, workspaceTarget],
-  );
+  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -380,7 +363,7 @@ export function SidebarWorkspaceContextMenu({
       ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
       : null,
   });
-  const workspaceTarget = useMemo(
+  const workspaceTarget = useMemo<WorkspaceLabelTarget>(
     () => ({
       serverId: workspace.serverId,
       workspaceId: workspace.workspaceId,
@@ -388,22 +371,7 @@ export function SidebarWorkspaceContextMenu({
     }),
     [workspace],
   );
-  const pages = useMemo<MenuPageDefinition[]>(
-    () => [
-      {
-        id: "workspaceLabels",
-        title: t("workspaceLabels.title"),
-        content: (
-          <WorkspaceLabelPickerPage
-            serverId={workspaceTarget.serverId}
-            workspaceId={workspaceTarget.workspaceId}
-            assignedLabels={workspaceTarget.labels}
-          />
-        ),
-      },
-    ],
-    [t, workspaceTarget],
-  );
+  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>

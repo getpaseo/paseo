@@ -969,10 +969,10 @@ export const ko: TranslationResources = {
   workspaceLabels: {
     title: "레이블",
     unlabelled: "레이블 없음",
-    search: "레이블 검색",
     clearSearch: "레이블 검색 지우기",
-    create: "새 레이블 만들기…",
-    createNamed: '새 레이블 만들기: "{{name}}"',
+    create: "레이블 만들기",
+    createConfirm: "만들기",
+    creating: "만드는 중…",
     name: "레이블 이름",
     updateHostUse: "레이블을 사용하려면 호스트를 업데이트하세요.",
     errors: { update: "레이블을 업데이트할 수 없습니다", load: "레이블을 불러올 수 없습니다" },
@@ -989,8 +989,6 @@ export const ko: TranslationResources = {
       blue: "파랑",
     },
     accessibility: {
-      addKeepOpen: "{{name}} 추가 후 레이블 열어 두기",
-      removeKeepOpen: "{{name}} 제거 후 레이블 열어 두기",
       group: "{{label}} 그룹",
     },
     filter: {

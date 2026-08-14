@@ -954,10 +954,10 @@ export const zhCN: TranslationResources = {
   workspaceLabels: {
     title: "标签",
     unlabelled: "无标签",
-    search: "搜索标签",
     clearSearch: "清除标签搜索",
-    create: "新建标签…",
-    createNamed: "新建标签：“{{name}}”",
+    create: "新建标签",
+    createConfirm: "创建",
+    creating: "创建中…",
     name: "标签名称",
     updateHostUse: "请更新此主机以使用标签。",
     errors: { update: "无法更新标签", load: "无法加载标签" },
@@ -974,8 +974,6 @@ export const zhCN: TranslationResources = {
       blue: "蓝色",
     },
     accessibility: {
-      addKeepOpen: "添加{{name}}并保持标签菜单打开",
-      removeKeepOpen: "移除{{name}}并保持标签菜单打开",
       group: "{{label}}组",
     },
     filter: {

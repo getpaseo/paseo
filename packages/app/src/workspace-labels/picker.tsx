@@ -1,42 +1,113 @@
-import React, {
+import {
   useCallback,
   useEffect,
   useMemo,
+  useState,
   useSyncExternalStore,
   type ReactElement,
 } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
-import { withUnistyles } from "react-native-unistyles";
-import { CheckSquare, Plus, Square } from "lucide-react-native";
+import { View } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
+import { Plus } from "lucide-react-native";
 import {
+  normalizeWorkspaceLabelName,
   WORKSPACE_LABEL_COLORS,
+  type WorkspaceLabelColor,
   type WorkspaceLabelDefinition,
 } from "@getpaseo/protocol/workspace-labels";
-import { MenuHint, MenuItem, useMenuContext } from "@/components/ui/menu";
-import { SearchField } from "@/components/ui/search-field";
+import {
+  MenuHint,
+  MenuItem,
+  MenuSeparator,
+  MenuSubTrigger,
+  MenuTextField,
+  menuRowContentInset,
+  useMenuContext,
+  type MenuPageDefinition,
+} from "@/components/ui/menu";
 import {
   createWorkspaceLabelPickerModel,
   useWorkspaceLabelProjection,
+  workspaceLabelErrorMessage,
   workspaceLabels,
+  type WorkspaceLabelPickerRow,
 } from "@/workspace-labels";
-import { StyleSheet } from "react-native-unistyles";
-import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
-import { WorkspaceLabelDot, workspaceLabelColorName } from "./swatch";
+import { WorkspaceLabelDot, WorkspaceLabelSwatchRow } from "./swatch";
+
+/** The `MenuSubTrigger` on a workspace's menu that opens the assign page. */
+export const WORKSPACE_LABEL_PAGE_ID = "workspaceLabels";
+const WORKSPACE_LABEL_CREATE_PAGE_ID = "workspaceLabelsCreate";
 
 /** The menu's own icon size, matching the trailing check on every other row. */
 const MENU_ICON_SIZE = 14;
 
 const ThemedPlus = withUnistyles(Plus);
-const ThemedCheckSquare = withUnistyles(CheckSquare);
-const ThemedSquare = withUnistyles(Square);
-
-const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
+// The create row keeps the leading column the label rows above it sit in. Without a mark there
+// its label would start on the text rail while every label starts 24pt further in, and the last
+// row of the page would read as one that slipped out of the list.
 const CREATE_LEADING = <ThemedPlus size={MENU_ICON_SIZE} uniProps={mutedMapping} />;
 
-export function WorkspaceLabelPickerPage({
+/** The colour a new label takes until you say otherwise. */
+const DEFAULT_CREATE_COLOR: WorkspaceLabelColor = WORKSPACE_LABEL_COLORS[0];
+
+export interface WorkspaceLabelTarget {
+  serverId: string;
+  workspaceId: string;
+  /** Label names the workspace already carries, from the sidebar entry. */
+  labels: readonly string[];
+}
+
+const NO_PAGES: readonly MenuPageDefinition[] = [];
+
+/**
+ * The two pages behind a workspace's `Labels` row, for whichever menu is asking.
+ *
+ * Both the kebab dropdown and the row's context menu open the same thing, and a page defined
+ * twice is a page that will be improved once.
+ */
+export function useWorkspaceLabelMenuPages(
+  target: WorkspaceLabelTarget | null,
+): readonly MenuPageDefinition[] {
+  const { t } = useTranslation();
+  return useMemo(() => {
+    if (!target) return NO_PAGES;
+    return [
+      {
+        id: WORKSPACE_LABEL_PAGE_ID,
+        title: t("workspaceLabels.title"),
+        content: (
+          <WorkspaceLabelPickerPage
+            serverId={target.serverId}
+            workspaceId={target.workspaceId}
+            assignedLabels={target.labels}
+          />
+        ),
+      },
+      {
+        id: WORKSPACE_LABEL_CREATE_PAGE_ID,
+        title: t("workspaceLabels.create"),
+        // A page you type into is not one the pointer opens or dismisses on its own.
+        hoverIntent: false,
+        content: (
+          <WorkspaceLabelCreatePage serverId={target.serverId} workspaceId={target.workspaceId} />
+        ),
+      },
+    ];
+  }, [t, target]);
+}
+
+/**
+ * Every label on the host, with the ones this workspace carries ticked.
+ *
+ * Assigning is multi-select, so a press toggles and nothing closes; the menu ends when it is
+ * dismissed. Assignment is the trailing check `MenuItem` already draws for a chosen row, and the
+ * colour goes in the leading slot, which puts both on the rails every other row in the menu uses.
+ */
+function WorkspaceLabelPickerPage({
   serverId,
   workspaceId,
   assignedLabels,
@@ -45,7 +116,6 @@ export function WorkspaceLabelPickerPage({
   workspaceId: string;
   assignedLabels: readonly string[];
 }): ReactElement {
-  const menu = useMenuContext("WorkspaceLabelPickerPage");
   const { t } = useTranslation();
   const { labels, targetHost: host } = useWorkspaceLabelProjection(serverId);
   const model = useMemo(
@@ -53,81 +123,42 @@ export function WorkspaceLabelPickerPage({
       createWorkspaceLabelPickerModel({
         mutate: ({ label, assigned }) =>
           workspaceLabels.setAssignment({ serverId, workspaceId, label, assigned }),
-        close: () => menu.setOpen(false),
       }),
-    [menu, serverId, workspaceId],
+    [serverId, workspaceId],
   );
   useEffect(() => {
     model.sync({ labels, assigned: assignedLabels, online: host?.status === "online" });
   }, [assignedLabels, host?.status, labels, model]);
   const snapshot = useSyncExternalStore(model.subscribe, model.snapshot, model.snapshot);
-  const disabled = !snapshot.online;
+  const offline = !snapshot.online;
   const pending = useMemo(() => new Set(snapshot.pendingNames), [snapshot.pendingNames]);
-  const setQuery = useCallback((value: string) => model.setQuery(value), [model]);
-  const beginCreate = useCallback(() => model.beginCreate(), [model]);
-  const setCreateName = useCallback((value: string) => model.setCreateName(value), [model]);
-  const create = useCallback(
-    (color: WorkspaceLabelDefinition["color"]) => model.create(color),
-    [model],
-  );
   const toggle = useCallback(
-    (label: WorkspaceLabelDefinition, assigned: boolean, source: "row" | "checkbox") =>
-      model.toggle(label, assigned, source),
+    (label: WorkspaceLabelDefinition, assigned: boolean) => {
+      void model.toggle(label, assigned);
+    },
     [model],
   );
 
   return (
     <>
-      <View style={styles.search}>
-        <SearchField
-          value={snapshot.query}
-          onChangeText={setQuery}
-          placeholder={t("workspaceLabels.search")}
-          clearAccessibilityLabel={t("workspaceLabels.clearSearch")}
-          testID="workspace-label-picker-search"
-        />
-      </View>
-      <MenuItem
-        leading={CREATE_LEADING}
-        disabled={disabled}
-        closeOnSelect={false}
-        onSelect={beginCreate}
-        testID="workspace-label-picker-create"
-      >
-        {snapshot.picker.create.name
-          ? t("workspaceLabels.createNamed", { name: snapshot.picker.create.name })
-          : t("workspaceLabels.create")}
-      </MenuItem>
-      {snapshot.creating ? (
-        <View style={styles.create}>
-          <TextInput
-            value={snapshot.createName}
-            onChangeText={setCreateName}
-            placeholder={t("workspaceLabels.name")}
-            editable={!disabled}
-            style={styles.input}
-            testID="workspace-label-picker-create-name"
-          />
-          <View style={styles.palette}>
-            {WORKSPACE_LABEL_COLORS.map((color) => (
-              <CreateColorItem
-                key={color}
-                color={color}
-                disabled={disabled || !snapshot.createName.trim() || pending.size > 0}
-                create={create}
-              />
-            ))}
-          </View>
-        </View>
-      ) : null}
-      {snapshot.picker.rows.map((row) => (
-        <WorkspaceLabelPickerRow
+      {snapshot.rows.map((row) => (
+        <WorkspaceLabelAssignRow
           key={row.name.toLocaleLowerCase()}
-          label={row}
-          disabled={disabled || pending.has(row.name.toLocaleLowerCase())}
+          row={row}
+          offline={offline}
+          pending={pending.has(row.name.toLocaleLowerCase())}
           onToggle={toggle}
         />
       ))}
+      {snapshot.rows.length > 0 ? <MenuSeparator /> : null}
+      <MenuSubTrigger
+        id={WORKSPACE_LABEL_CREATE_PAGE_ID}
+        leading={CREATE_LEADING}
+        disabled={offline}
+        testID="workspace-label-picker-create"
+      >
+        {t("workspaceLabels.create")}
+      </MenuSubTrigger>
       {snapshot.error ? (
         <MenuHint testID="workspace-label-picker-error">{snapshot.error}</MenuHint>
       ) : null}
@@ -138,120 +169,119 @@ export function WorkspaceLabelPickerPage({
   );
 }
 
-function CreateColorItem({
-  color,
-  disabled,
-  create,
+function WorkspaceLabelAssignRow({
+  row,
+  offline,
+  pending,
+  onToggle,
 }: {
-  color: WorkspaceLabelDefinition["color"];
-  disabled: boolean;
-  create: (color: WorkspaceLabelDefinition["color"]) => void;
+  row: WorkspaceLabelPickerRow;
+  offline: boolean;
+  pending: boolean;
+  onToggle: (label: WorkspaceLabelDefinition, assigned: boolean) => void;
 }): ReactElement {
-  const leading = useMemo(() => <WorkspaceLabelDot color={color} />, [color]);
-  const select = useCallback(() => create(color), [color, create]);
+  const leading = useMemo(() => <WorkspaceLabelDot color={row.color} />, [row.color]);
+  const select = useCallback(
+    () => onToggle({ name: row.name, color: row.color }, !row.assigned),
+    [onToggle, row.assigned, row.color, row.name],
+  );
   return (
     <MenuItem
       leading={leading}
-      disabled={disabled}
+      selected={row.assigned}
+      disabled={offline}
+      status={pending ? "pending" : "idle"}
       closeOnSelect={false}
       onSelect={select}
-      testID={`workspace-label-picker-create-color-${color}`}
+      testID={`workspace-label-picker-row-${row.name}`}
     >
-      {workspaceLabelColorName(color)}
+      {row.name}
     </MenuItem>
   );
 }
 
-function WorkspaceLabelPickerRow({
-  label,
-  disabled,
-  onToggle,
+/**
+ * Naming a new label and giving it a colour, in place of the list rather than under it.
+ *
+ * Picking a colour picks a colour: the label is created by the one row that says so, and only
+ * once the name is not empty. A failure keeps the draft and says what happened, because the
+ * alternative is retyping the name to find out whether the host is still there.
+ */
+function WorkspaceLabelCreatePage({
+  serverId,
+  workspaceId,
 }: {
-  label: WorkspaceLabelDefinition & { assigned: boolean };
-  disabled: boolean;
-  onToggle: (
-    label: WorkspaceLabelDefinition,
-    assigned: boolean,
-    source: "row" | "checkbox",
-  ) => Promise<boolean>;
+  serverId: string;
+  workspaceId: string;
 }): ReactElement {
   const { t } = useTranslation();
-  const handleRow = useCallback(() => {
-    void onToggle(label, !label.assigned, "row");
-  }, [label, onToggle]);
-  const handleCheckbox = useCallback(() => {
-    void onToggle(label, !label.assigned, "checkbox");
-  }, [label, onToggle]);
-  const accessibilityState = useMemo(
-    () => ({ checked: label.assigned, disabled }),
-    [disabled, label.assigned],
-  );
+  const menu = useMenuContext("WorkspaceLabelCreatePage");
+  const { targetHost: host } = useWorkspaceLabelProjection(serverId);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState<WorkspaceLabelColor>(DEFAULT_CREATE_COLOR);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const offline = host?.status !== "online";
+
+  const submit = useCallback(() => {
+    const trimmed = normalizeWorkspaceLabelName(name);
+    if (!trimmed || pending) return;
+    setPending(true);
+    setError(null);
+    workspaceLabels
+      .setAssignment({
+        serverId,
+        workspaceId,
+        label: { name: trimmed, color },
+        assigned: true,
+      })
+      .then(() => menu.goBack())
+      .catch((cause: unknown) => setError(workspaceLabelErrorMessage(cause)))
+      .finally(() => setPending(false));
+  }, [color, menu, name, pending, serverId, workspaceId]);
+
   return (
-    <View style={styles.labelRow}>
-      <Pressable
-        accessibilityRole="checkbox"
-        accessibilityLabel={t(
-          label.assigned
-            ? "workspaceLabels.accessibility.removeKeepOpen"
-            : "workspaceLabels.accessibility.addKeepOpen",
-          { name: label.name },
-        )}
-        accessibilityState={accessibilityState}
-        disabled={disabled}
-        onPress={handleCheckbox}
-        style={styles.checkboxTarget}
-        testID={`workspace-label-picker-checkbox-${label.name}`}
+    <>
+      <MenuTextField
+        onChangeText={setName}
+        placeholder={t("workspaceLabels.name")}
+        autoFocus
+        editable={!offline && !pending}
+        onSubmitEditing={submit}
+        testID="workspace-label-picker-create-name"
+      />
+      <View style={styles.swatches}>
+        <WorkspaceLabelSwatchRow
+          value={color}
+          onChange={setColor}
+          disabled={offline || pending}
+          testID="workspace-label-picker-create-colors"
+        />
+      </View>
+      <MenuSeparator />
+      <MenuItem
+        disabled={offline || !normalizeWorkspaceLabelName(name)}
+        status={pending ? "pending" : "idle"}
+        pendingLabel={t("workspaceLabels.creating")}
+        closeOnSelect={false}
+        onSelect={submit}
+        testID="workspace-label-picker-create-submit"
       >
-        {label.assigned ? (
-          <ThemedCheckSquare size={MENU_ICON_SIZE} uniProps={foregroundMapping} />
-        ) : (
-          <ThemedSquare size={MENU_ICON_SIZE} uniProps={mutedMapping} />
-        )}
-      </Pressable>
-      <Pressable
-        accessibilityRole="menuitem"
-        disabled={disabled}
-        onPress={handleRow}
-        style={styles.labelBody}
-        testID={`workspace-label-picker-row-${label.name}`}
-      >
-        <WorkspaceLabelDot color={label.color} />
-        <Text style={styles.labelText}>{label.name}</Text>
-      </Pressable>
-    </View>
+        {t("workspaceLabels.createConfirm")}
+      </MenuItem>
+      {error ? <MenuHint testID="workspace-label-picker-error">{error}</MenuHint> : null}
+    </>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  search: { paddingHorizontal: theme.spacing[3], paddingVertical: theme.spacing[1] },
-  create: { gap: theme.spacing[2], paddingHorizontal: theme.spacing[3] },
-  input: {
-    color: theme.colors.foreground,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing[2],
-  },
-  palette: { gap: theme.spacing[1] },
-  labelRow: {
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[3],
-  },
-  labelBody: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  labelText: { color: theme.colors.foreground },
-  checkboxTarget: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
+  // The swatches start where a row's label starts, so the page reads down one rail: field text,
+  // first swatch, commit row. The inset is the text's box, which leaves the round swatch hanging
+  // a hair left of the letters beside it — that overshoot is what makes a circle look aligned
+  // with a flat stem, so it is the rail rather than a miss. Vertical room of its own because the
+  // page's row gap is zero.
+  swatches: {
+    paddingHorizontal: menuRowContentInset(theme),
+    paddingVertical: theme.spacing[2],
   },
 }));

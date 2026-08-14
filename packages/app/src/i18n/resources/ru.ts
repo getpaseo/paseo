@@ -984,10 +984,10 @@ export const ru: TranslationResources = {
   workspaceLabels: {
     title: "Метки",
     unlabelled: "Без метки",
-    search: "Поиск меток",
     clearSearch: "Очистить поиск меток",
-    create: "Создать метку…",
-    createNamed: "Создать метку: «{{name}}»",
+    create: "Создать метку",
+    createConfirm: "Создать",
+    creating: "Создание…",
     name: "Название метки",
     updateHostUse: "Обновите этот хост, чтобы использовать метки.",
     errors: { update: "Не удалось обновить метку", load: "Не удалось загрузить метки" },
@@ -1004,8 +1004,6 @@ export const ru: TranslationResources = {
       blue: "Синий",
     },
     accessibility: {
-      addKeepOpen: "Добавить {{name}} и оставить метки открытыми",
-      removeKeepOpen: "Удалить {{name}} и оставить метки открытыми",
       group: "Группа «{{label}}»",
     },
     filter: {

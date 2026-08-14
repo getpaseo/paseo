@@ -77,6 +77,25 @@ Opening a submenu truncates the path to the depth of the trigger that opened it.
 sliding the pointer across a row of triggers would stack up every flyout it passed instead of
 swapping between them.
 
+## A page that takes input
+
+A menu page can hold a small form — `MenuTextField` is the field for it, drawn as a row's own
+fill so its text lands on the same rail as the labels above it. Two things have to be true for
+that page, and both are set on the page definition rather than discovered later:
+
+- **`hoverIntent: false`.** A branch you skim is opened and closed by the pointer; a form is not.
+  Without this the page opens on a pointer that was only passing through, and dismisses itself —
+  draft and all — the moment your hands move to the keyboard and the mouse drifts off the flyout.
+  While such a page is open, the whole surface stops closing on hover, because the parent flyout
+  leads back to the same dismissal.
+- **The compact presentation has to be a sheet.** `MenuTextField` resolves to
+  `BottomSheetTextInput` on compact native, which reads the sheet's context and has none in a
+  popover.
+
+The sheet keeps `keyboardBehavior="interactive"`. `extend` grows a sheet to its largest snap
+point, and with `enableDynamicSizing` that point is the content's own height — a short page does
+not grow, and the keyboard comes up over the field you are typing into.
+
 ## Hover intent
 
 A flyout **overlaps its parent by 5pt** rather than sitting beside it. With a gap there is a strip

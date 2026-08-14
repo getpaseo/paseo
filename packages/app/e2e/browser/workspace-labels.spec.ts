@@ -66,6 +66,18 @@ async function installWorkspaceLabelMutationFailure(page: import("@playwright/te
   };
 }
 
+function labelRow(page: import("@playwright/test").Page, name: string) {
+  return page.getByTestId(`workspace-label-picker-row-${name}`);
+}
+
+async function expectAssigned(
+  page: import("@playwright/test").Page,
+  name: string,
+  assigned: boolean,
+) {
+  await expect(labelRow(page, name)).toHaveAttribute("aria-checked", String(assigned));
+}
+
 async function openWorkspaceLabels(page: import("@playwright/test").Page, workspaceId: string) {
   const serverId = getServerId();
   const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`).first();
@@ -73,32 +85,26 @@ async function openWorkspaceLabels(page: import("@playwright/test").Page, worksp
   await row.hover();
   await page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`).first().click();
   await page.getByTestId(`sidebar-workspace-menu-labels-${serverId}:${workspaceId}`).click();
-  await expect(page.getByPlaceholder("Search labels")).toBeVisible();
+  await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
 }
 
-async function openWorkspaceLabelsOnTouch(
-  page: import("@playwright/test").Page,
-  workspaceId: string,
-) {
-  const serverId = getServerId();
-  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`).click();
-  await page.getByTestId(`sidebar-workspace-menu-labels-${serverId}:${workspaceId}`).tap();
-  await expect(page.getByPlaceholder("Search labels")).toBeVisible();
-}
-
+/**
+ * Creating is its own page: the list is replaced by a name field and the swatches, and one row
+ * commits. Picking a colour must not create anything on its own.
+ */
 async function createLabel(
   page: import("@playwright/test").Page,
   input: { workspaceId: string; name: string; color: string },
 ) {
   await openWorkspaceLabels(page, input.workspaceId);
-  await page.getByPlaceholder("Search labels").fill(input.name);
-  await page.getByRole("button", { name: `Create new label: "${input.name}"` }).click();
-  await page
-    .getByRole("button", { name: `${input.color[0]?.toUpperCase()}${input.color.slice(1)}` })
-    .click();
-  await expect(page.getByPlaceholder("Search labels")).toBeHidden();
+  await page.getByTestId("workspace-label-picker-create").click();
+  await expect(page.getByTestId("workspace-label-picker-create-name")).toBeVisible();
+  await page.getByTestId("workspace-label-picker-create-name").fill(input.name);
+  await page.getByTestId(`workspace-label-swatch-${input.color}`).click();
+  await expect(page.getByTestId(`workspace-label-picker-row-${input.name}`)).toBeHidden();
+  await page.getByTestId("workspace-label-picker-create-submit").click();
+  await expectAssigned(page, input.name, true);
+  await page.keyboard.press("Escape");
 }
 
 test.describe("Workspace labels", () => {
@@ -155,36 +161,32 @@ test.describe("Workspace labels", () => {
         color: "sky",
       });
 
-      await test.step("checkbox toggles keep the picker open while row toggles close it", async () => {
+      await test.step("every press toggles and the picker stays open", async () => {
         await openWorkspaceLabels(page, seeded.workspaceId);
-        await page.getByRole("checkbox", { name: "Remove Urgent and keep labels open" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
-        await page.getByRole("checkbox", { name: "Remove Frontend and keep labels open" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
-        await page.getByRole("checkbox", { name: "Add Urgent and keep labels open" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
-        await page.getByRole("checkbox", { name: "Add Frontend and keep labels open" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
+        await labelRow(page, "Urgent").click();
+        await expectAssigned(page, "Urgent", false);
+        await labelRow(page, "Frontend").click();
+        await expectAssigned(page, "Frontend", false);
+        await labelRow(page, "Urgent").click();
+        await labelRow(page, "Frontend").click();
+        await expectAssigned(page, "Urgent", true);
+        await expectAssigned(page, "Frontend", true);
+        // Four toggles in, the page it started on is still the page it is on.
+        await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
         await page.keyboard.press("Escape");
 
-        await openWorkspaceLabels(page, seeded.workspaceId);
-        await expect(
-          page.getByRole("checkbox", {
-            name: "Remove Urgent and keep labels open",
-          }),
-        ).toBeVisible();
-        await expect(
-          page.getByRole("checkbox", {
-            name: "Remove Frontend and keep labels open",
-          }),
-        ).toBeVisible();
-        await page.getByRole("menuitem", { name: "Urgent" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeHidden();
-        await openWorkspaceLabels(page, seeded.workspaceId);
-        await page.getByRole("menuitem", { name: "Urgent" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeHidden();
-
         await expect.poll(readWorkspaceLabels.bind(null, seeded)).toEqual(["Frontend", "Urgent"]);
+      });
+
+      await test.step("a rejected assignment leaves the row alone and says why", async () => {
+        await openWorkspaceLabels(page, seeded.workspaceId);
+        mutationFailure.failNextAssignment();
+        await labelRow(page, "Urgent").click();
+        await expect(page.getByTestId("workspace-label-picker-error")).toContainText(
+          "Injected label mutation failure.",
+        );
+        await expectAssigned(page, "Urgent", true);
+        await page.keyboard.press("Escape");
       });
 
       await test.step("one label row cycles include, exclude, off and composes with grouping", async () => {
@@ -255,24 +257,20 @@ test.describe("Workspace labels", () => {
         await expect(page.getByTestId("workspace-label-manager-label-Priority")).toBeVisible();
       });
 
-      await test.step("rendered creation failure stays open and retries after reconnect", async () => {
+      await test.step("a rejected creation keeps the draft and retries in place", async () => {
         await page.keyboard.press("Escape");
         await openWorkspaceLabels(page, seeded.workspaceId);
-        await page.getByPlaceholder("Search labels").fill("Retry");
-        await page.getByRole("button", { name: 'Create new label: "Retry"' }).click();
+        await page.getByTestId("workspace-label-picker-create").click();
+        await page.getByTestId("workspace-label-picker-create-name").fill("Retry");
         mutationFailure.failNextAssignment();
-        await page.getByRole("button", { name: "Red" }).click();
+        await page.getByTestId("workspace-label-picker-create-submit").click();
         await expect(page.getByTestId("workspace-label-picker-error")).toContainText(
           "Injected label mutation failure.",
         );
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
+        await expect(page.getByTestId("workspace-label-picker-create-name")).toHaveValue("Retry");
 
-        await page.getByRole("button", { name: "Red" }).click();
-        await expect(page.getByPlaceholder("Search labels")).toBeHidden();
-        await openWorkspaceLabels(page, seeded.workspaceId);
-        await expect(
-          page.getByRole("checkbox", { name: "Remove Retry and keep labels open" }),
-        ).toBeVisible();
+        await page.getByTestId("workspace-label-picker-create-submit").click();
+        await expectAssigned(page, "Retry", true);
         await page.keyboard.press("Escape");
       });
 
@@ -298,10 +296,10 @@ test.describe("Workspace labels", () => {
     }
   });
 
-  test.describe("touch picker controls", () => {
+  test.describe("compact picker", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-    test("checkbox stays open while the row body closes", async ({ page }) => {
+    test("toggles in place and pushes the create page over the list", async ({ page }) => {
       const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-touch-" });
       try {
         await seeded.client.setWorkspaceLabel({
@@ -312,18 +310,28 @@ test.describe("Workspace labels", () => {
         await gotoAppShell(page);
         await page.getByRole("button", { name: "Open menu", exact: true }).click();
         await waitForSidebarHydration(page);
-        await openWorkspaceLabelsOnTouch(page, seeded.workspaceId);
 
-        const checkbox = page.getByRole("checkbox", {
-          name: "Remove Touch and keep labels open",
-        });
-        const touchTarget = await checkbox.boundingBox();
-        expect(touchTarget?.width).toBeGreaterThanOrEqual(44);
-        expect(touchTarget?.height).toBeGreaterThanOrEqual(44);
-        await checkbox.tap();
-        await expect(page.getByPlaceholder("Search labels")).toBeVisible();
-        await page.getByRole("menuitem", { name: "Touch" }).tap();
-        await expect(page.getByPlaceholder("Search labels")).toBeHidden();
+        const serverId = getServerId();
+        await page.getByTestId(`sidebar-workspace-kebab-${serverId}:${seeded.workspaceId}`).click();
+        await page
+          .getByTestId(`sidebar-workspace-menu-labels-${serverId}:${seeded.workspaceId}`)
+          .tap();
+        await expectAssigned(page, "Touch", true);
+
+        await labelRow(page, "Touch").tap();
+        await expectAssigned(page, "Touch", false);
+        await expect(page.getByTestId("workspace-label-picker-create")).toBeVisible();
+
+        // The pushed page replaces the list rather than unfolding under it.
+        await page.getByTestId("workspace-label-picker-create").tap();
+        await expect(page.getByTestId("workspace-label-picker-create-name")).toBeVisible();
+        await expect(labelRow(page, "Touch")).toBeHidden();
+        await page.getByTestId("workspace-label-picker-create-name").fill("Handheld");
+        await page.getByTestId("workspace-label-swatch-emerald").tap();
+        await page.getByTestId("workspace-label-picker-create-submit").tap();
+
+        await expectAssigned(page, "Handheld", true);
+        await expectAssigned(page, "Touch", false);
       } finally {
         await seeded.cleanup();
       }

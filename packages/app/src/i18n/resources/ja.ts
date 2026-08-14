@@ -973,10 +973,10 @@ export const ja: TranslationResources = {
   workspaceLabels: {
     title: "ラベル",
     unlabelled: "ラベルなし",
-    search: "ラベルを検索",
     clearSearch: "ラベル検索をクリア",
-    create: "新しいラベルを作成…",
-    createNamed: "新しいラベルを作成:「{{name}}」",
+    create: "ラベルを作成",
+    createConfirm: "作成",
+    creating: "作成中…",
     name: "ラベル名",
     updateHostUse: "ラベルを使用するにはホストを更新してください。",
     errors: { update: "ラベルを更新できません", load: "ラベルを読み込めません" },
@@ -993,8 +993,6 @@ export const ja: TranslationResources = {
       blue: "青",
     },
     accessibility: {
-      addKeepOpen: "{{name}}を追加してラベルを開いたままにする",
-      removeKeepOpen: "{{name}}を削除してラベルを開いたままにする",
       group: "{{label}}グループ",
     },
     filter: {
