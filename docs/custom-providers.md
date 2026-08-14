@@ -532,6 +532,30 @@ Only enable capabilities Paseo should execute. When the agent and Paseo run in
 different environments, configure equivalent absolute workspace paths before
 delegating filesystem or terminal operations to Paseo.
 
+Some ACP agents publish slash commands asynchronously after `session/new`.
+Enable initial command waiting for those providers so the new-agent composer
+does not read an empty command list before the update arrives:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "acp"],
+        "params": {
+          "waitForInitialCommands": true,
+          "initialCommandsWaitTimeoutMs": 1500
+        }
+      }
+    }
+  }
+}
+```
+
+Keep the default timeout unless the provider documents a longer command-discovery delay.
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.

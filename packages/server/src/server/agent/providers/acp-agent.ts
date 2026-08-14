@@ -2687,7 +2687,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
           description: command.description,
-          argumentHint: "",
+          argumentHint: command.input?.hint ?? "",
           kind: "command",
         }));
         this.settleCommandsReady();
