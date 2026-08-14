@@ -836,6 +836,18 @@ export class AgentManager {
     );
   }
 
+  // why: unlike listAgents(), this walks every live agent including internal
+  // ones (e.g. branch-name/git-metadata generators) — callers that need to
+  // know whether a workspace is safe to tear down must not miss those.
+  hasWorkspaceInFlightRun(workspaceId: string): boolean {
+    for (const agent of this.agents.values()) {
+      if (agent.workspaceId === workspaceId && this.hasInFlightRun(agent.id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
     const targetAgentId =
       options?.agentId == null ? null : validateAgentId(options.agentId, "subscribe");

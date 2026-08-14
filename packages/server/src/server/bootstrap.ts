@@ -987,24 +987,26 @@ export async function createPaseoDaemon(
     logger,
   });
 
-  setupAutoArchiveOnMerge({
-    paseoHome: config.paseoHome,
-    paseoWorktreesBaseRoot: config.worktreesRoot,
-    daemonConfigStore,
-    workspaceGitService,
-    github,
-    agentManager,
-    agentStorage,
-    terminalManager,
-    logger,
-    findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
-    listActiveWorkspaces: listActiveWorkspacesExternal,
-    getAutoArchivedChangeRequestUrl: async (workspaceId) =>
-      (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
-    archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-    markWorkspaceArchiving: markWorkspaceArchivingExternal,
-    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
-    emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+  const autoArchiveOnMergeSubscription = setupAutoArchiveOnMerge({
+    options: {
+      paseoHome: config.paseoHome,
+      paseoWorktreesBaseRoot: config.worktreesRoot,
+      daemonConfigStore,
+      workspaceGitService,
+      github,
+      agentManager,
+      agentStorage,
+      terminalManager,
+      logger,
+      findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+      listActiveWorkspaces: listActiveWorkspacesExternal,
+      getAutoArchivedChangeRequestUrl: async (workspaceId) =>
+        (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
+      archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+      markWorkspaceArchiving: markWorkspaceArchivingExternal,
+      clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+      emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+    },
   });
 
   const createPaseoWorktreeForTools = async (
@@ -1615,6 +1617,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
+    autoArchiveOnMergeSubscription.unsubscribe();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();

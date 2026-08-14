@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   archiveIfSafe,
   type ArchiveIfSafeDependencies,
+  type ArchiveIfSafeOutcome,
   type AutoArchiveArchiveOptions,
 } from "./archive-if-safe.js";
 import type { ArchiveResult, ActiveWorkspaceRef } from "../workspace-archive-service.js";
@@ -73,6 +74,7 @@ function createLogger(): Logger {
     child: () => logger,
     info: vi.fn(),
     warn: vi.fn(),
+    debug: vi.fn(),
   };
   return logger as unknown as Logger;
 }
@@ -84,6 +86,7 @@ function createHarness(overrides?: {
   isPaseoOwnedWorktreeCwd?: ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   archiveByScope?: ArchiveIfSafeDependencies["archiveByScope"];
   resolveWorkspaceIdAtPath?: ArchiveIfSafeDependencies["resolveWorkspaceIdAtPath"];
+  hasWorkspaceInFlightRun?: (workspaceId: string) => boolean;
 }) {
   const getConfig = vi.fn(() => ({
     autoArchiveAfterMerge: overrides?.autoArchiveAfterMerge ?? true,
@@ -94,6 +97,7 @@ function createHarness(overrides?: {
   const workspaceGitService = {
     getSnapshot,
   } as unknown as AutoArchiveArchiveOptions["workspaceGitService"];
+  const hasWorkspaceInFlightRun = vi.fn(overrides?.hasWorkspaceInFlightRun ?? (() => false));
   const options: AutoArchiveArchiveOptions = {
     paseoHome: PASEO_HOME,
     daemonConfigStore: {
@@ -101,7 +105,9 @@ function createHarness(overrides?: {
     } as unknown as AutoArchiveArchiveOptions["daemonConfigStore"],
     workspaceGitService,
     github: {} as AutoArchiveArchiveOptions["github"],
-    agentManager: {} as AutoArchiveArchiveOptions["agentManager"],
+    agentManager: {
+      hasWorkspaceInFlightRun,
+    } as unknown as AutoArchiveArchiveOptions["agentManager"],
     agentStorage: {} as AutoArchiveArchiveOptions["agentStorage"],
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
     findWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
@@ -148,6 +154,7 @@ function createHarness(overrides?: {
     deps,
     getConfig,
     getSnapshot,
+    hasWorkspaceInFlightRun,
     inFlight,
     log,
     options,
@@ -160,8 +167,8 @@ async function runArchiveIfSafe(
     cwd?: string;
     pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   },
-): Promise<void> {
-  await archiveIfSafe({
+): Promise<ArchiveIfSafeOutcome> {
+  return await archiveIfSafe({
     cwd: overrides?.cwd ?? CWD,
     pullRequest:
       overrides && "pullRequest" in overrides
@@ -301,6 +308,7 @@ function createRealOutcomeHarness(input: {
     } as unknown as AutoArchiveArchiveOptions["workspaceGitService"],
     github: createGitHubServiceStub(),
     agentManager: {
+      hasWorkspaceInFlightRun: () => false,
       listAgents: () => [],
       archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
       archiveSnapshot: vi.fn(async () => {
@@ -375,28 +383,59 @@ describe("archiveIfSafe", () => {
     const harness = createHarness();
     harness.inFlight.add(CWD);
 
-    await runArchiveIfSafe(harness);
+    const outcome = await runArchiveIfSafe(harness);
 
     expect(harness.getSnapshot).not.toHaveBeenCalled();
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
     expect(harness.inFlight.has(CWD)).toBe(true);
+    // Distinct from "skipped": a collision with another in-flight check for
+    // this cwd is a transient concurrency artifact, not a verdict that the
+    // workspace is ineligible — callers must not stop watching it for this.
+    expect(outcome).toEqual({ status: "inconclusive" });
   });
 
-  test("logs and skips when reading the snapshot fails", async () => {
+  test("is inconclusive (not skipped) when reading the snapshot fails on the retry too", async () => {
     const harness = createHarness({
       getSnapshot: async () => {
         throw new Error("snapshot failed");
       },
     });
 
-    await runArchiveIfSafe(harness);
+    const outcome = await runArchiveIfSafe(harness);
 
     expect(harness.log.warn).toHaveBeenCalledWith(
       { err: expect.any(Error), cwd: CWD },
-      "Failed to read snapshot for auto-archive; skipping",
+      "Failed to read snapshot for auto-archive after a retry; will try again later",
     );
+    expect(harness.getSnapshot).toHaveBeenCalledTimes(2);
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
     expect(harness.inFlight.has(CWD)).toBe(false);
+    // Not "skipped": a repeated I/O failure is not a verdict about the
+    // workspace, so callers must keep this cwd on their retry list.
+    expect(outcome).toEqual({ status: "inconclusive" });
+  });
+
+  test("recovers from a single transient snapshot-read failure and archives", async () => {
+    let callCount = 0;
+    const harness = createHarness({
+      getSnapshot: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("transient snapshot failure");
+        }
+        return createSnapshot();
+      },
+    });
+
+    const outcome = await runArchiveIfSafe(harness);
+
+    expect(harness.getSnapshot).toHaveBeenCalledTimes(2);
+    expect(outcome).toEqual({ status: "archived" });
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+    expect(harness.log.debug).toHaveBeenCalledWith(
+      { err: expect.any(Error), cwd: CWD },
+      "Failed to read snapshot for auto-archive; retrying once",
+    );
   });
 
   test("does nothing when there is no snapshot", async () => {
@@ -454,20 +493,140 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
-  test("logs and does not throw when archiving fails", async () => {
+  test("does nothing when the merged PR's head branch does not match this worktree's branch", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: "unrelated-branch" } }),
+    });
+
+    const outcome = await runArchiveIfSafe(harness, {
+      pullRequest: createPullRequest({ headRefName: "feature", isMerged: true }),
+    });
+
+    expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ status: "skipped" });
+  });
+
+  test("does nothing when the worktree has no resolvable current branch", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: null } }),
+    });
+
+    await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+  });
+
+  test("archives when the merged PR's head branch matches this worktree's branch", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: "feature" } }),
+    });
+
+    const outcome = await runArchiveIfSafe(harness, {
+      pullRequest: createPullRequest({ headRefName: "feature", isMerged: true }),
+    });
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ status: "archived" });
+  });
+
+  test("does not (yet) archive a forked-PR checkout using the owner/branch local-name convention", async () => {
+    // Known limitation: a worktree checked out from a fork PR can get a local
+    // branch named "<owner>/<headRef>" (see doesLocalBranchNameIdentifyTrackedHead
+    // in checkout-git.ts), but WorkspaceGitRuntimeSnapshot's pullRequest has no
+    // headRepositoryOwner to verify that prefix against — a suffix-only match
+    // would wrongly match an unrelated "otherowner/feature" branch too, so this
+    // case intentionally stays unmatched (safe direction: never over-archive).
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: "contributor/feature" } }),
+    });
+
+    const outcome = await runArchiveIfSafe(harness, {
+      pullRequest: createPullRequest({ headRefName: "feature", isMerged: true }),
+    });
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ status: "skipped" });
+  });
+
+  test("does not archive an unrelated sibling branch that merely shares a suffix with the head ref", async () => {
+    const harness = createHarness({
+      getSnapshot: async () => createSnapshot({ git: { currentBranch: "bob/feature" } }),
+    });
+
+    const outcome = await runArchiveIfSafe(harness, {
+      pullRequest: createPullRequest({ headRefName: "feature", isMerged: true }),
+    });
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ status: "skipped" });
+  });
+
+  test("defers instead of archiving when the workspace has an in-flight run", async () => {
+    const harness = createHarness({
+      hasWorkspaceInFlightRun: (workspaceId) => workspaceId === "ws-auto-archive",
+    });
+
+    const outcome = await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ status: "deferred", workspaceId: "ws-auto-archive" });
+    expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("uses the workspace-scoped liveness check, not a per-agent one — this must include internal agents", async () => {
+    const harness = createHarness({
+      hasWorkspaceInFlightRun: (workspaceId) => workspaceId === "ws-auto-archive",
+    });
+
+    await runArchiveIfSafe(harness);
+
+    // The workspace-scoped check (AgentManager.hasWorkspaceInFlightRun) walks every
+    // live agent including internal ones (e.g. branch-name/git-metadata generators).
+    // A per-agent-id check built on the internal-filtering listAgents() would miss
+    // those and archive out from under them (#2886).
+    expect(harness.hasWorkspaceInFlightRun).toHaveBeenCalledWith("ws-auto-archive");
+  });
+
+  test("ignores other workspaces when checking liveness", async () => {
+    const harness = createHarness({
+      hasWorkspaceInFlightRun: (workspaceId) => workspaceId === "ws-other-workspace",
+    });
+
+    const outcome = await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ status: "archived" });
+  });
+
+  test("archives once the workspace has no in-flight run", async () => {
+    const harness = createHarness({
+      hasWorkspaceInFlightRun: () => false,
+    });
+
+    const outcome = await runArchiveIfSafe(harness);
+
+    expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ status: "archived" });
+  });
+
+  test("logs and does not throw when archiving fails, and stays inconclusive so it retries later", async () => {
     const harness = createHarness({
       archiveByScope: async () => {
         throw new Error("archive failed");
       },
     });
 
-    await runArchiveIfSafe(harness);
+    const outcome = await runArchiveIfSafe(harness);
 
     expect(harness.log.warn).toHaveBeenCalledWith(
       { err: expect.any(Error), cwd: CWD },
-      "Auto-archive after merge failed",
+      "Auto-archive after merge failed; will try again later",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+    // A failed archive attempt (e.g. a transient filesystem error) is not a
+    // verdict that the workspace is ineligible — keep it on the retry list.
+    expect(outcome).toEqual({ status: "inconclusive" });
   });
 
   test("archives a clean Paseo-owned worktree after merge", async () => {

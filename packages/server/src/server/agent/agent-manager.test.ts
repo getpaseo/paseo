@@ -6068,6 +6068,46 @@ test("subscribe does not emit state events for internal agents to global subscri
   expect(receivedEvents.filter((id) => id === generatedAgentIds[1]).length).toBe(0);
 });
 
+test("hasWorkspaceInFlightRun sees an internal agent's in-flight run that listAgents hides", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-liveness-"));
+  const workspaceId = "ws-internal-liveness";
+  const turnId = "turn-internal-liveness";
+  let session: ControlledInterruptSession | null = null;
+  class HoldingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new ControlledInterruptSession(config, turnId, async () => {});
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new HoldingClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  const internalAgent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId },
+  );
+
+  const run = manager.streamAgent(internalAgent.id, "go");
+  void (async () => {
+    for await (const _event of run) {
+      // Keep the foreground stream subscribed until the controlled turn settles.
+    }
+  })();
+  await manager.waitForAgentRunStart(internalAgent.id);
+
+  try {
+    expect(manager.listAgents().some((agent) => agent.workspaceId === workspaceId)).toBe(false);
+    expect(manager.hasWorkspaceInFlightRun(workspaceId)).toBe(true);
+    expect(manager.hasWorkspaceInFlightRun("some-other-workspace")).toBe(false);
+  } finally {
+    await manager.closeAgent(internalAgent.id);
+  }
+});
+
 test("subscribe hides provider subagents of internal parents from global subscribers", async () => {
   const internalAgentId = "00000000-0000-4000-8000-000000000117";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-provider-child-"));
