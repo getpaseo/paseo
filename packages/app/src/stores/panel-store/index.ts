@@ -89,6 +89,9 @@ export interface PanelState {
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
   explorerFilesSplitRatio: number;
+  // Content-search panel (Ctrl+L) open state per workspace explorer key.
+  // Transient — deliberately not persisted.
+  contentSearchOpenByWorkspace: Record<string, boolean>;
 
   // Actions
   toggleFocusMode: () => void;
@@ -119,6 +122,8 @@ export interface PanelState {
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
   setExplorerFilesSplitRatio: (ratio: number) => void;
+  openContentSearch: (workspaceKey: string) => void;
+  setContentSearchOpen: (workspaceKey: string, open: boolean) => void;
 }
 
 const DEFAULT_DESKTOP_OPEN = isWeb;
@@ -156,6 +161,7 @@ export const usePanelStore = create<PanelState>()(
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
       explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+      contentSearchOpenByWorkspace: {},
 
       toggleFocusMode: () =>
         set((state) => ({
@@ -317,6 +323,26 @@ export const usePanelStore = create<PanelState>()(
           explorerFilesSplitRatio: Number.isFinite(ratio)
             ? clampExplorerFilesSplitRatio(ratio)
             : DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+        }),
+      openContentSearch: (workspaceKey) =>
+        set((state) => ({
+          contentSearchOpenByWorkspace: {
+            ...state.contentSearchOpenByWorkspace,
+            [workspaceKey]: true,
+          },
+        })),
+      setContentSearchOpen: (workspaceKey, open) =>
+        set((state) => {
+          if (Boolean(state.contentSearchOpenByWorkspace[workspaceKey]) === open) {
+            return state;
+          }
+          const next = { ...state.contentSearchOpenByWorkspace };
+          if (open) {
+            next[workspaceKey] = true;
+          } else {
+            delete next[workspaceKey];
+          }
+          return { contentSearchOpenByWorkspace: next };
         }),
     }),
     {

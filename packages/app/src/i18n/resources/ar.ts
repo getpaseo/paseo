@@ -429,6 +429,12 @@ export const ar: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "البحث في الملفات…",
+        close: "إغلاق البحث",
+        noResults: "لا نتائج",
+        truncated: "تم اقتطاع النتائج",
+      },
       sort: {
         name: "اسم",
         modified: "معدل",

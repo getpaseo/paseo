@@ -65,6 +65,7 @@ import { useFileDownload } from "@/hooks/use-file-download";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
+import { ContentSearchPanel } from "@/components/content-search-panel";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
@@ -481,6 +482,27 @@ export function FileExplorerPane({
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryDuplicate === true,
   );
   const [pendingEdit, setPendingEdit] = useState<ExplorerPendingEdit | null>(null);
+  // Content-search panel (Ctrl+L) — per-workspace open flag in the panel store.
+  const contentSearchOpen = usePanelStore((state) =>
+    workspaceStateKey ? Boolean(state.contentSearchOpenByWorkspace[workspaceStateKey]) : false,
+  );
+  const setContentSearchOpen = usePanelStore((state) => state.setContentSearchOpen);
+  // COMPAT(fsContentSearch): added in v0.3.2, remove gate after 2027-08-11.
+  const fsContentSearchEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fsContentSearch === true,
+  );
+  const showContentSearch = contentSearchOpen && fsContentSearchEnabled;
+  const handleCloseContentSearch = useCallback(() => {
+    if (workspaceStateKey) {
+      setContentSearchOpen(workspaceStateKey, false);
+    }
+  }, [setContentSearchOpen, workspaceStateKey]);
+  const handleContentSearchOpenFile = useCallback(
+    (relPath: string) => {
+      onOpenFile?.(relPath);
+    },
+    [onOpenFile],
+  );
   const downloadFile = useFileDownload({
     serverId,
     workspaceId,
@@ -1064,6 +1086,14 @@ export function FileExplorerPane({
       }}
       style={styles.container}
     >
+      {showContentSearch && workspaceStateKey ? (
+        <ContentSearchPanel
+          serverId={serverId}
+          workspaceRoot={normalizedWorkspaceRoot}
+          onClose={handleCloseContentSearch}
+          onOpenFile={handleContentSearchOpenFile}
+        />
+      ) : null}
       <FileExplorerPaneContent
         error={error}
         showInitialLoading={showInitialLoading}

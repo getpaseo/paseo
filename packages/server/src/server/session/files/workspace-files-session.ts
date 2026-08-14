@@ -6,6 +6,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
+  ContentSearchRequest,
   FileDownloadTokenRequest,
   FileEntryCreateRequest,
   FileEntryDeleteRequest,
@@ -33,6 +34,7 @@ import {
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
+import { searchFileContents } from "../../file-explorer/content-search.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
 
 /**
@@ -216,6 +218,53 @@ export class WorkspaceFilesSession {
   dispose(): void {
     for (const unsubscribe of this.fileSubscriptions.values()) unsubscribe();
     this.fileSubscriptions.clear();
+  }
+
+  async handleContentSearchRequest(request: ContentSearchRequest, source?: object): Promise<void> {
+    const { cwd, query, requestId } = request;
+    const trimmedCwd = cwd.trim();
+    if (!trimmedCwd) {
+      this.host.emit(
+        {
+          type: "fs.content_search.response",
+          payload: { cwd, query, files: [], truncated: false, error: "cwd is required", requestId },
+        },
+        source,
+      );
+      return;
+    }
+    try {
+      const result = await searchFileContents(trimmedCwd, query);
+      this.host.emit(
+        {
+          type: "fs.content_search.response",
+          payload: {
+            cwd: trimmedCwd,
+            query,
+            files: result.files,
+            truncated: result.truncated,
+            error: null,
+            requestId,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      this.host.emit(
+        {
+          type: "fs.content_search.response",
+          payload: {
+            cwd: trimmedCwd,
+            query,
+            files: [],
+            truncated: false,
+            error: error instanceof Error ? error.message : String(error),
+            requestId,
+          },
+        },
+        source,
+      );
+    }
   }
 
   async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {

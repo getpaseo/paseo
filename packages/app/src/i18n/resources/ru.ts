@@ -432,6 +432,12 @@ export const ru: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "Поиск в файлах…",
+        close: "Закрыть поиск",
+        noResults: "Нет результатов",
+        truncated: "Результаты усечены",
+      },
       sort: {
         name: "Имя",
         modified: "Модифицированный",

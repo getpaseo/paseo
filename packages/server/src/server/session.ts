@@ -1,7 +1,6 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -253,6 +252,7 @@ import {
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import { scanForNestedCheckouts } from "../utils/nested-checkout-scan.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
@@ -2171,6 +2171,8 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
+      case "fs.content_search.request":
+        return this.workspaceFilesSession.handleContentSearchRequest(msg, source);
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":
@@ -3944,46 +3946,30 @@ export class Session {
     msg: ProjectNestedReposScanRequest,
   ): Promise<void> {
     const { parentCwd, requestId } = msg;
+    let resolvedRoot: string;
     try {
-      const root = expandTilde(parentCwd);
-      const resolvedRoot = resolve(root);
-      let entries: Dirent[];
-      try {
-        entries = await readdir(resolvedRoot, { withFileTypes: true });
-      } catch {
-        this.emit({
-          type: "project.nested_repos.scan_response",
-          payload: { parentCwd: resolvedRoot, repos: [], error: null, requestId },
-        });
-        return;
-      }
-      const repos = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) {
-          continue;
-        }
-        const dir = resolve(resolvedRoot, entry.name);
-        let hasGitDir = false;
-        try {
-          const dotGit = await lstat(resolve(dir, ".git"));
-          hasGitDir = dotGit.isDirectory() || dotGit.isFile();
-        } catch {
-          hasGitDir = false;
-        }
-        if (!hasGitDir) {
-          continue;
-        }
-        repos.push({ path: dir, name: entry.name, isWorktree: false, branch: null });
-      }
+      resolvedRoot = resolve(expandTilde(parentCwd));
+    } catch {
       this.emit({
         type: "project.nested_repos.scan_response",
-        payload: { parentCwd: resolvedRoot, repos, error: null, requestId },
+        payload: { parentCwd, repos: [], error: "Invalid path", requestId },
+      });
+      return;
+    }
+    try {
+      // Depth-2 scan (hidden directories included) that reports main repos and
+      // linked worktrees alike, with resolved branch + worktree flag. Cached in
+      // the scan util for a short TTL to keep sidebar re-mounts cheap.
+      const checkouts = await scanForNestedCheckouts(resolvedRoot);
+      this.emit({
+        type: "project.nested_repos.scan_response",
+        payload: { parentCwd: resolvedRoot, repos: checkouts, error: null, requestId },
       });
     } catch (error) {
       this.emit({
         type: "project.nested_repos.scan_response",
         payload: {
-          parentCwd: resolve(expandTilde(parentCwd)),
+          parentCwd: resolvedRoot,
           repos: [],
           error: error instanceof Error ? error.message : String(error),
           requestId,

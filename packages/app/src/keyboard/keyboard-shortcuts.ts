@@ -156,6 +156,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   general: [
     "toggle-command-center",
     "search-files",
+    "search-file-contents",
     "show-shortcuts",
     "toggle-settings",
     "cycle-theme",
@@ -321,6 +322,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "search-files",
       section: "general",
       label: "Search files",
+    },
+  },
+
+  // --- Search in file contents (workspace file explorer panel) ---
+  {
+    id: "file-search-cmd-l-mac",
+    action: "file.search",
+    combo: "Cmd+L",
+    when: { mac: true, commandCenter: false, terminal: false },
+    help: {
+      id: "search-file-contents",
+      section: "general",
+      label: "Search in files",
+    },
+  },
+  {
+    id: "file-search-ctrl-l-non-mac",
+    action: "file.search",
+    combo: "Ctrl+L",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "search-file-contents",
+      section: "general",
+      label: "Search in files",
     },
   },
 

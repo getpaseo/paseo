@@ -433,6 +433,12 @@ export const ptBR: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "Buscar nos arquivos…",
+        close: "Fechar busca",
+        noResults: "Nenhum resultado",
+        truncated: "Resultados truncados",
+      },
       sort: {
         name: "Nome",
         modified: "Modificado",
