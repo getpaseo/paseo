@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import {
+  SIDEBAR_UNLABELLED_LABEL_KEY,
+  type SidebarLabelMatch,
+  type SidebarLabelState,
+} from "@/stores/sidebar-view-store";
+import {
   filterWorkspacesByLabels,
   groupWorkspacesByLabel,
   labelWorkspaceGroups,
@@ -50,98 +55,45 @@ describe("sidebar label filtering and grouping", () => {
     workspace("three", []),
   ];
 
-  test("composes include-any, include-all, exclusions, and unlabelled semantics", () => {
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: ["backend", "urgent"],
-        exclude: [],
-        match: "any",
-        includeUnlabelled: false,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["one", "two"]);
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: ["backend", "urgent"],
-        exclude: [],
-        match: "all",
-        includeUnlabelled: false,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["one"]);
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: ["backend"],
-        exclude: ["urgent"],
-        match: "any",
-        includeUnlabelled: false,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["two"]);
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: [],
-        exclude: ["urgent"],
-        match: "any",
-        includeUnlabelled: false,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["two", "three"]);
+  function filtered(labels: Record<string, SidebarLabelState>, match: SidebarLabelMatch = "any") {
+    return filterWorkspacesByLabels({ workspaces, labels, match }).map(
+      (entry) => entry.workspaceId,
+    );
+  }
+
+  test("composes include-any, include-all, and exclusions", () => {
+    expect(filtered({})).toEqual(["one", "two", "three"]);
+    expect(filtered({ backend: "include", urgent: "include" })).toEqual(["one", "two"]);
+    expect(filtered({ backend: "include", urgent: "include" }, "all")).toEqual(["one"]);
+    expect(filtered({ backend: "include", urgent: "exclude" })).toEqual(["two"]);
+    expect(filtered({ urgent: "exclude" })).toEqual(["two", "three"]);
   });
 
-  test("models Unlabelled explicitly for include, exclude, and host composition", () => {
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: [],
-        exclude: [],
-        match: "any",
-        includeUnlabelled: true,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["three"]);
-    expect(
-      filterWorkspacesByLabels({
-        workspaces,
-        include: [],
-        exclude: [],
-        match: "any",
-        includeUnlabelled: false,
-        excludeUnlabelled: true,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["one", "two"]);
-
-    const hostFiltered = [
-      ...workspaces,
-      { ...workspace("other-unlabelled", []), serverId: "other-host" },
-    ].filter((entry) => entry.serverId === "other-host");
-    expect(
-      filterWorkspacesByLabels({
-        workspaces: hostFiltered,
-        include: ["backend"],
-        exclude: [],
-        match: "any",
-        includeUnlabelled: true,
-        excludeUnlabelled: false,
-      }).map((entry) => entry.workspaceId),
-    ).toEqual(["other-unlabelled"]);
+  test("treats a lone include the same under either match mode", () => {
+    expect(filtered({ urgent: "include" }, "all")).toEqual(filtered({ urgent: "include" }));
   });
 
-  test("deduplicates cross-host spelling variants before applying match-all", () => {
+  test("models Unlabelled as a row in the same map", () => {
+    expect(filtered({ [SIDEBAR_UNLABELLED_LABEL_KEY]: "include" })).toEqual(["three"]);
+    expect(filtered({ [SIDEBAR_UNLABELLED_LABEL_KEY]: "exclude" })).toEqual(["one", "two"]);
+    expect(filtered({ backend: "include", [SIDEBAR_UNLABELLED_LABEL_KEY]: "include" })).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+    expect(
+      filtered({ backend: "include", [SIDEBAR_UNLABELLED_LABEL_KEY]: "include" }, "all"),
+    ).toEqual([]);
+  });
+
+  test("reads whitespace-only label names as no label rather than as the Unlabelled key", () => {
     expect(
       filterWorkspacesByLabels({
-        workspaces,
-        include: ["URGENT", " urgent "],
-        exclude: [],
-        match: "all",
-        includeUnlabelled: false,
-        excludeUnlabelled: false,
+        workspaces: [workspace("blank", ["   "])],
+        labels: { [SIDEBAR_UNLABELLED_LABEL_KEY]: "include" },
+        match: "any",
       }).map((entry) => entry.workspaceId),
-    ).toEqual(["one"]);
+    ).toEqual(["blank"]);
   });
 
   test("duplicates multi-labelled workspaces and places Unlabelled last", () => {

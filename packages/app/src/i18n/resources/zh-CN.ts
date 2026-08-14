@@ -976,15 +976,12 @@ export const zhCN: TranslationResources = {
     accessibility: {
       addKeepOpen: "添加{{name}}并保持标签菜单打开",
       removeKeepOpen: "移除{{name}}并保持标签菜单打开",
-      color: "{{color}}标签颜色",
       group: "{{label}}组",
     },
     filter: {
-      include: "包含",
-      exclude: "排除",
-      matchAny: "匹配任一已包含标签",
-      matchAll: "匹配所有已包含标签",
-      clear: "清除标签筛选",
+      matchAny: "匹配任一",
+      matchAll: "匹配全部",
+      clear: "清除筛选",
       noMatchesTitle: "没有匹配的工作区",
       noMatchesDescription: "更改或清除标签筛选以查看工作区。",
     },

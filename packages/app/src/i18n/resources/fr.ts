@@ -1017,15 +1017,12 @@ export const fr: TranslationResources = {
     accessibility: {
       addKeepOpen: "Ajouter {{name}} et garder les étiquettes ouvertes",
       removeKeepOpen: "Retirer {{name}} et garder les étiquettes ouvertes",
-      color: "Couleur d’étiquette {{color}}",
       group: "Groupe {{label}}",
     },
     filter: {
-      include: "Inclure",
-      exclude: "Exclure",
-      matchAny: "Correspondre à une étiquette incluse",
-      matchAll: "Correspondre à toutes les étiquettes incluses",
-      clear: "Effacer le filtre d’étiquettes",
+      matchAny: "Correspondre à l’une",
+      matchAll: "Correspondre à toutes",
+      clear: "Effacer le filtre",
       noMatchesTitle: "Aucun espace de travail ne correspond",
       noMatchesDescription:
         "Modifiez ou effacez le filtre d’étiquettes pour afficher les espaces de travail.",

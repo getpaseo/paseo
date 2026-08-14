@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
   type ComponentType,
+  type PropsWithChildren,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -11,6 +12,7 @@ import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
+  Circle,
   CircleCheck,
   CircleDashed,
   Clock,
@@ -24,6 +26,7 @@ import {
   Settings2,
   Tag,
   Type,
+  X,
 } from "lucide-react-native";
 import {
   MenuItem,
@@ -39,16 +42,18 @@ import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import {
-  countSidebarLabelSelections,
-  sidebarLabelSelectionIncludes,
-  toggleSidebarLabelSelection,
+  hasActiveSidebarLabelFilter,
+  SIDEBAR_UNLABELLED_LABEL_KEY,
   type SidebarGroupMode,
+  type SidebarLabelState,
 } from "@/stores/sidebar-view-store";
+import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
+import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -56,10 +61,32 @@ const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMute
 const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
+const ThemedCircle = withUnistyles(Circle);
+const ThemedX = withUnistyles(X);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
 const MENU_WIDTH = 232;
+
+/**
+ * Excluded rows carry this where an included row carries `MenuItem`'s own check.
+ *
+ * `X` and `Check` are the same lucide pair — same stroke, same ink bounds at the same 16 — so the
+ * trailing rail does not shift as a row cycles through the three states. Anything heavier here
+ * (`Ban`, say) fills its box where the check does not, and the whole column twitches.
+ *
+ * One element for the life of the module: there is nothing per-row about it.
+ */
+const EXCLUDED_MARK = <ThemedX size={16} uniProps={mutedIconMapping} />;
+
+/**
+ * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
+ *
+ * 11 rather than the dot's 10 because lucide draws a `size` box and puts a stroked r=10-of-24
+ * circle inside it, so the ring's outer edge lands on the dots' edge at 11 and 1pt short at 10.
+ * The glyphs are what have to agree here, not the boxes they are centred in.
+ */
+const UNLABELLED_MARK = <ThemedCircle size={11} uniProps={mutedIconMapping} />;
 
 type OptionIcon = ComponentType<{
   size: number;
@@ -163,6 +190,10 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   );
 
   const showHostFilter = hosts.length > 1;
+  // Nothing to filter by means no row at all. The active-filter half is not redundant: the merged
+  // catalog only counts hosts that are online, so a host dropping off would otherwise take away
+  // the only way back to a filter that is still hiding workspaces.
+  const showLabelFilter = labels.length > 0 || hasActiveSidebarLabelFilter(preferences.labelFilter);
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
@@ -222,25 +253,17 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         content: <HostFilterPage preferences={preferences} hosts={hosts} />,
       });
     }
-    definitions.push(
-      {
-        id: "labelInclude",
-        title: t("workspaceLabels.filter.include"),
-        content: <LabelFacetPage facet="include" labels={labels} preferences={preferences} />,
-      },
-      {
-        id: "labelExclude",
-        title: t("workspaceLabels.filter.exclude"),
-        content: <LabelFacetPage facet="exclude" labels={labels} preferences={preferences} />,
-      },
-      {
+    if (showLabelFilter) {
+      definitions.push({
         id: "labelFilter",
         title: t("workspaceLabels.title"),
-        content: <LabelFilterPage preferences={preferences} onManage={openManager} />,
-      },
-    );
+        content: (
+          <LabelFilterPage labels={labels} preferences={preferences} onManage={openManager} />
+        ),
+      });
+    }
     return definitions;
-  }, [t, preferences, hosts, showHostFilter, labels, openManager]);
+  }, [t, preferences, hosts, showHostFilter, showLabelFilter, labels, openManager]);
 
   return (
     <>
@@ -291,19 +314,18 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
               </MenuSubTrigger>
             </>
           ) : null}
-          <MenuSeparator />
-          <MenuSubTrigger
-            id="labelFilter"
-            indicator={
-              preferences.labelFilter.include.length > 0 ||
-              preferences.labelFilter.exclude.length > 0 ||
-              preferences.labelFilter.includeUnlabelled ||
-              preferences.labelFilter.excludeUnlabelled
-            }
-            testID="sidebar-display-label-filter"
-          >
-            {t("workspaceLabels.title")}
-          </MenuSubTrigger>
+          {showLabelFilter ? (
+            <>
+              <MenuSeparator />
+              <MenuSubTrigger
+                id="labelFilter"
+                indicator={hasActiveSidebarLabelFilter(preferences.labelFilter)}
+                testID="sidebar-display-label-filter"
+              >
+                {t("workspaceLabels.title")}
+              </MenuSubTrigger>
+            </>
+          ) : null}
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />
@@ -311,72 +333,87 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   );
 }
 
+/**
+ * Every label you could filter by, wherever it lives, one row each.
+ *
+ * The catalog is the merged cross-host one on purpose: a workspace row draws its label in its own
+ * host's color because it would otherwise lie, but this page is the whole set of things to filter
+ * on and a per-host split would only make you visit it twice.
+ *
+ * Below the rows, what you can do with the selection — the match toggle once two labels are
+ * included, and Clear once anything is. Both are absent rather than disabled when they have
+ * nothing to act on, so the page is as long as the decision you are actually making.
+ */
 function LabelFilterPage({
+  labels,
   preferences,
   onManage,
 }: {
+  labels: ReturnType<typeof useWorkspaceLabelProjection>["labels"];
   preferences: Preferences;
   onManage: () => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const includeCount =
-    countSidebarLabelSelections(preferences.labelFilter.include) +
-    (preferences.labelFilter.includeUnlabelled ? 1 : 0);
-  const excludeCount =
-    countSidebarLabelSelections(preferences.labelFilter.exclude) +
-    (preferences.labelFilter.excludeUnlabelled ? 1 : 0);
-  const matchAny = useCallback(
-    () => preferences.setLabelFilter({ ...preferences.labelFilter, match: "any" }),
-    [preferences],
-  );
-  const matchAll = useCallback(
-    () => preferences.setLabelFilter({ ...preferences.labelFilter, match: "all" }),
-    [preferences],
-  );
+  const selections = preferences.labelFilter.labels;
+  const includeCount = Object.values(selections).filter((state) => state === "include").length;
+  const matchAny = useCallback(() => preferences.setLabelMatch("any"), [preferences]);
+  const matchAll = useCallback(() => preferences.setLabelMatch("all"), [preferences]);
   return (
     <>
-      <MenuSubTrigger
-        id="labelInclude"
-        value={includeCount ? String(includeCount) : undefined}
-        testID="sidebar-label-filter-include"
+      {labels.map((label) => (
+        <LabelFilterItem
+          key={workspaceLabelKey(label.name)}
+          name={label.name}
+          color={label.color}
+          state={selections[workspaceLabelKey(label.name)]}
+          onCycle={preferences.cycleLabelFilter}
+          testID={`sidebar-label-filter-option-${label.name}`}
+        >
+          {label.name}
+        </LabelFilterItem>
+      ))}
+      <LabelFilterItem
+        name={SIDEBAR_UNLABELLED_LABEL_KEY}
+        color={null}
+        state={selections[SIDEBAR_UNLABELLED_LABEL_KEY]}
+        onCycle={preferences.cycleLabelFilter}
+        testID="sidebar-label-filter-option-unlabelled"
       >
-        {t("workspaceLabels.filter.include")}
-      </MenuSubTrigger>
-      <MenuSubTrigger
-        id="labelExclude"
-        value={excludeCount ? String(excludeCount) : undefined}
-        testID="sidebar-label-filter-exclude"
-      >
-        {t("workspaceLabels.filter.exclude")}
-      </MenuSubTrigger>
-      {includeCount >= 2 ? (
+        {t("workspaceLabels.unlabelled")}
+      </LabelFilterItem>
+      {hasActiveSidebarLabelFilter(preferences.labelFilter) ? (
         <>
           <MenuSeparator />
+          {includeCount >= 2 ? (
+            <>
+              <MenuItem
+                selected={preferences.labelFilter.match === "any"}
+                closeOnSelect={false}
+                onSelect={matchAny}
+                testID="sidebar-label-filter-match-any"
+              >
+                {t("workspaceLabels.filter.matchAny")}
+              </MenuItem>
+              <MenuItem
+                selected={preferences.labelFilter.match === "all"}
+                closeOnSelect={false}
+                onSelect={matchAll}
+                testID="sidebar-label-filter-match-all"
+              >
+                {t("workspaceLabels.filter.matchAll")}
+              </MenuItem>
+            </>
+          ) : null}
           <MenuItem
-            selected={preferences.labelFilter.match === "any"}
             closeOnSelect={false}
-            onSelect={matchAny}
+            onSelect={preferences.clearLabelFilter}
+            testID="sidebar-label-filter-clear"
           >
-            {t("workspaceLabels.filter.matchAny")}
-          </MenuItem>
-          <MenuItem
-            selected={preferences.labelFilter.match === "all"}
-            closeOnSelect={false}
-            onSelect={matchAll}
-          >
-            {t("workspaceLabels.filter.matchAll")}
+            {t("workspaceLabels.filter.clear")}
           </MenuItem>
         </>
       ) : null}
       <MenuSeparator />
-      <MenuItem
-        disabled={includeCount === 0 && excludeCount === 0}
-        closeOnSelect={false}
-        onSelect={preferences.clearLabelFilter}
-        testID="sidebar-label-filter-clear"
-      >
-        {t("workspaceLabels.filter.clear")}
-      </MenuItem>
       <MenuItem onSelect={onManage} testID="sidebar-label-manage">
         {t("workspaceLabels.manage.open")}
       </MenuItem>
@@ -384,72 +421,46 @@ function LabelFilterPage({
   );
 }
 
-function LabelFacetPage({
-  facet,
-  labels,
-  preferences,
-}: {
-  facet: "include" | "exclude";
-  labels: ReturnType<typeof useWorkspaceLabelProjection>["labels"];
-  preferences: Preferences;
-}): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <>
-      {labels.map((label) => (
-        <LabelFacetItem
-          key={label.name.toLocaleLowerCase()}
-          name={label.name}
-          unlabelled={false}
-          facet={facet}
-          preferences={preferences}
-        />
-      ))}
-      <LabelFacetItem
-        name={t("workspaceLabels.unlabelled")}
-        unlabelled
-        facet={facet}
-        preferences={preferences}
-      />
-    </>
-  );
-}
-
-function LabelFacetItem({
+/**
+ * One label, cycling off -> include -> exclude -> off.
+ *
+ * Include is `MenuItem`'s own check, so the two marked states share the trailing rail by
+ * construction. Exclude also dims the row: a mark you have to identify is not a state you can
+ * read at a glance, and a label that has been ruled out should look pushed back next to the ones
+ * that are still in play.
+ */
+function LabelFilterItem({
   name,
-  unlabelled,
-  facet,
-  preferences,
-}: {
+  color,
+  state,
+  onCycle,
+  testID,
+  children,
+}: PropsWithChildren<{
   name: string;
-  unlabelled: boolean;
-  facet: "include" | "exclude";
-  preferences: Preferences;
-}): ReactElement {
-  const selected = preferences.labelFilter[facet];
-  const unlabelledField = facet === "include" ? "includeUnlabelled" : "excludeUnlabelled";
-  const isSelected = unlabelled
-    ? preferences.labelFilter[unlabelledField]
-    : sidebarLabelSelectionIncludes(selected, name);
-  const toggle = useCallback(() => {
-    if (unlabelled) {
-      preferences.setLabelFilter({
-        ...preferences.labelFilter,
-        [unlabelledField]: !isSelected,
-      });
-      return;
-    }
-    const next = toggleSidebarLabelSelection(selected, name);
-    preferences.setLabelFilter({ ...preferences.labelFilter, [facet]: next });
-  }, [facet, isSelected, name, preferences, selected, unlabelled, unlabelledField]);
+  /** `null` is Unlabelled, the one row with no color to stand for. */
+  color: WorkspaceLabelColor | null;
+  state: SidebarLabelState | undefined;
+  onCycle: (name: string) => void;
+  testID: string;
+}>): ReactElement {
+  const cycle = useCallback(() => onCycle(name), [name, onCycle]);
+  const leading = useMemo(
+    () => (color ? <WorkspaceLabelDot color={color} /> : UNLABELLED_MARK),
+    [color],
+  );
+  const excluded = state === "exclude";
   return (
     <MenuItem
-      selected={isSelected}
+      selected={state === "include"}
+      muted={excluded}
+      leading={leading}
+      trailing={excluded ? EXCLUDED_MARK : undefined}
       closeOnSelect={false}
-      onSelect={toggle}
-      testID={`sidebar-label-filter-${facet}-${unlabelled ? "unlabelled" : name}`}
+      onSelect={cycle}
+      testID={testID}
     >
-      {name}
+      {children}
     </MenuItem>
   );
 }

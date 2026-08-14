@@ -984,15 +984,12 @@ export const ar: TranslationResources = {
     accessibility: {
       addKeepOpen: "إضافة {{name}} وإبقاء التسميات مفتوحة",
       removeKeepOpen: "إزالة {{name}} وإبقاء التسميات مفتوحة",
-      color: "لون التسمية {{color}}",
       group: "مجموعة {{label}}",
     },
     filter: {
-      include: "تضمين",
-      exclude: "استبعاد",
-      matchAny: "مطابقة أي تسمية مضمنة",
-      matchAll: "مطابقة كل التسميات المضمنة",
-      clear: "مسح عامل تصفية التسميات",
+      matchAny: "مطابقة أي منها",
+      matchAll: "مطابقة جميعها",
+      clear: "مسح عامل التصفية",
       noMatchesTitle: "لا توجد مساحات عمل مطابقة",
       noMatchesDescription: "غيّر عامل تصفية التسميات أو امسحه لعرض مساحات العمل.",
     },

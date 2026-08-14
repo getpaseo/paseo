@@ -995,15 +995,12 @@ export const ja: TranslationResources = {
     accessibility: {
       addKeepOpen: "{{name}}を追加してラベルを開いたままにする",
       removeKeepOpen: "{{name}}を削除してラベルを開いたままにする",
-      color: "{{color}}のラベル色",
       group: "{{label}}グループ",
     },
     filter: {
-      include: "含める",
-      exclude: "除外",
-      matchAny: "含めたラベルのいずれかに一致",
-      matchAll: "含めたすべてのラベルに一致",
-      clear: "ラベルフィルターをクリア",
+      matchAny: "いずれかに一致",
+      matchAll: "すべてに一致",
+      clear: "フィルターをクリア",
       noMatchesTitle: "一致するワークスペースがありません",
       noMatchesDescription:
         "ワークスペースを表示するにはラベルフィルターを変更またはクリアしてください。",

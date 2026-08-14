@@ -1,6 +1,6 @@
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import type { SidebarLabelMatch } from "@/stores/sidebar-view-store";
+import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
 import type {
   WorkspaceLabelColor,
   WorkspaceLabelDefinition,
@@ -33,31 +33,31 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
   }));
 }
 
-export function filterWorkspacesByLabels(input: {
-  workspaces: readonly SidebarWorkspaceEntry[];
-  include: readonly string[];
-  exclude: readonly string[];
-  includeUnlabelled: boolean;
-  excludeUnlabelled: boolean;
-  match: SidebarLabelMatch;
-}): SidebarWorkspaceEntry[] {
-  const include = new Set(input.include.map(workspaceLabelKey));
-  const exclude = new Set(input.exclude.map(workspaceLabelKey));
+/**
+ * Applies the Labels page's tri-state rows to the sidebar.
+ *
+ * `Unlabelled` is a row like any other, so it is a key in the same map rather than a pair of
+ * booleans beside it; the only thing that makes it special is what the key asks of a workspace.
+ * Exclusions win over inclusions, and `match: "all"` only has anything to say once two rows are
+ * included — with one, `every` and `some` are the same question.
+ */
+export function filterWorkspacesByLabels(
+  input: { workspaces: readonly SidebarWorkspaceEntry[] } & SidebarLabelFilter,
+): SidebarWorkspaceEntry[] {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const [key, state] of Object.entries(input.labels)) {
+    (state === "include" ? include : exclude).push(key);
+  }
   return input.workspaces.filter((workspace) => {
-    const labels = new Set((workspace.labels ?? []).map(workspaceLabelKey));
-    const unlabelled = labels.size === 0;
-    if (input.excludeUnlabelled && unlabelled) return false;
-    if ([...exclude].some((key) => labels.has(key))) return false;
-    const positiveCount = include.size + (input.includeUnlabelled ? 1 : 0);
-    if (positiveCount === 0) return true;
-    const matches = [
-      ...[...include].map((key) => labels.has(key)),
-      ...(input.includeUnlabelled ? [unlabelled] : []),
-    ];
-    if (input.match === "all" && positiveCount >= 2) {
-      return matches.every(Boolean);
-    }
-    return matches.some(Boolean);
+    // Whitespace-only names normalize away, so `size === 0` is exactly "carries no real label"
+    // and the empty key can only ever mean Unlabelled.
+    const keys = new Set((workspace.labels ?? []).map(workspaceLabelKey).filter(Boolean));
+    const matches = (key: string) =>
+      key === SIDEBAR_UNLABELLED_LABEL_KEY ? keys.size === 0 : keys.has(key);
+    if (exclude.some(matches)) return false;
+    if (include.length === 0) return true;
+    return input.match === "all" ? include.every(matches) : include.some(matches);
   });
 }
 

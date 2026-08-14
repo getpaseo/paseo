@@ -8,6 +8,7 @@ import {
   useSidebarViewStore,
   type SidebarGroupMode,
   type SidebarLabelFilter,
+  type SidebarLabelMatch,
 } from "@/stores/sidebar-view-store";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
@@ -31,7 +32,8 @@ export interface SidebarDisplayPreferences {
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   labelFilter: SidebarLabelFilter;
-  setLabelFilter: (filter: SidebarLabelFilter) => void;
+  cycleLabelFilter: (name: string) => void;
+  setLabelMatch: (match: SidebarLabelMatch) => void;
   clearLabelFilter: () => void;
 }
 
@@ -50,7 +52,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
-  const setLabelFilter = useSidebarViewStore((state) => state.setLabelFilter);
+  const cycleLabelFilter = useSidebarViewStore((state) => state.cycleLabelFilter);
+  const setLabelMatch = useSidebarViewStore((state) => state.setLabelMatch);
   const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
 
   const {
@@ -111,7 +114,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleHostFilter,
       clearHostFilters,
       labelFilter,
-      setLabelFilter,
+      cycleLabelFilter,
+      setLabelMatch,
       clearLabelFilter,
     }),
     [
@@ -129,7 +133,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleHostFilter,
       clearHostFilters,
       labelFilter,
-      setLabelFilter,
+      cycleLabelFilter,
+      setLabelMatch,
       clearLabelFilter,
     ],
   );

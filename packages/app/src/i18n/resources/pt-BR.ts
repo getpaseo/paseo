@@ -1009,15 +1009,12 @@ export const ptBR: TranslationResources = {
     accessibility: {
       addKeepOpen: "Adicionar {{name}} e manter as etiquetas abertas",
       removeKeepOpen: "Remover {{name}} e manter as etiquetas abertas",
-      color: "Cor de etiqueta {{color}}",
       group: "Grupo {{label}}",
     },
     filter: {
-      include: "Incluir",
-      exclude: "Excluir",
-      matchAny: "Corresponder a qualquer etiqueta incluída",
-      matchAll: "Corresponder a todas as etiquetas incluídas",
-      clear: "Limpar filtro de etiquetas",
+      matchAny: "Corresponder a qualquer uma",
+      matchAll: "Corresponder a todas",
+      clear: "Limpar filtro",
       noMatchesTitle: "Nenhum espaço de trabalho corresponde",
       noMatchesDescription: "Altere ou limpe o filtro de etiquetas para ver espaços de trabalho.",
     },

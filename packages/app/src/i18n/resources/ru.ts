@@ -1006,15 +1006,12 @@ export const ru: TranslationResources = {
     accessibility: {
       addKeepOpen: "Добавить {{name}} и оставить метки открытыми",
       removeKeepOpen: "Удалить {{name}} и оставить метки открытыми",
-      color: "Цвет метки: {{color}}",
       group: "Группа «{{label}}»",
     },
     filter: {
-      include: "Включить",
-      exclude: "Исключить",
-      matchAny: "Совпадает с любой включённой меткой",
-      matchAll: "Совпадает со всеми включёнными метками",
-      clear: "Очистить фильтр меток",
+      matchAny: "Совпадает с любой",
+      matchAll: "Совпадает со всеми",
+      clear: "Очистить фильтр",
       noMatchesTitle: "Нет подходящих рабочих пространств",
       noMatchesDescription:
         "Измените или очистите фильтр меток, чтобы увидеть рабочие пространства.",

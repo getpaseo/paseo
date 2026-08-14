@@ -993,15 +993,12 @@ export const en = {
     accessibility: {
       addKeepOpen: "Add {{name}} and keep labels open",
       removeKeepOpen: "Remove {{name}} and keep labels open",
-      color: "{{color}} label color",
       group: "{{label}} group",
     },
     filter: {
-      include: "Include",
-      exclude: "Exclude",
-      matchAny: "Match any included label",
-      matchAll: "Match all included labels",
-      clear: "Clear label filter",
+      matchAny: "Match any",
+      matchAll: "Match all",
+      clear: "Clear filter",
       noMatchesTitle: "No workspaces match",
       noMatchesDescription: "Change or clear the label filter to see workspaces.",
     },

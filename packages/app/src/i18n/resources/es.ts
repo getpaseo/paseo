@@ -1018,15 +1018,12 @@ export const es: TranslationResources = {
     accessibility: {
       addKeepOpen: "Añadir {{name}} y mantener las etiquetas abiertas",
       removeKeepOpen: "Quitar {{name}} y mantener las etiquetas abiertas",
-      color: "Color de etiqueta {{color}}",
       group: "Grupo {{label}}",
     },
     filter: {
-      include: "Incluir",
-      exclude: "Excluir",
-      matchAny: "Coincidir con cualquier etiqueta incluida",
-      matchAll: "Coincidir con todas las etiquetas incluidas",
-      clear: "Borrar filtro de etiquetas",
+      matchAny: "Coincidir con cualquiera",
+      matchAll: "Coincidir con todas",
+      clear: "Borrar filtro",
       noMatchesTitle: "Ningún espacio de trabajo coincide",
       noMatchesDescription: "Cambia o borra el filtro de etiquetas para ver espacios de trabajo.",
     },

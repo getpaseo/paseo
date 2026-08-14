@@ -121,8 +121,9 @@ test.describe("Workspace labels", () => {
 
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await page.getByTestId("sidebar-display-label-filter").click();
-      await page.getByTestId("sidebar-label-filter-include").click();
-      await page.getByTestId("sidebar-label-filter-include-Unused").click();
+      // Clear only exists once something is filtered, so the row has to be included first.
+      await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
+      await page.getByTestId("sidebar-label-filter-option-Unused").click();
 
       await expect(page.getByText("No workspaces match", { exact: true })).toBeVisible();
       await expect(page.getByTestId("sidebar-project-empty-state")).toBeHidden();
@@ -186,48 +187,44 @@ test.describe("Workspace labels", () => {
         await expect.poll(readWorkspaceLabels.bind(null, seeded)).toEqual(["Frontend", "Urgent"]);
       });
 
-      await test.step("include filtering composes with clear and label grouping", async () => {
+      await test.step("one label row cycles include, exclude, off and composes with grouping", async () => {
+        const labelledRow = page.getByTestId(
+          `sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`,
+        );
+        const unlabelledRow = page.getByTestId(
+          `sidebar-workspace-row-${getServerId()}:${unlabelled.workspaceId}`,
+        );
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await page.getByTestId("sidebar-display-label-filter").click();
-        await page.getByTestId("sidebar-label-filter-include").click();
-        await page.getByTestId("sidebar-label-filter-include-Urgent").click();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`),
-        ).toBeVisible();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${unlabelled.workspaceId}`),
-        ).toBeHidden();
 
-        await page.keyboard.press("Escape");
+        const urgent = page.getByTestId("sidebar-label-filter-option-Urgent");
+        await urgent.click();
+        await expect(labelledRow).toBeVisible();
+        await expect(unlabelledRow).toBeHidden();
+
+        await urgent.click();
+        await expect(labelledRow).toBeHidden();
+        await expect(unlabelledRow).toBeVisible();
+
+        await urgent.click();
+        await page.getByTestId("sidebar-label-filter-option-unlabelled").click();
+        await expect(labelledRow).toBeHidden();
+        await expect(unlabelledRow).toBeVisible();
+
+        // Two included labels are what the match toggle is for, and only then.
+        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeHidden();
+        await urgent.click();
+        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeVisible();
+        await page.getByTestId("sidebar-label-filter-match-all").click();
+        // Labelled and unlabelled at once is unsatisfiable, which empties the sidebar and takes
+        // the open menu down with it — so the way back is through the trigger, not the page.
+        await expect(labelledRow).toBeHidden();
+        await expect(unlabelledRow).toBeHidden();
+
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await page.getByTestId("sidebar-display-label-filter").click();
         await page.getByTestId("sidebar-label-filter-clear").click();
-        await page.getByTestId("sidebar-label-filter-exclude").click();
-        await page.getByTestId("sidebar-label-filter-exclude-Urgent").click();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`),
-        ).toBeHidden();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${unlabelled.workspaceId}`),
-        ).toBeVisible();
-
-        await page.keyboard.press("Escape");
-        await page.getByTestId("sidebar-display-preferences-menu").click();
-        await page.getByTestId("sidebar-display-label-filter").click();
-        await page.getByTestId("sidebar-label-filter-clear").click();
-        await page.getByTestId("sidebar-label-filter-include").click();
-        await page.getByTestId("sidebar-label-filter-include-unlabelled").click();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`),
-        ).toBeHidden();
-        await expect(
-          page.getByTestId(`sidebar-workspace-row-${getServerId()}:${unlabelled.workspaceId}`),
-        ).toBeVisible();
-
-        await page.keyboard.press("Escape");
-        await page.getByTestId("sidebar-display-preferences-menu").click();
-        await page.getByTestId("sidebar-display-label-filter").click();
-        await page.getByTestId("sidebar-label-filter-clear").click();
+        await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
         await page.keyboard.press("Escape");
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await page.getByTestId("sidebar-display-grouping").click();
@@ -249,8 +246,10 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("sidebar-label-manage").click();
         await expect(page.getByText("Manage labels", { exact: true })).toBeVisible();
         await page.getByTestId("workspace-label-manager-label-Urgent").click();
-        await expect(page.getByRole("radio", { name: "Red label color" })).toBeChecked();
-        await expect(page.getByRole("radio", { name: "Sky label color" })).not.toBeChecked();
+        // Phase 1's swatch names a colour by itself; the old "{{color}} label color" string is
+        // no longer rendered anywhere.
+        await expect(page.getByRole("radio", { name: "Red" })).toBeChecked();
+        await expect(page.getByRole("radio", { name: "Sky" })).not.toBeChecked();
         await page.getByTestId("workspace-label-manager-name").fill("Priority");
         await page.getByRole("button", { name: "Rename" }).click();
         await expect(page.getByTestId("workspace-label-manager-label-Priority")).toBeVisible();

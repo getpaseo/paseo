@@ -991,15 +991,12 @@ export const ko: TranslationResources = {
     accessibility: {
       addKeepOpen: "{{name}} 추가 후 레이블 열어 두기",
       removeKeepOpen: "{{name}} 제거 후 레이블 열어 두기",
-      color: "{{color}} 레이블 색상",
       group: "{{label}} 그룹",
     },
     filter: {
-      include: "포함",
-      exclude: "제외",
-      matchAny: "포함된 레이블 중 하나와 일치",
-      matchAll: "포함된 모든 레이블과 일치",
-      clear: "레이블 필터 지우기",
+      matchAny: "하나라도 일치",
+      matchAll: "모두 일치",
+      clear: "필터 지우기",
       noMatchesTitle: "일치하는 워크스페이스가 없습니다",
       noMatchesDescription: "워크스페이스를 보려면 레이블 필터를 변경하거나 지우세요.",
     },

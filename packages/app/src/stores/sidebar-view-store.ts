@@ -7,42 +7,35 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 export type SidebarGroupMode = "project" | "status" | "label";
 export type SidebarLabelMatch = "any" | "all";
+export type SidebarLabelState = "include" | "exclude";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
 const SIDEBAR_VIEW_STORE_VERSION = 3;
 
+/**
+ * The key standing for "this workspace carries no labels at all".
+ *
+ * `normalizeWorkspaceLabelName` trims, so no real label can ever normalize to the empty string
+ * and nothing in `labels` can collide with it. That is the whole reason the empty string is the
+ * choice: a sentinel like `"__unlabelled__"` would be a name a person is free to type.
+ */
+export const SIDEBAR_UNLABELLED_LABEL_KEY = "";
+
+/**
+ * What the sidebar's Labels page currently says.
+ *
+ * One entry per label the user has an opinion about, keyed by `workspaceLabelKey` — the page is a
+ * column of tri-state rows, and a row holds one value, so include and exclude cannot both be true
+ * for the same label by construction. Absent means the row is off.
+ */
 export interface SidebarLabelFilter {
-  include: string[];
-  exclude: string[];
-  includeUnlabelled: boolean;
-  excludeUnlabelled: boolean;
+  labels: Record<string, SidebarLabelState>;
   match: SidebarLabelMatch;
 }
 
-export function deduplicateSidebarLabelNames(names: readonly string[]): string[] {
-  const namesByKey = new Map<string, string>();
-  for (const name of names) {
-    const key = workspaceLabelKey(name);
-    if (key && !namesByKey.has(key)) namesByKey.set(key, name);
-  }
-  return [...namesByKey.values()];
-}
-
-export function sidebarLabelSelectionIncludes(names: readonly string[], name: string): boolean {
-  const key = workspaceLabelKey(name);
-  return names.some((candidate) => workspaceLabelKey(candidate) === key);
-}
-
-export function toggleSidebarLabelSelection(names: readonly string[], name: string): string[] {
-  const key = workspaceLabelKey(name);
-  const uniqueNames = deduplicateSidebarLabelNames(names);
-  const withoutName = uniqueNames.filter((candidate) => workspaceLabelKey(candidate) !== key);
-  return withoutName.length < uniqueNames.length ? withoutName : [...withoutName, name];
-}
-
-export function countSidebarLabelSelections(names: readonly string[]): number {
-  return deduplicateSidebarLabelNames(names).length;
+export function hasActiveSidebarLabelFilter(filter: SidebarLabelFilter): boolean {
+  return Object.keys(filter.labels).length > 0;
 }
 
 interface SidebarViewStoreState {
@@ -53,7 +46,9 @@ interface SidebarViewStoreState {
   setGroupMode: (mode: SidebarGroupMode) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
-  setLabelFilter: (filter: SidebarLabelFilter) => void;
+  /** One tap on a label row: off -> include -> exclude -> off. */
+  cycleLabelFilter: (name: string) => void;
+  setLabelMatch: (match: SidebarLabelMatch) => void;
   clearLabelFilter: () => void;
   reconcileHostFilters: (serverIds: readonly string[]) => void;
 }
@@ -66,10 +61,7 @@ interface SidebarViewPersistedState {
 
 const SidebarGroupModeSchema = z.enum(["project", "status", "label"]);
 const SidebarLabelFilterSchema = z.object({
-  include: z.array(z.string()),
-  exclude: z.array(z.string()),
-  includeUnlabelled: z.boolean().optional(),
-  excludeUnlabelled: z.boolean().optional(),
+  labels: z.record(z.string(), z.enum(["include", "exclude"])),
   match: z.enum(["any", "all"]),
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
@@ -122,15 +114,21 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
     groupMode: state.groupMode ?? "project",
     hostFilters: readHostFilters(state),
     labelFilter: state.labelFilter
-      ? {
-          ...state.labelFilter,
-          include: deduplicateSidebarLabelNames(state.labelFilter.include),
-          exclude: deduplicateSidebarLabelNames(state.labelFilter.exclude),
-          includeUnlabelled: state.labelFilter.includeUnlabelled ?? false,
-          excludeUnlabelled: state.labelFilter.excludeUnlabelled ?? false,
-        }
+      ? normalizeSidebarLabelFilter(state.labelFilter)
       : emptyLabelFilter(),
   };
+}
+
+/**
+ * Re-keys a persisted filter through `workspaceLabelKey`, so the invariant on `labels` holds for
+ * state that was written by an older build of this page rather than by the current one.
+ */
+function normalizeSidebarLabelFilter(filter: SidebarLabelFilter): SidebarLabelFilter {
+  const labels: Record<string, SidebarLabelState> = {};
+  for (const [name, state] of Object.entries(filter.labels)) {
+    labels[workspaceLabelKey(name)] = state;
+  }
+  return { labels, match: filter.match };
 }
 
 export function createSidebarViewStorage(
@@ -163,14 +161,16 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
             : [...state.hostFilters, serverId],
         })),
       clearHostFilters: () => set({ hostFilters: [] }),
-      setLabelFilter: (labelFilter) =>
-        set({
-          labelFilter: {
-            ...labelFilter,
-            include: deduplicateSidebarLabelNames(labelFilter.include),
-            exclude: deduplicateSidebarLabelNames(labelFilter.exclude),
-          },
+      cycleLabelFilter: (name) =>
+        set((state) => {
+          const key = workspaceLabelKey(name);
+          const labels = { ...state.labelFilter.labels };
+          if (labels[key] === undefined) labels[key] = "include";
+          else if (labels[key] === "include") labels[key] = "exclude";
+          else delete labels[key];
+          return { labelFilter: { ...state.labelFilter, labels } };
         }),
+      setLabelMatch: (match) => set((state) => ({ labelFilter: { ...state.labelFilter, match } })),
       clearLabelFilter: () => set({ labelFilter: emptyLabelFilter() }),
       reconcileHostFilters: (serverIds) =>
         set((state) => {
@@ -202,12 +202,6 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   ),
 );
 
-function emptyLabelFilter(): SidebarViewPersistedState["labelFilter"] {
-  return {
-    include: [],
-    exclude: [],
-    includeUnlabelled: false,
-    excludeUnlabelled: false,
-    match: "any",
-  };
+function emptyLabelFilter(): SidebarLabelFilter {
+  return { labels: {}, match: "any" };
 }
