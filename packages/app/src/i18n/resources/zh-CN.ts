@@ -1948,7 +1948,7 @@ export const zhCN: TranslationResources = {
         accessibilityLabel: "选择思考过程显示方式（{{value}}）",
         options: {
           collapsed: "折叠",
-          expandActive: "仅展开当前活动",
+          expandLast: "仅展开最新",
           expanded: "始终展开",
         },
       },

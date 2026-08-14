@@ -33,7 +33,7 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
-export type ThinkingDisplayDetail = "collapsed" | "expand_active" | "expanded";
+export type ThinkingDisplayDetail = "collapsed" | "expand_last" | "expanded";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
 const ThemePreferenceSchema = z.enum([
@@ -220,10 +220,18 @@ const StoredAppSettingsSchema = z
       .optional()
       .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
     autoExpandReasoning: z
-      .enum(["collapsed", "expand_active", "expanded"])
-      .or(
-        z.boolean().transform((value) => (value ? ("expanded" as const) : ("collapsed" as const))),
-      )
+      .enum(["collapsed", "expand_last", "expand_active", "expanded"])
+      .or(z.boolean())
+      .transform((value) => {
+        if (typeof value === "boolean") {
+          return value ? ("expanded" as const) : ("collapsed" as const);
+        }
+        if (value === "expand_active") {
+          // COMPAT(autoExpandReasoningExpandActive): migrated to expand_last in v0.4.0.
+          return "expand_last" as const;
+        }
+        return value;
+      })
       .catch("collapsed"),
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])

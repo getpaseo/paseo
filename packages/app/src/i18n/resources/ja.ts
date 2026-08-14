@@ -1989,7 +1989,7 @@ export const ja: TranslationResources = {
         accessibilityLabel: "思考プロセスの表示を選択 ({{value}})",
         options: {
           collapsed: "折りたたむ",
-          expandActive: "実行中のみ展開",
+          expandLast: "最新のみ展開",
           expanded: "常に展開",
         },
       },

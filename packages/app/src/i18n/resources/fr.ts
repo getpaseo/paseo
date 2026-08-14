@@ -2025,7 +2025,7 @@ export const fr: TranslationResources = {
         accessibilityLabel: "Sélectionner l'affichage de la réflexion ({{value}})",
         options: {
           collapsed: "Réduit",
-          expandActive: "Développer si actif",
+          expandLast: "Développer le dernier",
           expanded: "Toujours développer",
         },
       },

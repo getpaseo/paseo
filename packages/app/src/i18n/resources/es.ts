@@ -2021,7 +2021,7 @@ export const es: TranslationResources = {
         accessibilityLabel: "Seleccionar visualización de pensamiento ({{value}})",
         options: {
           collapsed: "Plegado",
-          expandActive: "Expandir activo",
+          expandLast: "Expandir último",
           expanded: "Expandir siempre",
         },
       },

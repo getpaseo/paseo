@@ -2005,7 +2005,7 @@ export const ptBR: TranslationResources = {
         accessibilityLabel: "Selecionar exibição de pensamento ({{value}})",
         options: {
           collapsed: "Recolhido",
-          expandActive: "Expandir ativo",
+          expandLast: "Expandir último",
           expanded: "Sempre expandir",
         },
       },

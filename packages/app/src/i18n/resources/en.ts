@@ -2071,7 +2071,7 @@ export const en = {
         accessibilityLabel: "Select thinking display ({{value}})",
         options: {
           collapsed: "Collapsed",
-          expandActive: "Expand Active",
+          expandLast: "Expand Last",
           expanded: "Always expand",
         },
       },

@@ -227,7 +227,7 @@ function ThemeRow({
 
 const THINKING_DISPLAY_DETAILS: readonly AppSettings["autoExpandReasoning"][] = [
   "collapsed",
-  "expand_active",
+  "expand_last",
   "expanded",
 ];
 
@@ -235,7 +235,7 @@ function getThinkingDisplayDetailLabel(
   t: TFunction,
   value: AppSettings["autoExpandReasoning"],
 ): string {
-  const optionKey = value === "expand_active" ? "expandActive" : value;
+  const optionKey = value === "expand_last" ? "expandLast" : value;
   return t(`settings.general.autoExpandReasoning.options.${optionKey}`);
 }
 

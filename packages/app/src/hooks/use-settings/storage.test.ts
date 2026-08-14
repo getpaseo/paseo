@@ -631,9 +631,14 @@ describe("appearance settings", () => {
         [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: "expand_active" }),
       }),
     });
-    expect((await loadAppSettingsFromStorage(depsActive)).autoExpandReasoning).toBe(
-      "expand_active",
-    );
+    expect((await loadAppSettingsFromStorage(depsActive)).autoExpandReasoning).toBe("expand_last");
+
+    const depsLast = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ autoExpandReasoning: "expand_last" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(depsLast)).autoExpandReasoning).toBe("expand_last");
 
     const depsExpanded = makeDeps({
       storage: createInMemoryKeyValueStorage({

@@ -1983,7 +1983,7 @@ export const ko: TranslationResources = {
         accessibilityLabel: "사고 과정 표시 선택({{value}})",
         options: {
           collapsed: "접음",
-          expandActive: "실행 중일 때만 펼치기",
+          expandLast: "마지막 항목만 펼치기",
           expanded: "항상 펼치기",
         },
       },

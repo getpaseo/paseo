@@ -715,12 +715,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
     );
 
+    const latestThoughtId = useMemo(() => {
+      const head = projectedToolCalls.head;
+      for (let i = head.length - 1; i >= 0; i -= 1) {
+        if (head[i]?.kind === "thought") {
+          return head[i]?.id ?? null;
+        }
+      }
+      const tail = projectedToolCalls.tail;
+      for (let i = tail.length - 1; i >= 0; i -= 1) {
+        if (tail[i]?.kind === "thought") {
+          return tail[i]?.id ?? null;
+        }
+      }
+      return null;
+    }, [projectedToolCalls.head, projectedToolCalls.tail]);
+
     const renderThoughtItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "thought" }>) => {
-        const isThoughtActive = item.status !== "ready";
+        const isLastThought = item.id === latestThoughtId;
         const isExpanded =
           autoExpandReasoning === "expanded" ||
-          (autoExpandReasoning === "expand_active" && isThoughtActive);
+          (autoExpandReasoning === "expand_last" && isLastThought);
         return (
           <ThoughtSlot
             itemId={item.id}
@@ -732,7 +748,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [autoExpandReasoning, setInlineDetailsExpanded],
+      [autoExpandReasoning, latestThoughtId, setInlineDetailsExpanded],
     );
 
     const renderSingleToolCallItem = useCallback(
