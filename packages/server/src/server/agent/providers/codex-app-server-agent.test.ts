@@ -3578,6 +3578,69 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("loads independent persisted sub-agent histories with bounded concurrency", async () => {
+    const session = createSession();
+    const childThreadIds = Array.from({ length: 10 }, (_, index) => `child-thread-${index}`);
+    const childStartedItems = childThreadIds.map((childThreadId, index) => ({
+      type: "subAgentActivity",
+      id: `child-started-${index}`,
+      kind: "started",
+      agentThreadId: childThreadId,
+      agentPath: `/root/child-${index}`,
+    }));
+    const requestedChildThreadIds = new Set<string>();
+    let activeChildReads = 0;
+    let peakChildReads = 0;
+    let releaseChildReads = () => {};
+    const childReadGate = new Promise<void>((resolve) => {
+      releaseChildReads = resolve;
+    });
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: childStartedItems,
+                },
+              ],
+            },
+          };
+        }
+
+        if (threadId) {
+          requestedChildThreadIds.add(threadId);
+        }
+        activeChildReads += 1;
+        peakChildReads = Math.max(peakChildReads, activeChildReads);
+        try {
+          await childReadGate;
+          return { thread: { turns: [] } };
+        } finally {
+          activeChildReads -= 1;
+        }
+      }),
+    };
+
+    const historyLoad = asInternals(session).loadPersistedHistory();
+    try {
+      await vi.waitFor(() => {
+        expect(peakChildReads).toBe(8);
+      });
+    } finally {
+      releaseChildReads();
+      await historyLoad;
+    }
+
+    expect(requestedChildThreadIds).toEqual(new Set(childThreadIds));
+    expect(activeChildReads).toBe(0);
+  });
+
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
     const session = createSession();
     session.client = {

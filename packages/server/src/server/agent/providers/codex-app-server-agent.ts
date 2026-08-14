@@ -134,6 +134,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+const PERSISTED_SUBAGENT_HISTORY_CONCURRENCY = 8;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3715,33 +3716,55 @@ export class CodexAppServerAgentSession implements AgentSession {
     const queue = rootRoutes.map((route) => ({ route, parentCallId: null as string | null }));
     const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
     while (queue.length > 0 && visitedThreadIds.size < 100) {
-      const next = queue.shift();
-      if (!next || visitedThreadIds.has(next.route.childThreadId)) {
-        continue;
-      }
-      visitedThreadIds.add(next.route.childThreadId);
-      this.registerSubAgentToolCall({
-        timelineItem: next.route.toolCall,
-        rawItem: { agentThreadId: next.route.childThreadId },
-        parentCallId: next.parentCallId,
-      });
-      try {
-        const childHistory = await loadCodexThreadHistoryTimeline({
-          threadId: next.route.childThreadId,
-          cwd: this.config.cwd ?? null,
-          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+      const batch: Array<{ route: PersistedSubAgentRoute; parentCallId: string | null }> = [];
+      while (
+        batch.length < PERSISTED_SUBAGENT_HISTORY_CONCURRENCY &&
+        queue.length > 0 &&
+        visitedThreadIds.size < 100
+      ) {
+        const next = queue.shift();
+        if (!next || visitedThreadIds.has(next.route.childThreadId)) {
+          continue;
+        }
+        visitedThreadIds.add(next.route.childThreadId);
+        this.registerSubAgentToolCall({
+          timelineItem: next.route.toolCall,
+          rawItem: { agentThreadId: next.route.childThreadId },
+          parentCallId: next.parentCallId,
         });
-        for (const entry of childHistory.timeline) {
-          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
-        }
-        for (const route of childHistory.subAgentRoutes) {
-          queue.push({ route, parentCallId: next.route.toolCall.callId });
-        }
-      } catch (error) {
-        this.logger.trace(
-          { err: error, childThreadId: next.route.childThreadId },
-          "Failed to load persisted Codex child history",
-        );
+        batch.push(next);
+      }
+
+      const nestedRoutes = await Promise.all(
+        batch.map(async (next) => {
+          try {
+            const childHistory = await loadCodexThreadHistoryTimeline({
+              threadId: next.route.childThreadId,
+              cwd: this.config.cwd ?? null,
+              requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+            });
+            for (const entry of childHistory.timeline) {
+              this.emitProviderSubagentTimeline(
+                next.route.childThreadId,
+                entry.item,
+                entry.timestamp,
+              );
+            }
+            return childHistory.subAgentRoutes.map((route) => ({
+              route,
+              parentCallId: next.route.toolCall.callId,
+            }));
+          } catch (error) {
+            this.logger.trace(
+              { err: error, childThreadId: next.route.childThreadId },
+              "Failed to load persisted Codex child history",
+            );
+            return [];
+          }
+        }),
+      );
+      for (const routes of nestedRoutes) {
+        queue.push(...routes);
       }
     }
   }
