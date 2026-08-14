@@ -229,10 +229,12 @@ class SessionEvents {
     );
   }
 
-  nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
+  nextTurnCompletion(
+    turnId?: string,
+  ): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
-        event.type === "turn_completed",
+        event.type === "turn_completed" && (turnId === undefined || event.turnId === turnId),
     );
   }
 
@@ -1027,12 +1029,10 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnCompletedEvents()).toHaveLength(1);
 
     fakeSession.finishTurn();
-    await vi.waitFor(() => {
-      expect(events.turnCompletedEvents()).toHaveLength(2);
-    });
-    expect(events.turnCompletedEvents().at(-1)).toMatchObject({
+    await expect(events.nextTurnCompletion(recoveryTurnId)).resolves.toMatchObject({
       turnId: recoveryTurnId,
     });
+    expect(events.turnCompletedEvents()).toHaveLength(2);
   });
 
   test("clears a buffered Pi retry when the runtime exits", async () => {
@@ -1134,9 +1134,7 @@ describe("PiRpcAgentSession", () => {
     });
 
     expect(events.turnCompletedEvents()).toHaveLength(0);
-    expect((events as unknown as { events: AgentStreamEvent[] }).events).not.toContainEqual(
-      expect.objectContaining({ type: "turn_failed" }),
-    );
+    expect(events.eventTypes()).not.toContain("turn_failed");
 
     fakeSession.emit({ type: "agent_start" });
     fakeSession.emit({
