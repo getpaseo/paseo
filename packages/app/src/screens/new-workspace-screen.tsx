@@ -86,10 +86,15 @@ import { useProjectIcons } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
+import { requestWorkspaceDraftAgent } from "@/composer/draft/create-agent-request";
+import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type {
+  CreatePaseoWorktreeInput,
+  DaemonClient,
+} from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
@@ -118,6 +123,8 @@ import {
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { createWorkspaceAgentInBackground } from "./new-workspace/background-handoff";
+import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -742,10 +749,17 @@ function normalizeBranchDetails(
   return names.map((name) => ({ name, committerDate: 0 }));
 }
 
+/**
+ * "background" means the user left the New workspace screen mid-creation, so nothing navigated
+ * and the screen — if still mounted under another route — has to drop its pending state itself.
+ */
+type SubmitOutcome = "navigated" | "background";
+
 interface SubmitDraftInput {
   serverId: string;
   draftKey: string;
   draftId?: string;
+  draftContextScopeKey: string | null;
   initialSetup?: WorkspaceDraftTabSetup;
   workspaceId: string;
   workspaceDirectory: string;
@@ -754,6 +768,8 @@ interface SubmitDraftInput {
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
 }
 
 type NewWorkspaceComposerState = NonNullable<
@@ -857,7 +873,10 @@ interface CreateChatAgentInput {
   serverId: string;
   draftKey: string;
   draftId?: string;
+  draftContextScopeKey: string | null;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -918,7 +937,7 @@ function buildComposerInitialValues(input: {
   return undefined;
 }
 
-async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
+async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
   const { text, attachments, cwd } = payload;
   if (!composerState) {
@@ -947,10 +966,11 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     provider,
     composerState,
   });
-  submitWorkspaceDraft({
+  return await submitWorkspaceDraft({
     serverId,
     draftKey,
     draftId: input.draftId,
+    draftContextScopeKey: input.draftContextScopeKey,
     initialSetup,
     workspaceId: ensuredWorkspace.id,
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
@@ -959,6 +979,8 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     provider,
     composerState,
     supportsForgeSearch: input.supportsForgeSearch,
+    resolveClient: input.resolveClient,
+    isStillOnCreateScreen: input.isStillOnCreateScreen,
   });
 }
 
@@ -1023,7 +1045,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   };
 }
 
-function submitWorkspaceDraft(input: SubmitDraftInput): void {
+async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutcome> {
   const {
     serverId,
     draftKey,
@@ -1051,6 +1073,35 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     composerState,
     initialSetup,
   });
+  // Creation blocks on a slow daemon RPC. If the user moved on while it ran, the destination
+  // screen's draft tab will never mount to issue create_agent, so this path does it instead.
+  if (!input.isStillOnCreateScreen()) {
+    await createWorkspaceAgentInBackground({
+      draftId,
+      draftKey,
+      draftContextScopeKey: input.draftContextScopeKey,
+      createAgent: () =>
+        requestWorkspaceDraftAgent(input.resolveClient(), {
+          workspaceId,
+          config: buildWorkspaceDraftAgentConfig({
+            provider: submission.provider,
+            cwd: submission.cwd,
+            ...(submission.modeId ? { modeId: submission.modeId } : {}),
+            ...(submission.model ? { model: submission.model } : {}),
+            ...(submission.thinkingOptionId
+              ? { thinkingOptionId: submission.thinkingOptionId }
+              : {}),
+            ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
+          }),
+          text: text.trim(),
+          clientMessageId,
+          ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
+          ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+        }),
+    });
+    return "background";
+  }
+
   useCreateFlowStore.getState().setPending({
     serverId,
     draftId,
@@ -1084,6 +1135,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     target: submission.target,
   });
   useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
+  return "navigated";
 }
 
 function useNewWorkspaceHostSelector(input: {
@@ -1588,6 +1640,7 @@ export function NewWorkspaceScreen({
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
+  const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1706,12 +1759,17 @@ export function NewWorkspaceScreen({
     });
   }, []);
 
+  // Read through refs: creation can outlive the render that started it, and the host runtime
+  // replaces the DaemonClient on reconnect. A captured client would be closed by then.
+  const connectionRef = useRef({ client, isConnected });
+  connectionRef.current = { client, isConnected };
   const withConnectedClient = useCallback(() => {
-    if (!client || !isConnected) {
+    const connection = connectionRef.current;
+    if (!connection.client || !connection.isConnected) {
       throw new Error(t("newWorkspace.errors.hostDisconnected"));
     }
-    return client;
-  }, [client, isConnected, t]);
+    return connection.client;
+  }, [t]);
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
@@ -2054,18 +2112,29 @@ export function NewWorkspaceScreen({
         await updateFormPreferences({ launchTarget });
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
+          let outcome: SubmitOutcome = "background";
           await runCreateEmptyWorkspace({
             payload,
             ensureWorkspace,
             serverId: selectedServerId,
-            navigate: (targetServerId, workspaceId) =>
-              navigateToWorkspace({ serverId: targetServerId, workspaceId }),
+            navigate: (targetServerId, workspaceId) => {
+              if (!isStillOnCreateScreen()) {
+                return;
+              }
+              outcome = "navigated";
+              navigateToWorkspace({ serverId: targetServerId, workspaceId });
+            },
           });
+          // Nothing navigated, so this screen may still be mounted under another route. Release
+          // the pending lock it would otherwise keep forever.
+          if (outcome === "background") {
+            setPendingAction(null);
+          }
           return;
         }
 
         setPendingAction("chat");
-        await runCreateChatAgent({
+        const outcome = await runCreateChatAgent({
           payload,
           composerState,
           forkDraftSetup,
@@ -2073,12 +2142,18 @@ export function NewWorkspaceScreen({
           serverId: selectedServerId,
           draftKey,
           draftId,
+          draftContextScopeKey,
           supportsForgeSearch,
+          resolveClient: withConnectedClient,
+          isStillOnCreateScreen,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
           },
         });
+        if (outcome === "background") {
+          setPendingAction(null);
+        }
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -2088,16 +2163,19 @@ export function NewWorkspaceScreen({
     },
     [
       composerState,
+      draftContextScopeKey,
       draftId,
       draftKey,
       ensureWorkspace,
       forkDraftSetup,
+      isStillOnCreateScreen,
       launchTarget,
       selectedServerId,
       supportsForgeSearch,
       t,
       toast,
       updateFormPreferences,
+      withConnectedClient,
     ],
   );
 
@@ -2106,6 +2184,7 @@ export function NewWorkspaceScreen({
       setErrorMessage(null);
       await updateFormPreferences({ launchTarget });
       setPendingAction("terminal");
+      let outcome: SubmitOutcome = "background";
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
         prompt: terminalPromptText,
@@ -2129,9 +2208,20 @@ export function NewWorkspaceScreen({
           withConnectedClient().sendTerminalInput(terminalId, { type: "input", data });
         },
         serverId: selectedServerId,
-        navigate: (targetServerId, workspaceId, target) =>
-          navigateToWorkspace({ serverId: targetServerId, workspaceId, target }),
+        // The terminal is spawned and fed its command before this runs, so skipping the
+        // navigation costs nothing: it is standalone, and `reconcileTabs` auto-opens standalone
+        // terminals when the workspace is next visited.
+        navigate: (targetServerId, workspaceId, target) => {
+          if (!isStillOnCreateScreen()) {
+            return;
+          }
+          outcome = "navigated";
+          navigateToWorkspace({ serverId: targetServerId, workspaceId, target });
+        },
       });
+      if (outcome === "background") {
+        setPendingAction(null);
+      }
     } catch (error) {
       const message = toErrorMessage(error);
       setPendingAction(null);
@@ -2140,6 +2230,7 @@ export function NewWorkspaceScreen({
     }
   }, [
     ensureWorkspace,
+    isStillOnCreateScreen,
     launchTarget,
     selectedServerId,
     selectedSourceDirectory,

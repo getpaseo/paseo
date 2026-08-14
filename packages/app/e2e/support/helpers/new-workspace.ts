@@ -16,11 +16,13 @@ type NewWorkspaceDaemonClient = Pick<
   | "connect"
   | "createPaseoWorktree"
   | "createWorkspace"
+  | "fetchAgents"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "inspectWorkspaceRecovery"
   | "listProjects"
+  | "listTerminals"
   | "on"
   | "patchDaemonConfig"
   | "removeProject"
@@ -617,4 +619,116 @@ export async function delayBrowserAgentCreatedStatus(
     waitForCreateRequest: () => createRequestSeen,
     waitForDelayedCreatedStatus: () => delayedCreatedStatusSeen,
   };
+}
+
+export interface WorkspaceCreatedDelayControl {
+  release(): void;
+  waitForCreateRequest(): Promise<void>;
+}
+
+/**
+ * Holds `workspace.create.response` so a test can act as the user does while the daemon is still
+ * running `git worktree add` — most importantly, navigate somewhere else.
+ */
+export async function delayBrowserWorkspaceCreatedResponse(
+  page: Page,
+): Promise<WorkspaceCreatedDelayControl> {
+  const daemonPortPattern = daemonWsRoutePattern();
+  const createRequestIds = new Set<string>();
+  const delayedForwards: Array<() => void> = [];
+  let releaseRequested = false;
+  let resolveCreateRequest: (() => void) | null = null;
+  const createRequestSeen = new Promise<void>((resolve) => {
+    resolveCreateRequest = resolve;
+  });
+
+  await page.routeWebSocket(daemonPortPattern, (ws) => {
+    const server = ws.connectToServer();
+
+    ws.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      if (sessionMessage?.type === "workspace.create.request") {
+        const requestId = getStringField(sessionMessage, "requestId");
+        if (requestId) {
+          createRequestIds.add(requestId);
+          resolveCreateRequest?.();
+        }
+      }
+      server.send(message);
+    });
+
+    server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const payload =
+        sessionMessage?.type === "workspace.create.response" &&
+        typeof sessionMessage.payload === "object"
+          ? (sessionMessage.payload as Record<string, unknown>)
+          : null;
+      const requestId = payload ? getStringField(payload, "requestId") : null;
+
+      if (requestId && createRequestIds.has(requestId) && !releaseRequested) {
+        delayedForwards.push(() => ws.send(message));
+        return;
+      }
+
+      ws.send(message);
+    });
+  });
+
+  return {
+    release() {
+      releaseRequested = true;
+      for (const forward of delayedForwards.splice(0)) {
+        forward();
+      }
+    },
+    waitForCreateRequest: () => createRequestSeen,
+  };
+}
+
+type WorkspaceEntry = Awaited<
+  ReturnType<NewWorkspaceDaemonClient["fetchWorkspaces"]>
+>["entries"][number];
+
+/**
+ * Waits for a workspace the caller did not already know about, and returns it. Tests that create a
+ * workspace without navigating to it have no route to assert on, so the daemon's own list is the
+ * signal that creation finished.
+ */
+export async function waitForCreatedWorkspace(
+  client: NewWorkspaceDaemonClient,
+  knownWorkspaceIds: ReadonlySet<string>,
+  options?: { timeout?: number },
+): Promise<WorkspaceEntry> {
+  let created: WorkspaceEntry | undefined;
+  await expect
+    .poll(
+      async () => {
+        const payload = await client.fetchWorkspaces();
+        created = payload.entries.find((entry) => !knownWorkspaceIds.has(entry.id));
+        return created !== undefined;
+      },
+      { timeout: options?.timeout ?? 60_000 },
+    )
+    .toBe(true);
+  if (!created) {
+    throw new Error("Workspace list reported a new workspace but it could not be read back");
+  }
+  return created;
+}
+
+export async function countWorkspaceAgents(
+  client: NewWorkspaceDaemonClient,
+  workspaceId: string,
+): Promise<number> {
+  const payload = await client.fetchAgents({ filter: { includeArchived: true } });
+  return payload.entries.filter((entry) => entry.agent.workspaceId === workspaceId).length;
+}
+
+export async function countWorkspaceTerminals(
+  client: NewWorkspaceDaemonClient,
+  workspaceId: string,
+): Promise<number> {
+  const payload = await client.listTerminals(undefined, undefined, { workspaceId });
+  return payload.terminals.length;
 }
