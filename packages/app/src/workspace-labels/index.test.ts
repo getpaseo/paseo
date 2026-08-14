@@ -5,19 +5,16 @@ import {
   createWorkspaceLabelPickerModel,
   mergeWorkspaceLabelCatalogs,
   projectWorkspaceLabels,
+  selectWorkspaceLabelDefinitions,
   shouldCloseWorkspaceLabelPicker,
+  type WorkspaceLabelHostSnapshot,
 } from "./index";
-import { workspaceLabelColorMapping } from "./colors";
-import type { Theme } from "@/styles/theme";
+// A label's color is no longer a table of its own: `swatch.tsx` hands every surface the
+// identity color of the same name, and `identityForeground` typechecking against
+// `WorkspaceLabelColor` is what keeps the protocol's ten names and the identity table's ten in
+// step. There is nothing left here to assert that the compiler does not.
 
 describe("workspace label projection", () => {
-  test("resolves group label colors through the workspace-label theme palette", () => {
-    const theme = {
-      colors: { palette: { workspaceLabel: { red: "theme-red" } } },
-    } as unknown as Theme;
-
-    expect(workspaceLabelColorMapping("red")(theme)).toEqual({ color: "theme-red" });
-  });
   test("merges normalized names deterministically and lets the target host definition win", () => {
     const catalogs = [
       { serverId: "host-b", labels: [{ name: "Blocked", color: "red" as const }] },
@@ -53,6 +50,61 @@ describe("workspace label projection", () => {
 
     expect(projection.labels).toEqual([{ name: "Urgent", color: "red" }]);
     expect(projection.targetHost?.status).toBe("offline");
+  });
+
+  test("draws a shared label name in the workspace's own host color", () => {
+    // Two hosts, one name, two colors. The cross-host merge would settle this by target
+    // precedence and then alphabetical serverId, so a row asking without saying whose row it is
+    // can end up painted in the other host's color.
+    const hostsById: Record<string, WorkspaceLabelHostSnapshot> = {
+      "host-a": {
+        serverId: "host-a",
+        status: "online",
+        error: null,
+        labels: [{ name: "backend", color: "violet" }],
+      },
+      "host-b": {
+        serverId: "host-b",
+        status: "online",
+        error: null,
+        labels: [{ name: "Backend", color: "red" }],
+      },
+    };
+
+    expect(
+      selectWorkspaceLabelDefinitions({ hostsById, serverId: "host-b", names: ["Backend"] }),
+    ).toEqual([{ name: "Backend", color: "red" }]);
+    expect(
+      selectWorkspaceLabelDefinitions({ hostsById, serverId: "host-a", names: ["backend"] }),
+    ).toEqual([{ name: "backend", color: "violet" }]);
+  });
+
+  test("keeps the assignment order and drops names the workspace's own host does not know", () => {
+    const hostsById: Record<string, WorkspaceLabelHostSnapshot> = {
+      "host-a": {
+        serverId: "host-a",
+        status: "online",
+        error: null,
+        labels: [{ name: "Urgent", color: "red" }],
+      },
+      "host-b": {
+        serverId: "host-b",
+        status: "online",
+        error: null,
+        labels: [{ name: "Backend", color: "sky" }],
+      },
+    };
+
+    expect(
+      selectWorkspaceLabelDefinitions({
+        hostsById,
+        serverId: "host-a",
+        names: ["urgent", "backend"],
+      }),
+    ).toEqual([{ name: "Urgent", color: "red" }]);
+    expect(
+      selectWorkspaceLabelDefinitions({ hostsById, serverId: "unknown", names: ["Urgent"] }),
+    ).toEqual([]);
   });
 
   test("keeps create visible, prefills search, and distinguishes row from checkbox closing", () => {

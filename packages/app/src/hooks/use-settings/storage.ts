@@ -83,12 +83,17 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
+// Strict, so every item in SIDEBAR_ROW_ITEMS needs a key here the day it is added: the whole
+// settings write is one validation, and one unknown key silently loses every other toggle in it.
+// `checks` and `scripts` are gone from the item list and stay here for the COMPAT reads in
+// row-items.ts.
 const SidebarRowItemsSchema = z.strictObject({
   branch: z.boolean().optional(),
   project: z.boolean().optional(),
   host: z.boolean().optional(),
   changeRequest: z.boolean().optional(),
   services: z.boolean().optional(),
+  labels: z.boolean().optional(),
   checks: z.boolean().optional(),
   scripts: z.boolean().optional(),
 });

@@ -1041,6 +1041,7 @@ export const ko: TranslationResources = {
         changeRequest: "풀 리퀘스트",
         checks: "검사",
         services: "서비스",
+        labels: "레이블",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
       },

@@ -1034,6 +1034,7 @@ export const ar: TranslationResources = {
         changeRequest: "طلب السحب",
         checks: "الفحوصات",
         services: "الخدمات",
+        labels: "التسميات",
         diff: "إحصائيات الفروق",
         timestamp: "آخر نشاط",
       },

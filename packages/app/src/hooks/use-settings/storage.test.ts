@@ -16,6 +16,10 @@ import {
   type SettingsDeps,
 } from "./storage";
 import { createFakeDesktopBridge, createInMemoryKeyValueStorage } from "./fakes";
+import {
+  DEFAULT_SIDEBAR_ROW_ITEMS,
+  SIDEBAR_ROW_ITEMS,
+} from "@/components/sidebar/display-preferences/row-items";
 import { THEME_OPTIONS } from "@/styles/theme";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
@@ -366,6 +370,18 @@ describe("saveAppSettings", () => {
       theme: "light",
       toolCallDetailLevel: "overview",
     });
+  });
+
+  // The row items are written as one object through one strict schema, so an item the schema
+  // does not know does not just fail to persist itself — it takes every sibling toggle with it.
+  it.each(SIDEBAR_ROW_ITEMS)("persists the %s row item being switched off", async (item) => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const sidebarRowItems = { ...DEFAULT_SIDEBAR_ROW_ITEMS, [item]: false };
+
+    await saveAppSettings({ queryClient, updates: { sidebarRowItems }, deps });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems).toEqual(sidebarRowItems);
   });
 });
 

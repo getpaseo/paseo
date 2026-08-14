@@ -23,7 +23,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
-import { workspaceLabelColorMapping } from "@/workspace-labels/colors";
+import { WORKSPACE_LABEL_ICON_MAPPINGS } from "@/workspace-labels/swatch";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -468,7 +468,7 @@ function StatusGroupLeadingVisual({
   if (!showChevron) {
     if (leading.kind === "label") {
       return leading.color ? (
-        <ThemedCircleDot size={14} uniProps={workspaceLabelColorMapping(leading.color)} />
+        <ThemedCircleDot size={14} uniProps={WORKSPACE_LABEL_ICON_MAPPINGS[leading.color]} />
       ) : (
         <ThemedCircleDot size={14} uniProps={foregroundMutedColorMapping} />
       );

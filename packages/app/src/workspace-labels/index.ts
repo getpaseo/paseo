@@ -1,5 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
+import {
+  workspaceLabelKey,
+  type WorkspaceLabelDefinition,
+} from "@getpaseo/protocol/workspace-labels";
 import { useMemo } from "react";
 import { create } from "zustand";
 import { HostWorkspaceLabelReplica } from "./internal/host-replica";
@@ -73,6 +76,47 @@ export function useWorkspaceLabelProjection(targetServerId?: string): WorkspaceL
   const hosts = useWorkspaceLabels((state) => state.hosts);
   return useMemo(() => projectWorkspaceLabels(hosts, targetServerId), [hosts, targetServerId]);
 }
+
+/**
+ * The definitions behind the label names a workspace carries, in assignment order.
+ *
+ * Resolved against the workspace's own host and nothing else. The cross-host projection is for
+ * surfaces that span hosts — a filter page, a manager — and it would answer here too, but two
+ * hosts are free to give the same name different colors, and a merged catalog settles that by
+ * precedence and then alphabetical serverId. A row that drew its label in a color its host never
+ * assigned would be lying about the one thing the color is for.
+ *
+ * A workspace stores names; the color lives in that host's catalog, so a name the catalog does
+ * not know is dropped rather than drawn in an invented color. The catalog survives the host going
+ * offline, so this only drops names while a host's first list is still in flight.
+ */
+export function useWorkspaceLabelDefinitions(
+  serverId: string,
+  names: readonly string[] | undefined,
+): readonly WorkspaceLabelDefinition[] {
+  const hostsById = useWorkspaceLabels((state) => state.hosts);
+  return useMemo(
+    () => selectWorkspaceLabelDefinitions({ hostsById, serverId, names }),
+    [hostsById, names, serverId],
+  );
+}
+
+export function selectWorkspaceLabelDefinitions(input: {
+  hostsById: Readonly<Record<string, WorkspaceLabelHostSnapshot>>;
+  serverId: string;
+  names: readonly string[] | undefined;
+}): readonly WorkspaceLabelDefinition[] {
+  const { hostsById, serverId, names } = input;
+  if (!names || names.length === 0) return EMPTY_LABEL_DEFINITIONS;
+  const catalog = hostsById[serverId]?.labels ?? [];
+  const byKey = new Map(catalog.map((label) => [workspaceLabelKey(label.name), label]));
+  return names.flatMap((name) => {
+    const definition = byKey.get(workspaceLabelKey(name));
+    return definition ? [definition] : [];
+  });
+}
+
+const EMPTY_LABEL_DEFINITIONS: readonly WorkspaceLabelDefinition[] = [];
 
 interface HostConnection {
   client: DaemonClient;

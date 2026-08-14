@@ -87,6 +87,7 @@ const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
   host: withUnistyles(Server),
   changeRequest: withUnistyles(GitPullRequest),
   services: withUnistyles(Globe),
+  labels: withUnistyles(Tag),
 };
 
 // These mark how much of the row an option spends, not what CI is, so they are the shapes each
@@ -123,6 +124,7 @@ const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
   host: "sidebar.display.show.host",
   changeRequest: "sidebar.display.show.changeRequest",
   services: "sidebar.display.show.services",
+  labels: "sidebar.display.show.labels",
 };
 
 const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {

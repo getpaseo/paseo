@@ -1068,6 +1068,7 @@ export const fr: TranslationResources = {
         changeRequest: "Pull request",
         checks: "Vérifications",
         services: "Services",
+        labels: "Libellés",
         diff: "Statistiques de diff",
         timestamp: "Dernière activité",
       },

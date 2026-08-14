@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore, type ReactElement } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import {
-  WORKSPACE_LABEL_COLORS,
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
 } from "@getpaseo/protocol/workspace-labels";
@@ -16,7 +15,7 @@ import {
   useWorkspaceLabelProjection,
   workspaceLabels,
 } from "@/workspace-labels";
-import { WORKSPACE_LABEL_COLOR_STYLE, workspaceLabelColorName } from "./colors";
+import { WorkspaceLabelDot, WorkspaceLabelSwatchRow } from "./swatch";
 import { useTranslation } from "react-i18next";
 
 export function WorkspaceLabelManagerModal({
@@ -65,7 +64,9 @@ export function WorkspaceLabelManagerModal({
   const selectLabel = useCallback((name: string) => model.selectLabel(name), [model]);
   const setDraftName = useCallback((value: string) => model.setDraftName(value), [model]);
   const recolor = useCallback(
-    (color: WorkspaceLabelDefinition["color"]) => model.recolor(color),
+    (color: WorkspaceLabelDefinition["color"]) => {
+      void model.recolor(color);
+    },
     [model],
   );
 
@@ -133,17 +134,12 @@ export function WorkspaceLabelManagerModal({
               style={styles.input}
               testID="workspace-label-manager-name"
             />
-            <View style={styles.colors}>
-              {WORKSPACE_LABEL_COLORS.map((color) => (
-                <ManagerColorButton
-                  key={color}
-                  color={color}
-                  selected={selected.color === color}
-                  disabled={disabled}
-                  onRecolor={recolor}
-                />
-              ))}
-            </View>
+            <WorkspaceLabelSwatchRow
+              value={selected.color}
+              onChange={recolor}
+              disabled={disabled}
+              testID="workspace-label-manager-colors"
+            />
             <View style={styles.row}>
               <Button
                 size="sm"
@@ -213,10 +209,6 @@ function ManagerLabelRow({
   const select = useCallback(() => {
     selectLabel(label.name);
   }, [label.name, selectLabel]);
-  const dotStyle = useMemo(
-    () => [styles.dot, styles[WORKSPACE_LABEL_COLOR_STYLE[label.color]]],
-    [label.color],
-  );
   const rowStyle = useMemo(
     () => [styles.labelRow, selected && styles.labelRowSelected],
     [selected],
@@ -228,49 +220,9 @@ function ManagerLabelRow({
       onPress={select}
       testID={`workspace-label-manager-label-${label.name}`}
     >
-      <View style={dotStyle} />
+      <WorkspaceLabelDot color={label.color} />
       <Text style={styles.text}>{label.name}</Text>
     </Pressable>
-  );
-}
-
-function ManagerColorButton({
-  color,
-  selected,
-  disabled,
-  onRecolor,
-}: {
-  color: WorkspaceLabelDefinition["color"];
-  selected: boolean;
-  disabled: boolean;
-  onRecolor: (color: WorkspaceLabelDefinition["color"]) => Promise<void>;
-}): ReactElement {
-  const { t } = useTranslation();
-  const accessibilityState = useMemo(() => ({ checked: selected, disabled }), [disabled, selected]);
-  const style = useMemo(
-    () => [
-      styles.color,
-      styles[WORKSPACE_LABEL_COLOR_STYLE[color]],
-      selected && styles.colorSelected,
-    ],
-    [color, selected],
-  );
-  const recolor = useCallback(() => {
-    void onRecolor(color);
-  }, [color, onRecolor]);
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityLabel={t("workspaceLabels.accessibility.color", {
-        color: workspaceLabelColorName(color),
-      })}
-      accessibilityState={accessibilityState}
-      aria-checked={selected}
-      disabled={disabled}
-      style={style}
-      onPress={recolor}
-      testID={`workspace-label-manager-color-${color}`}
-    />
   );
 }
 
@@ -287,7 +239,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   labelRowSelected: { backgroundColor: theme.colors.surface2 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
   text: { color: theme.colors.foreground },
   muted: { color: theme.colors.foregroundMuted },
   editor: { gap: theme.spacing[3], paddingTop: theme.spacing[2] },
@@ -299,18 +250,5 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing[2],
   },
-  colors: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
-  color: { width: 44, height: 44, borderRadius: 22 },
-  colorSelected: { borderWidth: 3, borderColor: theme.colors.foreground },
   error: { color: theme.colors.destructive },
-  labelColorViolet: { backgroundColor: theme.colors.palette.workspaceLabel.violet },
-  labelColorSky: { backgroundColor: theme.colors.palette.workspaceLabel.sky },
-  labelColorEmerald: { backgroundColor: theme.colors.palette.workspaceLabel.emerald },
-  labelColorOrange: { backgroundColor: theme.colors.palette.workspaceLabel.orange },
-  labelColorPink: { backgroundColor: theme.colors.palette.workspaceLabel.pink },
-  labelColorIndigo: { backgroundColor: theme.colors.palette.workspaceLabel.indigo },
-  labelColorTeal: { backgroundColor: theme.colors.palette.workspaceLabel.teal },
-  labelColorRed: { backgroundColor: theme.colors.palette.workspaceLabel.red },
-  labelColorAmber: { backgroundColor: theme.colors.palette.workspaceLabel.amber },
-  labelColorBlue: { backgroundColor: theme.colors.palette.workspaceLabel.blue },
 }));

@@ -1043,6 +1043,7 @@ export const en = {
         changeRequest: "Pull request",
         checks: "Checks",
         services: "Services",
+        labels: "Labels",
         diff: "Diff stats",
         timestamp: "Last activity",
       },

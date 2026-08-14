@@ -1026,6 +1026,7 @@ export const zhCN: TranslationResources = {
         changeRequest: "拉取请求",
         checks: "检查",
         services: "服务",
+        labels: "标签",
         diff: "差异统计",
         timestamp: "最近活动",
       },

@@ -1057,6 +1057,7 @@ export const ru: TranslationResources = {
         changeRequest: "Pull request",
         checks: "Проверки",
         services: "Сервисы",
+        labels: "Метки",
         diff: "Статистика изменений",
         timestamp: "Последняя активность",
       },

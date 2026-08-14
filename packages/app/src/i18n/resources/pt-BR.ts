@@ -1059,6 +1059,7 @@ export const ptBR: TranslationResources = {
         changeRequest: "Pull request",
         checks: "Verificações",
         services: "Serviços",
+        labels: "Etiquetas",
         diff: "Estatísticas de diff",
         timestamp: "Última atividade",
       },

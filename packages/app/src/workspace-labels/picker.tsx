@@ -6,6 +6,7 @@ import React, {
   type ReactElement,
 } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
+import { withUnistyles } from "react-native-unistyles";
 import { CheckSquare, Plus, Square } from "lucide-react-native";
 import {
   WORKSPACE_LABEL_COLORS,
@@ -20,9 +21,20 @@ import {
 } from "@/workspace-labels";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { WORKSPACE_LABEL_COLOR_STYLE, workspaceLabelColorName } from "./colors";
+import type { Theme } from "@/styles/theme";
+import { WorkspaceLabelDot, workspaceLabelColorName } from "./swatch";
 
-const CREATE_LEADING = <Plus size={14} />;
+/** The menu's own icon size, matching the trailing check on every other row. */
+const MENU_ICON_SIZE = 14;
+
+const ThemedPlus = withUnistyles(Plus);
+const ThemedCheckSquare = withUnistyles(CheckSquare);
+const ThemedSquare = withUnistyles(Square);
+
+const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+const CREATE_LEADING = <ThemedPlus size={MENU_ICON_SIZE} uniProps={mutedMapping} />;
 
 export function WorkspaceLabelPickerPage({
   serverId,
@@ -135,10 +147,7 @@ function CreateColorItem({
   disabled: boolean;
   create: (color: WorkspaceLabelDefinition["color"]) => void;
 }): ReactElement {
-  const leading = useMemo(
-    () => <View style={[styles.dot, styles[WORKSPACE_LABEL_COLOR_STYLE[color]]]} />,
-    [color],
-  );
+  const leading = useMemo(() => <WorkspaceLabelDot color={color} />, [color]);
   const select = useCallback(() => create(color), [color, create]);
   return (
     <MenuItem
@@ -173,10 +182,6 @@ function WorkspaceLabelPickerRow({
   const handleCheckbox = useCallback(() => {
     void onToggle(label, !label.assigned, "checkbox");
   }, [label, onToggle]);
-  const dotStyle = useMemo(
-    () => [styles.dot, styles[WORKSPACE_LABEL_COLOR_STYLE[label.color]]],
-    [label.color],
-  );
   const accessibilityState = useMemo(
     () => ({ checked: label.assigned, disabled }),
     [disabled, label.assigned],
@@ -197,7 +202,11 @@ function WorkspaceLabelPickerRow({
         style={styles.checkboxTarget}
         testID={`workspace-label-picker-checkbox-${label.name}`}
       >
-        {label.assigned ? <CheckSquare size={15} /> : <Square size={15} />}
+        {label.assigned ? (
+          <ThemedCheckSquare size={MENU_ICON_SIZE} uniProps={foregroundMapping} />
+        ) : (
+          <ThemedSquare size={MENU_ICON_SIZE} uniProps={mutedMapping} />
+        )}
       </Pressable>
       <Pressable
         accessibilityRole="menuitem"
@@ -206,7 +215,7 @@ function WorkspaceLabelPickerRow({
         style={styles.labelBody}
         testID={`workspace-label-picker-row-${label.name}`}
       >
-        <View style={dotStyle} />
+        <WorkspaceLabelDot color={label.color} />
         <Text style={styles.labelText}>{label.name}</Text>
       </Pressable>
     </View>
@@ -239,21 +248,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   labelText: { color: theme.colors.foreground },
-  dot: { width: 10, height: 10, borderRadius: 5 },
   checkboxTarget: {
     width: 44,
     height: 44,
     alignItems: "center",
     justifyContent: "center",
   },
-  labelColorViolet: { backgroundColor: theme.colors.palette.workspaceLabel.violet },
-  labelColorSky: { backgroundColor: theme.colors.palette.workspaceLabel.sky },
-  labelColorEmerald: { backgroundColor: theme.colors.palette.workspaceLabel.emerald },
-  labelColorOrange: { backgroundColor: theme.colors.palette.workspaceLabel.orange },
-  labelColorPink: { backgroundColor: theme.colors.palette.workspaceLabel.pink },
-  labelColorIndigo: { backgroundColor: theme.colors.palette.workspaceLabel.indigo },
-  labelColorTeal: { backgroundColor: theme.colors.palette.workspaceLabel.teal },
-  labelColorRed: { backgroundColor: theme.colors.palette.workspaceLabel.red },
-  labelColorAmber: { backgroundColor: theme.colors.palette.workspaceLabel.amber },
-  labelColorBlue: { backgroundColor: theme.colors.palette.workspaceLabel.blue },
 }));
