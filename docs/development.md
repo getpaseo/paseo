@@ -23,6 +23,10 @@ Desktop dev launches its desktop-managed daemon with `PASEO_NODE_ENV=development
 so development-only providers such as Mock Load Test are available. Packaged
 desktop launches always force the daemon to production mode.
 
+The web and desktop dev launchers pass the current Git branch to Metro as
+`EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL`. The expanded desktop sidebar shows it in
+the titlebar row. Production builds leave the variable unset and show no label.
+
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
 ## Nix desktop package
@@ -127,9 +131,11 @@ desktop-only environment inherited by terminals opened inside Paseo from couplin
 a new worktree instance to the parent desktop instance's profile or single-instance
 lock.
 
-Electron remains in the desktop dev runner's process group. Closing or stopping the
-workspace-script terminal must terminate Electron with Metro; detaching Electron
-leaves an orphan holding the worktree's single-instance lock and broken output pipes.
+The desktop workspace script `exec`s the dev runner so the terminal owns the runner
+PID. Terminal shutdown reaches the runner as `SIGHUP`; the runner stops Metro and
+asks Electron to quit through its normal app lifecycle. Do not add an npm wrapper or
+detach Electron: either change leaves an orphan holding the worktree's single-instance
+lock and broken output pipes.
 
 With desktop dev running, verify the real BrowserWindow, titlebar clearance, fullscreen
 transition, and 751-pixel settings split with:
@@ -302,9 +308,9 @@ Lifecycle commands run in the worktree through a stable script shell: `bash`
 resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
 Windows. They inherit the daemon environment plus Paseo's lifecycle variables;
 login and interactive shell startup files are not loaded, and Bash's `BASH_ENV`
-hook is unset. Daemon-run loop verify checks and ACP single-string terminal
-commands use the same non-login Bash behavior on macOS/Linux, but preserve their
-existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
+hook is unset. ACP single-string terminal commands use the same non-login Bash
+behavior on macOS/Linux, but preserve their existing `cmd.exe /c` string semantics
+on Windows. Service scripts are separate:
 they launch in a terminal and receive the service environment described below.
 
 Because the shell differs per platform, a lifecycle command that must run
@@ -456,7 +462,7 @@ install.
 
 Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `paseo` binary on macOS is a symlink into the installed Paseo desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
 
-Canonical automation uses `paseo workspace create/ls/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
+Canonical automation uses `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally

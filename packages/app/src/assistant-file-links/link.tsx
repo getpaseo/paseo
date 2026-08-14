@@ -1,16 +1,9 @@
-import { useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import {
-  Platform,
-  Pressable,
-  Text,
-  View,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
+import { MarkdownLinkText } from "@/components/markdown/link-text";
 import { AssistantLinkPressProvider, type AssistantLinkPress } from "./link-press-context";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -39,7 +32,6 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const [hovered, setHovered] = useState(false);
   const { target, onHoverIn, onPress, onAuxPress } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
@@ -55,15 +47,6 @@ export function AssistantMarkdownLink({
     event.stopPropagation();
     onAuxPress();
   });
-  const handleHoverIn = useStableEvent(() => {
-    setHovered(true);
-    onHoverIn();
-  });
-  const handleHoverOut = useStableEvent(() => setHovered(false));
-  const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [style, hovered && { textDecorationLine: "underline" as const }],
-    [style, hovered],
-  );
   const linkPress = useMemo<AssistantLinkPress>(
     () => ({ onPress, accessibilityRole: "link" }),
     [onPress],
@@ -114,19 +97,14 @@ export function AssistantMarkdownLink({
       onAuxClickCapture={preventAnchorNavigation}
       style={LINK_ANCHOR_STYLE}
     >
-      <Pressable
-        accessibilityRole="link"
+      <MarkdownLinkText
+        dataSet={monoSurface ? MARKDOWN_CODE_LINK_DATASET : undefined}
+        style={style}
         onPress={onPress}
-        onHoverIn={handleHoverIn}
-        onHoverOut={handleHoverOut}
+        onHoverIn={onHoverIn}
       >
-        <Text
-          dataSet={monoSurface ? MARKDOWN_CODE_LINK_DATASET : undefined}
-          style={hoveredTextStyle}
-        >
-          {children}
-        </Text>
-      </Pressable>
+        {children}
+      </MarkdownLinkText>
     </a>
   );
 

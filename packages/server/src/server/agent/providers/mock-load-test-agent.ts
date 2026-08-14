@@ -644,6 +644,8 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly assistantResponse: string | null;
+  private readonly streamingAssistantResponse: string | null;
+  private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
 
@@ -656,6 +658,18 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockAssistantResponse === "string"
         ? options.config.featureValues.mockAssistantResponse
         : null;
+    this.streamingAssistantResponse =
+      typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
+        ? options.config.featureValues.mockStreamingAssistantResponse
+        : null;
+    const requestedStreamingInterval =
+      options.config.featureValues?.mockStreamingAssistantIntervalMs;
+    this.streamingAssistantIntervalMs =
+      typeof requestedStreamingInterval === "number" &&
+      Number.isFinite(requestedStreamingInterval) &&
+      requestedStreamingInterval >= 1
+        ? Math.min(requestedStreamingInterval, 1_000)
+        : MOCK_LOAD_TEST_INTERVAL_MS;
     this.rewindError =
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
@@ -721,6 +735,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
+      } else if (this.streamingAssistantResponse !== null) {
+        this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
       } else if (this.assistantResponse !== null) {
         this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
       } else if (structuredBranchName) {
@@ -1037,6 +1053,32 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer = setTimeout(() => {
       this.emitSettledAssistantTurn(turn, finalText);
     }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleStreamingAssistantTurn(turn: ActiveTurn, finalText: string): void {
+    const tokens = tokenize(finalText);
+    const emitNext = () => {
+      if (this.activeTurn !== turn) {
+        return;
+      }
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      const token = tokens.shift();
+      if (token === undefined) {
+        this.finishTurnWithText(turn, finalText);
+        return;
+      }
+      turn.emittedTokens += 1;
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: token,
+        messageId: turn.assistantMessageId,
+      });
+      turn.timer = setTimeout(emitNext, this.streamingAssistantIntervalMs);
+      turn.timer.unref?.();
+    };
+    turn.timer = setTimeout(emitNext, 0);
     turn.timer.unref?.();
   }
 

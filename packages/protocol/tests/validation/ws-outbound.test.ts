@@ -138,6 +138,34 @@ const SourceSchema = z.object({
     );
   });
 
+  it("accepts project config responses with and without setup commit status", () => {
+    const payload = {
+      requestId: "project-config-read",
+      repoRoot: "/repo",
+      ok: true,
+      config: null,
+      revision: null,
+    };
+    const envelope = (
+      responsePayload: typeof payload & {
+        hasUncommittedWorktreeSetupChanges?: boolean;
+      },
+    ) => ({
+      type: "session",
+      message: {
+        type: "read_project_config_response",
+        payload: responsePayload,
+      },
+    });
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope(payload)).success).toBe(true);
+    expect(
+      GeneratedWSOutboundMessageSchema.safeParse(
+        envelope({ ...payload, hasUncommittedWorktreeSetupChanges: true }),
+      ).success,
+    ).toBe(true);
+  });
+
   it("accepts a compact provider snapshot envelope", () => {
     const envelope = {
       type: "session",

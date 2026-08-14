@@ -28,7 +28,11 @@ Yes. Both run. Repositories are not owned by a project.
 
 ## Can the configuration live somewhere other than the repository being watched?
 
-Yes. `filters.repo` can name any repository the organization can reach, so a private repository can hold `.paseo/hub.yml` for triggers that watch public ones. Push access to that repository grants access to the organization's connections, which is a good reason to keep it private and protected.
+Yes. `filters.repo` can name any repository the organization can reach, so a private repository can hold the `.paseo` bundle for workflows that watch public repositories. Protect push access because the bundle selects the organization's connections, daemons, agents, and outputs.
+
+## Where do triggers go now?
+
+Each trigger and its ordered steps live in one direct `.paseo/workflows/*.yml` file. `hub.yml` contains only named environments and agents. Hub rejects monolithic `triggers` configuration instead of translating it.
 
 ## Can I edit configuration in the dashboard?
 

@@ -2,7 +2,6 @@
 /* eslint-disable max-nested-callbacks */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  BranchAlreadyCheckedOutError,
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
@@ -41,6 +40,9 @@ import {
   writeFileSync,
   readFileSync,
   chmodSync,
+  lstatSync,
+  readlinkSync,
+  symlinkSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -299,22 +301,17 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("release/1.1.15");
     });
 
-    it("throws a typed error when checking out a branch already checked out in the main repo", async () => {
-      let caughtError: unknown;
-      try {
-        await createLegacyWorktreeForTest({
-          cwd: repoDir,
-          worktreeSlug: "dev-worktree",
-          source: { kind: "checkout-branch", branchName: "main" },
-          runSetup: true,
-          paseoHome,
-        });
-      } catch (error) {
-        caughtError = error;
-      }
+    it("creates a suffixed branch when checking out a branch already checked out in the main repo", async () => {
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "dev-worktree",
+        source: { kind: "checkout-branch", branchName: "main" },
+        runSetup: true,
+        paseoHome,
+      });
 
-      expect(caughtError).toBeInstanceOf(BranchAlreadyCheckedOutError);
-      expect((caughtError as BranchAlreadyCheckedOutError).branchName).toBe("main");
+      expect(result.branchName).toBe("main-1");
+      expect(existsSync(result.worktreePath)).toBe(true);
     });
 
     it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {
@@ -1194,33 +1191,95 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
-    it("does not overwrite a committed paseo.json with uncommitted edits in the main repo", async () => {
+    it("keeps a new worktree clean when its upstream ref has a newer paseo.json", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      const updaterDir = join(tempDir, "updater");
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "committed" } } }),
+        JSON.stringify({ worktree: { setup: "echo old" } }),
       );
       execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
       execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
         cwd: repoDir,
       });
-
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["clone", remoteDir, updaterDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: updaterDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: updaterDir });
       writeFileSync(
-        join(repoDir, "paseo.json"),
-        JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
+        join(updaterDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo new" } }),
       );
+      execFileSync("git", ["add", "paseo.json"], { cwd: updaterDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "update paseo.json"], {
+        cwd: updaterDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: updaterDir });
+      execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "preserve-committed",
-        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/preserve" },
+        worktreeSlug: "upstream-config",
+        source: {
+          kind: "branch-off",
+          baseBranch: "origin/main",
+          branchName: "feature/upstream-config",
+        },
         runSetup: false,
         paseoHome,
       });
 
       const worktreeConfigPath = join(result.worktreePath, "paseo.json");
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-        scripts: { dev: { command: "committed" } },
+        worktree: { setup: "echo new" },
       });
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
+    });
+
+    it("preserves a dangling paseo.json symlink from the selected ref", async () => {
+      const externalConfigPath = join(tempDir, "outside-paseo.json");
+      execFileSync("git", ["checkout", "-b", "symlink-config"], { cwd: repoDir });
+      symlinkSync(externalConfigPath, join(repoDir, "paseo.json"));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json symlink"],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo source" } }),
+      );
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "symlink-config",
+        source: {
+          kind: "branch-off",
+          baseBranch: "symlink-config",
+          branchName: "feature/symlink-config",
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+      expect(lstatSync(worktreeConfigPath).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(worktreeConfigPath)).toBe(externalConfigPath);
+      expect(existsSync(externalConfigPath)).toBe(false);
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {

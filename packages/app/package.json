@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -29,7 +29,8 @@
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
-    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs"
+    "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
+    "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -92,6 +93,7 @@
     "i18next": "^26.3.0",
     "lucide-react-native": "^0.546.0",
     "markdown-it": "^10.0.0",
+    "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
@@ -117,6 +119,7 @@
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "use-sync-external-store": "^1.6.0",
+    "yaml": "^2.8.4",
     "zod": "^4.4.3",
     "zustand": "^5.0.9"
   },
@@ -134,6 +137,7 @@
     "@xterm/headless": "^6.1.0-beta.213",
     "dotenv": "^17.2.3",
     "eas-cli": "^16.24.1",
+    "esbuild": "0.28.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "expo-gradle-jvmargs": "^1.1.2",

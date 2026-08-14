@@ -569,10 +569,17 @@ function readStatus(value: unknown): string | undefined {
 
 function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
   const normalized = status.trim().toLowerCase();
-  if (normalized === "error" || normalized === "errored") {
-    return "running";
+  switch (normalized) {
+    case "error":
+    case "errored":
+      return "running";
+    case "shutdown":
+      return "canceled";
+    case "notfound":
+      return "failed";
+    default:
+      return normalizeToolCallStatus(status, null, null);
   }
-  return normalizeToolCallStatus(status, null, null);
 }
 
 function resolveCollabAgentStatus(

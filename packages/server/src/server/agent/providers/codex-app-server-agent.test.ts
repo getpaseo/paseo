@@ -22,10 +22,30 @@ import {
   codexAppServerTurnInputFromPrompt,
   listCodexSkills,
   mapCodexPatchNotificationToToolCall,
+  mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
+
+describe("mapCodexPlanUpdateToTodo", () => {
+  test("preserves checklist progress without creating a plan card", () => {
+    expect(
+      mapCodexPlanUpdateToTodo([
+        { step: "Inspect", status: "completed" },
+        { step: "Implement", status: "inProgress" },
+        { step: "Verify", status: "pending" },
+      ]),
+    ).toEqual({
+      type: "todo",
+      items: [
+        { id: "0", text: "Inspect", status: "completed", completed: true },
+        { id: "1", text: "Implement", status: "in_progress", completed: false },
+        { id: "2", text: "Verify", status: "pending", completed: false },
+      ],
+    });
+  });
+});
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
@@ -69,6 +89,11 @@ type CodexTestSession = AgentSession & {
   activeForegroundTurnId: string | null;
   client: CodexClientLike | null;
 };
+
+type TurnTerminalEvent = Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+>;
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
@@ -117,6 +142,41 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   internals.autoReviewEnabledPromise = Promise.resolve(false);
   internals.spawnAppServer = async () => appServer.child;
   return provider;
+}
+
+async function startCompactionTurnTest(): Promise<{
+  appServer: FakeCodexAppServer;
+  session: AgentSession;
+  events: AgentStreamEvent[];
+  terminalEvent: Promise<TurnTerminalEvent>;
+}> {
+  const appServer = createFakeCodexAppServer();
+  const session = new CodexAppServerAgentSession(
+    createConfig({ cwd: "/workspace/project" }),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  const events: AgentStreamEvent[] = [];
+  const terminalEvent = new Promise<TurnTerminalEvent>((resolve) => {
+    session.subscribe((event) => {
+      const isCompaction = event.type === "timeline" && event.item.type === "compaction";
+      const isTerminal =
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled";
+      if (isCompaction || isTerminal) {
+        events.push(event);
+      }
+      if (isTerminal) {
+        resolve(event);
+      }
+    });
+  });
+
+  await session.startTurn("exercise compaction lifecycle");
+  appServer.startsTurn({ threadId: "thread-1", turnId: "codex-turn-1" });
+  return { appServer, session, events, terminalEvent };
 }
 
 function archivedThreadHandle() {
@@ -2181,6 +2241,80 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps a settled child completed until Codex starts another child turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "call-settled-child",
+        threadId: "settled-child-thread",
+        agentPath: "/root/settled-child",
+      });
+      appServer.completeTurn({ threadId: "settled-child-thread" });
+      appServer.says({
+        threadId: "settled-child-thread",
+        itemId: "late-child-message",
+        text: "Late trailing output.",
+      });
+
+      const providerUpserts = events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      );
+      expect(providerUpserts.at(-1)).toMatchObject({
+        id: "settled-child-thread",
+        status: "completed",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "timeline",
+        item: {
+          callId: "call-settled-child",
+          status: "completed",
+          detail: { type: "sub_agent", log: "[Assistant] Late trailing output." },
+        },
+      });
+
+      appServer.completesSubAgentActivity({
+        callId: "late-child-interaction",
+        threadId: "settled-child-thread",
+        agentPath: "/root/settled-child",
+        kind: "interacted",
+      });
+      expect(
+        events.findLast(
+          (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+        ),
+      ).toMatchObject({ event: { id: "settled-child-thread", status: "completed" } });
+
+      appServer.startsTurn({
+        threadId: "settled-child-thread",
+        turnId: "next-child-turn",
+      });
+      expect(
+        events.findLast(
+          (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+        ),
+      ).toMatchObject({ event: { id: "settled-child-thread", status: "running" } });
+
+      appServer.completeTurn({ threadId: "settled-child-thread" });
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("updates a registered child with its later native activity name", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -3393,6 +3527,10 @@ describe("Codex app-server provider", () => {
 
     const liveEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => liveEvents.push(event));
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "v2-child-thread",
+      turn: { id: "v2-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
@@ -3421,6 +3559,10 @@ describe("Codex app-server provider", () => {
     });
 
     liveEvents.length = 0;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "legacy-child-thread",
+      turn: { id: "legacy-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "legacy-child-thread",
       itemId: "legacy-child-message-after-resume",
@@ -3821,6 +3963,99 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("completes a pending Codex compaction when its turn ends", async () => {
+    const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+
+    try {
+      appServer.startsCompaction({
+        threadId: "thread-1",
+        itemId: "compact-without-completion",
+      });
+      appServer.completeTurn();
+      await terminalEvent;
+
+      expect(
+        events.map((event) =>
+          event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
+        ),
+      ).toEqual(["compaction:loading", "compaction:completed", "turn_completed"]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not complete a Codex compaction twice when its item finishes before the turn", async () => {
+    const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+
+    try {
+      appServer.startsCompaction({
+        threadId: "thread-1",
+        itemId: "compact-completed-normally",
+      });
+      appServer.completesCompaction({
+        threadId: "thread-1",
+        itemId: "compact-completed-normally",
+      });
+      appServer.completeTurn();
+      await terminalEvent;
+
+      expect(
+        events.map((event) =>
+          event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
+        ),
+      ).toEqual(["compaction:loading", "compaction:completed", "turn_completed"]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not let a late compaction completion consume the current pending item", async () => {
+    const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+
+    try {
+      appServer.startsCompaction({ threadId: "thread-1", itemId: "current-compaction" });
+      appServer.completesCompaction({ threadId: "thread-1", itemId: "older-compaction" });
+      appServer.completeTurn();
+      await terminalEvent;
+
+      expect(
+        events.map((event) =>
+          event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
+        ),
+      ).toEqual(["compaction:loading", "compaction:completed", "turn_completed"]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    { status: "failed", terminalType: "turn_failed" },
+    { status: "interrupted", terminalType: "turn_canceled" },
+  ])("completes a pending compaction before a $status turn", async ({ status, terminalType }) => {
+    const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+
+    try {
+      appServer.startsCompaction({ threadId: "thread-1", itemId: `compact-${status}` });
+      appServer.completeTurn({
+        status,
+        error: status === "failed" ? { message: "Compaction failed" } : null,
+      });
+      await terminalEvent;
+
+      expect(
+        events.map((event) =>
+          event.type === "timeline" ? `${event.item.type}:${event.item.status}` : event.type,
+        ),
+      ).toEqual(["compaction:loading", "compaction:completed", terminalType]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("emits and dedupes Codex thread/compacted notifications", () => {

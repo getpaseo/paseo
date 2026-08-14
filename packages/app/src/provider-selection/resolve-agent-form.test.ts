@@ -47,6 +47,14 @@ const TEST_CLAUDE_DEFINITION: AgentProviderDefinition = {
   ],
 };
 
+const TEST_PI_DEFINITION: AgentProviderDefinition = {
+  id: "pi",
+  label: "Pi",
+  description: "Pi test provider",
+  defaultModeId: null,
+  modes: [],
+};
+
 const CODEX_MODELS: AgentModelDefinition[] = [
   {
     provider: "codex",
@@ -310,7 +318,6 @@ describe("mergeSelectedComposerPreferences", () => {
             },
             claude: { model: "claude-sonnet-4-6" },
           },
-          favoriteModels: [{ provider: "codex", modelId: "gpt-5.4-mini" }],
         },
         provider: "codex",
         updates: { model: "gpt-5.4" },
@@ -326,7 +333,6 @@ describe("mergeSelectedComposerPreferences", () => {
         },
         claude: { model: "claude-sonnet-4-6" },
       },
-      favoriteModels: [{ provider: "codex", modelId: "gpt-5.4-mini" }],
     });
   });
 
@@ -972,55 +978,6 @@ describe("resolveAgentForm", () => {
     });
   });
 
-  describe("SET_PROVIDER_FROM_USER", () => {
-    it("switches provider, picks preferred model and mode, marks provider modified", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, {
-        type: "SET_PROVIDER_FROM_USER",
-        provider: "codex",
-        providerModels: CODEX_MODELS,
-        providerDef: TEST_CODEX_DEFINITION,
-        providerPrefs: { model: "gpt-5.3-codex", mode: "full-access" },
-      });
-
-      expect(next.form.provider).toBe("codex");
-      expect(next.form.model).toBe("gpt-5.3-codex");
-      expect(next.form.modeId).toBe("full-access");
-      expect(next.userModified.provider).toBe(true);
-      expect(next.userModified.model).toBe(false);
-    });
-
-    it("falls back to provider defaults when no prefs", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, {
-        type: "SET_PROVIDER_FROM_USER",
-        provider: "codex",
-        providerModels: CODEX_MODELS,
-        providerDef: TEST_CODEX_DEFINITION,
-        providerPrefs: undefined,
-      });
-
-      expect(next.form.modeId).toBe("auto");
-      expect(next.form.model).toBe("gpt-5.3-codex");
-    });
-
-    it("canonicalizes an aliased preferred model and restores its thinking option", () => {
-      const next = resolveAgentForm(makeState(), {
-        type: "SET_PROVIDER_FROM_USER",
-        provider: "codex",
-        providerModels: ALIASED_CODEX_MODELS,
-        providerDef: TEST_CODEX_DEFINITION,
-        providerPrefs: {
-          model: "gpt-5.3-codex-legacy",
-          thinkingByModel: { "gpt-5.3-codex-legacy": "low" },
-        },
-      });
-
-      expect(next.form.model).toBe("gpt-5.3-codex");
-      expect(next.form.thinkingOptionId).toBe("low");
-    });
-  });
-
   describe("SET_PROVIDER_AND_MODEL_FROM_USER", () => {
     it("sets provider, model, and default mode; marks both modified", () => {
       const state = makeState();
@@ -1089,6 +1046,42 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.modeId).toBe("full-access");
       expect(next.userModified.modeId).toBe(true);
+    });
+  });
+
+  describe("APPLY_PROFILE_FROM_USER", () => {
+    it("drops a stale saved mode for a modeless profile provider", () => {
+      const next = resolveAgentForm(makeState({ provider: "codex", modeId: "full-access" }), {
+        type: "APPLY_PROFILE_FROM_USER",
+        provider: "pi",
+        modelId: "anthropic/sonnet",
+        modeId: "",
+        thinkingOptionId: "",
+        providerDef: TEST_PI_DEFINITION,
+        providerModels: [{ provider: "pi", id: "anthropic/sonnet", label: "Sonnet" }],
+        providerPrefs: { mode: "full-access" },
+      });
+
+      expect(next.form).toMatchObject({
+        provider: "pi",
+        model: "anthropic/sonnet",
+        modeId: "",
+      });
+    });
+
+    it("restores thinking for the selected model when the profile omits it", () => {
+      const next = resolveAgentForm(makeState(), {
+        type: "APPLY_PROFILE_FROM_USER",
+        provider: "codex",
+        modelId: "gpt-5.3-codex",
+        modeId: "full-access",
+        thinkingOptionId: "",
+        providerDef: TEST_CODEX_DEFINITION,
+        providerModels: CODEX_MODELS,
+        providerPrefs: { thinkingByModel: { "gpt-5.3-codex": "low" } },
+      });
+
+      expect(next.form.thinkingOptionId).toBe("low");
     });
   });
 

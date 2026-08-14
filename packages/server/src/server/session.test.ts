@@ -33,10 +33,8 @@ import {
   asAgentManager,
   asAgentStorage,
   asDownloadTokenStore,
-  asPushTokenStore,
-  asChatService,
+  asPushNotifications,
   asScheduleService,
-  asLoopService,
   asCheckoutDiffManager,
   asGitHubService,
   asWorkspaceGitService,
@@ -310,6 +308,7 @@ interface SessionForTestOptions {
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
+  hubExecutionAgents?: SessionOptions["hubExecutionAgents"];
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
@@ -317,6 +316,7 @@ interface SessionForTestOptions {
   daemonVersion?: SessionOptions["daemonVersion"];
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
+  pushNotifications?: SessionOptions["pushNotifications"];
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
@@ -366,7 +366,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
-    pushTokenStore: asPushTokenStore(),
+    pushNotifications: options.pushNotifications ?? asPushNotifications(),
     paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
@@ -394,9 +394,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     },
-    chatService: asChatService(),
     scheduleService: asScheduleService(),
-    loopService: asLoopService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
     workspaceGitService: asWorkspaceGitService(workspaceGitService),
@@ -412,6 +410,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
+    hubExecutionAgents: options.hubExecutionAgents,
     serviceProxy: options.serviceProxy,
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
@@ -426,6 +425,44 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 }
 
 describe("session authorization scopes", () => {
+  test("routes named-agent validation through the session source", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const providers = createProviderSnapshotManagerStub();
+    providers.validateAgentConfiguration.mockResolvedValue([
+      { path: ["model"], message: "Model is unavailable" },
+    ]);
+    const session = createSessionForTest({
+      messages,
+      providerSnapshotManager: providers.manager,
+      hubExecutionAgents: {
+        create: vi.fn(),
+        control: vi.fn(),
+        subscribe: vi.fn(() => () => undefined),
+        invalidateAuthority: vi.fn(),
+      },
+    });
+
+    await session.handleMessage({
+      type: "hub.execution.agent.validate.request",
+      requestId: "validate-agent",
+      provider: "codex",
+      model: "missing",
+    });
+
+    expect(providers.validateAgentConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex", model: "missing" }),
+    );
+    expect(messages).toContainEqual({
+      type: "hub.execution.agent.validate.response",
+      payload: {
+        requestId: "validate-agent",
+        valid: false,
+        issues: [{ path: ["model"], message: "Model is unavailable" }],
+        error: null,
+      },
+    });
+  });
+
   test("rejects an RPC outside an exact grant with the generic RPC error", async () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
@@ -673,6 +710,7 @@ describe("project command-center RPCs", () => {
               projectDisplayName: "new-project",
               projectCustomName: null,
               projectCustomIconRevision: null,
+              projectIconRevision: "automatic:none:v1",
               projectRootPath: directoryPath,
               projectKind: "non_git",
             },
@@ -1404,6 +1442,88 @@ describe("project config RPC authorization", () => {
         },
       },
     ]);
+  });
+});
+
+test("push token registration can be revoked by the connected client", async () => {
+  const renewed: string[] = [];
+  const revoked: string[] = [];
+  const messages: unknown[] = [];
+  const session = createSessionForTest({
+    messages,
+    pushNotifications: asPushNotifications({
+      renew: (token: string) => renewed.push(token),
+      revoke: (token: string) => revoked.push(token),
+    }),
+  });
+
+  await session.handleMessage({
+    type: "register_push_token",
+    token: "ExponentPushToken[test-device]",
+  });
+  await session.handleMessage({
+    type: "push.unregister.request",
+    token: "ExponentPushToken[test-device]",
+    requestId: "revoke-1",
+  });
+  await session.handleMessage({
+    type: "client_heartbeat",
+    deviceType: "mobile",
+    focusedAgentId: null,
+    lastActivityAt: "2026-08-10T00:00:00.000Z",
+    appVisible: false,
+  });
+
+  expect(renewed).toEqual(["ExponentPushToken[test-device]"]);
+  expect(revoked).toEqual(["ExponentPushToken[test-device]"]);
+  expect(messages).toEqual([
+    {
+      type: "push.unregister.response",
+      payload: { requestId: "revoke-1" },
+    },
+  ]);
+});
+
+test("push token revocation only acknowledges durable removal", async () => {
+  const renewed: string[] = [];
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    pushNotifications: asPushNotifications({
+      renew: (token: string) => renewed.push(token),
+      revoke: () => {
+        throw new Error("disk full");
+      },
+    }),
+  });
+
+  await session.handleMessage({
+    type: "register_push_token",
+    token: "ExponentPushToken[test-device]",
+  });
+  await session.handleMessage({
+    type: "push.unregister.request",
+    token: "ExponentPushToken[test-device]",
+    requestId: "revoke-failed",
+  });
+  await session.handleMessage({
+    type: "client_heartbeat",
+    deviceType: "mobile",
+    focusedAgentId: null,
+    lastActivityAt: "2026-08-10T00:00:00.000Z",
+    appVisible: false,
+  });
+
+  expect(renewed).toEqual(["ExponentPushToken[test-device]", "ExponentPushToken[test-device]"]);
+  expect(messages.some((message) => message.type === "push.unregister.response")).toBe(false);
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "revoke-failed",
+      requestType: "push.unregister.request",
+      error: "Request failed: disk full",
+      code: "handler_error",
+    },
   });
 });
 
@@ -4575,57 +4695,12 @@ describe("session pull request timeline handling", () => {
   });
 });
 
-describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
-  // Each chat/*, loop/*, and schedule/* type must reach its domain handler. The
-  // injected service stubs are unstubbed, so every handler's own try/catch fires
-  // and emits its domain rpc_error code — proving the message routed (a dropped
-  // case would silently no-op and emit nothing). schedule/* historically routed
-  // via the chat dispatcher's fall-through arm; this guards that path explicitly.
+describe("schedule dispatch routing", () => {
+  // Each schedule/* type must reach its domain handler. The injected service stub
+  // is unstubbed, so every handler's own try/catch emits its domain rpc_error code.
   // handleMessage receives already-parsed messages, so these fixtures only need to
   // satisfy the TS union here — zod parsing happens upstream at the transport.
   const routingCases: Array<{ msg: SessionInboundMessage; code: string }> = [
-    {
-      msg: { type: "chat/create", requestId: "rt-chat-create", name: "room" },
-      code: "chat_request_failed",
-    },
-    { msg: { type: "chat/list", requestId: "rt-chat-list" }, code: "chat_request_failed" },
-    {
-      msg: { type: "chat/inspect", requestId: "rt-chat-inspect", room: "room" },
-      code: "chat_request_failed",
-    },
-    {
-      msg: { type: "chat/delete", requestId: "rt-chat-delete", room: "room" },
-      code: "chat_request_failed",
-    },
-    {
-      msg: { type: "chat/post", requestId: "rt-chat-post", room: "room", body: "hi" },
-      code: "chat_request_failed",
-    },
-    {
-      msg: { type: "chat/read", requestId: "rt-chat-read", room: "room" },
-      code: "chat_request_failed",
-    },
-    {
-      msg: { type: "chat/wait", requestId: "rt-chat-wait", room: "room" },
-      code: "chat_request_failed",
-    },
-    {
-      msg: { type: "loop/run", requestId: "rt-loop-run", prompt: "p", cwd: "/tmp/loop" },
-      code: "loop_request_failed",
-    },
-    { msg: { type: "loop/list", requestId: "rt-loop-list" }, code: "loop_request_failed" },
-    {
-      msg: { type: "loop/inspect", requestId: "rt-loop-inspect", id: "loop-1" },
-      code: "loop_request_failed",
-    },
-    {
-      msg: { type: "loop/logs", requestId: "rt-loop-logs", id: "loop-1" },
-      code: "loop_request_failed",
-    },
-    {
-      msg: { type: "loop/stop", requestId: "rt-loop-stop", id: "loop-1" },
-      code: "loop_request_failed",
-    },
     {
       msg: {
         type: "schedule/create",
@@ -4893,7 +4968,7 @@ test("keeps selective delivery scoped per socket when a retained session also ha
   ]);
 });
 
-test("sends project updates only to capable sockets in a retained session", () => {
+test("sends project updates only to capable sockets in a retained session", async () => {
   const messages: SessionOutboundMessage[] = [];
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
   const session = createSessionForTest({ messages, targetedMessages });
@@ -4902,7 +4977,7 @@ test("sends project updates only to capable sockets in a retained session", () =
   session.updateClientCapabilities(null, legacySocket);
   session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true }, capableSocket);
 
-  session.emitProjectUpdate({
+  await session.emitProjectUpdate({
     kind: "upsert",
     project: createPersistedProjectRecord({
       projectId: "project-capable-socket",
@@ -4965,6 +5040,7 @@ test("project.list returns every active project descriptor", async () => {
             projectDisplayName: "acme/app",
             projectCustomName: null,
             projectCustomIconRevision: null,
+            projectIconRevision: "automatic:none:v1",
             projectRootPath: "/tmp/project-active",
             projectKind: "git",
           },

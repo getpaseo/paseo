@@ -21,6 +21,7 @@ describe("Hub commands", () => {
 
     assert.deepEqual(names, [
       "login",
+      "init",
       "connect",
       "status",
       "disconnect",
@@ -344,7 +345,6 @@ describe("Hub commands", () => {
     daemon.beforeDisconnect = () => {
       assert.equal(credentials.active()?.credential, "human-secret");
     };
-
     const result = await runHubLogout(
       { json: true, disconnectDaemon: true, force: true },
       {
@@ -359,9 +359,31 @@ describe("Hub commands", () => {
     assert.equal(daemon.disconnects, 1);
     assert.deepEqual(daemon.disconnectForces, [true]);
     assert.equal(result.data.daemonDisconnected, true);
+    assert.equal(result.data.warning, undefined);
   });
 
-  it("disconnect reports the current Hub and preserves it in the final result", async () => {
+  it("logout reports a daemon disconnect warning", async () => {
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "human-secret" });
+    const daemon = new FakeDaemon("https://hub.test");
+    daemon.disconnectWarning = "Hub could not be reached; cleanup may remain pending.";
+
+    const result = await runHubLogout(
+      { json: true, disconnectDaemon: true },
+      {
+        credentials,
+        daemon: new FakeDaemonConnection(daemon),
+        isInteractive: () => false,
+        confirmDisconnect: async () => false,
+        reporter: quietReporter,
+      },
+    );
+
+    assert.equal(result.data.daemonDisconnected, true);
+    assert.equal(result.data.warning, "Hub could not be reached; cleanup may remain pending.");
+  });
+
+  it("disconnect reports clean local status without a ghost Hub origin", async () => {
     const daemon = new FakeDaemon("https://hub.test");
     const progress: string[] = [];
 
@@ -374,7 +396,7 @@ describe("Hub commands", () => {
     );
 
     assert.deepEqual(progress, ["Disconnecting this daemon from https://hub.test"]);
-    assert.equal(result.data[0]?.hub, "https://hub.test");
+    assert.equal(result.data[0]?.hub, null);
   });
 
   it("preserves login when an accepted daemon disconnect fails", async () => {
@@ -448,6 +470,7 @@ class FakeDaemon implements HubDaemonClient {
   disconnects = 0;
   readonly disconnectForces: boolean[] = [];
   disconnectError: Error | null = null;
+  disconnectWarning: string | null = null;
   beforeDisconnect: (() => void) | null = null;
 
   constructor(private readonly origin: string) {}
@@ -466,7 +489,10 @@ class FakeDaemon implements HubDaemonClient {
     this.disconnectForces.push(force);
     this.beforeDisconnect?.();
     if (this.disconnectError !== null) throw this.disconnectError;
-    return { status: hubStatus("not_connected", null) };
+    return {
+      status: hubStatus("not_connected", null),
+      ...(this.disconnectWarning ? { warning: this.disconnectWarning } : {}),
+    };
   }
 
   async close() {}
