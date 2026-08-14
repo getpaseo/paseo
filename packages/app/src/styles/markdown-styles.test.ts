@@ -86,6 +86,9 @@ describe("createMarkdownStyles", () => {
     expect(styles.ordered_list_icon).toMatchObject({
       userSelect: "text",
     });
+    expect(styles.strong).toMatchObject({
+      fontWeight: darkTheme.fontWeight.bold,
+    });
   });
 
   it("uses the mono font-size token directly for inline and block code", () => {
