@@ -10,8 +10,18 @@ import type { Theme } from "@/styles/theme";
 import { useNestedRepos, type NestedRepo } from "@/hooks/use-nested-repos";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { useSessionStore } from "@/stores/session-store";
+import { useOpenProject } from "@/hooks/use-open-project";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { StatusRing } from "@/components/status-ring";
+import { getProviderIcon } from "@/components/provider-icons";
+import {
+  aggregateSidebarStateBuckets,
+  deriveSidebarStateBucket,
+  type SidebarStateBucket,
+} from "@/utils/sidebar-agent-state";
+import { getStatusDotColor } from "@/utils/status-dot-color";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
@@ -25,6 +35,21 @@ interface RepoSessionEntry {
   agentId: string;
   title: string | null;
   cwd: string;
+  /** Agent CLI (claude, codex, …) — drives the leading provider icon. */
+  provider: string | null;
+  status: Agent["status"];
+  pendingPermissionCount: number;
+  requiresAttention: boolean;
+  attentionReason: Agent["attentionReason"];
+}
+
+function entryBucket(session: RepoSessionEntry): SidebarStateBucket {
+  return deriveSidebarStateBucket({
+    status: session.status,
+    pendingPermissionCount: session.pendingPermissionCount,
+    requiresAttention: session.requiresAttention,
+    attentionReason: session.attentionReason,
+  });
 }
 
 /**
@@ -42,6 +67,7 @@ export function NestedReposSection({ serverId, scanCwd }: { serverId: string; sc
     scanCwd,
   );
   const [sectionCollapsed, setSectionCollapsed] = useState(false);
+  const openProject = useOpenProject(serverId);
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
 
   // Stable Map reference — re-renders only when the agents map itself changes.
@@ -65,7 +91,16 @@ export function NestedReposSection({ serverId, scanCwd }: { serverId: string; sc
         continue;
       }
       const entries = byRepo.get(repo.path) ?? [];
-      entries.push({ agentId: agent.id, title: agent.title, cwd: agent.cwd });
+      entries.push({
+        agentId: agent.id,
+        title: agent.title,
+        cwd: agent.cwd,
+        provider: agent.provider ?? null,
+        status: agent.status,
+        pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+        requiresAttention: agent.requiresAttention ?? false,
+        attentionReason: agent.attentionReason ?? null,
+      });
       byRepo.set(repo.path, entries);
     }
     return byRepo;
@@ -87,17 +122,22 @@ export function NestedReposSection({ serverId, scanCwd }: { serverId: string; sc
     });
   }, []);
 
+  // The New Workspace route only honours a source directory when it also carries
+  // a projectId, so register the nested repo as a project first. Registration is
+  // idempotent daemon-side: an already-known path returns its existing project.
   const handleNewSessionForRepo = useCallback(
-    (repo: NestedRepo) => {
+    async (repo: NestedRepo) => {
+      const result = await openProject(repo.path);
       router.navigate(
         buildNewWorkspaceRoute({
           serverId,
           sourceDirectory: repo.path,
           displayName: repo.name,
+          ...(result.ok ? { projectId: result.project.projectId } : {}),
         }) as Href,
       );
     },
-    [serverId],
+    [openProject, serverId],
   );
 
   if (loading && repos.length === 0) {
@@ -165,12 +205,18 @@ function NestedRepoAccordion({
   sessions: RepoSessionEntry[];
   expanded: boolean;
   onToggle: (path: string) => void;
-  onNewSession: (repo: NestedRepo) => void;
+  onNewSession: (repo: NestedRepo) => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const handleToggle = useCallback(() => onToggle(repo.path), [onToggle, repo.path]);
-  const handleNew = useCallback(() => onNewSession(repo), [onNewSession, repo]);
+  const handleNew = useCallback(() => void onNewSession(repo), [onNewSession, repo]);
   const newSessionLabel = t("sidebar.workspace.actions.newSessionInRepo", { repo: repo.name });
+  // Collapsed repos keep reporting their most urgent session so live activity
+  // stays visible without expanding the accordion.
+  const repoBucket = useMemo(
+    () => (sessions.length > 0 ? aggregateSidebarStateBuckets(sessions.map(entryBucket)) : null),
+    [sessions],
+  );
   const plusIconProps = useCallback(
     (hovered: boolean) => (theme: Theme) => ({
       color: hovered ? theme.colors.foreground : theme.colors.foregroundMuted,
@@ -219,6 +265,12 @@ function NestedRepoAccordion({
                 </>
               ) : null}
               {sessions.length > 0 ? <Text style={styles.rowCount}>{sessions.length}</Text> : null}
+              {repoBucket && repoBucket !== "done" ? (
+                <RepoStatusBadge
+                  bucket={repoBucket}
+                  testID={`sidebar-nested-repo-status-${repo.name}`}
+                />
+              ) : null}
             </>
           )}
         </Pressable>
@@ -247,12 +299,35 @@ function NestedRepoAccordion({
   );
 }
 
+function statusDotStyleForBucket(bucket: SidebarStateBucket) {
+  switch (bucket) {
+    case "needs_input":
+    case "pending_question":
+      return styles.statusDotNeedsInput;
+    case "failed":
+      return styles.statusDotFailed;
+    case "attention":
+      return styles.statusDotAttention;
+    default:
+      return styles.statusDotIdle;
+  }
+}
+
+function RepoStatusBadge({ bucket, testID }: { bucket: SidebarStateBucket; testID: string }) {
+  if (bucket === "running" || bucket === "pending_question") {
+    return <StatusRing />;
+  }
+  return <View testID={testID} style={[styles.statusDot, statusDotStyleForBucket(bucket)]} />;
+}
+
 function RepoSessionRow({ serverId, session }: { serverId: string; session: RepoSessionEntry }) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => {
     router.navigate(navigateToAgent({ serverId, agentId: session.agentId }) as unknown as Href);
   }, [serverId, session.agentId]);
   const title = session.title ?? t("importSession.preview.untitledSession");
+  const bucket = entryBucket(session);
+  const ProviderIcon = session.provider ? withUnistyles(getProviderIcon(session.provider)) : null;
 
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -270,6 +345,18 @@ function RepoSessionRow({ serverId, session }: { serverId: string; session: Repo
       style={rowStyle}
       testID={`sidebar-nested-repo-session-${session.agentId}`}
     >
+      {ProviderIcon ? (
+        <View
+          style={styles.sessionProviderLogo}
+          testID={`sidebar-nested-repo-session-provider-${session.agentId}`}
+        >
+          <ProviderIcon size={12} uniProps={foregroundMutedColorMapping} />
+        </View>
+      ) : null}
+      <RepoStatusBadge
+        bucket={bucket}
+        testID={`sidebar-nested-repo-session-status-${session.agentId}`}
+      />
       <Text numberOfLines={1} style={styles.sessionText}>
         {title}
       </Text>
@@ -364,11 +451,36 @@ const styles = StyleSheet.create((theme) => ({
   sessionRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
     paddingVertical: 3,
     paddingLeft: 14,
     paddingRight: 4,
     borderRadius: 4,
     marginRight: 8,
+  },
+  sessionProviderLogo: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusDot: {
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    borderRadius: theme.borderRadius.full,
+    flexShrink: 0,
+  },
+  statusDotNeedsInput: {
+    backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
+  },
+  statusDotFailed: {
+    backgroundColor: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
+  },
+  statusDotAttention: {
+    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
+  },
+  statusDotIdle: {
+    backgroundColor: theme.colors.foregroundExtraMuted,
+    opacity: 0.3,
   },
   sessionText: {
     flex: 1,
