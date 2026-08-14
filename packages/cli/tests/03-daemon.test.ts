@@ -23,6 +23,7 @@ import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
+import YAML from "yaml";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 
 console.log("=== Daemon Commands ===\n");
@@ -275,6 +276,44 @@ try {
       const pairingPayload = JSON.parse(pairing.stdout);
       assert.strictEqual(pairingPayload.relayEnabled, true, "pairing should use live relay state");
       assert.match(pairingPayload.url, /#offer=/, "pairing should use the live daemon offer");
+
+      const reloadConfig = JSON.parse(await readFile(configPath, "utf-8"));
+      reloadConfig.daemon = {
+        ...reloadConfig.daemon,
+        listen: process.platform === "win32" ? `${listen}-changed` : `${listen}.changed`,
+        browserTools: { enabled: true },
+      };
+      await writeFile(configPath, `${JSON.stringify(reloadConfig, null, 2)}\n`, "utf-8");
+      const nestedReload = await daemonCommand(["reload", "--host", listen, "--json"]);
+      assert.strictEqual(nestedReload.exitCode, 0, nestedReload.stderr);
+      assert.deepStrictEqual(JSON.parse(nestedReload.stdout), {
+        appliedPaths: ["daemon.browserTools.enabled"],
+        restartRequiredPaths: [],
+        overrideControlledPaths: ["daemon.listen"],
+      });
+
+      reloadConfig.daemon.browserTools.enabled = false;
+      await writeFile(configPath, `${JSON.stringify(reloadConfig, null, 2)}\n`, "utf-8");
+      const aliasReload = await runLocalPaseo(["reload", "--host", listen, "--json"], {
+        PASEO_HOME: paseoHome,
+      });
+      assert.strictEqual(aliasReload.exitCode, 0, aliasReload.stderr);
+      assert.deepStrictEqual(JSON.parse(aliasReload.stdout), {
+        appliedPaths: ["daemon.browserTools.enabled"],
+        restartRequiredPaths: [],
+        overrideControlledPaths: [],
+      });
+
+      const yamlReload = await daemonCommand(["reload", "--host", listen, "--format", "yaml"]);
+      assert.strictEqual(yamlReload.exitCode, 0, yamlReload.stderr);
+      assert.deepStrictEqual(YAML.parse(yamlReload.stdout), {
+        appliedPaths: [],
+        restartRequiredPaths: [],
+        overrideControlledPaths: [],
+      });
+
+      const humanReload = await daemonCommand(["reload", "--host", listen]);
+      assert.match(humanReload.stdout, /Configuration reloaded\./);
 
       const foreignHome = await mkdtemp(join(tmpdir(), "paseo-test-foreign-home-"));
       try {

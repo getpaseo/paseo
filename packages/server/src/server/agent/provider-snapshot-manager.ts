@@ -85,15 +85,9 @@ function omitProviderOverrides(
   overrides: Record<string, ProviderOverride> | undefined,
   providers: readonly string[],
 ): Record<string, ProviderOverride> | undefined {
-  if (!overrides || providers.length === 0) {
-    return overrides;
-  }
-
+  if (!overrides || providers.length === 0) return overrides;
   const nextOverrides = { ...overrides };
-  for (const provider of providers) {
-    delete nextOverrides[provider];
-  }
-
+  for (const provider of providers) delete nextOverrides[provider];
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
 }
 
@@ -129,6 +123,13 @@ interface ProviderSnapshotReadOptions {
 
 interface ApplyMutableProviderConfigOptions {
   removeProviders?: readonly string[];
+  replace?: boolean;
+}
+
+export interface StagedMutableProviderConfig {
+  agentManagerState: AgentManagerProviderState;
+  publish(): void;
+  rollback(): void;
 }
 
 interface ProviderSnapshotProviderOptions {
@@ -185,6 +186,16 @@ interface ProviderLoad {
   promise: Promise<void>;
 }
 
+interface MutableProviderState {
+  baseProviderOverrides: Record<string, ProviderOverride> | undefined;
+  runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  providerOverrides: Record<string, ProviderOverride> | undefined;
+  providerRegistry: Record<AgentProvider, ProviderDefinition>;
+  providerClients: Record<AgentProvider, AgentClient>;
+  snapshots: Map<string, Map<AgentProvider, ProviderSnapshotEntry>>;
+  providerLoads: Map<string, Map<AgentProvider, ProviderLoad>>;
+}
+
 type ProviderCatalogScope = { scope: "global" } | { scope: "workspace"; cwd: string };
 
 interface ProviderSnapshotTarget {
@@ -197,8 +208,8 @@ export class ProviderSnapshotManager {
   private readonly providerLoads = new Map<string, Map<AgentProvider, ProviderLoad>>();
   private readonly events = new EventEmitter();
   private destroyed = false;
-  private readonly refreshTimeoutMs: number;
-  private readonly diagnosticTimeoutMs: number;
+  private refreshTimeoutMs: number;
+  private diagnosticTimeoutMs: number;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -456,24 +467,97 @@ export class ProviderSnapshotManager {
     mutableProviders: MutableDaemonConfig["providers"] | undefined,
     options: ApplyMutableProviderConfigOptions = {},
   ): AgentManagerProviderState {
-    this.baseProviderOverrides = omitProviderOverrides(
-      this.baseProviderOverrides,
-      options.removeProviders ?? [],
-    );
-    this.providerOverrides = applyMutableProviderConfigToOverrides(
-      this.baseProviderOverrides,
-      mutableProviders,
-    );
-    this.providerRegistry = this.buildRegistry();
-    this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
-
-    for (const cwd of this.snapshots.keys()) {
-      this.providerLoads.delete(cwd);
-      this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
-      this.emitChange(cwd);
+    const staged = this.stageMutableProviderConfig(mutableProviders, options);
+    try {
+      staged.publish();
+      return staged.agentManagerState;
+    } catch (error) {
+      staged.rollback();
+      throw error;
     }
+  }
 
-    return this.getAgentManagerProviderState();
+  stageMutableProviderConfig(
+    mutableProviders: MutableDaemonConfig["providers"] | undefined,
+    options: ApplyMutableProviderConfigOptions = {},
+  ): StagedMutableProviderConfig {
+    const previous = this.captureMutableProviderState();
+    const snapshotCwds = Array.from(this.snapshots.keys());
+    try {
+      if (options.replace) {
+        this.baseProviderOverrides = undefined;
+        this.runtimeSettings = undefined;
+      } else {
+        this.baseProviderOverrides = omitProviderOverrides(
+          this.baseProviderOverrides,
+          options.removeProviders ?? [],
+        );
+      }
+      this.providerOverrides = applyMutableProviderConfigToOverrides(
+        this.baseProviderOverrides,
+        mutableProviders,
+      );
+      // The mutable config is the complete provider source after startup. Keeping
+      // startup-derived runtime settings here would retain removed command/env fields.
+      if (options.replace) this.runtimeSettings = undefined;
+      this.providerRegistry = this.buildRegistry();
+      this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+
+      for (const cwd of this.snapshots.keys()) {
+        this.providerLoads.delete(cwd);
+        this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
+      }
+
+      return {
+        agentManagerState: this.getAgentManagerProviderState(),
+        publish: () => {
+          for (const cwd of snapshotCwds) {
+            this.emitChange(cwd);
+            const target =
+              cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY
+                ? createGlobalSnapshotTarget()
+                : createWorkspaceSnapshotTarget(cwd);
+            const providers = this.resolveProvidersToWarm(cwd);
+            if (providers.length > 0) void this.warmUp(target, providers);
+          }
+        },
+        rollback: () => this.restoreMutableProviderState(previous),
+      };
+    } catch (error) {
+      this.restoreMutableProviderState(previous);
+      throw error;
+    }
+  }
+
+  private captureMutableProviderState(): MutableProviderState {
+    return {
+      baseProviderOverrides: this.baseProviderOverrides,
+      runtimeSettings: this.runtimeSettings,
+      providerOverrides: this.providerOverrides,
+      providerRegistry: this.providerRegistry,
+      providerClients: this.providerClients,
+      // Preserve the inner map identities: in-flight refreshes close over them.
+      // Staging replaces active maps instead of mutating these originals.
+      snapshots: new Map(this.snapshots),
+      providerLoads: new Map(this.providerLoads),
+    };
+  }
+
+  private restoreMutableProviderState(previous: MutableProviderState): void {
+    this.baseProviderOverrides = previous.baseProviderOverrides;
+    this.runtimeSettings = previous.runtimeSettings;
+    this.providerOverrides = previous.providerOverrides;
+    this.providerRegistry = previous.providerRegistry;
+    this.providerClients = previous.providerClients;
+    this.snapshots.clear();
+    for (const [cwd, entries] of previous.snapshots) this.snapshots.set(cwd, entries);
+    this.providerLoads.clear();
+    for (const [cwd, loads] of previous.providerLoads) this.providerLoads.set(cwd, loads);
+  }
+
+  setRefreshTimeoutMs(refreshTimeoutMs: number | undefined): void {
+    this.refreshTimeoutMs = resolveRefreshTimeoutMs(refreshTimeoutMs);
+    this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(undefined, this.refreshTimeoutMs);
   }
 
   on(event: "change", listener: ProviderSnapshotChangeListener): this {
@@ -665,18 +749,22 @@ export class ProviderSnapshotManager {
         defaultModeId: definition?.defaultModeId ?? null,
       };
 
-      if (!definition?.enabled || !current || current.status === "loading") {
+      if (!definition?.enabled) {
         entries.set(provider, {
           ...metadata,
           status: "unavailable",
-          enabled: definition?.enabled ?? true,
+          enabled: false,
         });
         continue;
       }
 
       entries.set(provider, {
-        ...current,
         ...metadata,
+        status: "loading",
+        enabled: true,
+        models: current?.models,
+        modes: current?.modes,
+        fetchedAt: current?.fetchedAt,
       });
     }
 

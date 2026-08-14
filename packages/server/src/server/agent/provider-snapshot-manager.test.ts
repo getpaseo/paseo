@@ -442,6 +442,34 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("setRefreshTimeoutMs changes the deadline for future refreshes", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 60_000,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable: vi.fn(waitUntilAborted) }),
+      },
+    });
+    manager.setRefreshTimeoutMs(1);
+
+    try {
+      await expect(
+        manager.getProvider({ cwd: "/tmp/project", provider: "codex", wait: true }),
+      ).resolves.toMatchObject({
+        status: "error",
+        error: "Timed out refreshing Codex after 1ms; pending: availability",
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("defaults provider refreshes to a two-minute deadline", async () => {
     vi.useFakeTimers();
     const manager = new ProviderSnapshotManager({
@@ -1401,6 +1429,77 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 
       const cwds = listener.mock.calls.map((call) => call[1]).sort();
       expect(cwds).toEqual([cwdA, cwdB].sort());
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("stages provider state without events, then publishes or rolls back", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: true },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+    });
+    try {
+      const cwd = resolve("/tmp/project");
+      manager.getSnapshot(cwd);
+      const events: string[] = [];
+      manager.on("change", (_entries, changedCwd) => events.push(changedCwd));
+
+      const rolledBack = manager.stageMutableProviderConfig(
+        { codex: { enabled: false } },
+        { replace: true },
+      );
+      expect(events).toEqual([]);
+      expect(manager.getAgentManagerProviderState().providerDefinitions.codex).toMatchObject({
+        enabled: false,
+      });
+      rolledBack.rollback();
+      expect(events).toEqual([]);
+      expect(manager.getAgentManagerProviderState().providerDefinitions.codex).toMatchObject({
+        enabled: true,
+      });
+
+      const committed = manager.stageMutableProviderConfig(
+        { codex: { enabled: false } },
+        { replace: true },
+      );
+      expect(events).toEqual([]);
+      committed.publish();
+      expect(events).toEqual([cwd]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("restores provider state when applying a live config fails", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: true },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+    });
+    manager.getSnapshot("/tmp/project");
+    manager.on("change", () => {
+      throw new Error("snapshot consumer failed");
+    });
+
+    try {
+      expect(() =>
+        manager.applyMutableProviderConfig({ codex: { enabled: false } }, { replace: true }),
+      ).toThrow("snapshot consumer failed");
+      expect(manager.getAgentManagerProviderState().providerDefinitions.codex).toMatchObject({
+        enabled: true,
+      });
     } finally {
       manager.destroy();
     }

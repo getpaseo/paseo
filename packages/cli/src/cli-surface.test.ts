@@ -10,6 +10,18 @@ describe("canonical CLI surface", () => {
     expect(help).not.toContain("worktree");
   });
 
+  it("offers identical top-level and daemon config reload commands", () => {
+    const cli = createCli();
+    const reload = cli.commands.find((command) => command.name() === "reload");
+    const daemon = cli.commands.find((command) => command.name() === "daemon");
+    const nestedReload = daemon?.commands.find((command) => command.name() === "reload");
+
+    expect(reload?.helpInformation()).toContain("--host <host>");
+    expect(reload?.helpInformation()).toContain("--json");
+    expect(nestedReload?.helpInformation()).toContain("--host <host>");
+    expect(nestedReload?.helpInformation()).toContain("--json");
+  });
+
   it("names explicit workspace creation without exposing older syntax", () => {
     const run = createCli().commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();
