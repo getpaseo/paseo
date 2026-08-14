@@ -1091,6 +1091,8 @@ export const ptBR: TranslationResources = {
         editFiles: "Editar arquivos",
         mainCheckout: "Main checkout",
         nestedRepos: "Repositórios",
+        newSessionInRepo: "Nova sessão em {{repo}}",
+        noSessionsInRepo: "Ainda sem sessões",
         tabs: "{{count}} abas",
         archiving: "Arquivando...",
         hiding: "Ocultando...",

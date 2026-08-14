@@ -1079,6 +1079,8 @@ export const en = {
         editFiles: "Edit files",
         mainCheckout: "Main checkout",
         nestedRepos: "Repos",
+        newSessionInRepo: "New session in {{repo}}",
+        noSessionsInRepo: "No sessions yet",
         tabs: "{{count}} tabs",
         archiving: "Archiving...",
         hiding: "Hiding...",

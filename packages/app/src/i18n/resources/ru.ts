@@ -1091,6 +1091,8 @@ export const ru: TranslationResources = {
         editFiles: "Редактировать файлы",
         mainCheckout: "Main checkout",
         nestedRepos: "Репозитории",
+        newSessionInRepo: "Новая сессия в {{repo}}",
+        noSessionsInRepo: "Сессий пока нет",
         tabs: "{{count}} вкладок",
         archiving: "Архивирование...",
         hiding: "Скрытие...",

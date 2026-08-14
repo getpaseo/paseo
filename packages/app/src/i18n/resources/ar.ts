@@ -1069,6 +1069,8 @@ export const ar: TranslationResources = {
         editFiles: "تحرير الملفات",
         mainCheckout: "Main checkout",
         nestedRepos: "المستودعات",
+        newSessionInRepo: "جلسة جديدة في {{repo}}",
+        noSessionsInRepo: "لا توجد جلسات بعد",
         tabs: "{{count}} علامات تبويب",
         archiving: "أرشفة...",
         hiding: "إخفاء...",

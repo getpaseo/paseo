@@ -1080,6 +1080,8 @@ export const ja: TranslationResources = {
         editFiles: "ファイルを編集",
         mainCheckout: "Main checkout",
         nestedRepos: "リポジトリ",
+        newSessionInRepo: "{{repo}} で新しいセッション",
+        noSessionsInRepo: "セッションはまだありません",
         tabs: "{{count}}タブ",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",

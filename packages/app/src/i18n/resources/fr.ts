@@ -1099,6 +1099,8 @@ export const fr: TranslationResources = {
         editFiles: "Modifier les fichiers",
         mainCheckout: "Main checkout",
         nestedRepos: "Dépôts",
+        newSessionInRepo: "Nouvelle session dans {{repo}}",
+        noSessionsInRepo: "Pas encore de session",
         tabs: "{{count}} onglets",
         archiving: "Archivage...",
         hiding: "Dissimulation...",

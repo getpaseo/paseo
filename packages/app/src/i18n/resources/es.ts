@@ -1100,6 +1100,8 @@ export const es: TranslationResources = {
         editFiles: "Editar archivos",
         mainCheckout: "Main checkout",
         nestedRepos: "Repositorios",
+        newSessionInRepo: "Nueva sesión en {{repo}}",
+        noSessionsInRepo: "Aún no hay sesiones",
         tabs: "{{count}} pestañas",
         archiving: "Archivando...",
         hiding: "Ocultación...",
