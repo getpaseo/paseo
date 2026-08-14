@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
+  collectAssistantTurnContentForStreamRenderStrategy,
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
   type StreamStrategy,
@@ -333,6 +334,34 @@ describe("layoutStream", () => {
     expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
     expect(footerOwners(layout)).toEqual([assistant.id]);
   });
+
+  it.each(["web", "android"] as const)(
+    "copies every assistant block when a completed turn spans history and live head on %s",
+    (platform) => {
+      const strategy = strategyFor(platform);
+      const layout = layoutFor({
+        platform,
+        tail: [
+          userMessage("u1", 1),
+          assistantMessage("first block", 2, { groupId: "turn-1", index: 0 }),
+          assistantMessage("second block", 3, { groupId: "turn-1", index: 1 }),
+        ],
+        head: [assistantMessage("final block", 4, { groupId: "turn-1", index: 2 })],
+      });
+      const footer = layout.auxiliaryTurnFooter;
+
+      expect(footer).not.toBeNull();
+      expect(
+        collectAssistantTurnContentForStreamRenderStrategy({
+          strategy,
+          items: footer!.items,
+          startIndex: footer!.startIndex,
+          precedingItems: footer!.precedingItems,
+          precedingStartIndex: footer!.precedingStartIndex,
+        }),
+      ).toBe("first block\n\nsecond block\n\nfinal block");
+    },
+  );
 
   it.each(["web", "android"] as const)(
     "places inline footer after trailing visible tool rows before the next user on %s",

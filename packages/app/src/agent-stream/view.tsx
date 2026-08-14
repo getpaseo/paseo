@@ -153,9 +153,7 @@ function renderStreamItemWithTurnFooter(input: {
   const footer = footerHost ? (
     <CompletedTurnFooterRow
       strategy={input.strategy}
-      items={footerHost.items}
-      timing={footerHost.timing}
-      startIndex={footerHost.startIndex}
+      host={footerHost}
       supportsTimelineCursor={input.supportsTimelineCursor}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />

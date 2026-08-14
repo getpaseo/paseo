@@ -277,8 +277,25 @@ export function collectAssistantTurnContentForStreamRenderStrategy(params: {
   strategy: StreamStrategy;
   items: StreamItem[];
   startIndex: number;
+  precedingItems?: StreamItem[] | null;
+  precedingStartIndex?: number | null;
 }): string {
-  return params.strategy.collectAssistantTurnContent(params.items, params.startIndex);
+  const content = params.strategy.collectAssistantTurnContent(params.items, params.startIndex);
+  if (!params.precedingItems || params.precedingStartIndex == null) {
+    return content;
+  }
+
+  const precedingContent = params.strategy.collectAssistantTurnContent(
+    params.precedingItems,
+    params.precedingStartIndex,
+  );
+  if (!precedingContent) {
+    return content;
+  }
+  if (!content) {
+    return precedingContent;
+  }
+  return `${precedingContent}\n\n${content}`;
 }
 
 export function isNearBottomForStreamRenderStrategy(

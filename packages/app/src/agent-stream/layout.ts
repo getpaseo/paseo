@@ -10,6 +10,8 @@ export interface TurnFooterHost {
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  precedingItems: StreamItem[] | null;
+  precedingStartIndex: number | null;
 }
 
 export interface StreamLayoutItem {
@@ -68,12 +70,16 @@ function createTurnFooterHost(input: {
   items: StreamItem[];
   index: number;
   timingByAssistantId: Map<string, TurnTiming>;
+  precedingItems?: StreamItem[] | null;
+  precedingStartIndex?: number | null;
 }): TurnFooterHost {
   return {
     itemId: input.item.id,
     items: input.items,
     timing: input.timingByAssistantId.get(input.item.id),
     startIndex: input.index,
+    precedingItems: input.precedingItems ?? null,
+    precedingStartIndex: input.precedingStartIndex ?? null,
   };
 }
 
@@ -143,6 +149,11 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
     items: assistant.items,
     index: assistant.index,
     timingByAssistantId: input.timingByAssistantId,
+    precedingItems: footerItems === input.liveHead ? input.history : null,
+    precedingStartIndex:
+      footerItems === input.liveHead
+        ? input.strategy.getHistoryLiveBoundaryIndex(input.history)
+        : null,
   });
 }
 
@@ -176,6 +187,8 @@ function resolveCompletedFooter(input: {
     items: assistant.items,
     index: assistant.index,
     timingByAssistantId: input.timingByAssistantId,
+    precedingItems: input.boundaryAboveItems,
+    precedingStartIndex: input.boundaryAboveIndex,
   });
 }
 
