@@ -120,8 +120,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // No padding: it would inset the glyph from the header's right rail, where the title, the search
+  // icon and everything the sheet renders below sit flush. The target comes from `hitSlop`, the
+  // way the back arrow on the other rail already gets its own.
   closeButton: {
-    padding: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   searchRow: {
@@ -396,6 +398,7 @@ export function SheetHeaderView({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t("common.actions.close")}
+            hitSlop={8}
             style={styles.closeButton}
             onPress={onClose}
           >

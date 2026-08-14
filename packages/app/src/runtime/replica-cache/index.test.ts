@@ -149,6 +149,7 @@ function seedSession(): void {
           ...workspace(),
           workspaceKind: "worktree",
           worktreeSlug: "owned-worktree",
+          labels: ["backend"],
         }),
       ],
     ]),
@@ -261,6 +262,9 @@ describe("ReplicaCache", () => {
     expect(session.agents.get("agent-1")?.projectPlacement?.checkout.cwd).toBe("/repo/paseo");
     expect(session.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
+    // A restored row draws its label chips. The reconnect cursor is current, so nothing re-sends
+    // them and a cache that dropped them would leave the sidebar unlabelled until the next edit.
+    expect(session.workspaces.get("workspace-1")?.labels).toEqual(["backend"]);
     expect(session.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
     expect(session.agentAuthoritativeHistoryApplied).toEqual(new Map([["agent-1", true]]));
     expect(session.agentTimelineCursor).toEqual(

@@ -428,6 +428,10 @@ function LabelFilterPage({
  * construction. Exclude also dims the row: a mark you have to identify is not a state you can
  * read at a glance, and a label that has been ruled out should look pushed back next to the ones
  * that are still in play.
+ *
+ * Exclude passes `selected="mixed"` for the same reason it draws its own trailing mark: the row is
+ * marked, but not by the check. Without it a screen reader cannot tell an excluded label from an
+ * untouched one, since dimming and an `X` are both invisible to it.
  */
 function LabelFilterItem({
   name,
@@ -452,7 +456,7 @@ function LabelFilterItem({
   const excluded = state === "exclude";
   return (
     <MenuItem
-      selected={state === "include"}
+      selected={excluded ? "mixed" : state === "include"}
       muted={excluded}
       leading={leading}
       trailing={excluded ? EXCLUDED_MARK : undefined}
