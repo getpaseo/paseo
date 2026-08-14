@@ -6108,6 +6108,53 @@ test("hasWorkspaceInFlightRun sees an internal agent's in-flight run that listAg
   }
 });
 
+test("hasWorkspaceInFlightRun sees a running provider-native subagent even while its parent is idle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-subagent-liveness-"));
+  const workspaceId = "ws-subagent-liveness";
+  const sessionHolder: { current: TestAgentSession | null } = { current: null };
+  class SubagentCapableClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      sessionHolder.current = new TestAgentSession(config);
+      return sessionHolder.current;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SubagentCapableClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+
+  // Parent has never run a turn: idle by every existing measure.
+  expect(manager.getAgent(parent.id)?.lifecycle).toBe("idle");
+  expect(manager.hasWorkspaceInFlightRun(workspaceId)).toBe(false);
+
+  // A provider-native subagent (e.g. a Task tool child) is running under it.
+  // docs/agent-lifecycle.md: "a parent agent is idle when its own turn is
+  // idle, even if a child is running" — that must still count as workspace
+  // activity for archival safety.
+  sessionHolder.current?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "native-child", title: "Native child", status: "running" },
+  });
+  await manager.flush();
+
+  expect(manager.hasWorkspaceInFlightRun(workspaceId)).toBe(true);
+
+  sessionHolder.current?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "native-child", status: "completed" },
+  });
+  await manager.flush();
+
+  expect(manager.hasWorkspaceInFlightRun(workspaceId)).toBe(false);
+});
+
 test("subscribe hides provider subagents of internal parents from global subscribers", async () => {
   const internalAgentId = "00000000-0000-4000-8000-000000000117";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-provider-child-"));

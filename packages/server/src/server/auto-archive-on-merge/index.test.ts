@@ -149,6 +149,13 @@ async function waitForDeferral(harness: ReturnType<typeof createTestHarness>): P
   });
 }
 
+// Lets any fire-and-forget `void attemptArchive(...)`/`void recheckWatchedCwds()`
+// call already in flight settle before asserting "nothing happened" — those
+// calls have no observable signal of their own to wait on.
+async function settlePendingWork(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 describe("setupAutoArchiveOnMerge", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -195,7 +202,7 @@ describe("setupAutoArchiveOnMerge", () => {
       agent: { id: "agent-1", workspaceId: WORKSPACE_ID } as never,
     });
 
-    await new Promise((resolve) => setImmediate(resolve));
+    await settlePendingWork();
     expect(getSnapshot).toHaveBeenCalledTimes(1);
     expect(harness.archiveByScope).not.toHaveBeenCalled();
   });
@@ -229,7 +236,7 @@ describe("setupAutoArchiveOnMerge", () => {
       await vi.waitFor(() => {
         expect(getSnapshot).toHaveBeenCalledTimes(2);
       });
-      await new Promise((resolve) => setImmediate(resolve));
+      await settlePendingWork();
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
