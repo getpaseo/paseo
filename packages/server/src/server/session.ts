@@ -2437,10 +2437,8 @@ export class Session {
         return this.handleWorkspaceLabelList(msg);
       case "workspace.label.assignment.set.request":
         return this.handleWorkspaceLabelAssignment(msg);
-      case "workspace.label.rename.request":
-        return this.handleWorkspaceLabelRename(msg);
-      case "workspace.label.recolor.request":
-        return this.handleWorkspaceLabelRecolor(msg);
+      case "workspace.label.update.request":
+        return this.handleWorkspaceLabelUpdate(msg);
       case "workspace.label.delete.request":
         return this.handleWorkspaceLabelDelete(msg);
       case "workspace.label.delete.inspect.request":
@@ -5656,27 +5654,13 @@ export class Session {
     }
   }
 
-  private async handleWorkspaceLabelRename(
-    request: Extract<SessionInboundMessage, { type: "workspace.label.rename.request" }>,
+  private async handleWorkspaceLabelUpdate(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.update.request" }>,
   ): Promise<void> {
     try {
-      const result = await this.requireWorkspaceLabels().rename(request);
+      const result = await this.requireWorkspaceLabels().update(request);
       this.emit({
-        type: "workspace.label.rename.response",
-        payload: { requestId: request.requestId, ...result },
-      });
-    } catch (error) {
-      this.emitWorkspaceLabelError(request, error);
-    }
-  }
-
-  private async handleWorkspaceLabelRecolor(
-    request: Extract<SessionInboundMessage, { type: "workspace.label.recolor.request" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.requireWorkspaceLabels().recolor(request);
-      this.emit({
-        type: "workspace.label.recolor.response",
+        type: "workspace.label.update.response",
         payload: { requestId: request.requestId, ...result },
       });
     } catch (error) {

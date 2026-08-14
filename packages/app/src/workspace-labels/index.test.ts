@@ -160,13 +160,99 @@ describe("workspace label projection", () => {
     });
   });
 
-  test("manager owns host selection and preserves selected surfaces on mutation failure", async () => {
+  test("manager sends one update for both fields and closes the edit only once it lands", async () => {
+    const updates: unknown[] = [];
+    const model = createWorkspaceLabelManagerModel({
+      update: async (input) => {
+        updates.push(input);
+        return { label: { name: "Priority", color: "sky" } };
+      },
+      inspectDelete: async () => ({ affectedWorkspaceCount: 0 }),
+      delete: async () => undefined,
+    });
+    model.syncHosts([
+      {
+        serverId: "host-a",
+        label: "Alpha",
+        status: "online",
+        labels: [{ name: "Urgent", color: "red" }],
+      },
+    ]);
+
+    model.edit({ name: "Urgent", color: "red" });
+    expect(model.snapshot()).toMatchObject({
+      draft: { name: "Urgent", draftName: "Urgent", color: "red" },
+      dirty: false,
+    });
+
+    model.setDraftName("Priority");
+    model.setDraftColor("sky");
+    expect(model.snapshot().dirty).toBe(true);
+
+    await model.save();
+    // One call carrying both fields — a rename that lands and a recolour that does not is a
+    // state the user never asked for.
+    expect(updates).toEqual([
+      { serverId: "host-a", name: "Urgent", newName: "Priority", color: "sky" },
+    ]);
+    expect(model.snapshot()).toMatchObject({ draft: null, error: null });
+  });
+
+  test("manager sends only the field that changed and skips an untouched draft", async () => {
+    const updates: unknown[] = [];
+    const model = createWorkspaceLabelManagerModel({
+      update: async (input) => {
+        updates.push(input);
+        return {};
+      },
+      inspectDelete: async () => ({ affectedWorkspaceCount: 0 }),
+      delete: async () => undefined,
+    });
+    model.syncHosts([
+      {
+        serverId: "host-a",
+        label: "Alpha",
+        status: "online",
+        labels: [{ name: "Urgent", color: "red" }],
+      },
+    ]);
+
+    model.edit({ name: "Urgent", color: "red" });
+    model.setDraftColor("amber");
+    await model.save();
+    expect(updates).toEqual([{ serverId: "host-a", name: "Urgent", color: "amber" }]);
+
+    model.syncHosts([
+      {
+        serverId: "host-a",
+        label: "Alpha",
+        status: "online",
+        labels: [{ name: "Urgent", color: "amber" }],
+      },
+    ]);
+    model.edit({ name: "Urgent", color: "amber" });
+    // Whitespace is not an edit: the name normalizes back to what the label already is.
+    model.setDraftName("  Urgent ");
+    expect(model.snapshot().dirty).toBe(false);
+    // Nor is an empty one — Save has nothing to offer either way.
+    model.setDraftName("   ");
+    expect(model.snapshot().dirty).toBe(false);
+    await model.save();
+    expect(updates).toHaveLength(1);
+  });
+
+  test("manager owns host selection and keeps the draft intact on a failed update", async () => {
     let deleteCalls = 0;
     const model = createWorkspaceLabelManagerModel({
-      rename: async () => {
-        throw new Error("rename failed");
+      update: async () => {
+        // The daemon client appends the correlation it failed on to every RPC error.
+        throw Object.assign(
+          new Error(
+            "A label with that name already exists requestType=workspace.label.update.request code=label_name_taken",
+          ),
+          { requestType: "workspace.label.update.request", code: "label_name_taken" },
+        );
       },
-      recolor: async () => ({ label: { name: "Urgent", color: "sky" } }),
       inspectDelete: async () => ({ affectedWorkspaceCount: 7 }),
       delete: async () => {
         deleteCalls += 1;
@@ -187,15 +273,19 @@ describe("workspace label projection", () => {
         labels: [{ name: "Other", color: "sky" }],
       },
     ]);
-    model.selectLabel("Urgent");
+    model.edit({ name: "Urgent", color: "red" });
     model.setDraftName("Priority");
+    model.setDraftColor("amber");
 
-    await model.rename();
+    await model.save();
+    // Nothing half-applied: the view stays open on the draft exactly as typed.
     expect(model.snapshot()).toMatchObject({
       serverId: "host-a",
-      selectedName: "Urgent",
-      draftName: "Priority",
-      error: "rename failed",
+      draft: { name: "Urgent", draftName: "Priority", color: "amber" },
+      editing: { name: "Urgent", color: "red" },
+      // What the daemon said, without the correlation it travelled with.
+      error: "A label with that name already exists",
+      pending: false,
     });
 
     let confirmedCount = 0;
@@ -208,13 +298,13 @@ describe("workspace label projection", () => {
     expect(confirmedCount).toBe(7);
     expect(deleteCalls).toBe(1);
     expect(model.snapshot()).toMatchObject({
-      selectedName: "Urgent",
+      draft: { name: "Urgent" },
       error: "delete failed",
       pending: false,
     });
 
     model.selectHost("host-b");
-    expect(model.snapshot()).toMatchObject({ serverId: "host-b", selectedName: null });
+    expect(model.snapshot()).toMatchObject({ serverId: "host-b", draft: null });
   });
 
   test("manager keeps one immutable host and label target through delete confirmation", async () => {
@@ -225,8 +315,7 @@ describe("workspace label projection", () => {
     const inspected: string[] = [];
     const deleted: string[] = [];
     const model = createWorkspaceLabelManagerModel({
-      rename: async () => ({}),
-      recolor: async () => ({}),
+      update: async () => ({}),
       inspectDelete: async ({ serverId, name }) => {
         inspected.push(`${serverId}:${name}`);
         return { affectedWorkspaceCount: 1 };
@@ -249,18 +338,18 @@ describe("workspace label projection", () => {
         labels: [{ name: "Urgent", color: "sky" }],
       },
     ]);
-    model.selectLabel("Urgent");
+    model.edit({ name: "Urgent", color: "red" });
 
     const remove = model.delete(() => confirmation);
     await Promise.resolve();
     expect(model.snapshot().pending).toBe(true);
     model.selectHost("host-b");
-    model.selectLabel("Urgent");
+    model.edit({ name: "Urgent", color: "sky" });
     confirmDelete(true);
     await remove;
 
     expect(inspected).toEqual(["host-a:Urgent"]);
     expect(deleted).toEqual(["host-a:Urgent"]);
-    expect(model.snapshot()).toMatchObject({ serverId: "host-a", selectedName: null });
+    expect(model.snapshot()).toMatchObject({ serverId: "host-a", draft: null });
   });
 });

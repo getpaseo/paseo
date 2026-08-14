@@ -24,7 +24,7 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import type { WorkspaceLabelService } from "./workspace-labels/index.js";
+import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -652,6 +652,72 @@ describe("workspace label subscriptions", () => {
       seq: 2,
     });
     expect(messages.filter((message) => message.type === "workspace.label.update")).toHaveLength(1);
+  });
+});
+
+describe("workspace label editing", () => {
+  test("answers one edit with the label it produced and the assignments it rewrote", async () => {
+    const calls: unknown[] = [];
+    const service = {
+      update: async (input: unknown) => {
+        calls.push(input);
+        return { label: { name: "Priority", color: "sky" }, affectedWorkspaceCount: 3 };
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    await session.handleMessage({
+      type: "workspace.label.update.request",
+      requestId: "request-edit",
+      name: "Urgent",
+      newName: "Priority",
+      color: "sky",
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({ name: "Urgent", newName: "Priority", color: "sky" }),
+    ]);
+    expect(messages).toEqual([
+      {
+        type: "workspace.label.update.response",
+        payload: {
+          requestId: "request-edit",
+          label: { name: "Priority", color: "sky" },
+          affectedWorkspaceCount: 3,
+        },
+      },
+    ]);
+  });
+
+  test("reports a name collision as a coded error and emits no response", async () => {
+    const service = {
+      update: async () => {
+        throw new WorkspaceLabelError("label_name_taken", "A label with that name already exists");
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    await session.handleMessage({
+      type: "workspace.label.update.request",
+      requestId: "request-collision",
+      name: "Urgent",
+      newName: "Waiting",
+      color: "teal",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "request-collision",
+          requestType: "workspace.label.update.request",
+          code: "label_name_taken",
+          error: "A label with that name already exists",
+        },
+      },
+    ]);
   });
 });
 

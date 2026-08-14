@@ -17,7 +17,7 @@ interface AssignmentCommit {
   catalogChanged: boolean;
 }
 
-interface RenameCommit {
+interface UpdateCommit {
   label: WorkspaceLabelDefinition;
   affectedWorkspaceCount: number;
   changed: boolean;
@@ -121,33 +121,55 @@ export class WorkspaceLabelService {
     });
   }
 
-  async rename(input: {
+  /**
+   * Edit a label: a new name, a new colour, or both, in one catalog commit.
+   *
+   * Both fields are optional and an omitted field is left alone. They travel together because
+   * the alternative — a rename that succeeds and a recolour that then fails — leaves the catalog
+   * in a state nobody asked for and no client can describe.
+   *
+   * Renaming onto a name the host already has is rejected, not merged. Merging would fold two
+   * labels' assignments together with no way back, and the user asked to edit one label. The
+   * check happens inside the planner, so a rejected collision applies neither field.
+   */
+  async update(input: {
     name: string;
-    newName: string;
+    newName?: string;
+    color?: WorkspaceLabelDefinition["color"];
   }): Promise<{ label: WorkspaceLabelDefinition; affectedWorkspaceCount: number }> {
     return this.exclusive(async () => {
       const fromKey = workspaceLabelKey(requireName(input.name));
-      const newName = requireName(input.newName);
-      const toKey = workspaceLabelKey(newName);
-      const committed = await this.catalog.commit<RenameCommit>((catalog, workspaces) => {
+      const newName = input.newName === undefined ? null : requireName(input.newName);
+      const committed = await this.catalog.commit<UpdateCommit>((catalog, workspaces) => {
         const existing = catalog.find((label) => workspaceLabelKey(label.name) === fromKey);
         if (!existing) throw new WorkspaceLabelError("label_not_found", "Label not found");
-        const collision = catalog.find((label) => workspaceLabelKey(label.name) === toKey);
-        if (collision && collision !== existing) {
-          throw new WorkspaceLabelError(
-            "label_name_taken",
-            "A label with that name already exists",
-          );
+        // A label keeping its own key is not colliding with itself, so case-only edits pass.
+        if (newName !== null && workspaceLabelKey(newName) !== fromKey) {
+          const toKey = workspaceLabelKey(newName);
+          if (catalog.some((label) => workspaceLabelKey(label.name) === toKey)) {
+            throw new WorkspaceLabelError(
+              "label_name_taken",
+              "A label with that name already exists",
+            );
+          }
         }
-        if (existing.name === newName) {
+        const nameChanged = newName !== null && newName !== existing.name;
+        const colorChanged = input.color !== undefined && input.color !== existing.color;
+        if (!nameChanged && !colorChanged) {
           return {
             labels: [...catalog],
             workspaceUpdates: [],
             result: { label: existing, affectedWorkspaceCount: 0, changed: false },
           };
         }
-        const label = { ...existing, name: newName };
-        const workspaceUpdates = rewriteAssignments(workspaces, fromKey, newName);
+        const label = {
+          name: nameChanged && newName !== null ? newName : existing.name,
+          color: input.color ?? existing.color,
+        };
+        // Workspaces store names, so only a rename rewrites assignments; a recolour is catalog-only.
+        const workspaceUpdates = nameChanged
+          ? rewriteAssignments(workspaces, fromKey, label.name)
+          : [];
         return {
           labels: catalog.map((candidate) => (candidate === existing ? label : candidate)),
           workspaceUpdates,
@@ -155,7 +177,7 @@ export class WorkspaceLabelService {
             label,
             affectedWorkspaceCount: workspaceUpdates.length,
             changed: true,
-            previousName: existing.name,
+            ...(nameChanged ? { previousName: existing.name } : {}),
           },
         };
       });
@@ -170,34 +192,6 @@ export class WorkspaceLabelService {
         label: committed.label,
         affectedWorkspaceCount: committed.affectedWorkspaceCount,
       };
-    });
-  }
-
-  async recolor(input: {
-    name: string;
-    color: WorkspaceLabelDefinition["color"];
-  }): Promise<{ label: WorkspaceLabelDefinition }> {
-    return this.exclusive(async () => {
-      const key = workspaceLabelKey(requireName(input.name));
-      const committed = await this.catalog.commit((catalog) => {
-        const existing = catalog.find((label) => workspaceLabelKey(label.name) === key);
-        if (!existing) throw new WorkspaceLabelError("label_not_found", "Label not found");
-        if (existing.color === input.color) {
-          return {
-            labels: [...catalog],
-            workspaceUpdates: [],
-            result: { label: existing, changed: false },
-          };
-        }
-        const label = { ...existing, color: input.color };
-        return {
-          labels: catalog.map((entry) => (entry === existing ? label : entry)),
-          workspaceUpdates: [],
-          result: { label, changed: true },
-        };
-      });
-      if (committed.changed) this.sequence.publish({ kind: "upsert", label: committed.label });
-      return { label: committed.label };
     });
   }
 

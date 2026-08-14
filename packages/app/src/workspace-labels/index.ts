@@ -15,6 +15,7 @@ export type { WorkspaceLabelPickerRow } from "./internal/picker-model";
 export { mergeWorkspaceLabelCatalogs } from "./internal/merge";
 export { workspaceLabelErrorMessage } from "./internal/workflow-model";
 export type {
+  WorkspaceLabelManagerDraft,
   WorkspaceLabelManagerHost,
   WorkspaceLabelManagerSnapshot,
   WorkspaceLabelPickerModelSnapshot,
@@ -167,16 +168,13 @@ class WorkspaceLabelsController {
     return this.mutate(input.serverId, (client) => client.setWorkspaceLabel(input));
   }
 
-  async rename(input: { serverId: string; name: string; newName: string }) {
-    return this.mutate(input.serverId, (client) => client.renameWorkspaceLabel(input));
-  }
-
-  async recolor(input: {
+  async update(input: {
     serverId: string;
     name: string;
-    color: WorkspaceLabelDefinition["color"];
+    newName?: string;
+    color?: WorkspaceLabelDefinition["color"];
   }) {
-    return this.mutate(input.serverId, (client) => client.recolorWorkspaceLabel(input));
+    return this.mutate(input.serverId, (client) => client.updateWorkspaceLabel(input));
   }
 
   async delete(input: { serverId: string; name: string }) {

@@ -21,6 +21,7 @@ async function readWorkspaceLabels(seeded: Awaited<ReturnType<typeof seedWorkspa
 
 async function installWorkspaceLabelMutationFailure(page: import("@playwright/test").Page) {
   let failNextAssignment = false;
+  let failNextUpdate = false;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((message) => {
@@ -33,12 +34,12 @@ async function installWorkspaceLabelMutationFailure(page: import("@playwright/te
         return;
       }
       const request = envelope?.type === "session" ? envelope.message : null;
-      if (
-        failNextAssignment &&
-        request?.type === "workspace.label.assignment.set.request" &&
-        request.requestId
-      ) {
+      const failing =
+        (failNextAssignment && request?.type === "workspace.label.assignment.set.request") ||
+        (failNextUpdate && request?.type === "workspace.label.update.request");
+      if (failing && request?.type && request.requestId) {
         failNextAssignment = false;
+        failNextUpdate = false;
         browser.send(
           JSON.stringify({
             type: "session",
@@ -62,6 +63,9 @@ async function installWorkspaceLabelMutationFailure(page: import("@playwright/te
   return {
     failNextAssignment() {
       failNextAssignment = true;
+    },
+    failNextUpdate() {
+      failNextUpdate = true;
     },
   };
 }
@@ -146,7 +150,7 @@ test.describe("Workspace labels", () => {
     }
   });
 
-  test("creates, multi-assigns, filters, groups, and renames against the daemon", async ({
+  test("creates, multi-assigns, filters, groups, and edits against the daemon", async ({
     page,
   }) => {
     const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-" });
@@ -242,19 +246,44 @@ test.describe("Workspace labels", () => {
         ).toBeVisible();
       });
 
-      await test.step("management targets the selected host and preserves assignments on rename", async () => {
+      await test.step("editing a label is one operation and preserves its assignments", async () => {
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await page.getByTestId("sidebar-display-label-filter").click();
         await page.getByTestId("sidebar-label-manage").click();
         await expect(page.getByText("Manage labels", { exact: true })).toBeVisible();
-        await page.getByTestId("workspace-label-manager-label-Urgent").click();
+
+        await page.getByTestId("workspace-label-manager-search").fill("urg");
+        await expect(page.getByTestId("workspace-label-manager-label-Frontend")).toBeHidden();
+        await page.getByTestId("workspace-label-manager-search").fill("");
+        await expect(page.getByTestId("workspace-label-manager-label-Frontend")).toBeVisible();
+
+        // A row is a label, not a button that swaps the surface — the pencil opens the edit, and
+        // it is only reachable once the row is hovered, the way it is only visible then.
+        await page.getByTestId("workspace-label-manager-label-Urgent").hover();
+        await page.getByTestId("workspace-label-manager-edit-Urgent").click();
         // Phase 1's swatch names a colour by itself; the old "{{color}} label color" string is
         // no longer rendered anywhere.
         await expect(page.getByRole("radio", { name: "Red" })).toBeChecked();
         await expect(page.getByRole("radio", { name: "Sky" })).not.toBeChecked();
+
         await page.getByTestId("workspace-label-manager-name").fill("Priority");
-        await page.getByRole("button", { name: "Rename" }).click();
+        await page.getByRole("radio", { name: "Amber" }).click();
+        // Picking a colour picks a colour: nothing has left for the host yet.
+        await expect(page.getByTestId("workspace-label-manager-save")).toBeVisible();
+
+        mutationFailure.failNextUpdate();
+        await page.getByTestId("workspace-label-manager-save").click();
+        await expect(page.getByTestId("workspace-label-manager-error")).toContainText(
+          "Injected label mutation failure.",
+        );
+        // Nothing half-applied: the view is still open on the draft exactly as typed.
+        await expect(page.getByTestId("workspace-label-manager-name")).toHaveValue("Priority");
+        await expect(page.getByRole("radio", { name: "Amber" })).toBeChecked();
+
+        await page.getByTestId("workspace-label-manager-save").click();
         await expect(page.getByTestId("workspace-label-manager-label-Priority")).toBeVisible();
+        await expect(page.getByTestId("workspace-label-manager-label-Urgent")).toBeHidden();
+        await expect.poll(readWorkspaceLabels.bind(null, seeded)).toEqual(["Frontend", "Priority"]);
       });
 
       await test.step("a rejected creation keeps the draft and retries in place", async () => {

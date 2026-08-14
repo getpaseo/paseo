@@ -689,13 +689,9 @@ export type WorkspaceLabelAssignmentPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.assignment.set.response" }
 >["payload"];
-export type WorkspaceLabelRenamePayload = Extract<
+export type WorkspaceLabelUpdatePayload = Extract<
   SessionOutboundMessage,
-  { type: "workspace.label.rename.response" }
->["payload"];
-export type WorkspaceLabelRecolorPayload = Extract<
-  SessionOutboundMessage,
-  { type: "workspace.label.recolor.response" }
+  { type: "workspace.label.update.response" }
 >["payload"];
 export type WorkspaceLabelDeletePayload = Extract<
   SessionOutboundMessage,
@@ -2175,32 +2171,19 @@ export class DaemonClient {
     });
   }
 
-  renameWorkspaceLabel(options: {
+  updateWorkspaceLabel(options: {
     name: string;
-    newName: string;
+    newName?: string;
+    color?: Extract<SessionInboundMessage, { type: "workspace.label.update.request" }>["color"];
     requestId?: string;
-  }): Promise<WorkspaceLabelRenamePayload> {
-    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.rename.response">({
+  }): Promise<WorkspaceLabelUpdatePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.update.response">({
       requestId: options.requestId,
       message: {
-        type: "workspace.label.rename.request",
+        type: "workspace.label.update.request",
         name: options.name,
-        newName: options.newName,
-      },
-    });
-  }
-
-  recolorWorkspaceLabel(options: {
-    name: string;
-    color: Extract<SessionInboundMessage, { type: "workspace.label.recolor.request" }>["color"];
-    requestId?: string;
-  }): Promise<WorkspaceLabelRecolorPayload> {
-    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.recolor.response">({
-      requestId: options.requestId,
-      message: {
-        type: "workspace.label.recolor.request",
-        name: options.name,
-        color: options.color,
+        ...(options.newName === undefined ? {} : { newName: options.newName }),
+        ...(options.color === undefined ? {} : { color: options.color }),
       },
     });
   }

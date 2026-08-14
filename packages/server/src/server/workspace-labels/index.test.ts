@@ -151,7 +151,7 @@ describe("workspace labels", () => {
     expect(updates).toEqual([]);
   });
 
-  test("compacts rename cycles and chained rename-delete into coherent catch-up changes", async () => {
+  test("compacts name cycles and a chained edit-delete into coherent catch-up changes", async () => {
     await labels.setAssignment({
       workspaceId: "wks_one",
       label: { name: "A", color: "red" },
@@ -159,8 +159,8 @@ describe("workspace labels", () => {
     });
     const checkpoint = await labels.subscribe({ onChange: () => undefined });
 
-    await labels.rename({ name: "A", newName: "B" });
-    await labels.rename({ name: "B", newName: "A" });
+    await labels.update({ name: "A", newName: "B" });
+    await labels.update({ name: "B", newName: "A" });
     const cycle = await labels.subscribe({
       cursor: {
         generation: checkpoint.snapshot.sync.generation,
@@ -173,8 +173,8 @@ describe("workspace labels", () => {
       sync: { mode: "changes", removals: [] },
     });
 
-    await labels.rename({ name: "A", newName: "B" });
-    await labels.rename({ name: "B", newName: "C" });
+    await labels.update({ name: "A", newName: "B" });
+    await labels.update({ name: "B", newName: "C" });
     await labels.delete("C");
     const deleted = await labels.subscribe({
       cursor: {
@@ -193,24 +193,77 @@ describe("workspace labels", () => {
     checkpoint.unsubscribe();
   });
 
-  test("renames, recolors, and deletes one host catalog while rewriting assignments", async () => {
+  test("edits and deletes one host catalog while rewriting assignments", async () => {
     await labels.setAssignment({
       workspaceId: "wks_one",
       label: { name: "Blocked", color: "red" },
       assigned: true,
     });
-    expect(await labels.rename({ name: "blocked", newName: "Waiting" })).toMatchObject({
+    expect(await labels.update({ name: "blocked", newName: "Waiting" })).toMatchObject({
       label: { name: "Waiting", color: "red" },
       affectedWorkspaceCount: 1,
     });
-    await expect(labels.rename({ name: "waiting", newName: "" })).rejects.toMatchObject({
+    await expect(labels.update({ name: "waiting", newName: "" })).rejects.toMatchObject({
       code: "label_name_empty",
     });
-    expect(await labels.recolor({ name: "WAITING", color: "amber" })).toEqual({
+    expect(await labels.update({ name: "WAITING", color: "amber" })).toEqual({
       label: { name: "Waiting", color: "amber" },
+      affectedWorkspaceCount: 0,
     });
     expect(await labels.delete("waiting")).toEqual({ affectedWorkspaceCount: 1 });
     expect((await registry.get("wks_one"))?.labels).toBeUndefined();
+  });
+
+  test("applies a name and a colour in one commit, or neither", async () => {
+    const changes: unknown[] = [];
+    const subscription = await labels.subscribe({ onChange: (change) => changes.push(change) });
+    await labels.setAssignment({
+      workspaceId: "wks_one",
+      label: { name: "Blocked", color: "red" },
+      assigned: true,
+    });
+    await labels.setAssignment({
+      workspaceId: "wks_one",
+      label: { name: "Waiting", color: "amber" },
+      assigned: true,
+    });
+    changes.length = 0;
+
+    expect(await labels.update({ name: "blocked", newName: "Urgent", color: "sky" })).toEqual({
+      label: { name: "Urgent", color: "sky" },
+      affectedWorkspaceCount: 1,
+    });
+    // One publication for one edit — a client never sees the name land without the colour.
+    expect(changes).toMatchObject([
+      { kind: "upsert", label: { name: "Urgent", color: "sky" }, previousName: "Blocked" },
+    ]);
+    expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent", "Waiting"]);
+
+    // A collision applies neither field: the colour in the same request is refused with the name.
+    await expect(
+      labels.update({ name: "Urgent", newName: "waiting", color: "teal" }),
+    ).rejects.toMatchObject({ code: "label_name_taken" });
+    expect(changes).toHaveLength(1);
+    expect((await labels.subscribe({ onChange: () => undefined })).snapshot.labels).toEqual([
+      { name: "Urgent", color: "sky" },
+      { name: "Waiting", color: "amber" },
+    ]);
+
+    // A label is not colliding with itself, so case is editable.
+    expect(await labels.update({ name: "Urgent", newName: "URGENT" })).toMatchObject({
+      label: { name: "URGENT", color: "sky" },
+      affectedWorkspaceCount: 1,
+    });
+    expect((await registry.get("wks_one"))?.labels).toEqual(["URGENT", "Waiting"]);
+
+    // An edit that changes nothing changes nothing, quietly.
+    changes.length = 0;
+    expect(await labels.update({ name: "urgent", newName: "URGENT", color: "sky" })).toEqual({
+      label: { name: "URGENT", color: "sky" },
+      affectedWorkspaceCount: 0,
+    });
+    expect(changes).toEqual([]);
+    subscription.unsubscribe();
   });
 
   test("counts the same active and archived records that delete rewrites", async () => {
@@ -226,7 +279,7 @@ describe("workspace labels", () => {
     expect((await registry.get("wks_one"))?.labels).toBeUndefined();
   });
 
-  test("rejects rename collisions without changing catalog or assignments", async () => {
+  test("rejects name collisions without changing catalog or assignments", async () => {
     await labels.setAssignment({
       workspaceId: "wks_one",
       label: { name: "Blocked", color: "red" },
@@ -238,7 +291,7 @@ describe("workspace labels", () => {
       assigned: true,
     });
 
-    await expect(labels.rename({ name: "Blocked", newName: "waiting" })).rejects.toMatchObject({
+    await expect(labels.update({ name: "Blocked", newName: "waiting" })).rejects.toMatchObject({
       code: "label_name_taken",
     });
     expect((await registry.get("wks_one"))?.labels).toEqual(["Blocked", "Waiting"]);
@@ -348,7 +401,7 @@ describe("workspace labels", () => {
     });
     failingCatalog = "priority";
 
-    await expect(failingLabels.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(failingLabels.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "catalog unavailable",
     );
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
@@ -409,7 +462,7 @@ describe("workspace labels", () => {
     });
     interruptWorkspaceWrite = true;
 
-    await expect(interrupted.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow();
+    await expect(interrupted.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow();
     expect(workspacePublications).toEqual([]);
     expect(catalogPublications).toEqual([]);
 
@@ -472,7 +525,7 @@ describe("workspace labels", () => {
     });
 
     failNextWorkspaceWrite = true;
-    await expect(recovering.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(recovering.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "one interrupted write",
     );
 
@@ -507,7 +560,7 @@ describe("workspace labels", () => {
     });
 
     failCommitMarker = true;
-    await expect(markerLabels.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(markerLabels.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "commit marker unavailable",
     );
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
@@ -595,7 +648,7 @@ describe("workspace labels", () => {
     });
 
     losePreparedAcknowledgement = true;
-    await expect(preparedLabels.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(preparedLabels.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "lost prepared acknowledgement",
     );
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
@@ -655,7 +708,7 @@ describe("workspace labels", () => {
     });
 
     loseCatalogAcknowledgement = true;
-    await expect(catalogLabels.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(catalogLabels.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "lost catalog acknowledgement",
     );
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
@@ -727,7 +780,7 @@ describe("workspace labels", () => {
     });
 
     loseWorkspaceAcknowledgement = true;
-    await expect(workspaceLabels.rename({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
+    await expect(workspaceLabels.update({ name: "Urgent", newName: "Priority" })).rejects.toThrow(
       "lost workspace acknowledgement",
     );
     expect((await lostAckRegistry.get("wks_lost_ack"))?.labels).toEqual(["Urgent"]);
@@ -781,7 +834,7 @@ describe("workspace labels", () => {
 
     rejectAfterCommittedWrite = true;
     await expect(
-      uncertainLabels.rename({ name: "Urgent", newName: "Priority" }),
+      uncertainLabels.update({ name: "Urgent", newName: "Priority" }),
     ).rejects.toMatchObject({ code: "workspace_label_storage_uncertain" });
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
     expect(workspacePublications).toEqual([]);
@@ -790,11 +843,9 @@ describe("workspace labels", () => {
     await expect(registry.archive("wks_one", "2099-01-04T00:00:00.000Z")).rejects.toThrow(
       "blocked until daemon restart",
     );
-    await expect(uncertainLabels.recolor({ name: "Priority", color: "sky" })).rejects.toMatchObject(
-      {
-        code: "workspace_label_storage_uncertain",
-      },
-    );
+    await expect(uncertainLabels.update({ name: "Priority", color: "sky" })).rejects.toMatchObject({
+      code: "workspace_label_storage_uncertain",
+    });
     expect(workspacePublications).toEqual([]);
     expect(catalogPublications).toEqual([]);
 
@@ -838,7 +889,7 @@ describe("workspace labels", () => {
     failAfterCatalog = true;
 
     await expect(
-      cleanupLabels.rename({ name: "Urgent", newName: "Priority" }),
+      cleanupLabels.update({ name: "Urgent", newName: "Priority" }),
     ).rejects.toMatchObject({ code: "workspace_label_storage_uncertain" });
     expect((await registry.get("wks_one"))?.labels).toEqual(["Urgent"]);
 
@@ -874,7 +925,7 @@ describe("workspace labels", () => {
     });
     failCleanup = true;
 
-    await expect(cleanupLabels.rename({ name: "Urgent", newName: "Priority" })).resolves.toEqual({
+    await expect(cleanupLabels.update({ name: "Urgent", newName: "Priority" })).resolves.toEqual({
       label: { name: "Priority", color: "red" },
       affectedWorkspaceCount: 1,
     });

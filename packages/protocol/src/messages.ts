@@ -1008,17 +1008,17 @@ export const WorkspaceLabelAssignmentSetRequestSchema = z.object({
   label: WorkspaceLabelDefinitionSchema,
   assigned: z.boolean(),
 });
-export const WorkspaceLabelRenameRequestSchema = z.object({
-  type: z.literal("workspace.label.rename.request"),
+/**
+ * Editing a label is one operation. A name and a colour are two fields of one thing, and two
+ * RPCs can land half-applied — leaving the catalog in a state the user never asked for and the
+ * UI with nothing true to say. Both fields are optional; omitting one leaves it alone.
+ */
+export const WorkspaceLabelUpdateRequestSchema = z.object({
+  type: z.literal("workspace.label.update.request"),
   requestId: z.string(),
   name: z.string(),
-  newName: z.string(),
-});
-export const WorkspaceLabelRecolorRequestSchema = z.object({
-  type: z.literal("workspace.label.recolor.request"),
-  requestId: z.string(),
-  name: z.string(),
-  color: WorkspaceLabelColorSchema,
+  newName: z.string().optional(),
+  color: WorkspaceLabelColorSchema.optional(),
 });
 export const WorkspaceLabelDeleteRequestSchema = z.object({
   type: z.literal("workspace.label.delete.request"),
@@ -2962,8 +2962,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
-  WorkspaceLabelRenameRequestSchema,
-  WorkspaceLabelRecolorRequestSchema,
+  WorkspaceLabelUpdateRequestSchema,
   WorkspaceLabelDeleteRequestSchema,
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
@@ -3970,17 +3969,13 @@ export const WorkspaceLabelAssignmentSetResponseSchema = z.object({
     workspaceLabels: z.array(z.string()),
   }),
 });
-export const WorkspaceLabelRenameResponseSchema = z.object({
-  type: z.literal("workspace.label.rename.response"),
+export const WorkspaceLabelUpdateResponseSchema = z.object({
+  type: z.literal("workspace.label.update.response"),
   payload: z.object({
     requestId: z.string(),
     label: WorkspaceLabelDefinitionSchema,
     affectedWorkspaceCount: z.number().int().nonnegative(),
   }),
-});
-export const WorkspaceLabelRecolorResponseSchema = z.object({
-  type: z.literal("workspace.label.recolor.response"),
-  payload: z.object({ requestId: z.string(), label: WorkspaceLabelDefinitionSchema }),
 });
 export const WorkspaceLabelDeleteResponseSchema = z.object({
   type: z.literal("workspace.label.delete.response"),
@@ -6195,8 +6190,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelListResponseSchema,
   WorkspaceLabelUpdateSchema,
   WorkspaceLabelAssignmentSetResponseSchema,
-  WorkspaceLabelRenameResponseSchema,
-  WorkspaceLabelRecolorResponseSchema,
+  WorkspaceLabelUpdateResponseSchema,
   WorkspaceLabelDeleteResponseSchema,
   WorkspaceLabelDeleteInspectResponseSchema,
   ProjectUpdateMessageSchema,

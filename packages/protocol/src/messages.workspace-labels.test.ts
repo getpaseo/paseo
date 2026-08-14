@@ -56,6 +56,42 @@ describe("workspace label wire schemas", () => {
     ).toMatchObject({ payload: { label: { name: "Needs review", color: "sky" } } });
   });
 
+  test("carries a name and a colour on one edit, and neither is required", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.label.update.request",
+        requestId: "req-edit",
+        name: "Urgent",
+        newName: "Priority",
+        color: "sky",
+      }),
+    ).toMatchObject({ newName: "Priority", color: "sky" });
+    // A colour-only edit and a name-only edit are the same operation with a field left out.
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.label.update.request",
+        requestId: "req-color",
+        name: "Urgent",
+        color: "amber",
+      }),
+    ).toEqual({
+      type: "workspace.label.update.request",
+      requestId: "req-color",
+      name: "Urgent",
+      color: "amber",
+    });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.label.update.response",
+        payload: {
+          requestId: "req-edit",
+          label: { name: "Priority", color: "sky" },
+          affectedWorkspaceCount: 2,
+        },
+      }),
+    ).toMatchObject({ payload: { affectedWorkspaceCount: 2 } });
+  });
+
   test("uses a distinct operation for authoritative non-mutating delete inspection", () => {
     expect(
       SessionInboundMessageSchema.parse({
@@ -77,6 +113,12 @@ describe("workspace label wire schemas", () => {
       SessionOutboundMessageSchema.parse({
         type: "workspace.label.delete.inspect.response",
         payload: { requestId: "req-inspect" },
+      }),
+    ).toThrow();
+    expect(() =>
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.label.update.response",
+        payload: { requestId: "req-edit", label: { name: "Priority", color: "sky" } },
       }),
     ).toThrow();
   });

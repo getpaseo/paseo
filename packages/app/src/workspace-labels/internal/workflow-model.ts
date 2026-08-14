@@ -110,24 +110,33 @@ export interface WorkspaceLabelManagerHost {
   error?: string | null;
 }
 
+/** The label being edited, as typed so far. Absent means the list is what's on screen. */
+export interface WorkspaceLabelManagerDraft {
+  /** The catalog name the edit targets. Fixed for the life of the draft. */
+  name: string;
+  draftName: string;
+  color: WorkspaceLabelDefinition["color"];
+}
+
 export interface WorkspaceLabelManagerSnapshot {
   hosts: readonly WorkspaceLabelManagerHost[];
   serverId: string;
-  selectedName: string | null;
-  draftName: string;
+  draft: WorkspaceLabelManagerDraft | null;
   query: string;
   error: string | null;
   pending: boolean;
   host: WorkspaceLabelManagerHost | null;
   labels: WorkspaceLabelDefinition[];
-  selected: WorkspaceLabelDefinition | null;
+  /** The catalog entry behind the open draft, or null when nothing is being edited. */
+  editing: WorkspaceLabelDefinition | null;
+  /** Whether the draft differs from the label it targets — what Save is worth pressing for. */
+  dirty: boolean;
 }
 
 export class WorkspaceLabelManagerModel extends ObservableModel {
   private hosts: readonly WorkspaceLabelManagerHost[] = [];
   private serverId = "";
-  private selectedName: string | null = null;
-  private draftName = "";
+  private draft: WorkspaceLabelManagerDraft | null = null;
   private query = "";
   private error: string | null = null;
   private operation: Promise<void> | null = null;
@@ -135,13 +144,11 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
 
   constructor(
     private readonly dependencies: {
-      rename: (input: { serverId: string; name: string; newName: string }) => Promise<{
-        label?: WorkspaceLabelDefinition;
-      }>;
-      recolor: (input: {
+      update: (input: {
         serverId: string;
         name: string;
-        color: WorkspaceLabelDefinition["color"];
+        newName?: string;
+        color?: WorkspaceLabelDefinition["color"];
       }) => Promise<{ label?: WorkspaceLabelDefinition }>;
       inspectDelete: (input: { serverId: string; name: string }) => Promise<{
         affectedWorkspaceCount: number;
@@ -159,8 +166,7 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
     this.hosts = hosts;
     if (!this.operation && !hosts.some((host) => host.serverId === this.serverId)) {
       this.serverId = hosts[0]?.serverId ?? "";
-      this.selectedName = null;
-      this.draftName = "";
+      this.draft = null;
     }
     this.commit();
   }
@@ -168,22 +174,45 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
   selectHost(serverId: string): void {
     if (this.operation || serverId === this.serverId) return;
     this.serverId = serverId;
-    this.selectedName = null;
-    this.draftName = "";
+    this.draft = null;
     this.error = null;
     this.commit();
   }
 
-  selectLabel(name: string): void {
+  /** Open the edit view on a label, seeded with what that label currently is. */
+  edit(label: WorkspaceLabelDefinition): void {
     if (this.operation) return;
-    this.selectedName = name;
-    this.draftName = name;
+    this.draft = { name: label.name, draftName: label.name, color: label.color };
+    this.error = null;
+    this.commit();
+  }
+
+  /** Leave the edit view without applying anything. */
+  cancelEdit(): void {
+    if (this.operation) return;
+    this.draft = null;
+    this.error = null;
+    this.commit();
+  }
+
+  /** Back to a freshly opened manager: no draft, no search, no stale error. */
+  reset(): void {
+    if (this.operation) return;
+    this.draft = null;
+    this.query = "";
     this.error = null;
     this.commit();
   }
 
   setDraftName(name: string): void {
-    this.draftName = name;
+    if (!this.draft) return;
+    this.draft = { ...this.draft, draftName: name };
+    this.commit();
+  }
+
+  setDraftColor(color: WorkspaceLabelDefinition["color"]): void {
+    if (!this.draft) return;
+    this.draft = { ...this.draft, color };
     this.commit();
   }
 
@@ -192,39 +221,39 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
     this.commit();
   }
 
-  rename(): Promise<void> {
-    const selected = this.currentSnapshot.selected;
-    if (!selected) return Promise.resolve();
+  /**
+   * Apply the draft as one update, and close the edit view only once it lands.
+   *
+   * A failure keeps the draft exactly as typed: the host either took both fields or neither, so
+   * there is nothing to reconcile and nothing to explain beyond the error.
+   */
+  save(): Promise<void> {
+    const draft = this.draft;
+    const editing = this.currentSnapshot.editing;
+    // Nothing to apply is nothing to send: `dirty` already accounts for an empty or
+    // whitespace-only name, which is not an edit the host could carry out.
+    if (!draft || !editing || !this.currentSnapshot.dirty) return Promise.resolve();
+    const newName = normalizeWorkspaceLabelName(draft.draftName);
     return this.run(async () => {
-      const result = await this.dependencies.rename({
+      await this.dependencies.update({
         serverId: this.serverId,
-        name: selected.name,
-        newName: this.draftName,
+        name: editing.name,
+        ...(newName === editing.name ? {} : { newName }),
+        ...(draft.color === editing.color ? {} : { color: draft.color }),
       });
-      const name = result.label?.name ?? normalizeWorkspaceLabelName(this.draftName);
-      this.selectedName = name;
-      this.draftName = name;
-    });
-  }
-
-  recolor(color: WorkspaceLabelDefinition["color"]): Promise<void> {
-    const selected = this.currentSnapshot.selected;
-    if (!selected) return Promise.resolve();
-    return this.run(async () => {
-      await this.dependencies.recolor({ serverId: this.serverId, name: selected.name, color });
+      this.draft = null;
     });
   }
 
   delete(confirm: (affectedWorkspaceCount: number) => Promise<boolean>): Promise<void> {
-    const selected = this.currentSnapshot.selected;
-    if (!selected) return Promise.resolve();
-    const target = { serverId: this.serverId, name: selected.name };
+    const editing = this.currentSnapshot.editing;
+    if (!editing) return Promise.resolve();
+    const target = { serverId: this.serverId, name: editing.name };
     return this.run(async () => {
       const inspected = await this.dependencies.inspectDelete(target);
       if (!(await confirm(inspected.affectedWorkspaceCount))) return;
       await this.dependencies.delete(target);
-      this.selectedName = null;
-      this.draftName = "";
+      this.draft = null;
     });
   }
 
@@ -253,28 +282,47 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
     const labels = (host?.labels ?? []).filter((label) =>
       label.name.toLocaleLowerCase().includes(this.query.trim().toLocaleLowerCase()),
     );
-    const selected =
+    const draft = this.draft;
+    const editing =
       host?.labels.find(
         (label) =>
-          this.selectedName !== null &&
-          workspaceLabelKey(label.name) === workspaceLabelKey(this.selectedName),
+          draft !== null && workspaceLabelKey(label.name) === workspaceLabelKey(draft.name),
       ) ?? null;
+    // An empty name is not an edit the host could carry out, so it is not dirty either — which
+    // is the one place Save's enablement is decided.
+    const draftName = draft ? normalizeWorkspaceLabelName(draft.draftName) : "";
     return {
       hosts: this.hosts,
       serverId: this.serverId,
-      selectedName: this.selectedName,
-      draftName: this.draftName,
+      draft,
       query: this.query,
       error: this.error,
       pending: this.operation !== null,
       host,
       labels: [...labels],
-      selected,
+      editing,
+      dirty:
+        draft !== null &&
+        editing !== null &&
+        draftName.length > 0 &&
+        (draftName !== editing.name || draft.color !== editing.color),
     };
   }
 }
 
-/** One phrasing for a failed label mutation, wherever the failure surfaces. */
+/**
+ * One phrasing for a failed label mutation, wherever the failure surfaces.
+ *
+ * The client appends the correlation it failed on — `requestType=… code=…` — to every RPC error,
+ * which is what a log wants and not what a user reads under a name field. The fields are on the
+ * error too, so the suffix is removed by identity rather than by guessing at the format.
+ */
 export function workspaceLabelErrorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : i18n.t("workspaceLabels.errors.update");
+  if (!(cause instanceof Error)) return i18n.t("workspaceLabels.errors.update");
+  const { requestType, code } = cause as { requestType?: string; code?: string };
+  const message = cause.message
+    .replace(` requestType=${requestType}`, "")
+    .replace(` code=${code}`, "")
+    .trim();
+  return message || i18n.t("workspaceLabels.errors.update");
 }
