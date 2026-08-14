@@ -1,8 +1,10 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useCallback, useMemo, useRef, type ReactNode } from "react";
 import {
   View,
   Text,
   ScrollView as RNScrollView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -492,13 +494,34 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
 }
 
 function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
+  const scrollRef = useRef<RNScrollView | GHScrollView | null>(null);
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 32;
+    const isBottom =
+      layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+    isNearBottomRef.current = isBottom;
+  }, []);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (isNearBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
+
   return (
     <View style={styles.section}>
       <ScrollView
+        ref={scrollRef as never}
         style={ds.scrollAreaStyle}
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled
         showsVerticalScrollIndicator
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={handleContentSizeChange}
       >
         <Text selectable style={styles.plainText}>
           {text}
@@ -509,13 +532,34 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
 }
 
 function ScrollableMarkdownSection({ text, ds }: { text: string; ds: DetailStyles }) {
+  const scrollRef = useRef<RNScrollView | GHScrollView | null>(null);
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 32;
+    const isBottom =
+      layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+    isNearBottomRef.current = isBottom;
+  }, []);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (isNearBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
+
   return (
     <View style={styles.section}>
       <ScrollView
+        ref={scrollRef as never}
         style={ds.scrollAreaStyle}
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled
         showsVerticalScrollIndicator
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={handleContentSizeChange}
       >
         <MarkdownRenderer text={text} compact enableHtmlish={false} />
       </ScrollView>
