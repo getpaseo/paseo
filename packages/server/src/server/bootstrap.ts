@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import contentDisposition from "content-disposition";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -798,9 +799,10 @@ export async function createPaseoDaemon(
         return;
       }
 
-      const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
+      // content-disposition emits ASCII filename fallback + RFC 5987 filename*
+      // so non-ASCII names do not trip Node's ERR_INVALID_CHAR on setHeader.
       res.setHeader("Content-Type", entry.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
+      res.setHeader("Content-Disposition", contentDisposition(entry.fileName));
       res.setHeader("Content-Length", fileStats.size.toString());
 
       const stream = fileHandle.createReadStream();
