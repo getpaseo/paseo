@@ -13,6 +13,7 @@ import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitServiceImpl,
 } from "../workspace-git-service.js";
+import { resolveWorkspaceLifecycleOperationOwner } from "../workspace-lifecycle-operation-service.js";
 import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
@@ -144,11 +145,14 @@ export async function archiveIfSafe(input: {
               },
               workspaceIdToKill,
             ),
+          lifecycle: resolveWorkspaceLifecycleOperationOwner(options.agentManager),
           sessionLogger: log,
         },
         {
           scope: { kind: "workspace", workspaceId },
-          requestId: "auto-archive-on-merge",
+          // The merged PR is the durable external identity: re-observing the
+          // same merge replays the committed archive instead of re-running.
+          requestId: `auto-archive-on-merge:${workspaceId}:${pullRequest.url}`,
         },
       );
       log.info({ cwd }, "Auto-archived worktree after PR merge");

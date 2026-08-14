@@ -1165,6 +1165,61 @@ export async function rollbackCreatedPaseoWorktree(
   throw cause;
 }
 
+export interface RemovePaseoWorktreeStrictOptions {
+  cwd: string;
+  worktreePath: string;
+  worktreesRoot?: string;
+  paseoHome?: string;
+  worktreesBaseRoot?: string;
+}
+
+/**
+ * Removal path for the workspace lifecycle owner: `git worktree remove` must
+ * succeed, or the caller records manual cleanup. Never falls through to a
+ * recursive directory delete and never touches branches.
+ */
+export async function removePaseoWorktreeStrict({
+  cwd,
+  worktreePath,
+  worktreesRoot,
+  paseoHome,
+  worktreesBaseRoot,
+}: RemovePaseoWorktreeStrictOptions): Promise<void> {
+  const resolvedWorktreesRoot =
+    worktreesRoot ?? (await getPaseoWorktreesRoot(cwd, paseoHome, worktreesBaseRoot));
+  const resolvedRequested = normalizePathForOwnership(worktreePath);
+  const ownership = await isPaseoOwnedWorktreeCwd(worktreePath, {
+    paseoHome,
+    worktreesRoot: worktreesBaseRoot,
+  });
+  const resolvedWorktree =
+    ownership.allowed && ownership.worktreePath ? ownership.worktreePath : resolvedRequested;
+
+  const relativeWorktreePath = getRealpathAwareRelativePath(
+    resolvedWorktreesRoot,
+    resolvedWorktree,
+  );
+  if (relativeWorktreePath === null || relativeWorktreePath === "") {
+    throw new Error("Refusing to delete non-Paseo worktree");
+  }
+
+  await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
+    cwd,
+    timeout: 120_000,
+  });
+  if (await pathExists(resolvedWorktree)) {
+    throw new Error(
+      `Worktree directory still exists after git worktree remove: ${resolvedWorktree}`,
+    );
+  }
+
+  try {
+    await runGitCommand(["worktree", "prune"], { cwd, timeout: 30_000 });
+  } catch {
+    // not critical; git will prune lazily
+  }
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);

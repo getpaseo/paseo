@@ -75,6 +75,10 @@ import {
   type ProviderSubagentDescriptor,
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
+import type {
+  WorkspaceLifecycleAdmission,
+  WorkspaceLifecycleOperationOwner,
+} from "../workspace-lifecycle-operation-service.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -1094,12 +1098,47 @@ export class AgentManager {
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
+  private workspaceLifecycleOperationsInstance: WorkspaceLifecycleOperationOwner | null = null;
+
+  /**
+   * The daemon-wide workspace lifecycle operation owner. The manager carries
+   * it so session and tool paths that already hold an AgentManager reference
+   * reach the single owner instance without new plumbing.
+   */
+  get workspaceLifecycleOperations(): WorkspaceLifecycleOperationOwner | null {
+    return this.workspaceLifecycleOperationsInstance;
+  }
+
+  setWorkspaceLifecycleOperations(operations: WorkspaceLifecycleOperationOwner): void {
+    this.workspaceLifecycleOperationsInstance = operations;
+  }
+
+  private withWorkspaceLifecycleAdmission<T>(
+    input: { workspaceId: string | undefined; cwd: string | undefined; actor: string },
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const admission = this.workspaceLifecycleOperationsInstance;
+    if (!admission || !input.workspaceId) {
+      return action();
+    }
+    return withAgentWorkspaceLifecycleAdmission(
+      admission,
+      { workspaceId: input.workspaceId, cwd: input.cwd ?? "", actor: input.actor },
+      action,
+    );
+  }
+
   createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation(
+      this.withWorkspaceLifecycleAdmission(
+        { workspaceId: options.workspaceId, cwd: config.cwd, actor: "agent:create" },
+        () => this.createAgentInternal(config, agentId, options),
+      ),
+    );
   }
 
   private async createAgentInternal(
@@ -1162,7 +1201,11 @@ export class AgentManager {
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.withWorkspaceLifecycleAdmission(
+        { workspaceId: options?.workspaceId, cwd: overrides?.cwd, actor: "agent:resume" },
+        () =>
+          this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      ),
     );
   }
 
@@ -1225,7 +1268,12 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    return this.trackAgentRegistrationOperation(
+      this.withWorkspaceLifecycleAdmission(
+        { workspaceId: input.workspaceId, cwd: input.cwd, actor: "agent:import" },
+        () => this.importProviderSessionInternal(input),
+      ),
+    );
   }
 
   private async importProviderSessionInternal(input: {
@@ -4714,5 +4762,27 @@ export function commandMayHaveChangedExternalState(command: string): boolean {
     // Fetches update refs/remotes/ which our watchers do not watch, so
     // ahead/behind counts can drift stale until the next refresh.
     /\bgit\s+fetch\b/.test(normalized)
+  );
+}
+
+export interface AgentWorkspaceLifecycleAdmissionInput {
+  workspaceId: string;
+  cwd: string;
+  actor: string;
+}
+
+/**
+ * Runs an agent mutation under the workspace lifecycle owner's shared
+ * admission lease, so workspace removal cannot enter destructive mutation
+ * while the agent action is in flight.
+ */
+export async function withAgentWorkspaceLifecycleAdmission<T>(
+  admission: WorkspaceLifecycleAdmission,
+  input: AgentWorkspaceLifecycleAdmissionInput,
+  action: () => Promise<T>,
+): Promise<T> {
+  return admission.withSharedAdmission(
+    { resourceKey: `workspace:${input.workspaceId}`, actor: input.actor },
+    action,
   );
 }

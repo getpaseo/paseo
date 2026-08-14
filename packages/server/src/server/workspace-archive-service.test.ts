@@ -18,6 +18,8 @@ import {
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
 } from "./workspace-archive-service.js";
+import { PaseoWorkspaceLifecycleOperationService } from "./workspace-lifecycle-operation-service.js";
+import { FileBackedWorkspaceLifecycleOperationStore } from "./workspace-lifecycle-operation-store.js";
 
 const cleanupPaths: string[] = [];
 
@@ -788,6 +790,186 @@ describe("archiveByScope", () => {
       expect.arrayContaining([workspaceA, workspaceB, workspaceC]),
     );
     expect(result.archivedWorkspaceIds).toHaveLength(3);
+    expect(result.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+});
+
+function createLifecycleOwner(root: string): {
+  store: FileBackedWorkspaceLifecycleOperationStore;
+  lifecycle: PaseoWorkspaceLifecycleOperationService;
+} {
+  const store = new FileBackedWorkspaceLifecycleOperationStore({
+    filePath: path.join(root, "workspace-lifecycle-operations.json"),
+    logger: createLogger(),
+  });
+  // Destructive mutation stays at the service default (disabled); only the
+  // archive flow's per-operation opt-in reaches the mutate step.
+  return {
+    store,
+    lifecycle: new PaseoWorkspaceLifecycleOperationService({ store, logger: createLogger() }),
+  };
+}
+
+function ownedWorkspaceRef(
+  workspaceId: string,
+  worktreePath: string,
+  repoDir: string,
+): ActiveWorkspaceRef {
+  return {
+    workspaceId,
+    cwd: worktreePath,
+    kind: "worktree",
+    worktreeRoot: worktreePath,
+    isPaseoOwnedWorktree: true,
+    mainRepoRoot: repoDir,
+  };
+}
+
+describe("archiveByScope through the workspace lifecycle owner", () => {
+  test("routes directory removal through the owner and keeps the branch", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "lifecycle-owner-commit");
+    const workspaceId = "ws-lifecycle-owner-commit";
+    const { store, lifecycle } = createLifecycleOwner(paseoHome);
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [ownedWorkspaceRef(workspaceId, worktree.worktreePath, repoDir)],
+    });
+    deps.lifecycle = lifecycle;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-lifecycle-owner-commit",
+    });
+
+    expect(result.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(await store.listNonterminal()).toEqual([]);
+    const record = await store.findCurrentByResource(
+      `worktree:${path.resolve(worktree.worktreePath)}`,
+    );
+    expect(record?.operationId).toBe("workspace-archive:req-lifecycle-owner-commit");
+    expect(record?.state).toBe("COMMITTED");
+    expect(record?.kind).toBe("archive");
+    const branches = execFileSync("git", ["branch", "--list", "lifecycle-owner-commit"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    }).toString();
+    expect(branches).toContain("lifecycle-owner-commit");
+  });
+
+  test("records MANUAL_CLEANUP and preserves the directory when git removal fails", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "lifecycle-owner-manual");
+    const workspaceId = "ws-lifecycle-owner-manual";
+    const { store, lifecycle } = createLifecycleOwner(paseoHome);
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [ownedWorkspaceRef(workspaceId, worktree.worktreePath, repoDir)],
+    });
+    deps.lifecycle = lifecycle;
+    rmSync(path.join(repoDir, ".git", "worktrees"), { recursive: true, force: true });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-lifecycle-owner-manual",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+    expect(result.removedDirectory).toBe(false);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+    expect(await store.listNonterminal()).toEqual([]);
+    const record = await store.findCurrentByResource(
+      `worktree:${path.resolve(worktree.worktreePath)}`,
+    );
+    expect(record?.state).toBe("MANUAL_CLEANUP");
+  });
+
+  test("distinct MCP request ids do not replay and the same id replays", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const slug = "mcp-request-replay";
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, slug);
+    const { store, lifecycle } = createLifecycleOwner(paseoHome);
+    const resourceKey = `worktree:${path.resolve(worktree.worktreePath)}`;
+
+    const archiveWith = async (workspaceId: string, requestId: string) => {
+      const deps = createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [ownedWorkspaceRef(workspaceId, worktree.worktreePath, repoDir)],
+      });
+      deps.lifecycle = lifecycle;
+      return archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId,
+      });
+    };
+    const recreateWorktree = async () => {
+      await createWorktree({
+        cwd: repoDir,
+        worktreeSlug: slug,
+        source: { kind: "checkout-branch", branchName: slug },
+        runSetup: false,
+        paseoHome,
+      });
+    };
+
+    const first = await archiveWith("ws-mcp-replay-1", `mcp:archive_workspace:ws-mcp:1`);
+    expect(first.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+
+    // A different per-call request id on the same target starts a fresh
+    // operation instead of replaying the first one.
+    await recreateWorktree();
+    const second = await archiveWith("ws-mcp-replay-2", `mcp:archive_workspace:ws-mcp:2`);
+    expect(second.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect((await store.findCurrentByResource(resourceKey))?.generation).toBe(2);
+
+    // Retrying the same request id replays the committed result without
+    // running the removal again.
+    await recreateWorktree();
+    const replayed = await archiveWith("ws-mcp-replay-3", `mcp:archive_workspace:ws-mcp:2`);
+    expect(replayed.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+    expect((await store.findCurrentByResource(resourceKey))?.generation).toBe(2);
+  });
+
+  test("waits for a shared workspace admission before removing the directory", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "lifecycle-owner-lease");
+    const workspaceId = "ws-lifecycle-owner-lease";
+    const { store, lifecycle } = createLifecycleOwner(paseoHome);
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [ownedWorkspaceRef(workspaceId, worktree.worktreePath, repoDir)],
+    });
+    deps.lifecycle = lifecycle;
+
+    let releaseAgent!: () => void;
+    const agentLease = lifecycle.withSharedAdmission(
+      { resourceKey: `workspace:${workspaceId}`, actor: "agent:test" },
+      async () => new Promise<void>((resolveLease) => (releaseAgent = resolveLease)),
+    );
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-lifecycle-owner-lease",
+    });
+    await vi.waitFor(async () => {
+      const nonterminal = await store.listNonterminal();
+      expect(nonterminal).toHaveLength(1);
+      expect(nonterminal[0]?.state).toBe("ADMISSION_CLOSED");
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    releaseAgent();
+    await agentLease;
+    const result = await archive;
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });

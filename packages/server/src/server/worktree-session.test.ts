@@ -2133,3 +2133,45 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
     ).toHaveLength(2);
   });
 });
+
+test("buildAgentSessionConfig forwards the exact lifecycleOperationId to worktree creation", async () => {
+  const createPaseoWorktree = vi.fn(async () => {
+    throw new Error("stop after capture");
+  });
+
+  await expect(
+    buildAgentSessionConfig(
+      {
+        paseoHome: "/paseo-home",
+        sessionLogger: createLogger(),
+        workspaceGitService: {
+          resolveRepoRoot: vi.fn(async () => "/repo"),
+          resolveDefaultBranch: vi.fn(async () => "main"),
+        } as unknown as WorkspaceGitService,
+        createPaseoWorktree,
+        checkoutExistingBranch: async () => {
+          throw new Error("should not checkout existing branch");
+        },
+        createBranchFromBase: async () => {
+          throw new Error("should not create a new branch from base");
+        },
+      },
+      {
+        provider: "codex",
+        cwd: "/repo",
+      },
+      undefined,
+      "legacy-worktree",
+      undefined,
+      "create-agent-worktree:req-legacy-1",
+    ),
+  ).rejects.toThrow("stop after capture");
+
+  expect(createPaseoWorktree).toHaveBeenCalledWith(
+    expect.objectContaining({
+      worktreeSlug: "legacy-worktree",
+      lifecycleOperationId: "create-agent-worktree:req-legacy-1",
+    }),
+    expect.anything(),
+  );
+});

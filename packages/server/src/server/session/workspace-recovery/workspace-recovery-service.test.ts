@@ -14,6 +14,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createWorktree } from "../../../utils/worktree.js";
+import { PaseoWorkspaceLifecycleOperationService } from "../../workspace-lifecycle-operation-service.js";
+import { FileBackedWorkspaceLifecycleOperationStore } from "../../workspace-lifecycle-operation-store.js";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -264,6 +267,135 @@ describe("workspace recovery", () => {
       "The source repository needed to restore this worktree no longer exists.",
     );
     expect(unarchived).toEqual([]);
+  });
+
+  test("restore recreates the worktree as a committed lifecycle operation", async () => {
+    const { tempDir, repoDir } = createGitRepository();
+    const branch = "feature/lifecycle-restore";
+    execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
+    const paseoHome = join(tempDir, "paseo-home");
+    const worktreesRoot = join(tempDir, "worktrees");
+    const created = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "lifecycle-restore",
+      source: { kind: "checkout-branch", branchName: branch },
+      runSetup: false,
+      paseoHome,
+      worktreesRoot,
+    });
+    const worktreeRoot = realpathSync(created.worktreePath);
+    rmSync(worktreeRoot, { recursive: true, force: true });
+    execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
+
+    const project = createProject({ rootPath: repoDir });
+    const workspace = createWorkspace({
+      workspaceId: "ws-lifecycle-restore",
+      cwd: worktreeRoot,
+      branch,
+      worktreeRoot,
+      mainRepoRoot: repoDir,
+    });
+    const store = new FileBackedWorkspaceLifecycleOperationStore({
+      filePath: join(tempDir, "workspace-lifecycle-operations.json"),
+      logger: createTestLogger(),
+    });
+    const unarchived: string[] = [];
+    const service = createWorkspaceRecoveryService({
+      paseoHome,
+      worktreesRoot,
+      getWorkspace: async (workspaceId) =>
+        workspaceId === workspace.workspaceId ? workspace : null,
+      getProject: async (projectId) => (projectId === project.projectId ? project : null),
+      isDirectory: async (targetPath) =>
+        existsSync(targetPath) && statSync(targetPath).isDirectory(),
+      unarchiveWorkspace: async (record) => {
+        unarchived.push(record.workspaceId);
+      },
+      lifecycle: new PaseoWorkspaceLifecycleOperationService({
+        store,
+        logger: createTestLogger(),
+      }),
+    });
+
+    await expect(
+      service.restore(workspace.workspaceId, { lifecycleOperationId: "restore-req-1" }),
+    ).resolves.toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "restore",
+    });
+    expect(existsSync(worktreeRoot)).toBe(true);
+    expect(unarchived).toEqual([workspace.workspaceId]);
+    const record = await store.get("worktree-restore:restore-req-1");
+    expect(record?.state).toBe("COMMITTED");
+    expect(record?.kind).toBe("create");
+    expect(await store.listNonterminal()).toEqual([]);
+  });
+
+  test("records MANUAL_CLEANUP and strictly compensates a diverged restore", async () => {
+    const { tempDir, repoDir } = createGitRepository();
+    const branch = "feature/lifecycle-diverged";
+    execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
+    const paseoHome = join(tempDir, "paseo-home");
+    const worktreesRoot = join(tempDir, "worktrees");
+    const created = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "lifecycle-diverged",
+      source: { kind: "checkout-branch", branchName: branch },
+      runSetup: false,
+      paseoHome,
+      worktreesRoot,
+    });
+    const worktreeRoot = realpathSync(created.worktreePath);
+    const workspaceCwd = join(worktreeRoot, "packages", "app");
+    rmSync(worktreeRoot, { recursive: true, force: true });
+    execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
+
+    const project = createProject({ rootPath: repoDir });
+    const workspace = createWorkspace({
+      workspaceId: "ws-lifecycle-diverged",
+      cwd: workspaceCwd,
+      branch,
+      worktreeRoot,
+      mainRepoRoot: repoDir,
+    });
+    const store = new FileBackedWorkspaceLifecycleOperationStore({
+      filePath: join(tempDir, "workspace-lifecycle-operations.json"),
+      logger: createTestLogger(),
+    });
+    const unarchived: string[] = [];
+    const service = createWorkspaceRecoveryService({
+      paseoHome,
+      worktreesRoot,
+      getWorkspace: async (workspaceId) =>
+        workspaceId === workspace.workspaceId ? workspace : null,
+      getProject: async (projectId) => (projectId === project.projectId ? project : null),
+      isDirectory: async (targetPath) =>
+        existsSync(targetPath) && statSync(targetPath).isDirectory(),
+      unarchiveWorkspace: async (record) => {
+        unarchived.push(record.workspaceId);
+      },
+      lifecycle: new PaseoWorkspaceLifecycleOperationService({
+        store,
+        logger: createTestLogger(),
+      }),
+    });
+
+    await expect(service.restore(workspace.workspaceId)).rejects.toThrow(
+      "Selected project directory is missing from the restored worktree",
+    );
+    expect(unarchived).toEqual([]);
+    // Strict git-only compensation removed the recreated worktree; the branch
+    // survives and no recursive delete ran.
+    expect(existsSync(worktreeRoot)).toBe(false);
+    expect(
+      execFileSync("git", ["branch", "--list", branch], { cwd: repoDir, stdio: "pipe" })
+        .toString()
+        .includes("lifecycle-diverged"),
+    ).toBe(true);
+    const record = await store.get(`worktree-restore:workspace-restore:${workspace.workspaceId}`);
+    expect(record?.state).toBe("MANUAL_CLEANUP");
+    expect(record?.evidence).toContain("create failed");
+    expect(await store.listNonterminal()).toEqual([]);
   });
 });
 

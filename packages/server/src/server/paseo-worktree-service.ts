@@ -12,7 +12,7 @@ import {
 } from "./worktree-core.js";
 import {
   mapWorkspaceRelativeCwdToWorktree,
-  rollbackCreatedPaseoWorktree,
+  removePaseoWorktreeStrict,
   seedPaseoConfigFile,
   validateBranchSlug,
   type WorktreeConfig,
@@ -29,10 +29,21 @@ import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
+import {
+  fingerprintWorkspaceLifecycleRequest,
+  type WorkspaceLifecycleOperationOwner,
+} from "./workspace-lifecycle-operation-service.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
   title?: string;
+  /**
+   * Durable identity of the logical create request, minted once at the request
+   * boundary (client requestId or a caller-scoped id). Required when the
+   * lifecycle owner is configured; a retried request replays the committed
+   * result instead of creating a replacement worktree.
+   */
+  lifecycleOperationId?: string;
 }
 
 export interface CreatePaseoWorktreeResult {
@@ -59,6 +70,10 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
+  // The workspace lifecycle operation owner. When present, creation runs as a
+  // durable lifecycle operation with one nonterminal owner per target; when
+  // absent the direct path applies (kept for direct-dependency tests).
+  lifecycle?: WorkspaceLifecycleOperationOwner;
 }
 
 export async function createPaseoWorktree(
@@ -69,6 +84,42 @@ export async function createPaseoWorktree(
 }
 
 async function createPaseoWorktreeWithPriority(
+  input: CreatePaseoWorktreeInput,
+  deps: CreatePaseoWorktreeDeps,
+): Promise<CreatePaseoWorktreeResult> {
+  const lifecycle = deps.lifecycle;
+  if (!lifecycle) {
+    return createPaseoWorktreeDirect(input, deps);
+  }
+
+  const operationIdentity = input.lifecycleOperationId;
+  if (!operationIdentity) {
+    throw new Error(
+      "createPaseoWorktree requires input.lifecycleOperationId when the lifecycle owner is configured",
+    );
+  }
+  // Auto-named worktrees have no deterministic target before creation, so the
+  // request identity keys the resource; named targets get one nonterminal
+  // owner per target.
+  const targetIdentity =
+    input.worktreeSlug ??
+    input.refName ??
+    (input.githubPrNumber !== undefined
+      ? `pr-${input.githubPrNumber}`
+      : `auto-${operationIdentity}`);
+  return lifecycle.runCreate({
+    operationId: `worktree-create:${operationIdentity}`,
+    fingerprint: fingerprintWorkspaceLifecycleRequest({
+      cwd: resolve(input.cwd),
+      targetIdentity,
+      projectId: input.projectId ?? null,
+    }),
+    resourceKey: `worktree:${resolve(input.cwd)}:${targetIdentity}`,
+    create: () => createPaseoWorktreeDirect(input, deps),
+  });
+}
+
+async function createPaseoWorktreeDirect(
   input: CreatePaseoWorktreeInput,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
@@ -115,16 +166,25 @@ async function createPaseoWorktreeWithPriority(
     if (!createdWorktree.created) {
       throw error;
     }
-    return rollbackCreatedPaseoWorktree(
-      {
+    // Strict compensation: git-only removal of the just-created worktree. If
+    // that fails the directory and branch are preserved for manual cleanup —
+    // never a recursive delete.
+    try {
+      await removePaseoWorktreeStrict({
         cwd: createdWorktree.repoRoot,
         worktreePath: createdWorktree.worktree.worktreePath,
-        ...(input.runSetup === false ? { teardownCwds: [] } : {}),
         paseoHome: input.paseoHome,
         worktreesBaseRoot: input.worktreesRoot,
-      },
-      error,
-    );
+      });
+    } catch (compensationError) {
+      const failure = new Error(
+        `${error instanceof Error ? error.message : "Worktree workflow failed"}; strict compensation preserved ${createdWorktree.worktree.worktreePath}: ${compensationError instanceof Error ? compensationError.message : String(compensationError)}`,
+        { cause: error },
+      );
+      Object.assign(failure, { cleanupError: compensationError });
+      throw failure;
+    }
+    throw error;
   }
 }
 

@@ -491,7 +491,7 @@ describe("archiveIfSafe", () => {
       }),
       {
         scope: { kind: "workspace", workspaceId: "ws-auto-archive" },
-        requestId: "auto-archive-on-merge",
+        requestId: "auto-archive-on-merge:ws-auto-archive:https://github.com/acme/repo/pull/123",
       },
     );
     expect(harness.log.info).toHaveBeenCalledWith(

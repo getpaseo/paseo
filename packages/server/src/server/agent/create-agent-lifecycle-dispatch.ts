@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
 import type { ForgeService } from "../../services/forge-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "../workspace-archive-service.js";
+import { resolveWorkspaceLifecycleOperationOwner } from "../workspace-lifecycle-operation-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -62,6 +62,7 @@ export class CreateAgentLifecycleDispatch {
     target: CreateAgentWorktreeTarget | undefined;
     firstAgentContext: FirstAgentContext;
     hasLegacyGitOptions: boolean;
+    requestId: string;
   }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
     if (input.target && input.hasLegacyGitOptions) {
       throw new Error("create_agent_request worktree cannot be combined with git options");
@@ -70,7 +71,12 @@ export class CreateAgentLifecycleDispatch {
       return null;
     }
 
-    return this.createWorktreeForTarget(input.cwd, input.target, input.firstAgentContext);
+    return this.createWorktreeForTarget(
+      input.cwd,
+      input.target,
+      input.firstAgentContext,
+      input.requestId,
+    );
   }
 
   registerAutoArchiveIfRequested(input: {
@@ -115,6 +121,7 @@ export class CreateAgentLifecycleDispatch {
     cwd: string,
     target: CreateAgentWorktreeTarget,
     firstAgentContext: FirstAgentContext,
+    requestId: string,
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     const baseInput = {
       cwd,
@@ -122,6 +129,8 @@ export class CreateAgentLifecycleDispatch {
       runSetup: false,
       paseoHome: this.dependencies.paseoHome,
       worktreesRoot: this.dependencies.worktreesRoot,
+      // The create_agent requestId is the durable create identity.
+      lifecycleOperationId: `create-agent-worktree:${requestId}`,
     } as const;
 
     switch (target.mode) {
@@ -213,11 +222,14 @@ export class CreateAgentLifecycleDispatch {
         markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
         clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
         killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
+        lifecycle: resolveWorkspaceLifecycleOperationOwner(this.dependencies.agentManager),
         sessionLogger: this.dependencies.logger,
       },
       {
         scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
-        requestId: randomUUID(),
+        // Durable per created worktree: retiring the same auto-created
+        // workspace twice replays the committed result instead of re-running.
+        requestId: `create-agent-auto-archive:${createdWorktree.workspace.workspaceId}`,
       },
     );
 

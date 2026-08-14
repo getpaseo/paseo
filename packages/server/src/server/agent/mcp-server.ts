@@ -14,6 +14,16 @@ export type AgentMcpServerOptions = PaseoToolHostDependencies;
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
+// Type-tagged so the numeric JSON-RPC id 1 and the string id "1" stay
+// distinct lifecycle identities; the tag prefix keeps any string content
+// collision-safe against the numeric encoding.
+function normalizeMcpRequestId(requestId: string | number | undefined): string | undefined {
+  if (requestId === undefined) {
+    return undefined;
+  }
+  return typeof requestId === "number" ? `n:${requestId}` : `s:${requestId}`;
+}
+
 function toMcpToolResult(result: PaseoToolResult): CallToolResult {
   const modelVisibleResult = addModelVisibleStructuredContent(result);
   return {
@@ -44,7 +54,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         inputSchema: tool.inputSchema,
       },
       async (args: unknown, context?: McpToolContext) =>
-        toMcpToolResult(await catalog.executeTool(tool.name, args, { signal: context?.signal })),
+        toMcpToolResult(
+          await catalog.executeTool(tool.name, args, {
+            signal: context?.signal,
+            requestId: normalizeMcpRequestId(context?.requestId),
+            sessionId: context?.sessionId,
+          }),
+        ),
     );
   }
 

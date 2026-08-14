@@ -211,6 +211,8 @@ type ScheduleAgentManager = Pick<
 interface ScheduleWorkspaceCreateInput {
   cwd: string;
   firstAgentContext: FirstAgentContext;
+  // Durable identity of the run this workspace belongs to.
+  runId: string;
 }
 
 export interface ScheduleServiceOptions {
@@ -225,7 +227,7 @@ export interface ScheduleServiceOptions {
   createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  archiveWorkspace: (workspaceId: string) => Promise<void>;
+  archiveWorkspace: (workspaceId: string, runId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -242,7 +244,7 @@ export class ScheduleService {
   private readonly createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly archiveWorkspace: (workspaceId: string, runId: string) => Promise<void>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -638,7 +640,7 @@ export class ScheduleService {
       return;
     }
     try {
-      await this.archiveWorkspace(interruptedWorkspace.workspaceId);
+      await this.archiveWorkspace(interruptedWorkspace.workspaceId, interruptedWorkspace.runId);
     } catch (error) {
       this.logger.warn(
         {
@@ -863,7 +865,7 @@ export class ScheduleService {
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt, runId);
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
@@ -929,7 +931,7 @@ export class ScheduleService {
         shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
       ) {
         try {
-          await this.archiveWorkspace(workspace.workspaceId);
+          await this.archiveWorkspace(workspace.workspaceId, runId);
         } catch (error) {
           this.logger.warn(
             {
@@ -949,14 +951,16 @@ export class ScheduleService {
   private async createScheduleRunWorkspace(
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
     prompt: string,
+    runId: string,
   ): Promise<PersistedWorkspaceRecord> {
     const firstAgentContext = { prompt };
     switch (config.isolation ?? "local") {
       case "local":
-        return this.createDirectoryWorkspace({ cwd: config.cwd, firstAgentContext });
+        return this.createDirectoryWorkspace({ cwd: config.cwd, firstAgentContext, runId });
       case "worktree":
-        return (await this.createPaseoWorktreeWorkspace({ cwd: config.cwd, firstAgentContext }))
-          .workspace;
+        return (
+          await this.createPaseoWorktreeWorkspace({ cwd: config.cwd, firstAgentContext, runId })
+        ).workspace;
     }
   }
 

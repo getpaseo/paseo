@@ -31,6 +31,7 @@ import {
   requireActiveWorkspaceForArchive,
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
+import { resolveWorkspaceLifecycleOperationOwner } from "../../workspace-lifecycle-operation-service.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
@@ -1255,19 +1256,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
       outputSchema: WorkspaceAutomationSummarySchema.shape,
     },
-    async ({
-      isolation,
-      path,
-      projectId,
-      title,
-      mode,
-      worktreeSlug,
-      branchName,
-      baseBranch,
-      branch,
-      prNumber,
-      forge,
-    }) => {
+    async (
+      {
+        isolation,
+        path,
+        projectId,
+        title,
+        mode,
+        worktreeSlug,
+        branchName,
+        baseBranch,
+        branch,
+        prNumber,
+        forge,
+      },
+      context,
+    ) => {
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
@@ -1296,6 +1300,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           }
           cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
         }
+        const callIdentity = mcpToolCallIdentity(context);
+        if (callIdentity === undefined && resolveWorkspaceLifecycleOperationOwner(agentManager)) {
+          throw new Error(
+            "create_workspace requires a per-call MCP request id under the workspace lifecycle owner",
+          );
+        }
         const worktreeTarget = resolveWorkspaceWorktreeTarget({
           mode,
           worktreeSlug,
@@ -1317,6 +1327,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
+            // The session-scoped MCP request id is the durable identity of the
+            // worktree this call provisions.
+            ...(callIdentity !== undefined
+              ? { lifecycleOperationId: `mcp-create-workspace:${callIdentity}` }
+              : {}),
           },
         );
         if (!result.ok) {
@@ -1366,7 +1381,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         removedDirectory: z.boolean(),
       },
     },
-    async ({ workspaceId }) => {
+    async ({ workspaceId }, context) => {
       if (!options.listActiveWorkspaces) {
         throw new Error("Active workspace lister is required to archive workspaces");
       }
@@ -1374,6 +1389,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         { listActiveWorkspaces: options.listActiveWorkspaces },
         workspaceId,
       );
+      const callIdentity = mcpToolCallIdentity(context);
+      if (callIdentity === undefined && resolveWorkspaceLifecycleOperationOwner(agentManager)) {
+        throw new Error(
+          "archive_workspace requires a per-call MCP request id under the workspace lifecycle owner",
+        );
+      }
       const result = await archiveByScope(
         archiveWorktreeDependencies(options, {
           agentManager,
@@ -1382,7 +1403,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           logger: childLogger,
         }),
         {
-          requestId: "mcp:archive_workspace",
+          // The session-scoped MCP request id is the durable identity of this
+          // tool call: retrying the same call replays the committed result, a
+          // new call gets its own operation.
+          requestId: `mcp:archive_workspace:${workspace.workspaceId}:${callIdentity}`,
           scope: { kind: "workspace", workspaceId: workspace.workspaceId },
         },
       );
@@ -1417,9 +1441,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         guidance: z.string().optional(),
       },
     },
-    async (args: unknown) => {
+    async (args: unknown, context) => {
       const resolvedArgs = await resolveCreateAgentToolArgs(args);
       const { parsedArgs, worktree } = resolvedArgs;
+      const createCallIdentity = mcpToolCallIdentity(context);
       let requestedBackground: boolean;
       let notifyOnFinish: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
@@ -1467,6 +1492,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           callerAgentId,
           callerContext,
           worktree,
+          // The session-scoped MCP request id is the durable identity for any
+          // worktree this create_agent call provisions.
+          lifecycleOperationId:
+            createCallIdentity !== undefined ? `mcp-create-agent:${createCallIdentity}` : undefined,
         },
       );
 
@@ -3163,6 +3192,19 @@ interface ArchiveWorktreeCommandContext {
   logger: Logger;
 }
 
+// The per-call identity for lifecycle operations started by an MCP tool call:
+// the type-tagged JSON-RPC request id, scoped by the transport session id when
+// the transport provides one. Without a session id, uniqueness holds only
+// within a single transport session.
+function mcpToolCallIdentity(context: PaseoToolExecutionContext): string | undefined {
+  if (context.requestId === undefined) {
+    return undefined;
+  }
+  return context.sessionId !== undefined
+    ? `${context.sessionId}:${context.requestId}`
+    : context.requestId;
+}
+
 function archiveWorktreeDependencies(
   options: PaseoToolHostDependencies,
   context: ArchiveWorktreeCommandContext,
@@ -3204,6 +3246,7 @@ function archiveWorktreeDependencies(
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,
+    lifecycle: resolveWorkspaceLifecycleOperationOwner(context.agentManager),
     killTerminalsForWorkspace: (workspaceId: string) =>
       killTerminalsForWorkspace(
         {

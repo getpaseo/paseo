@@ -58,6 +58,14 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { AgentMcpServerOptions } from "./mcp-server.js";
+import { createWorktree } from "../../utils/worktree.js";
+import type { ActiveWorkspaceRef } from "../workspace-archive-service.js";
+import { PaseoWorkspaceLifecycleOperationService } from "../workspace-lifecycle-operation-service.js";
+import { FileBackedWorkspaceLifecycleOperationStore } from "../workspace-lifecycle-operation-store.js";
+import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -5831,4 +5839,293 @@ describe("agent snapshot MCP serialization", () => {
     expect(content).not.toContain("second answer");
     expect(content).not.toContain("first answer");
   });
+});
+
+function createLifecycleGitRepo(): { tempDir: string; repoDir: string } {
+  const tempDir = mkdtempSync(join(tmpdir(), "mcp-server-lifecycle-"));
+  const repoDir = join(tempDir, "repo");
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  return { tempDir, repoDir };
+}
+
+interface LifecycleJsonRpcResponse {
+  id?: string | number;
+  result?: {
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string }>;
+  };
+  error?: { message?: string };
+}
+
+interface LifecycleMcpClient {
+  call: (id: string | number, name: string, args: unknown) => Promise<LifecycleJsonRpcResponse>;
+  close: () => Promise<void>;
+}
+
+// Drives the real createAgentMcpServer over a linked in-memory transport with
+// hand-built JSON-RPC frames, so the exact wire-level request id types and the
+// transport session id reach the registered tool handlers.
+async function connectLifecycleMcp(
+  options: AgentMcpServerOptions,
+  sessionId?: string,
+): Promise<LifecycleMcpClient> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  if (sessionId !== undefined) {
+    serverTransport.sessionId = sessionId;
+  }
+  const server = await createAgentMcpServer(options);
+  const pending = new Map<string | number, (message: LifecycleJsonRpcResponse) => void>();
+  Object.assign(clientTransport, {
+    onmessage: (message: JSONRPCMessage) => {
+      const response = message as LifecycleJsonRpcResponse;
+      if (response.id !== undefined) {
+        pending.get(response.id)?.(response);
+        pending.delete(response.id);
+      }
+    },
+  });
+  await server.connect(serverTransport);
+  await clientTransport.start();
+
+  const request = (id: string | number, method: string, params: unknown) =>
+    new Promise<LifecycleJsonRpcResponse>((resolve) => {
+      pending.set(id, resolve);
+      void clientTransport.send({ jsonrpc: "2.0", id, method, params } as JSONRPCMessage);
+    });
+
+  await request("init", "initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "lifecycle-identity-test", version: "0.0.0" },
+  });
+  await clientTransport.send({
+    jsonrpc: "2.0",
+    method: "notifications/initialized",
+  } as JSONRPCMessage);
+
+  return {
+    call: (id, name, args) => request(id, "tools/call", { name, arguments: args }),
+    close: async () => {
+      // Deterministic teardown: closing the server closes its transport, and
+      // closing the client side releases the linked in-memory pair so the
+      // worker can exit naturally.
+      await server.close();
+      await clientTransport.close();
+    },
+  };
+}
+
+function createLifecycleToolOptions(paseoHome: string): {
+  options: AgentMcpServerOptions;
+  store: FileBackedWorkspaceLifecycleOperationStore;
+} {
+  const store = new FileBackedWorkspaceLifecycleOperationStore({
+    filePath: join(paseoHome, "workspace-lifecycle-operations.json"),
+    logger: createTestLogger(),
+  });
+  const lifecycle = new PaseoWorkspaceLifecycleOperationService({
+    store,
+    logger: createTestLogger(),
+  });
+  const agentManager = new AgentManager({ clients: {}, logger: createTestLogger() });
+  agentManager.setWorkspaceLifecycleOperations(lifecycle);
+  const options: AgentMcpServerOptions = {
+    agentManager,
+    agentStorage: new AgentStorage(join(paseoHome, "agents"), createTestLogger()),
+    // Only invalidate() is reachable through these tests.
+    github: { invalidate: () => {} } as unknown as ForgeService,
+    logger: createTestLogger(),
+    paseoHome,
+  };
+  return { options, store };
+}
+
+it("wire-level id types stay distinct archive identities and the same typed id replays", async () => {
+  const { tempDir, repoDir } = createLifecycleGitRepo();
+  let client: LifecycleMcpClient | undefined;
+  try {
+    const paseoHome = join(tempDir, ".paseo");
+    const slug = "mcp-wire-id";
+    const worktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: slug,
+      source: { kind: "branch-off", baseBranch: "main", branchName: slug },
+      runSetup: false,
+      paseoHome,
+    });
+    const recreateTargetWorktree = () =>
+      createWorktree({
+        cwd: repoDir,
+        worktreeSlug: slug,
+        source: { kind: "checkout-branch", branchName: slug },
+        runSetup: false,
+        paseoHome,
+      });
+    const workspaceRef: ActiveWorkspaceRef = {
+      workspaceId: "ws-mcp-wire",
+      cwd: worktree.worktreePath,
+      kind: "worktree",
+      worktreeRoot: worktree.worktreePath,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: repoDir,
+    };
+
+    const { options, store } = createLifecycleToolOptions(paseoHome);
+    options.listActiveWorkspaces = async () => [workspaceRef];
+    options.findWorkspaceIdForCwd = async () => null;
+    options.archiveWorkspaceRecord = async () => {};
+    options.emitWorkspaceUpdatesForWorkspaceIds = async () => {};
+    options.markWorkspaceArchiving = () => {};
+    options.clearWorkspaceArchiving = () => {};
+    options.workspaceGitService = {
+      getSnapshot: async () => null,
+      listWorktrees: async () => [],
+      resolveRepoRoot: async () => repoDir,
+    } as unknown as AgentMcpServerOptions["workspaceGitService"];
+
+    client = await connectLifecycleMcp(options, "sess-wire");
+
+    const numeric = await client.call(1, "archive_workspace", { workspaceId: "ws-mcp-wire" });
+    expect(numeric.result?.structuredContent?.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    const numericOperationId = "workspace-archive:mcp:archive_workspace:ws-mcp-wire:sess-wire:n:1";
+    expect((await store.get(numericOperationId))?.state).toBe("COMMITTED");
+
+    // The string id "1" is a different wire identity than the numeric id 1:
+    // it starts a fresh operation on the same target instead of replaying.
+    await recreateTargetWorktree();
+    const stringly = await client.call("1", "archive_workspace", { workspaceId: "ws-mcp-wire" });
+    expect(stringly.result?.structuredContent?.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    const stringOperationId = "workspace-archive:mcp:archive_workspace:ws-mcp-wire:sess-wire:s:1";
+    const stringRecord = await store.get(stringOperationId);
+    expect(stringRecord?.state).toBe("COMMITTED");
+    expect(stringRecord?.generation).toBe(2);
+
+    // Retrying the exact same typed id replays the committed result without
+    // removing the directory again.
+    await recreateTargetWorktree();
+    const replayed = await client.call("1", "archive_workspace", { workspaceId: "ws-mcp-wire" });
+    expect(replayed.result?.structuredContent?.removedDirectory).toBe(true);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+    expect(
+      (await store.findCurrentByResource(`worktree:${resolvePath(worktree.worktreePath)}`))
+        ?.generation,
+    ).toBe(2);
+  } finally {
+    await client?.close().catch(() => undefined);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+it("create_agent carries the exact session-scoped identity into worktree creation", async () => {
+  const { tempDir, repoDir } = createLifecycleGitRepo();
+  let client: LifecycleMcpClient | undefined;
+  try {
+    const paseoHome = join(tempDir, ".paseo");
+    const { options } = createLifecycleToolOptions(paseoHome);
+    const capturedCreatePaseoWorktree = vi.fn(async () => {
+      throw new Error("stop after capture");
+    });
+    options.createPaseoWorktree = capturedCreatePaseoWorktree;
+    options.ensureWorkspaceForCreate = async () => "ws-created";
+    options.findWorkspaceIdForCwd = async () => null;
+    options.listActiveWorkspaces = async () => [];
+
+    client = await connectLifecycleMcp(options, "sess-create");
+
+    const response = await client.call(7, "create_agent", {
+      provider: "codex/gpt-5.4",
+      title: "Lifecycle identity capture",
+      initialPrompt: "capture the id",
+      cwd: repoDir,
+      worktreeName: "wt-identity",
+      baseBranch: "main",
+    });
+
+    expect(capturedCreatePaseoWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeSlug: "wt-identity",
+        lifecycleOperationId: "mcp-create-agent:sess-create:n:7",
+      }),
+      expect.anything(),
+    );
+    expect(JSON.stringify(response)).toContain("stop after capture");
+  } finally {
+    await client?.close().catch(() => undefined);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+it("create_workspace carries the exact session-scoped identity into worktree creation", async () => {
+  const { tempDir, repoDir } = createLifecycleGitRepo();
+  let client: LifecycleMcpClient | undefined;
+  try {
+    const paseoHome = join(tempDir, ".paseo");
+    const { options } = createLifecycleToolOptions(paseoHome);
+    const capturedCreatePaseoWorktree = vi.fn(async () => {
+      throw new Error("stop after capture");
+    });
+    options.createPaseoWorktree = capturedCreatePaseoWorktree;
+
+    client = await connectLifecycleMcp(options, "sess-ws");
+
+    const response = await client.call(9, "create_workspace", {
+      isolation: "worktree",
+      path: repoDir,
+      worktreeSlug: "ws-identity",
+      baseBranch: "main",
+    });
+
+    expect(capturedCreatePaseoWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeSlug: "ws-identity",
+        lifecycleOperationId: "mcp-create-workspace:sess-ws:n:9",
+      }),
+    );
+    expect(JSON.stringify(response)).toContain("stop after capture");
+  } finally {
+    await client?.close().catch(() => undefined);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+it("create_workspace fails closed without a per-call id under the lifecycle owner", async () => {
+  const { tempDir, repoDir } = createLifecycleGitRepo();
+  try {
+    const paseoHome = join(tempDir, ".paseo");
+    const { options } = createLifecycleToolOptions(paseoHome);
+    const capturedCreatePaseoWorktree = vi.fn(async () => {
+      throw new Error("should not be reached");
+    });
+    options.createPaseoWorktree = capturedCreatePaseoWorktree;
+    const catalog = await createPaseoToolCatalog(options);
+
+    await expect(
+      catalog.executeTool(
+        "create_workspace",
+        {
+          isolation: "worktree",
+          path: repoDir,
+          worktreeSlug: "ws-no-identity",
+          baseBranch: "main",
+        },
+        {},
+      ),
+    ).rejects.toThrow(/per-call MCP request id/);
+    expect(capturedCreatePaseoWorktree).not.toHaveBeenCalled();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

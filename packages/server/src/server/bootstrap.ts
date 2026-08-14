@@ -120,6 +120,8 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
+import { FileBackedWorkspaceLifecycleOperationStore } from "./workspace-lifecycle-operation-store.js";
+import { PaseoWorkspaceLifecycleOperationService } from "./workspace-lifecycle-operation-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -829,6 +831,27 @@ export async function createPaseoDaemon(
     isDev: config.isDev === true,
     extraClients: config.agentClients,
   });
+  // Single daemon-wide workspace lifecycle operation owner. Destructive
+  // mutation stays disabled at the service level; only the explicit workspace
+  // archive flow opts in per operation.
+  const workspaceLifecycleOperations = new PaseoWorkspaceLifecycleOperationService({
+    store: new FileBackedWorkspaceLifecycleOperationStore({
+      filePath: path.join(config.paseoHome, "workspace-lifecycle-operations.json"),
+      logger,
+    }),
+    logger,
+  });
+  // Fail closed on restart: operations a prior daemon left nonterminal are
+  // claimed to MANUAL_CLEANUP before anything can act on their resources. An
+  // unreadable journal aborts startup rather than running without the owner.
+  const interruptedLifecycleOperations =
+    await workspaceLifecycleOperations.recoverInterruptedOperations();
+  if (interruptedLifecycleOperations.length > 0) {
+    logger.warn(
+      { count: interruptedLifecycleOperations.length },
+      "Recovered interrupted workspace lifecycle operations to MANUAL_CLEANUP",
+    );
+  }
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     clients: initialAgentManagerState.clients,
@@ -841,6 +864,7 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     logger,
   });
+  agentManager.setWorkspaceLifecycleOperations(workspaceLifecycleOperations);
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -1025,6 +1049,7 @@ export async function createPaseoDaemon(
               : {}),
             workspaceGitService,
             workspaceProvisioning,
+            lifecycle: workspaceLifecycleOperations,
           });
         },
         warmWorkspaceGitData: async (workspace) => {
@@ -1090,6 +1115,7 @@ export async function createPaseoDaemon(
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        lifecycle: workspaceLifecycleOperations,
         sessionLogger: logger,
       },
       { scope: { kind: "workspace", workspaceId }, requestId },
@@ -1146,6 +1172,7 @@ export async function createPaseoDaemon(
   const createScheduleLocalWorkspaceExternal = async (input: {
     cwd: string;
     firstAgentContext: FirstAgentContext;
+    runId: string;
   }) => {
     const workspace = await workspaceProvisioning.createWorkspaceForDirectory(
       input.cwd,
@@ -1162,15 +1189,18 @@ export async function createPaseoDaemon(
   const createSchedulePaseoWorktreeExternal = async (input: {
     cwd: string;
     firstAgentContext: FirstAgentContext;
+    runId: string;
   }) => {
     const result = await createPaseoWorktreeForTools({
       cwd: input.cwd,
       firstAgentContext: input.firstAgentContext,
+      // The schedule run id is the durable create identity.
+      lifecycleOperationId: `schedule-run:${input.runId}`,
     });
     await emitWorkspaceUpdatesExternal([result.workspace.workspaceId]);
     return result;
   };
-  const archiveScheduleWorkspaceExternal = async (workspaceId: string) => {
+  const archiveScheduleWorkspaceExternal = async (workspaceId: string, runId: string) => {
     await archiveByScope(
       {
         paseoHome: config.paseoHome,
@@ -1195,11 +1225,13 @@ export async function createPaseoDaemon(
             workspaceIdToKill,
           ),
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        lifecycle: workspaceLifecycleOperations,
         sessionLogger: logger,
       },
       {
         scope: { kind: "workspace", workspaceId },
-        requestId: "schedule-run-finish",
+        // The schedule run id is the durable archive identity.
+        requestId: `schedule-run-finish:${runId}`,
       },
     );
   };

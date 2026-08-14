@@ -6,8 +6,12 @@ import {
   createWorktree,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
-  rollbackCreatedPaseoWorktree,
+  removePaseoWorktreeStrict,
 } from "../../../utils/worktree.js";
+import {
+  fingerprintWorkspaceLifecycleRequest,
+  type WorkspaceLifecycleOperationOwner,
+} from "../../workspace-lifecycle-operation-service.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
 import {
   resolveWorkspaceDisplayName,
@@ -40,7 +44,10 @@ export type WorkspaceRecoveryState =
 
 export interface WorkspaceRecoveryService {
   inspect(workspaceId: string): Promise<WorkspaceRecoveryState>;
-  restore(workspaceId: string): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }>;
+  restore(
+    workspaceId: string,
+    options?: { lifecycleOperationId?: string },
+  ): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }>;
 }
 
 type RecoveryPlan =
@@ -65,6 +72,11 @@ export function createWorkspaceRecoveryService(deps: {
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  // The workspace lifecycle operation owner. When present, worktree
+  // re-creation runs as a durable lifecycle operation; when absent the direct
+  // path applies (kept for direct-dependency tests). Compensation is strict on
+  // both paths — a failed restore never falls through to a recursive delete.
+  lifecycle?: WorkspaceLifecycleOperationOwner;
 }): WorkspaceRecoveryService {
   async function resolveRecovery(
     workspaceId: string,
@@ -140,6 +152,7 @@ export function createWorkspaceRecoveryService(deps: {
 
   async function restore(
     workspaceId: string,
+    options?: { lifecycleOperationId?: string },
   ): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }> {
     const resolved = await resolveRecovery(workspaceId);
     if (resolved.kind === "unavailable") {
@@ -147,7 +160,11 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      await recreateArchivedWorktree(
+        resolved.workspace,
+        resolved.sourceRepoRoot,
+        options?.lifecycleOperationId,
+      );
     }
     await deps.unarchiveWorkspace(resolved.workspace);
     return { workspaceId, action: resolved.kind };
@@ -156,6 +173,7 @@ export function createWorkspaceRecoveryService(deps: {
   async function recreateArchivedWorktree(
     workspace: PersistedWorkspaceRecord,
     sourceRepoRoot: string,
+    lifecycleOperationId: string | undefined,
   ): Promise<void> {
     const branch = workspace.branch;
     if (!branch) {
@@ -184,6 +202,34 @@ export function createWorkspaceRecoveryService(deps: {
         : workspace.cwd;
     }
 
+    const lifecycle = deps.lifecycle;
+    if (!lifecycle) {
+      await recreateWorktreeDirect(workspace, sourceRepoRoot, previousWorktreePath, branch);
+      return;
+    }
+
+    const operationIdentity = lifecycleOperationId ?? `workspace-restore:${workspace.workspaceId}`;
+    await lifecycle.runCreate({
+      operationId: `worktree-restore:${operationIdentity}`,
+      fingerprint: fingerprintWorkspaceLifecycleRequest({
+        workspaceId: workspace.workspaceId,
+        branch,
+        worktreePath: previousWorktreePath,
+      }),
+      resourceKey: `worktree:${previousWorktreePath}`,
+      create: async () => {
+        await recreateWorktreeDirect(workspace, sourceRepoRoot, previousWorktreePath, branch);
+        return { worktreePath: previousWorktreePath };
+      },
+    });
+  }
+
+  async function recreateWorktreeDirect(
+    workspace: PersistedWorkspaceRecord,
+    sourceRepoRoot: string,
+    previousWorktreePath: string,
+    branch: string,
+  ): Promise<void> {
     let recreatedWorktreePath: string;
     try {
       const result = await createWorktree({
@@ -218,16 +264,23 @@ export function createWorkspaceRecoveryService(deps: {
         });
       }
     } catch (error) {
-      return rollbackCreatedPaseoWorktree(
-        {
+      // Strict compensation: git-only removal of the just-created worktree.
+      // If that fails the directory is preserved for manual cleanup — never a
+      // recursive delete.
+      try {
+        await removePaseoWorktreeStrict({
           cwd: sourceRepoRoot,
           worktreePath: recreatedWorktreePath,
-          teardownCwds: [],
           paseoHome: deps.paseoHome,
           worktreesBaseRoot: deps.worktreesRoot,
-        },
-        error,
-      );
+        });
+      } catch (compensationError) {
+        throw new WorktreeRequestError({
+          code: "unknown",
+          message: `${error instanceof Error ? error.message : "Worktree restore failed"}; strict compensation preserved ${recreatedWorktreePath}: ${compensationError instanceof Error ? compensationError.message : String(compensationError)}`,
+        });
+      }
+      throw error;
     }
   }
 

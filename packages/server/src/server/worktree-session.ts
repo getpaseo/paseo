@@ -197,6 +197,7 @@ export async function buildAgentSessionConfig(
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
   firstAgentContext?: FirstAgentContext,
+  lifecycleOperationId?: string,
 ): Promise<{
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -234,6 +235,7 @@ export async function buildAgentSessionConfig(
         runSetup: false,
         paseoHome: dependencies.paseoHome,
         worktreesRoot: dependencies.worktreesRoot,
+        lifecycleOperationId,
       },
       {
         resolveDefaultBranch: normalized.baseBranch
@@ -526,6 +528,7 @@ export async function handleCreatePaseoWorktreeRequest(
         action: request.action,
         checkoutSource: request.checkoutSource,
         githubPrNumber: request.githubPrNumber,
+        lifecycleOperationId: request.requestId,
       },
     );
 

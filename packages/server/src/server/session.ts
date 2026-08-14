@@ -239,6 +239,7 @@ import {
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
+import { resolveWorkspaceLifecycleOperationOwner } from "./workspace-lifecycle-operation-service.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -803,6 +804,7 @@ export class Session {
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
+      lifecycle: resolveWorkspaceLifecycleOperationOwner(options.agentManager),
     });
     this.checkoutSession = new CheckoutSession({
       host: {
@@ -3049,7 +3051,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.recovery.restore.request" }>,
   ): Promise<void> {
     try {
-      await this.restoreWorkspaceAndEmit(request.workspaceId);
+      await this.restoreWorkspaceAndEmit(request.workspaceId, request.requestId);
       this.emit({
         type: "workspace.recovery.restore.response",
         payload: {
@@ -3178,6 +3180,7 @@ export class Session {
         target: worktree,
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
+        requestId,
       });
       createdWorktreeForCleanup = createdWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
@@ -3215,7 +3218,15 @@ export class Session {
           provisionalTitle,
           firstAgentContext,
           buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
-            this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
+            this.buildAgentSessionConfig(
+              sessionConfig,
+              gitOptions,
+              legacyWorktreeName,
+              ctx,
+              // The create_agent requestId is the durable identity of any
+              // worktree the legacy git path provisions.
+              requestId ? `create-agent-worktree:${requestId}` : undefined,
+            ),
         },
       );
       createdAgentId = snapshot.id;
@@ -3496,7 +3507,7 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
-      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
+      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId, requestId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
@@ -3643,6 +3654,7 @@ export class Session {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
+    lifecycleOperationId?: string,
   ): Promise<{
     sessionConfig: AgentSessionConfig;
     setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
@@ -3683,6 +3695,7 @@ export class Session {
       gitOptions,
       legacyWorktreeName,
       firstAgentContext,
+      lifecycleOperationId,
     );
   }
 
@@ -4730,8 +4743,11 @@ export class Session {
     };
   }
 
-  private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
-    await this.workspaceRecovery.restore(workspaceId);
+  private async restoreWorkspaceAndEmit(workspaceId: string, requestId: string): Promise<void> {
+    await this.workspaceRecovery.restore(workspaceId, {
+      // The restore RPC requestId is the durable restore identity.
+      lifecycleOperationId: `workspace-restore:${requestId}`,
+    });
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
@@ -4750,7 +4766,10 @@ export class Session {
     await this.refreshRecoveredWorkspaceForExternalMutation(workspace);
   }
 
-  private async restoreOwningWorkspaceForLegacyAgentRefresh(agentId: string): Promise<void> {
+  private async restoreOwningWorkspaceForLegacyAgentRefresh(
+    agentId: string,
+    requestId: string,
+  ): Promise<void> {
     // COMPAT(worktreeRestore): clients older than v0.1.105 used refresh_agent_request
     // as their explicit recovery RPC. Remove after 2027-01-11.
     if (!clientUsesLegacyWorkspaceRestore(this.appVersion)) {
@@ -4764,7 +4783,7 @@ export class Session {
     if (recovery.kind !== "recoverable") {
       return;
     }
-    await this.restoreWorkspaceAndEmit(record.workspaceId);
+    await this.restoreWorkspaceAndEmit(record.workspaceId, requestId);
   }
 
   private async createPaseoWorktree(
@@ -4780,6 +4799,7 @@ export class Session {
         : {}),
       workspaceGitService: this.workspaceGitService,
       workspaceProvisioning: this.workspaceProvisioning,
+      lifecycle: resolveWorkspaceLifecycleOperationOwner(this.agentManager),
     });
     void Promise.all([
       this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
@@ -5514,6 +5534,7 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        lifecycleOperationId: request.requestId,
       },
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }
@@ -6116,6 +6137,7 @@ export class Session {
           killTerminalsForWorkspace: (workspaceId) =>
             this.terminalController.killTerminalsForWorkspace(workspaceId),
           stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+          lifecycle: resolveWorkspaceLifecycleOperationOwner(this.agentManager),
           sessionLogger: this.sessionLogger,
         },
         {

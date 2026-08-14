@@ -21,6 +21,8 @@ import {
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
+import { PaseoWorkspaceLifecycleOperationService } from "./workspace-lifecycle-operation-service.js";
+import { FileBackedWorkspaceLifecycleOperationStore } from "./workspace-lifecycle-operation-store.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -85,6 +87,125 @@ test("creates a worktree and registers it in the source workspace project withou
     updatedAt: expect.any(String),
   });
   expect(events).toEqual([`workspace:${result.workspace.workspaceId}`]);
+});
+
+test("creation runs as a committed lifecycle operation owning the worktree resource", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: "remote:github.com/acme/repo",
+    rootPath: repoDir,
+    displayName: "acme/repo",
+  });
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-main-checkout",
+    projectId: sourceProject.projectId,
+    cwd: repoDir,
+    kind: "local_checkout",
+    displayName: "main",
+  });
+  deps.projects.set(sourceProject.projectId, sourceProject);
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+  const store = new FileBackedWorkspaceLifecycleOperationStore({
+    filePath: path.join(tempDir, "workspace-lifecycle-operations.json"),
+    logger: createTestLogger(),
+  });
+  deps.lifecycle = new PaseoWorkspaceLifecycleOperationService({
+    store,
+    logger: createTestLogger(),
+  });
+
+  const input = {
+    cwd: repoDir,
+    worktreeSlug: "lifecycle-owner-create",
+    runSetup: false,
+    paseoHome: path.join(tempDir, ".paseo"),
+    lifecycleOperationId: "create-req-1",
+  };
+  const result = await createPaseoWorktree(input, deps);
+
+  expect(result.created).toBe(true);
+  expect(result.workspace.cwd).toBe(result.worktree.worktreePath);
+  const record = await store.findCurrentByResource(
+    `worktree:${path.resolve(repoDir)}:lifecycle-owner-create`,
+  );
+  expect(record?.operationId).toBe("worktree-create:create-req-1");
+  expect(record?.state).toBe("COMMITTED");
+  expect(record?.kind).toBe("create");
+  expect(await store.listNonterminal()).toEqual([]);
+
+  // A retried request with the same durable identity replays the committed
+  // result instead of creating a replacement worktree.
+  const replayed = await createPaseoWorktree(input, deps);
+  expect(replayed).toEqual(result);
+  expect((await store.findCurrentByResource(
+    `worktree:${path.resolve(repoDir)}:lifecycle-owner-create`,
+  ))?.generation).toBe(1);
+
+  // Reusing the identity for a different target is rejected, never retried.
+  await expect(
+    createPaseoWorktree({ ...input, worktreeSlug: "lifecycle-owner-other" }, deps),
+  ).rejects.toThrow(/fingerprint|conflict/i);
+
+  // The owner path requires a request-scoped identity from the caller.
+  await expect(
+    createPaseoWorktree(
+      { ...input, worktreeSlug: "lifecycle-owner-no-id", lifecycleOperationId: undefined },
+      deps,
+    ),
+  ).rejects.toThrow(/lifecycleOperationId/);
+});
+
+test("failed post-create validation preserves directory and branch when git removal fails", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+  const store = new FileBackedWorkspaceLifecycleOperationStore({
+    filePath: path.join(tempDir, "workspace-lifecycle-operations.json"),
+    logger: createTestLogger(),
+  });
+  deps.lifecycle = new PaseoWorkspaceLifecycleOperationService({
+    store,
+    logger: createTestLogger(),
+  });
+  // Post-create provisioning breaks git's worktree admin state and fails, so
+  // the strict git-only compensation cannot remove the worktree either.
+  deps.workspaceProvisioning = {
+    createWorkspaceForWorktree: async () => {
+      rmSync(path.join(repoDir, ".git", "worktrees"), { recursive: true, force: true });
+      throw new Error("provisioning failed");
+    },
+  };
+
+  await expect(
+    createPaseoWorktree(
+      {
+        cwd: repoDir,
+        worktreeSlug: "compensation-preserved",
+        runSetup: false,
+        paseoHome: path.join(tempDir, ".paseo"),
+        lifecycleOperationId: "create-req-compensation",
+      },
+      deps,
+    ),
+  ).rejects.toThrow(/strict compensation preserved/);
+
+  // No recursive delete ran: the directory and its branch survive for manual
+  // cleanup, and the operation is recorded MANUAL_CLEANUP.
+  const worktreesRoot = await getPaseoWorktreesRoot(repoDir, path.join(tempDir, ".paseo"));
+  expect(existsSync(path.join(worktreesRoot, "compensation-preserved"))).toBe(true);
+  expect(
+    execFileSync("git", ["branch", "--list", "compensation-preserved"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    })
+      .toString()
+      .includes("compensation-preserved"),
+  ).toBe(true);
+  const record = await store.get("worktree-create:create-req-compensation");
+  expect(record?.state).toBe("MANUAL_CLEANUP");
+  expect(await store.listNonterminal()).toEqual([]);
 });
 
 test("refreshes a source project that became Git while creating a worktree", async () => {

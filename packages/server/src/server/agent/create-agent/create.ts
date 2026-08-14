@@ -115,6 +115,11 @@ export interface CreateAgentFromMcpInput {
     action?: "branch-off" | "checkout";
     githubPrNumber?: number;
   };
+  /**
+   * Durable identity of the originating request, carried into any worktree
+   * this create provisions. Required by the workspace lifecycle owner.
+   */
+  lifecycleOperationId?: string;
 }
 
 export type CreateAgentCommandInput = CreateAgentFromSessionInput | CreateAgentFromMcpInput;
@@ -315,6 +320,7 @@ async function resolveMcpCreateAgent(
       cwd,
       worktree: input.worktree,
       initialPrompt: input.initialPrompt ?? "",
+      lifecycleOperationId: input.lifecycleOperationId,
     });
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
@@ -507,6 +513,7 @@ async function resolveMcpCwd(params: {
   cwd: string;
   initialPrompt: string;
   worktree: CreateAgentFromMcpInput["worktree"];
+  lifecycleOperationId: string | undefined;
 }): Promise<{
   resolvedCwd: string;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -545,6 +552,7 @@ async function resolveMcpCwd(params: {
       runSetup: false,
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
+      lifecycleOperationId: params.lifecycleOperationId,
     },
     createPaseoWorktree: dependencies.createPaseoWorktree,
     resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,

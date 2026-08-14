@@ -9,9 +9,14 @@ import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  removePaseoWorktreeStrict,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
+import {
+  fingerprintWorkspaceLifecycleRequest,
+  type WorkspaceLifecycleOperationOwner,
+} from "./workspace-lifecycle-operation-service.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   PersistedWorkspaceRecord,
@@ -50,6 +55,10 @@ export interface ArchiveDependencies {
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
+  // The workspace lifecycle operation owner. When present, the destructive
+  // directory removal runs as a durable lifecycle operation; when absent the
+  // legacy direct removal path applies (kept for direct-dependency tests).
+  lifecycle?: WorkspaceLifecycleOperationOwner;
   sessionLogger?: Logger;
 }
 
@@ -398,6 +407,15 @@ async function maybeRemoveDirectory(
     return false;
   }
 
+  if (dependencies.lifecycle) {
+    return removeBackingDirectoryThroughLifecycleOwner(
+      dependencies,
+      request,
+      backing,
+      archivedWorkspaceIds,
+    );
+  }
+
   try {
     await deletePaseoWorktree({
       cwd: backing.mainRepoRoot,
@@ -413,6 +431,77 @@ async function maybeRemoveDirectory(
     dependencies.sessionLogger?.warn(
       { err: error, targetPath: backing.path, requestId: request.requestId },
       "Worktree disk removal failed during archive; workspace already archived",
+    );
+    return false;
+  }
+}
+
+// The destructive step runs as a durable lifecycle operation: admission for
+// the archived workspaces closes and drains, the unreferenced check re-runs
+// inside the operation, and the mutation is a strict git-only removal. Any
+// failure records MANUAL_CLEANUP and preserves the directory — the owner path
+// never falls through to a recursive delete and never deletes branches.
+async function removeBackingDirectoryThroughLifecycleOwner(
+  dependencies: ArchiveDependencies,
+  request: Pick<ArchiveByScopeRequest, "requestId">,
+  backing: BackingDirectory,
+  archivedWorkspaceIds: string[],
+): Promise<boolean> {
+  const lifecycle = dependencies.lifecycle;
+  if (!lifecycle) {
+    return false;
+  }
+  const repoRoot = backing.mainRepoRoot;
+  if (!repoRoot) {
+    dependencies.sessionLogger?.warn(
+      { targetPath: backing.path, requestId: request.requestId },
+      "Worktree removal skipped: backing repository root is unknown",
+    );
+    return false;
+  }
+
+  try {
+    // The external requestId is the durable operation identity: a retried
+    // request replays the committed result, a conflicting reuse is rejected by
+    // the fingerprint, and nothing here auto-retries. Callers mint one unique
+    // requestId per logical archive request.
+    const result = await lifecycle.runRemoval({
+      operationId: `workspace-archive:${request.requestId}`,
+      fingerprint: fingerprintWorkspaceLifecycleRequest({
+        requestId: request.requestId,
+        targetPath: backing.path,
+      }),
+      resourceKey: `worktree:${backing.path}`,
+      admissionResourceKeys: archivedWorkspaceIds.map((workspaceId) => `workspace:${workspaceId}`),
+      allowDestructiveMutation: true,
+      quiesce: async () => {
+        // Agents and terminals owned by the archived workspaces were torn down
+        // in archiveTargetRecords, and teardown commands already ran above.
+      },
+      verify: async () =>
+        isDirectoryUnreferenced(
+          await dependencies.listActiveWorkspaces(),
+          backing.path,
+          new Set(archivedWorkspaceIds),
+          dependencies,
+        ),
+      mutate: async () => {
+        await removePaseoWorktreeStrict({
+          cwd: repoRoot,
+          worktreePath: backing.path,
+          worktreesRoot: backing.paseoWorktreesRoot ?? undefined,
+          paseoHome: dependencies.paseoHome,
+          worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
+        });
+        return { removedDirectory: true };
+      },
+    });
+    dependencies.github.invalidate({ cwd: backing.path });
+    return result.removedDirectory;
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      "Worktree disk removal blocked by lifecycle owner; workspace already archived",
     );
     return false;
   }
