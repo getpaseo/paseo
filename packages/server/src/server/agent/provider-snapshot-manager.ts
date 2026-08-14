@@ -220,6 +220,7 @@ export class ProviderSnapshotManager {
   private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
   private providerRegistry: Record<AgentProvider, ProviderDefinition>;
   private providerClients: Record<AgentProvider, AgentClient>;
+  private readonly ownedClients = new Set<AgentClient>();
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
@@ -237,6 +238,7 @@ export class ProviderSnapshotManager {
     );
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+    for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
   }
 
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
@@ -328,6 +330,7 @@ export class ProviderSnapshotManager {
     }
     const client = definition.createClient(this.logger);
     this.providerClients[provider] = client;
+    this.ownedClients.add(client);
     return client;
   }
 
@@ -574,11 +577,8 @@ export class ProviderSnapshotManager {
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
-    const state = this.getAgentManagerProviderState();
-    const clients = Object.values(state.clients).filter(
-      (client): client is AgentClient => client !== undefined,
-    );
-    await shutdownAgentClients(clients, this.logger);
+    this.getAgentManagerProviderState();
+    await shutdownAgentClients(this.ownedClients, this.logger);
   }
 
   destroy(): void {

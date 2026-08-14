@@ -1507,6 +1507,57 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 });
 
 describe("ProviderSnapshotManager lifecycle", () => {
+  test("owns every materialized client generation until daemon shutdown", async () => {
+    const providerConfig = (label: string) => ({
+      claude: { enabled: false },
+      codex: { enabled: true, label },
+      copilot: { enabled: false },
+      omp: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: providerConfig("Initial"),
+    });
+    const shutdowns: Array<ReturnType<typeof vi.fn>> = [];
+    const trackShutdown = (client: AgentClient | undefined): AgentClient => {
+      if (!client) throw new Error("Expected materialized Codex client");
+      const shutdown = vi.fn(async () => undefined);
+      client.shutdown = shutdown;
+      shutdowns.push(shutdown);
+      return client;
+    };
+
+    const initialClient = trackShutdown(manager.getAgentManagerProviderState().clients.codex);
+    const published = manager.stageMutableProviderConfig(providerConfig("Published"), {
+      replace: true,
+    });
+    const publishedClient = trackShutdown(published.agentManagerState.clients.codex);
+    published.publish();
+
+    const rolledBack = manager.stageMutableProviderConfig(providerConfig("Rolled back"), {
+      replace: true,
+    });
+    trackShutdown(rolledBack.agentManagerState.clients.codex);
+    rolledBack.rollback();
+
+    expect(manager.getAgentManagerProviderState().clients.codex).toBe(publishedClient);
+
+    const newest = manager.stageMutableProviderConfig(providerConfig("Newest"), { replace: true });
+    const newestClient = trackShutdown(newest.agentManagerState.clients.codex);
+    newest.publish();
+
+    expect(initialClient).not.toBe(publishedClient);
+    expect(manager.getAgentManagerProviderState().clients.codex).toBe(newestClient);
+    for (const shutdown of shutdowns) expect(shutdown).not.toHaveBeenCalled();
+
+    await manager.shutdown();
+
+    for (const shutdown of shutdowns) expect(shutdown).toHaveBeenCalledTimes(1);
+    manager.destroy();
+  });
+
   test("on/off attaches and detaches change listeners", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
