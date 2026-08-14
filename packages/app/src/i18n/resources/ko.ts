@@ -1627,6 +1627,7 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {

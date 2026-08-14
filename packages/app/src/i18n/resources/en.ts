@@ -1628,6 +1628,7 @@ export const en = {
     archiveTooltip: "Archive subagent",
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedTooltip: "Archive finished",
+    archiveFinishedRetry: "Retry ({{failed}}/{{total}})",
   },
   panels: {
     draft: {

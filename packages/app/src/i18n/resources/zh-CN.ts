@@ -1597,6 +1597,7 @@ export const zhCN: TranslationResources = {
     archiveTooltip: "归档 subagent",
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedTooltip: "归档已完成项",
+    archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {

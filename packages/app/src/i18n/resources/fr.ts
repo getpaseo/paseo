@@ -1664,6 +1664,7 @@ export const fr: TranslationResources = {
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedTooltip: "Archiver les terminés",
+    archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
