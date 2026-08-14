@@ -2261,6 +2261,26 @@ export const FileExplorerRequestSchema = z.object({
   acceptBinary: z.boolean().optional(),
 });
 
+// COMPAT(fsContentSearch): added in v0.3.2, remove gate after 2027-08-11.
+// Clients gate on server_info.features.fsContentSearch; older daemons reject
+// the RPC outright.
+export const ContentSearchRequestSchema = z.object({
+  type: z.literal("fs.content_search.request"),
+  cwd: z.string(),
+  query: z.string().min(2).max(200),
+  requestId: z.string(),
+});
+
+export const ContentSearchMatchSchema = z.object({
+  line: z.number().int().positive(),
+  text: z.string(),
+});
+
+export const ContentSearchFileSchema = z.object({
+  relPath: z.string(),
+  matches: z.array(ContentSearchMatchSchema),
+});
+
 export const FileVersionSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ready"),
@@ -2758,6 +2778,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceCreateRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
+  ContentSearchRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3049,6 +3070,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectCreateDirectory: z.boolean().optional(),
         // COMPAT(projectNestedRepos): added in v0.3.2, remove gate after 2027-08-11.
         projectNestedRepos: z.boolean().optional(),
+        // COMPAT(fsContentSearch): added in v0.3.2, remove gate after 2027-08-11.
+        fsContentSearch: z.boolean().optional(),
         // COMPAT(projectList): added in v0.2.4, drop the gate when floor >= v0.2.4.
         projectList: z.boolean().optional(),
         // COMPAT(commitsList): added in v0.1.110, remove gate after 2027-01-16.
@@ -5025,6 +5048,18 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const ContentSearchResponseSchema = z.object({
+  type: z.literal("fs.content_search.response"),
+  payload: z.object({
+    cwd: z.string(),
+    query: z.string(),
+    files: z.array(ContentSearchFileSchema),
+    truncated: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileSubscribeResponseSchema = z.object({
   type: z.literal("fs.file.subscribe.response"),
   payload: z.object({
@@ -5727,6 +5762,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  ContentSearchResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,
@@ -6154,6 +6190,10 @@ export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSche
 export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type ContentSearchRequest = z.infer<typeof ContentSearchRequestSchema>;
+export type ContentSearchResponse = z.infer<typeof ContentSearchResponseSchema>;
+export type ContentSearchFile = z.infer<typeof ContentSearchFileSchema>;
+export type ContentSearchMatch = z.infer<typeof ContentSearchMatchSchema>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;

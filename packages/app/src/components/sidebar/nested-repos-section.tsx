@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { FolderGit2 } from "lucide-react-native";
+import { FolderGit2, GitBranch } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { Href } from "expo-router";
@@ -12,6 +12,7 @@ import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
+const ThemedGitBranch = withUnistyles(GitBranch);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 
@@ -44,7 +45,7 @@ export function NestedReposSection({ serverId, scanCwd }: { serverId: string; sc
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       {repos.map((repo) => (
         <NestedRepoRow key={repo.path} repo={repo} serverId={serverId} />
-      ))}
+      ))}{" "}
     </View>
   );
 }
@@ -86,6 +87,14 @@ function NestedRepoRow({ repo, serverId }: { repo: NestedRepo; serverId: string 
           <Text numberOfLines={1} style={styles.rowText}>
             {repo.name}
           </Text>
+          {repo.branch ? (
+            <>
+              <ThemedGitBranch size={11} uniProps={foregroundMutedColorMapping} />
+              <Text numberOfLines={1} style={styles.rowBranch}>
+                {repo.branch}
+              </Text>
+            </>
+          ) : null}
         </>
       )}
     </Pressable>
@@ -140,5 +149,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foreground,
     fontSize: 12,
+  },
+  rowBranch: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: 11,
+    fontFamily: theme.fontFamily.mono,
   },
 }));

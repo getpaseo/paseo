@@ -433,6 +433,12 @@ export const es: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "Buscar en archivos…",
+        close: "Cerrar búsqueda",
+        noResults: "Sin resultados",
+        truncated: "Resultados truncados",
+      },
       sort: {
         name: "Nombre",
         modified: "Modificado",

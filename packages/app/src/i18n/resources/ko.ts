@@ -430,6 +430,12 @@ export const ko: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "파일에서 검색…",
+        close: "검색 닫기",
+        noResults: "결과 없음",
+        truncated: "결과가 잘렸습니다",
+      },
       sort: {
         name: "이름",
         modified: "수정일",

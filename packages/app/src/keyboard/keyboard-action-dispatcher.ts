@@ -33,7 +33,8 @@ export type KeyboardActionId =
   | "workspace.project.pick"
   | "worktree.new"
   | "workspace.archive"
-  | "workspace.pin";
+  | "workspace.pin"
+  | "file.search";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -68,7 +69,8 @@ export type KeyboardActionDefinition =
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
-  | { id: "workspace.pin"; scope: KeyboardActionScope };
+  | { id: "workspace.pin"; scope: KeyboardActionScope }
+  | { id: "file.search"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;

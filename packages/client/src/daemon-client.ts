@@ -63,6 +63,7 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectNestedReposScanResponse,
+  ContentSearchResponse,
   ProjectIconSource,
   ProjectIconResponse,
   ProjectIconGetResponse,
@@ -411,6 +412,7 @@ type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type ProjectNestedReposScanPayload = ProjectNestedReposScanResponse["payload"];
+type ContentSearchPayload = ContentSearchResponse["payload"];
 type CreatePaseoWorktreePayload = Extract<
   SessionOutboundMessage,
   { type: "create_paseo_worktree_response" }
@@ -4159,6 +4161,22 @@ export class DaemonClient {
         parentCwd,
       },
       responseType: "project.nested_repos.scan_response",
+    });
+  }
+
+  async searchFileContents(
+    cwd: string,
+    query: string,
+    requestId?: string,
+  ): Promise<ContentSearchPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "fs.content_search.request",
+        cwd,
+        query,
+      },
+      responseType: "fs.content_search.response",
     });
   }
 

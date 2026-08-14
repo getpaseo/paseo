@@ -433,6 +433,12 @@ export const ja: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "ファイル内を検索…",
+        close: "検索を閉じる",
+        noResults: "結果なし",
+        truncated: "結果は切り詰められました",
+      },
       sort: {
         name: "名前",
         modified: "更新日時",

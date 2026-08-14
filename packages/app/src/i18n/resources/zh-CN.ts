@@ -429,6 +429,12 @@ export const zhCN: TranslationResources = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "在文件中搜索…",
+        close: "关闭搜索",
+        noResults: "无结果",
+        truncated: "结果已截断",
+      },
       sort: {
         name: "名称",
         modified: "修改时间",

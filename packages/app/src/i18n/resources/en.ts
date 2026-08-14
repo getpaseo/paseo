@@ -428,6 +428,12 @@ export const en = {
       },
     },
     fileExplorer: {
+      search: {
+        placeholder: "Search in files…",
+        close: "Close search",
+        noResults: "No results",
+        truncated: "Results truncated",
+      },
       sort: {
         name: "Name",
         modified: "Modified",
