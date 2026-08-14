@@ -58,5 +58,6 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Stakpak](https://stakpak.dev/), Rust-based DevOps agent.
 - [TRAE CLI](https://docs.trae.cn/cli_get-started-with-trae-cli), ByteDance's official TRAE coding agent.
 - [VT Code](https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md), open-source multi-provider coding agent.
+- [ZCode](https://github.com/william0wang/zcode-acp), Z.ai's coding agent with GLM models, via the community zcode-acp-server ACP adapter.
 
 The in-app catalog is the canonical, version-pinned source. Anything not listed here can still be added manually, see [Custom providers](/docs/custom-providers).

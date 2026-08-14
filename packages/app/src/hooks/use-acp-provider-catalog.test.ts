@@ -48,6 +48,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("kiro").command).toEqual(["kiro-cli", "acp"]);
     expect(findProvider("poolside").command).toEqual(["pool", "acp"]);
     expect(findProvider("traecli").command).toEqual(["traecli", "acp", "serve"]);
+    expect(findProvider("zcode").command).toEqual(["zcode-acp-server"]);
   });
 
   it("maps a catalog entry to the daemon provider config patch", () => {
@@ -58,6 +59,18 @@ describe("ACP provider catalog", () => {
           label: "Amp",
           description: "ACP wrapper for Amp - the frontier coding agent",
           command: ["amp-acp"],
+          env: {},
+        },
+      },
+    });
+    expect(buildAcpProviderConfigPatch(findProvider("zcode"))).toEqual({
+      providers: {
+        zcode: {
+          extends: "acp",
+          label: "ZCode",
+          description:
+            "Z.ai's coding agent with GLM models, exposed over ACP by the community zcode-acp-server adapter",
+          command: ["zcode-acp-server"],
           env: {},
         },
       },

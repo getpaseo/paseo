@@ -358,6 +358,16 @@ const CATALOG_DATA = [
       VT_ACP_ZED_ENABLED: "1",
     },
   },
+  {
+    id: "zcode",
+    title: "ZCode",
+    description:
+      "Z.ai's coding agent with GLM models, exposed over ACP by the community zcode-acp-server adapter",
+    version: "0.1.0",
+    iconId: null,
+    installLink: "https://github.com/william0wang/zcode-acp",
+    command: ["zcode-acp-server"],
+  },
 ] as const;
 
 export const ACP_PROVIDER_CATALOG: AcpProviderCatalogEntry[] = CATALOG_DATA.map((entry) => ({
