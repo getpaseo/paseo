@@ -808,9 +808,10 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
+  test("surfaces Pi extension command messages and completes from the prompt result", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
+    fakeSession.promptAck = { agentInvoked: false };
 
     await session.startTurn("/show-status");
     fakeSession.emit({
@@ -820,14 +821,54 @@ describe("PiRpcAgentSession", () => {
         content: [{ type: "text", text: "Extension command output" }],
       },
     });
+    await flushTurnScheduling();
 
     expect(events.timelineAndCompletionEvents()).toEqual([
       {
         type: "timeline",
         item: { type: "assistant_message", text: "Extension command output" },
       },
+      { type: "timeline", item: { type: "user_message", text: "/show-status" } },
       { type: "turn_completed" },
     ]);
+  });
+
+  test("keeps a Pi turn active when a custom message triggers continuation", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("research this");
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [
+          {
+            type: "text",
+            text: "Content fetched for 0/7 URLs [fetch-1]. Full page content now available.",
+          },
+        ],
+      },
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "assistant_message",
+      text: "Content fetched for 0/7 URLs [fetch-1]. Full page content now available.",
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    await expect(session.startTurn("do not overlap")).rejects.toThrow(
+      "A Pi turn is already active",
+    );
+
+    fakeSession.emit({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [] }],
+    });
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId,
+    });
   });
 
   test("canceling a silent Pi extension command leaves the session usable", async () => {
