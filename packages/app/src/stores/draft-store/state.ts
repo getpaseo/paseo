@@ -77,7 +77,7 @@ const ChangeRequestItemSchema = z.strictObject({
   kind: z.literal("change_request"),
   ...ForgeItemFields,
 });
-const AgentContextAttachmentSchema: z.ZodType<AgentContextAttachment> = z.strictObject({
+const AgentContextAttachmentSchema = z.strictObject({
   kind: z.literal("agent_context"),
   source: z.strictObject({
     serverId: z.string().trim().min(1),
@@ -86,7 +86,7 @@ const AgentContextAttachmentSchema: z.ZodType<AgentContextAttachment> = z.strict
     workspaceLabel: z.string().optional(),
     provider: z.string().optional(),
   }),
-});
+}) satisfies z.ZodType<AgentContextAttachment>;
 export const UserComposerAttachmentSchema: z.ZodType<UserComposerAttachment> = z.discriminatedUnion(
   "kind",
   [
