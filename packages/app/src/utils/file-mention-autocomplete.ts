@@ -1,5 +1,9 @@
 import { isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
-import { compareMatchScores, scoreTextFields, type MatchScore } from "./score-match";
+import {
+  compareMatchScores,
+  scoreTextFields,
+  type MatchScore,
+} from "@getpaseo/protocol/search/text-match";
 
 export interface FileMentionRange {
   start: number;

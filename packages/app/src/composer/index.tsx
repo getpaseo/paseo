@@ -1541,7 +1541,7 @@ function ComposerContentImpl({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-  await sendAgentMessageRef.current(
+      await sendAgentMessageRef.current(
         agentIdRef.current,
         text,
         submitAttachments,
