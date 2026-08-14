@@ -120,6 +120,7 @@ export const es: TranslationResources = {
     attachments: {
       addImage: "Agregar imagen",
       pasteImage: "Pegar imagen",
+      pasteTextFile: "Pegar texto como archivo",
       addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
       addIssueOrPr_mr: "Agregar problema o MR",
@@ -147,6 +148,8 @@ export const es: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "No hay ninguna imagen en el portapapeles",
       pasteImageFailed: "No se pudo pegar la imagen",
+      noClipboardText: "No hay texto en el portapapeles",
+      pasteTextFailed: "No se pudo pegar el texto como archivo",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

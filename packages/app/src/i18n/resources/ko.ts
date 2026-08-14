@@ -120,6 +120,7 @@ export const ko: TranslationResources = {
     attachments: {
       addImage: "이미지 추가",
       pasteImage: "이미지 붙여넣기",
+      pasteTextFile: "텍스트를 파일로 붙여넣기",
       addFile: "파일 업로드",
       addIssueOrPr: "이슈 또는 PR 추가",
       addIssueOrPr_mr: "이슈 또는 MR 추가",
@@ -147,6 +148,8 @@ export const ko: TranslationResources = {
       uploadFailed: "파일을 업로드하지 못했습니다",
       noClipboardImage: "클립보드에 이미지가 없습니다.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
+      noClipboardText: "클립보드에 텍스트가 없습니다.",
+      pasteTextFailed: "텍스트를 파일로 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
     clientCommands: {

@@ -122,6 +122,7 @@ export const fr: TranslationResources = {
     attachments: {
       addImage: "Ajouter une image",
       pasteImage: "Coller une image",
+      pasteTextFile: "Coller le texte comme fichier",
       addFile: "Upload file",
       addIssueOrPr: "Ajouter un problème ouPR",
       addIssueOrPr_mr: "Ajouter un problème ou MR",
@@ -149,6 +150,8 @@ export const fr: TranslationResources = {
       uploadFailed: "Failed to upload file",
       noClipboardImage: "Aucune image dans le presse-papiers",
       pasteImageFailed: "Impossible de coller l’image",
+      noClipboardText: "Aucun texte dans le presse-papiers",
+      pasteTextFailed: "Impossible de coller le texte comme fichier",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {

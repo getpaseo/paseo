@@ -36,6 +36,8 @@ import {
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
+import type { PickedFile } from "@/attachments/picked-file";
+import { createAutomaticPastedTextFile, restoreFailedPastedText } from "@/composer/clipboard-text";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -55,6 +57,7 @@ import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import {
   resolveSendTooltipLabel,
@@ -105,6 +108,7 @@ export interface MessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
+  onPasteTextFile?: (file: PickedFile) => Promise<boolean>;
   client: DaemonClient | null;
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
@@ -179,6 +183,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
 >;
 
 interface TextAreaHandle {
+  value?: string;
   scrollHeight?: number;
   clientHeight?: number;
   offsetHeight?: number;
@@ -406,27 +411,34 @@ function getTextInputNativeElement(
   return native instanceof HTMLElement ? native : null;
 }
 
-interface PasteImagesEffectArgs {
+interface PasteAttachmentsEffectArgs {
   getWebTextArea: () => TextAreaHandle | null;
+  getCurrentText: () => string;
+  onChangeText: (text: string) => void;
   isConnected: boolean;
   disabled: boolean;
   isDictating: boolean;
   isRealtimeVoiceForCurrentAgent: boolean;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => Promise<boolean>) | undefined;
 }
 
-function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
+function usePasteAttachmentsEffect(args: PasteAttachmentsEffectArgs): void {
   const {
     getWebTextArea,
+    getCurrentText,
+    onChangeText,
     isConnected,
     disabled,
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onPasteTextFile,
   } = args;
+  const stableOnChangeText = useStableEvent(onChangeText);
 
   useEffect(() => {
-    if (!isWeb || !onAddImages) return;
+    if (!isWeb || (!onAddImages && !onPasteTextFile)) return;
 
     const textarea = getWebTextArea() as
       | (TextAreaHandle & {
@@ -447,18 +459,52 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       if (!isConnected || disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
-      if (imageFiles.length === 0) return;
+      if (imageFiles.length > 0) {
+        if (!onAddImages) return;
+        event.preventDefault();
 
+        void filesToImageAttachments(imageFiles)
+          .then((pastedAttachments) => {
+            if (disposed || pastedAttachments.length === 0) return undefined;
+            onAddImages(pastedAttachments);
+            return undefined;
+          })
+          .catch((error) => {
+            console.error("[MessageInput] Failed to process pasted images:", error);
+          });
+        return;
+      }
+
+      if (!onPasteTextFile) return;
+      const pastedText = event.clipboardData?.getData("text/plain") ?? "";
+      const file = createAutomaticPastedTextFile(pastedText);
+      if (!file) return;
+
+      const initialText = getCurrentText();
+      const selectionStart = textarea.selectionStart ?? initialText.length;
+      const selectionEnd = textarea.selectionEnd ?? selectionStart;
       event.preventDefault();
 
-      void filesToImageAttachments(imageFiles)
-        .then((pastedAttachments) => {
-          if (disposed || pastedAttachments.length === 0) return;
-          onAddImages(pastedAttachments);
-          return;
+      const restorePastedText = () => {
+        const restoredText = restoreFailedPastedText({
+          currentText: getCurrentText(),
+          initialText,
+          pastedText,
+          selectionStart,
+          selectionEnd,
+        });
+        stableOnChangeText(restoredText);
+      };
+
+      void onPasteTextFile(file)
+        .then((uploaded) => {
+          if (!uploaded) restorePastedText();
+          return undefined;
         })
         .catch((error) => {
-          console.error("[MessageInput] Failed to process pasted images:", error);
+          console.error("[MessageInput] Failed to upload pasted text:", error);
+          restorePastedText();
+          return undefined;
         });
     };
 
@@ -469,11 +515,14 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     };
   }, [
     disabled,
+    getCurrentText,
     getWebTextArea,
     isConnected,
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+    onPasteTextFile,
+    stableOnChangeText,
   ]);
 }
 
@@ -1019,6 +1068,7 @@ interface ResolvedMessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteTextFile: ((file: PickedFile) => Promise<boolean>) | undefined;
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
   placeholder: string | undefined;
@@ -1065,6 +1115,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentMenuItems: props.attachmentMenuItems,
     onAttachButtonRef: props.onAttachButtonRef,
     onAddImages: props.onAddImages,
+    onPasteTextFile: props.onPasteTextFile,
     client: props.client,
     isReadyForDictation: props.isReadyForDictation,
     placeholder: props.placeholder,
@@ -1119,6 +1170,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentMenuItems,
       onAttachButtonRef,
       onAddImages,
+      onPasteTextFile,
       client,
       isReadyForDictation,
       placeholder,
@@ -1207,6 +1259,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     useEffect(() => {
       valueRef.current = value;
     }, [value]);
+
+    const handleInputChange = useCallback(
+      (nextValue: string) => {
+        valueRef.current = nextValue;
+        onChangeText(nextValue);
+      },
+      [onChangeText],
+    );
 
     useEffect(() => {
       return () => {
@@ -1481,13 +1541,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
-    usePasteImagesEffect({
+    usePasteAttachmentsEffect({
       getWebTextArea,
+      getCurrentText: () => valueRef.current,
+      onChangeText: handleInputChange,
       isConnected,
       disabled,
       isDictating,
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
+      onPasteTextFile,
     });
 
     const setBoundedInputHeight = useCallback(
@@ -1597,14 +1660,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       defaultActionQueues,
       t,
     });
-
-    const handleInputChange = useCallback(
-      (nextValue: string) => {
-        valueRef.current = nextValue;
-        onChangeText(nextValue);
-      },
-      [onChangeText],
-    );
 
     const handleInputFocus = useCallback(() => {
       isInputFocusedRef.current = true;

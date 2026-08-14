@@ -125,6 +125,7 @@ import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
 import { readClipboardImage } from "./clipboard-image";
+import { createPastedTextFile } from "./clipboard-text";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -1485,11 +1486,11 @@ export function Composer({
   }, [addImages, t]);
 
   const uploadPickedFiles = useCallback(
-    async (files: PickedFile[]) => {
-      if (files.length === 0) return;
+    async (files: PickedFile[]): Promise<boolean> => {
+      if (files.length === 0) return false;
       if (!client) {
         toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
-        return;
+        return false;
       }
 
       const oversized = files.find((f) => f.bytes.byteLength > MAX_FILE_SIZE_BYTES);
@@ -1497,24 +1498,47 @@ export function Composer({
         toastErrorRef.current(
           t("composer.errors.fileTooLarge", { size: "50MB", fileName: oversized.fileName }),
         );
-        return;
+        return false;
       }
 
       setIsUploadingFile(true);
       try {
         const uploaded = await uploadFileAttachments({ client, files });
         addFiles(uploaded);
+        return true;
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
         toastErrorRef.current(
           error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
         );
+        return false;
       } finally {
         setIsUploadingFile(false);
       }
     },
     [addFiles, client, t],
   );
+
+  const handlePasteTextFile = useCallback(
+    (file: PickedFile) => uploadPickedFiles([file]),
+    [uploadPickedFiles],
+  );
+
+  const handleNativePasteTextFile = useCallback(async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text.length === 0) {
+        toastErrorRef.current(t("composer.errors.noClipboardText"));
+        return;
+      }
+      const file = createPastedTextFile(text);
+      if (!file) return;
+      await uploadPickedFiles([file]);
+    } catch (error) {
+      console.error("[Composer] Failed to paste clipboard text:", error);
+      toastErrorRef.current(t("composer.errors.pasteTextFailed"));
+    }
+  }, [t, uploadPickedFiles]);
 
   const handlePickFile = useCallback(async () => {
     if (!client) {
@@ -1902,14 +1926,24 @@ export function Composer({
       },
     ];
     if (isNative) {
-      items.push({
-        id: "paste-image",
-        label: t("composer.attachments.pasteImage"),
-        icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
-        onSelect: () => {
-          void handlePasteImage();
+      items.push(
+        {
+          id: "paste-image",
+          label: t("composer.attachments.pasteImage"),
+          icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+          onSelect: () => {
+            void handlePasteImage();
+          },
         },
-      });
+        {
+          id: "paste-text-file",
+          label: t("composer.attachments.pasteTextFile"),
+          icon: <ThemedClipboardPaste size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+          onSelect: () => {
+            void handleNativePasteTextFile();
+          },
+        },
+      );
     }
     items.push(
       {
@@ -1932,7 +1966,14 @@ export function Composer({
       },
     );
     return items;
-  }, [forgePresentation, handlePasteImage, handlePickFile, handlePickImage, t]);
+  }, [
+    forgePresentation,
+    handleNativePasteTextFile,
+    handlePasteImage,
+    handlePickFile,
+    handlePickImage,
+    t,
+  ]);
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
@@ -2142,12 +2183,13 @@ export function Composer({
                 attachmentMenuItems={attachmentMenuItems}
                 onAttachButtonRef={handleAttachButtonRef}
                 onAddImages={addImages}
+                onPasteTextFile={handlePasteTextFile}
                 client={client}
                 isReadyForDictation={isDictationReady}
                 placeholder={messagePlaceholder}
                 autoFocus={messageInputAutoFocus}
                 autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                disabled={isSubmitLoading}
+                disabled={isSubmitLoadingVisible}
                 isPaneFocused={isPaneFocused}
                 leftContent={leftContent}
                 beforeVoiceContent={beforeVoiceContent}
