@@ -24,6 +24,7 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -322,6 +323,7 @@ interface SessionForTestOptions {
   binaryMessages?: Uint8Array[];
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
+  workspaceLabelService?: WorkspaceLabelService;
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -396,6 +398,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     },
+    workspaceLabelService: options.workspaceLabelService,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -548,6 +551,108 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   await session.cleanup();
   expect(listeners.size).toBe(0);
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
+});
+
+describe("workspace label subscriptions", () => {
+  type LabelSubscription = Awaited<ReturnType<WorkspaceLabelService["subscribe"]>>;
+  type LabelChange = Parameters<Parameters<WorkspaceLabelService["subscribe"]>[0]["onChange"]>[0];
+
+  function labelSubscription(requestId: string): LabelSubscription {
+    return {
+      snapshot: {
+        labels: [],
+        sync: {
+          mode: "snapshot",
+          generation: `generation-${requestId}`,
+          headSeq: 0,
+          removals: [],
+        },
+      },
+      unsubscribe: vi.fn(),
+    };
+  }
+
+  function labelListRequest(requestId: string) {
+    return {
+      type: "workspace.label.list.request" as const,
+      requestId,
+      subscribe: { subscriptionId: `subscription-${requestId}` },
+    };
+  }
+
+  test("an overlapping request cannot reactivate its superseded subscription", async () => {
+    const first = deferred<LabelSubscription>();
+    const callbacks: Array<(change: LabelChange) => void> = [];
+    const service = {
+      subscribe: async (input: Parameters<WorkspaceLabelService["subscribe"]>[0]) => {
+        callbacks.push(input.onChange);
+        return callbacks.length === 1 ? first.promise : labelSubscription("b");
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    const requestA = session.handleMessage(labelListRequest("a"));
+    await Promise.resolve();
+    await session.handleMessage(labelListRequest("b"));
+    const firstSubscription = labelSubscription("a");
+    first.resolve(firstSubscription);
+    await requestA;
+
+    expect(firstSubscription.unsubscribe).toHaveBeenCalledOnce();
+    callbacks[0]?.({
+      kind: "remove",
+      name: "Old",
+      generation: "generation-a",
+      seq: 1,
+    });
+    callbacks[1]?.({
+      kind: "remove",
+      name: "Current",
+      generation: "generation-b",
+      seq: 1,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ name: "Current" }) }),
+    ]);
+  });
+
+  test("a superseded failure cannot clear the current subscription or survive cleanup", async () => {
+    const first = deferred<LabelSubscription>();
+    const callbacks: Array<(change: LabelChange) => void> = [];
+    const current = labelSubscription("b");
+    const service = {
+      subscribe: async (input: Parameters<WorkspaceLabelService["subscribe"]>[0]) => {
+        callbacks.push(input.onChange);
+        return callbacks.length === 1 ? first.promise : current;
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    const requestA = session.handleMessage(labelListRequest("a"));
+    await Promise.resolve();
+    await session.handleMessage(labelListRequest("b"));
+    first.reject(new Error("old request failed"));
+    await requestA;
+
+    callbacks[1]?.({
+      kind: "remove",
+      name: "Current",
+      generation: "generation-b",
+      seq: 1,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toHaveLength(1);
+    await session.cleanup();
+    expect(current.unsubscribe).toHaveBeenCalledOnce();
+    callbacks[1]?.({
+      kind: "remove",
+      name: "After cleanup",
+      generation: "generation-b",
+      seq: 2,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toHaveLength(1);
+  });
 });
 
 describe("session authorization scopes", () => {

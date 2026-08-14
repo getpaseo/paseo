@@ -1,4 +1,11 @@
-import { useCallback, useMemo, type ComponentType, type ReactElement, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -15,6 +22,7 @@ import {
   Globe,
   Server,
   Settings2,
+  Tag,
   Type,
 } from "lucide-react-native";
 import {
@@ -30,11 +38,18 @@ import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
-import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import {
+  countSidebarLabelSelections,
+  sidebarLabelSelectionIncludes,
+  toggleSidebarLabelSelection,
+  type SidebarGroupMode,
+} from "@/stores/sidebar-view-store";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
+import { useWorkspaceLabelProjection } from "@/workspace-labels";
+import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -56,6 +71,7 @@ type OptionIcon = ComponentType<{
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
   status: withUnistyles(CircleDashed),
+  label: withUnistyles(Tag),
 };
 
 const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
@@ -86,13 +102,14 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
   timestamp: withUnistyles(Clock),
 };
 
-const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
+const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status", "label"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
 
 const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
   project: "sidebar.display.grouping.project",
   status: "sidebar.display.grouping.status",
+  label: "sidebar.display.grouping.labels",
 };
 
 const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
@@ -130,6 +147,10 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
   const hosts = useHosts();
+  const { labels } = useWorkspaceLabelProjection();
+  const [managerOpen, setManagerOpen] = useState(false);
+  const openManager = useCallback(() => setManagerOpen(true), []);
+  const closeManager = useCallback(() => setManagerOpen(false), []);
 
   const triggerStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -199,59 +220,235 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         content: <HostFilterPage preferences={preferences} hosts={hosts} />,
       });
     }
+    definitions.push(
+      {
+        id: "labelInclude",
+        title: t("workspaceLabels.filter.include"),
+        content: <LabelFacetPage facet="include" labels={labels} preferences={preferences} />,
+      },
+      {
+        id: "labelExclude",
+        title: t("workspaceLabels.filter.exclude"),
+        content: <LabelFacetPage facet="exclude" labels={labels} preferences={preferences} />,
+      },
+      {
+        id: "labelFilter",
+        title: t("workspaceLabels.title"),
+        content: <LabelFilterPage preferences={preferences} onManage={openManager} />,
+      },
+    );
     return definitions;
-  }, [t, preferences, hosts, showHostFilter]);
+  }, [t, preferences, hosts, showHostFilter, labels, openManager]);
 
   return (
-    <MenuRoot compactMode="sheet">
-      <MenuTrigger
-        style={triggerStyle}
-        accessibilityRole={isWeb ? undefined : "button"}
-        accessibilityLabel={t("sidebar.display.trigger")}
-        testID="sidebar-display-preferences-menu"
-      >
-        <ThemedSettings2 size={14} uniProps={mutedIconMapping} />
-      </MenuTrigger>
-      <MenuSurface
-        align="end"
-        width={MENU_WIDTH}
-        pages={pages}
-        sheetTitle={t("sidebar.display.heading")}
-        testID="sidebar-display-preferences-content"
-      >
-        <MenuSubTrigger
-          id="grouping"
-          value={t(GROUPING_LABEL_KEYS[preferences.grouping])}
-          testID="sidebar-display-grouping"
+    <>
+      <MenuRoot compactMode="sheet">
+        <MenuTrigger
+          style={triggerStyle}
+          accessibilityRole={isWeb ? undefined : "button"}
+          accessibilityLabel={t("sidebar.display.trigger")}
+          testID="sidebar-display-preferences-menu"
         >
-          {t("sidebar.display.grouping.label")}
-        </MenuSubTrigger>
-        <MenuSubTrigger
-          id="titleSource"
-          value={t(TITLE_SOURCE_LABEL_KEYS[preferences.titleSource])}
-          testID="sidebar-display-title-source"
+          <ThemedSettings2 size={14} uniProps={mutedIconMapping} />
+        </MenuTrigger>
+        <MenuSurface
+          align="end"
+          width={MENU_WIDTH}
+          pages={pages}
+          sheetTitle={t("sidebar.display.heading")}
+          testID="sidebar-display-preferences-content"
         >
-          {t("sidebar.display.titleSource.label")}
-        </MenuSubTrigger>
-        <MenuSubTrigger id="show" testID="sidebar-display-show">
-          {t("sidebar.display.show.label")}
-        </MenuSubTrigger>
-        {showHostFilter ? (
-          <>
-            <MenuSeparator />
-            {/* A filtered sidebar looks like workspaces went missing, so the branch says so
+          <MenuSubTrigger
+            id="grouping"
+            value={t(GROUPING_LABEL_KEYS[preferences.grouping])}
+            testID="sidebar-display-grouping"
+          >
+            {t("sidebar.display.grouping.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="titleSource"
+            value={t(TITLE_SOURCE_LABEL_KEYS[preferences.titleSource])}
+            testID="sidebar-display-title-source"
+          >
+            {t("sidebar.display.titleSource.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger id="show" testID="sidebar-display-show">
+            {t("sidebar.display.show.label")}
+          </MenuSubTrigger>
+          {showHostFilter ? (
+            <>
+              <MenuSeparator />
+              {/* A filtered sidebar looks like workspaces went missing, so the branch says so
                 from the root rather than making you open it to find out. */}
-            <MenuSubTrigger
-              id="hostFilter"
-              indicator={preferences.hostFilters.length > 0}
-              testID="sidebar-display-host-filter"
-            >
-              {t("sidebar.display.hostFilter.label")}
-            </MenuSubTrigger>
-          </>
-        ) : null}
-      </MenuSurface>
-    </MenuRoot>
+              <MenuSubTrigger
+                id="hostFilter"
+                indicator={preferences.hostFilters.length > 0}
+                testID="sidebar-display-host-filter"
+              >
+                {t("sidebar.display.hostFilter.label")}
+              </MenuSubTrigger>
+            </>
+          ) : null}
+          <MenuSeparator />
+          <MenuSubTrigger
+            id="labelFilter"
+            indicator={
+              preferences.labelFilter.include.length > 0 ||
+              preferences.labelFilter.exclude.length > 0 ||
+              preferences.labelFilter.includeUnlabelled ||
+              preferences.labelFilter.excludeUnlabelled
+            }
+            testID="sidebar-display-label-filter"
+          >
+            {t("workspaceLabels.title")}
+          </MenuSubTrigger>
+        </MenuSurface>
+      </MenuRoot>
+      <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />
+    </>
+  );
+}
+
+function LabelFilterPage({
+  preferences,
+  onManage,
+}: {
+  preferences: Preferences;
+  onManage: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const includeCount =
+    countSidebarLabelSelections(preferences.labelFilter.include) +
+    (preferences.labelFilter.includeUnlabelled ? 1 : 0);
+  const excludeCount =
+    countSidebarLabelSelections(preferences.labelFilter.exclude) +
+    (preferences.labelFilter.excludeUnlabelled ? 1 : 0);
+  const matchAny = useCallback(
+    () => preferences.setLabelFilter({ ...preferences.labelFilter, match: "any" }),
+    [preferences],
+  );
+  const matchAll = useCallback(
+    () => preferences.setLabelFilter({ ...preferences.labelFilter, match: "all" }),
+    [preferences],
+  );
+  return (
+    <>
+      <MenuSubTrigger
+        id="labelInclude"
+        value={includeCount ? String(includeCount) : undefined}
+        testID="sidebar-label-filter-include"
+      >
+        {t("workspaceLabels.filter.include")}
+      </MenuSubTrigger>
+      <MenuSubTrigger
+        id="labelExclude"
+        value={excludeCount ? String(excludeCount) : undefined}
+        testID="sidebar-label-filter-exclude"
+      >
+        {t("workspaceLabels.filter.exclude")}
+      </MenuSubTrigger>
+      {includeCount >= 2 ? (
+        <>
+          <MenuSeparator />
+          <MenuItem
+            selected={preferences.labelFilter.match === "any"}
+            closeOnSelect={false}
+            onSelect={matchAny}
+          >
+            {t("workspaceLabels.filter.matchAny")}
+          </MenuItem>
+          <MenuItem
+            selected={preferences.labelFilter.match === "all"}
+            closeOnSelect={false}
+            onSelect={matchAll}
+          >
+            {t("workspaceLabels.filter.matchAll")}
+          </MenuItem>
+        </>
+      ) : null}
+      <MenuSeparator />
+      <MenuItem
+        disabled={includeCount === 0 && excludeCount === 0}
+        closeOnSelect={false}
+        onSelect={preferences.clearLabelFilter}
+        testID="sidebar-label-filter-clear"
+      >
+        {t("workspaceLabels.filter.clear")}
+      </MenuItem>
+      <MenuItem onSelect={onManage} testID="sidebar-label-manage">
+        {t("workspaceLabels.manage.open")}
+      </MenuItem>
+    </>
+  );
+}
+
+function LabelFacetPage({
+  facet,
+  labels,
+  preferences,
+}: {
+  facet: "include" | "exclude";
+  labels: ReturnType<typeof useWorkspaceLabelProjection>["labels"];
+  preferences: Preferences;
+}): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <>
+      {labels.map((label) => (
+        <LabelFacetItem
+          key={label.name.toLocaleLowerCase()}
+          name={label.name}
+          unlabelled={false}
+          facet={facet}
+          preferences={preferences}
+        />
+      ))}
+      <LabelFacetItem
+        name={t("workspaceLabels.unlabelled")}
+        unlabelled
+        facet={facet}
+        preferences={preferences}
+      />
+    </>
+  );
+}
+
+function LabelFacetItem({
+  name,
+  unlabelled,
+  facet,
+  preferences,
+}: {
+  name: string;
+  unlabelled: boolean;
+  facet: "include" | "exclude";
+  preferences: Preferences;
+}): ReactElement {
+  const selected = preferences.labelFilter[facet];
+  const unlabelledField = facet === "include" ? "includeUnlabelled" : "excludeUnlabelled";
+  const isSelected = unlabelled
+    ? preferences.labelFilter[unlabelledField]
+    : sidebarLabelSelectionIncludes(selected, name);
+  const toggle = useCallback(() => {
+    if (unlabelled) {
+      preferences.setLabelFilter({
+        ...preferences.labelFilter,
+        [unlabelledField]: !isSelected,
+      });
+      return;
+    }
+    const next = toggleSidebarLabelSelection(selected, name);
+    preferences.setLabelFilter({ ...preferences.labelFilter, [facet]: next });
+  }, [facet, isSelected, name, preferences, selected, unlabelled, unlabelledField]);
+  return (
+    <MenuItem
+      selected={isSelected}
+      closeOnSelect={false}
+      onSelect={toggle}
+      testID={`sidebar-label-filter-${facet}-${unlabelled ? "unlabelled" : name}`}
+    >
+      {name}
+    </MenuItem>
   );
 }
 

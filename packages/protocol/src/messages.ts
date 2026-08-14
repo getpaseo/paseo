@@ -5,6 +5,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
+import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -982,6 +983,52 @@ export const WorkspacePinSetRequestSchema = z.object({
   workspaceId: z.string(),
   pinned: z.boolean(),
   requestId: z.string(),
+});
+
+export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
+export const WorkspaceLabelDefinitionSchema = z.object({
+  name: z.string(),
+  color: WorkspaceLabelColorSchema,
+});
+const WorkspaceLabelSyncCursorSchema = z.object({
+  generation: z.string(),
+  afterSeq: z.number().int().nonnegative(),
+});
+
+export const WorkspaceLabelListRequestSchema = z.object({
+  type: z.literal("workspace.label.list.request"),
+  requestId: z.string(),
+  subscribe: z.object({ subscriptionId: z.string() }),
+  sync: WorkspaceLabelSyncCursorSchema.optional(),
+});
+export const WorkspaceLabelAssignmentSetRequestSchema = z.object({
+  type: z.literal("workspace.label.assignment.set.request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+  label: WorkspaceLabelDefinitionSchema,
+  assigned: z.boolean(),
+});
+export const WorkspaceLabelRenameRequestSchema = z.object({
+  type: z.literal("workspace.label.rename.request"),
+  requestId: z.string(),
+  name: z.string(),
+  newName: z.string(),
+});
+export const WorkspaceLabelRecolorRequestSchema = z.object({
+  type: z.literal("workspace.label.recolor.request"),
+  requestId: z.string(),
+  name: z.string(),
+  color: WorkspaceLabelColorSchema,
+});
+export const WorkspaceLabelDeleteRequestSchema = z.object({
+  type: z.literal("workspace.label.delete.request"),
+  requestId: z.string(),
+  name: z.string(),
+});
+export const WorkspaceLabelDeleteInspectRequestSchema = z.object({
+  type: z.literal("workspace.label.delete.inspect.request"),
+  requestId: z.string(),
+  name: z.string(),
 });
 
 export const WorkspaceRecoveryInspectRequestSchema = z.object({
@@ -2913,6 +2960,12 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceLabelListRequestSchema,
+  WorkspaceLabelAssignmentSetRequestSchema,
+  WorkspaceLabelRenameRequestSchema,
+  WorkspaceLabelRecolorRequestSchema,
+  WorkspaceLabelDeleteRequestSchema,
+  WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
@@ -3246,6 +3299,8 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: z.boolean().optional(),
+        // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
+        workspaceLabels: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
         // checkoutGithubSetAutoMerge fallback after 2026-12-28.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
@@ -3655,6 +3710,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
+    labels: z.array(z.string()).optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -3871,6 +3928,73 @@ export const WorkspaceUpdateMessageSchema = z.object({
       seq: z.number().int().positive().optional(),
     }),
   ]),
+});
+
+const WorkspaceLabelSyncMetadataSchema = z.object({
+  mode: z.enum(["snapshot", "changes"]),
+  generation: z.string(),
+  headSeq: z.number().int().nonnegative(),
+  removals: z.array(z.object({ name: z.string(), seq: z.number().int().positive() })),
+});
+export const WorkspaceLabelListResponseSchema = z.object({
+  type: z.literal("workspace.label.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    labels: z.array(WorkspaceLabelDefinitionSchema),
+    sync: WorkspaceLabelSyncMetadataSchema,
+  }),
+});
+export const WorkspaceLabelUpdateSchema = z.object({
+  type: z.literal("workspace.label.update"),
+  payload: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("upsert"),
+      label: WorkspaceLabelDefinitionSchema,
+      previousName: z.string().optional(),
+      generation: z.string(),
+      seq: z.number().int().positive(),
+    }),
+    z.object({
+      kind: z.literal("remove"),
+      name: z.string(),
+      generation: z.string(),
+      seq: z.number().int().positive(),
+    }),
+  ]),
+});
+export const WorkspaceLabelAssignmentSetResponseSchema = z.object({
+  type: z.literal("workspace.label.assignment.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    label: WorkspaceLabelDefinitionSchema,
+    workspaceLabels: z.array(z.string()),
+  }),
+});
+export const WorkspaceLabelRenameResponseSchema = z.object({
+  type: z.literal("workspace.label.rename.response"),
+  payload: z.object({
+    requestId: z.string(),
+    label: WorkspaceLabelDefinitionSchema,
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
+});
+export const WorkspaceLabelRecolorResponseSchema = z.object({
+  type: z.literal("workspace.label.recolor.response"),
+  payload: z.object({ requestId: z.string(), label: WorkspaceLabelDefinitionSchema }),
+});
+export const WorkspaceLabelDeleteResponseSchema = z.object({
+  type: z.literal("workspace.label.delete.response"),
+  payload: z.object({
+    requestId: z.string(),
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
+});
+export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
+  type: z.literal("workspace.label.delete.inspect.response"),
+  payload: z.object({
+    requestId: z.string(),
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
 });
 
 export const ProjectUpdateMessageSchema = z.object({
@@ -6068,6 +6192,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  WorkspaceLabelListResponseSchema,
+  WorkspaceLabelUpdateSchema,
+  WorkspaceLabelAssignmentSetResponseSchema,
+  WorkspaceLabelRenameResponseSchema,
+  WorkspaceLabelRecolorResponseSchema,
+  WorkspaceLabelDeleteResponseSchema,
+  WorkspaceLabelDeleteInspectResponseSchema,
   ProjectUpdateMessageSchema,
   ProjectListResponseMessageSchema,
   ScriptStatusUpdateMessageSchema,

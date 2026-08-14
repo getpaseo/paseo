@@ -21,9 +21,12 @@ import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
+import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import { workspaceLabelColorMapping } from "@/workspace-labels/colors";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { StyleSheet } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -112,7 +115,7 @@ function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
 }
 
 interface StatusWorkspaceListProps {
-  groups: StatusGroup[];
+  groups: SidebarWorkspaceGroup[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
@@ -142,8 +145,8 @@ export function SidebarStatusWorkspaceList({
   parentGestureRef,
   dragGestureHostPresented,
 }: StatusWorkspaceListProps) {
-  const collapsedStatusGroupKeys = useSidebarCollapsedSectionsStore(
-    (state) => state.collapsedStatusGroupKeys,
+  const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedWorkspaceGroupKeys,
   );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
@@ -227,7 +230,7 @@ export function SidebarStatusWorkspaceList({
       {listHeaderComponent}
       <StatusGroupList
         groups={groups}
-        collapsedStatusGroupKeys={collapsedStatusGroupKeys}
+        collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
         shortcutIndex={statusShortcutIndex}
         showShortcutBadges={showShortcutBadges}
@@ -266,7 +269,7 @@ export function SidebarStatusWorkspaceList({
 
 function StatusGroupList({
   groups,
-  collapsedStatusGroupKeys,
+  collapsedWorkspaceGroupKeys,
   projectIconByProjectViewKey,
   shortcutIndex,
   showShortcutBadges,
@@ -275,8 +278,8 @@ function StatusGroupList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
-  groups: StatusGroup[];
-  collapsedStatusGroupKeys: ReadonlySet<string>;
+  groups: SidebarWorkspaceGroup[];
+  collapsedWorkspaceGroupKeys: ReadonlySet<string>;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
@@ -289,9 +292,9 @@ function StatusGroupList({
     <>
       {groups.map((group) => (
         <StatusGroupRows
-          key={group.bucket}
+          key={group.key}
           group={group}
-          collapsed={collapsedStatusGroupKeys.has(group.bucket)}
+          collapsed={collapsedWorkspaceGroupKeys.has(group.key)}
           projectIconByProjectViewKey={projectIconByProjectViewKey}
           shortcutIndex={shortcutIndex}
           showShortcutBadges={showShortcutBadges}
@@ -316,7 +319,7 @@ function StatusGroupRows({
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
-  group: StatusGroup;
+  group: SidebarWorkspaceGroup;
   collapsed: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndex: Map<string, number>;
@@ -339,7 +342,7 @@ function StatusGroupRows({
       {!collapsed ? (
         <View
           style={styles.statusWorkspaceListContainer}
-          testID={`sidebar-status-group-rows-${group.bucket}`}
+          testID={`sidebar-workspace-group-rows-${group.key}`}
         >
           {visibleWorkspaces.map((workspace) => (
             <StatusWorkspaceRow
@@ -362,7 +365,7 @@ function StatusGroupRows({
               expanded={workspacesExpanded}
               onPress={toggleWorkspacesExpanded}
               indented
-              testID={`sidebar-status-show-more-${group.bucket}`}
+              testID={`sidebar-workspace-group-show-more-${group.key}`}
             />
           ) : null}
         </View>
@@ -393,14 +396,21 @@ function buildStatusRowProjectPresentation({
   };
 }
 
-function StatusGroupHeader({ group, collapsed }: { group: StatusGroup; collapsed: boolean }) {
+function StatusGroupHeader({
+  group,
+  collapsed,
+}: {
+  group: SidebarWorkspaceGroup;
+  collapsed: boolean;
+}) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const toggleStatusGroupCollapsed = useSidebarCollapsedSectionsStore(
-    (state) => state.toggleStatusGroupCollapsed,
+  const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
+    (state) => state.toggleWorkspaceGroupCollapsed,
   );
   const handlePress = useCallback(() => {
-    toggleStatusGroupCollapsed(group.bucket);
-  }, [group.bucket, toggleStatusGroupCollapsed]);
+    toggleWorkspaceGroupCollapsed(group.key);
+  }, [group.key, toggleWorkspaceGroupCollapsed]);
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
   const rowStyle = useCallback(
@@ -417,16 +427,20 @@ function StatusGroupHeader({ group, collapsed }: { group: StatusGroup; collapsed
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={`${group.label} status group`}
+        accessibilityLabel={
+          group.leading.kind === "label"
+            ? t("workspaceLabels.accessibility.group", { label: group.label })
+            : `${group.label} group`
+        }
         accessibilityState={accessibilityState}
         style={rowStyle}
         onPress={handlePress}
-        testID={`sidebar-status-group-${group.bucket}`}
+        testID={`sidebar-workspace-group-${group.key}`}
       >
         <View style={styles.statusGroupRowLeft}>
           <View style={styles.statusGroupLeadingVisualSlot}>
             <StatusGroupLeadingVisual
-              bucket={group.bucket}
+              leading={group.leading}
               collapsed={collapsed}
               showChevron={isHovered}
             />
@@ -443,16 +457,23 @@ function StatusGroupHeader({ group, collapsed }: { group: StatusGroup; collapsed
 }
 
 function StatusGroupLeadingVisual({
-  bucket,
+  leading,
   collapsed,
   showChevron,
 }: {
-  bucket: StatusGroup["bucket"];
+  leading: SidebarWorkspaceGroup["leading"];
   collapsed: boolean;
   showChevron: boolean;
 }) {
   if (!showChevron) {
-    return <StatusGroupIcon bucket={bucket} />;
+    if (leading.kind === "label") {
+      return leading.color ? (
+        <ThemedCircleDot size={14} uniProps={workspaceLabelColorMapping(leading.color)} />
+      ) : (
+        <ThemedCircleDot size={14} uniProps={foregroundMutedColorMapping} />
+      );
+    }
+    return <StatusGroupIcon bucket={leading.bucket} />;
   }
   if (collapsed) {
     return <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />;
@@ -460,7 +481,7 @@ function StatusGroupLeadingVisual({
   return <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />;
 }
 
-function StatusGroupIcon({ bucket }: { bucket: StatusGroup["bucket"] }) {
+function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
   switch (bucket) {
     case "needs_input":
       return <ThemedCircleAlert size={14} uniProps={needsInputColorMapping} />;
@@ -792,7 +813,8 @@ function StatusWorkspaceRowInnerContent({
 }: StatusWorkspaceRowInnerProps & {
   dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
 }) {
-  const isTouchPlatform = platformIsNative;
+  const isCompact = useIsCompactFormFactor();
+  const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const {
@@ -991,6 +1013,9 @@ function StatusWorkspaceActionSlot({
           <SidebarWorkspaceMenu
             {...kebab.menuProps}
             workspaceKey={workspace.workspaceKey}
+            serverId={workspace.serverId}
+            workspaceId={workspace.workspaceId}
+            workspaceLabels={workspace.labels}
             onCopyPath={onCopyPath}
             onCopyBranchName={onCopyBranchName}
             onRename={onRename}

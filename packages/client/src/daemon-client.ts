@@ -681,6 +681,30 @@ export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, "type" | "requ
 };
 export type FetchWorkspacesEntry = FetchWorkspacesPayload["entries"][number];
 export type FetchWorkspacesPageInfo = FetchWorkspacesPayload["pageInfo"];
+export type WorkspaceLabelListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.list.response" }
+>["payload"];
+export type WorkspaceLabelAssignmentPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.assignment.set.response" }
+>["payload"];
+export type WorkspaceLabelRenamePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.rename.response" }
+>["payload"];
+export type WorkspaceLabelRecolorPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.recolor.response" }
+>["payload"];
+export type WorkspaceLabelDeletePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.delete.response" }
+>["payload"];
+export type WorkspaceLabelDeleteInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.delete.inspect.response" }
+>["payload"];
 export type ProjectListPayload = Extract<
   SessionOutboundMessage,
   { type: "project.list.response" }
@@ -2112,6 +2136,94 @@ export class DaemonClient {
           return null;
         }
         return msg.payload;
+      },
+    });
+  }
+
+  listWorkspaceLabels(options: {
+    subscriptionId: string;
+    sync?: { generation: string; afterSeq: number };
+    requestId?: string;
+  }): Promise<WorkspaceLabelListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.list.request",
+        subscribe: { subscriptionId: options.subscriptionId },
+        ...(options.sync ? { sync: options.sync } : {}),
+      },
+    });
+  }
+
+  setWorkspaceLabel(options: {
+    workspaceId: string;
+    label: Extract<
+      SessionInboundMessage,
+      { type: "workspace.label.assignment.set.request" }
+    >["label"];
+    assigned: boolean;
+    requestId?: string;
+  }): Promise<WorkspaceLabelAssignmentPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.assignment.set.request",
+        workspaceId: options.workspaceId,
+        label: options.label,
+        assigned: options.assigned,
+      },
+    });
+  }
+
+  renameWorkspaceLabel(options: {
+    name: string;
+    newName: string;
+    requestId?: string;
+  }): Promise<WorkspaceLabelRenamePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.rename.response">({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.rename.request",
+        name: options.name,
+        newName: options.newName,
+      },
+    });
+  }
+
+  recolorWorkspaceLabel(options: {
+    name: string;
+    color: Extract<SessionInboundMessage, { type: "workspace.label.recolor.request" }>["color"];
+    requestId?: string;
+  }): Promise<WorkspaceLabelRecolorPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.recolor.response">({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.recolor.request",
+        name: options.name,
+        color: options.color,
+      },
+    });
+  }
+
+  deleteWorkspaceLabel(options: {
+    name: string;
+    requestId?: string;
+  }): Promise<WorkspaceLabelDeletePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.delete.response">({
+      requestId: options.requestId,
+      message: { type: "workspace.label.delete.request", name: options.name },
+    });
+  }
+
+  inspectWorkspaceLabelDelete(options: {
+    name: string;
+    requestId?: string;
+  }): Promise<WorkspaceLabelDeleteInspectPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.delete.inspect.response">({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.delete.inspect.request",
+        name: options.name,
       },
     });
   }

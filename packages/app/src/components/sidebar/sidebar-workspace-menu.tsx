@@ -2,7 +2,16 @@ import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } 
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Archive, CircleCheck, Copy, MoreVertical, Pencil, Pin, PinOff } from "lucide-react-native";
+import {
+  Archive,
+  CircleCheck,
+  Copy,
+  MoreVertical,
+  Pencil,
+  Pin,
+  PinOff,
+  Tag,
+} from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -13,7 +22,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
@@ -28,6 +39,7 @@ import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
+import { WorkspaceLabelPickerPage } from "@/workspace-labels/picker";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -41,6 +53,7 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
+const ThemedTag = withUnistyles(Tag);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -62,6 +75,9 @@ function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 export interface SidebarWorkspaceMenuProps {
   workspaceKey: string;
+  serverId?: string;
+  workspaceId?: string;
+  workspaceLabels?: readonly string[];
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
   onRename?: () => void;
@@ -107,6 +123,8 @@ function WorkspaceMenuItem({
 function SidebarWorkspaceMenuItems({
   surface,
   workspaceKey,
+  serverId,
+  workspaceId,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -124,6 +142,10 @@ function SidebarWorkspaceMenuItems({
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
+  );
+  const labelLeading = useMemo(
+    () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
+    [],
   );
 
   return (
@@ -178,6 +200,15 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      {serverId && workspaceId ? (
+        <DropdownMenuSubTrigger
+          id="workspaceLabels"
+          leading={labelLeading}
+          testID={`sidebar-workspace-menu-labels-${workspaceKey}`}
+        >
+          {t("workspaceLabels.title")}
+        </DropdownMenuSubTrigger>
+      ) : null}
       <OpenInFileManagerMenuItem
         surface={surface}
         path={openInFileManagerPath}
@@ -202,6 +233,9 @@ function SidebarWorkspaceMenuItems({
 
 export function SidebarWorkspaceMenu({
   workspaceKey,
+  serverId,
+  workspaceId,
+  workspaceLabels,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -218,6 +252,32 @@ export function SidebarWorkspaceMenu({
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  const workspaceTarget = useMemo(
+    () =>
+      serverId && workspaceId
+        ? { serverId, workspaceId, labels: workspaceLabels ?? [] }
+        : undefined,
+    [serverId, workspaceId, workspaceLabels],
+  );
+  const pages = useMemo<MenuPageDefinition[]>(
+    () =>
+      workspaceTarget
+        ? [
+            {
+              id: "workspaceLabels",
+              title: t("workspaceLabels.title"),
+              content: (
+                <WorkspaceLabelPickerPage
+                  serverId={workspaceTarget.serverId}
+                  workspaceId={workspaceTarget.workspaceId}
+                  assignedLabels={workspaceTarget.labels}
+                />
+              ),
+            },
+          ]
+        : [],
+    [t, workspaceTarget],
+  );
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -229,10 +289,18 @@ export function SidebarWorkspaceMenu({
       >
         {renderTriggerIcon}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={260} sheetTitle={t("sidebar.workspace.actions.menu")}>
+      <DropdownMenuContent
+        align="end"
+        width={260}
+        pages={pages}
+        sheetTitle={t("sidebar.workspace.actions.menu")}
+      >
         <SidebarWorkspaceMenuItems
           surface="dropdown"
           workspaceKey={workspaceKey}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          workspaceLabels={workspaceLabels}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
@@ -312,6 +380,30 @@ export function SidebarWorkspaceContextMenu({
       ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
       : null,
   });
+  const workspaceTarget = useMemo(
+    () => ({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+      labels: workspace.labels ?? [],
+    }),
+    [workspace],
+  );
+  const pages = useMemo<MenuPageDefinition[]>(
+    () => [
+      {
+        id: "workspaceLabels",
+        title: t("workspaceLabels.title"),
+        content: (
+          <WorkspaceLabelPickerPage
+            serverId={workspaceTarget.serverId}
+            workspaceId={workspaceTarget.workspaceId}
+            assignedLabels={workspaceTarget.labels}
+          />
+        ),
+      },
+    ],
+    [t, workspaceTarget],
+  );
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
@@ -327,10 +419,14 @@ export function SidebarWorkspaceContextMenu({
         align="start"
         width={260}
         testID={`sidebar-workspace-context-menu-${workspaceKey}`}
+        pages={pages}
       >
         <SidebarWorkspaceMenuItems
           surface="context"
           workspaceKey={workspaceKey}
+          serverId={workspaceTarget.serverId}
+          workspaceId={workspaceTarget.workspaceId}
+          workspaceLabels={workspaceTarget.labels}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}

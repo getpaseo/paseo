@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
   createSidebarViewStorage,
+  countSidebarLabelSelections,
+  deduplicateSidebarLabelNames,
   migrateSidebarViewState,
+  sidebarLabelSelectionIncludes,
+  toggleSidebarLabelSelection,
   useSidebarViewStore,
 } from "./sidebar-view-store";
 
@@ -40,6 +44,13 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       hostFilters: [],
+      labelFilter: {
+        include: [],
+        exclude: [],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "any",
+      },
     });
   });
 
@@ -90,6 +101,13 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: [],
+      labelFilter: {
+        include: [],
+        exclude: [],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "any",
+      },
     });
   });
 
@@ -102,6 +120,13 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a"],
+      labelFilter: {
+        include: [],
+        exclude: [],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "any",
+      },
     });
   });
 
@@ -114,7 +139,76 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
+      labelFilter: {
+        include: [],
+        exclude: [],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "any",
+      },
     });
+  });
+
+  it("clears only the label facet", () => {
+    useSidebarViewStore.setState({
+      groupMode: "label",
+      hostFilters: ["host-a"],
+      labelFilter: {
+        include: ["urgent"],
+        exclude: ["blocked"],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "all",
+      },
+    });
+
+    useSidebarViewStore.getState().clearLabelFilter();
+
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      groupMode: "label",
+      hostFilters: ["host-a"],
+      labelFilter: {
+        include: [],
+        exclude: [],
+        includeUnlabelled: false,
+        excludeUnlabelled: false,
+        match: "any",
+      },
+    });
+  });
+
+  it("uses normalized label identity for selection, toggling, deduplication, and counts", () => {
+    const selected = ["Urgent", " urgent ", "Blocked"];
+
+    expect(sidebarLabelSelectionIncludes(selected, "URGENT")).toBe(true);
+    expect(deduplicateSidebarLabelNames(selected)).toEqual(["Urgent", "Blocked"]);
+    expect(countSidebarLabelSelections(selected)).toBe(2);
+    expect(toggleSidebarLabelSelection(selected, "uRgEnT")).toEqual(["Blocked"]);
+    expect(toggleSidebarLabelSelection(["Blocked"], "URGENT")).toEqual(["Blocked", "URGENT"]);
+  });
+
+  it("normalizes duplicate label identities when filters are set and migrated", () => {
+    useSidebarViewStore.getState().setLabelFilter({
+      include: ["Urgent", "urgent"],
+      exclude: ["Blocked", " BLOCKED "],
+      includeUnlabelled: false,
+      excludeUnlabelled: false,
+      match: "all",
+    });
+    expect(useSidebarViewStore.getState().labelFilter).toMatchObject({
+      include: ["Urgent"],
+      exclude: ["Blocked"],
+    });
+
+    expect(
+      migrateSidebarViewState({
+        labelFilter: {
+          include: ["Urgent", "URGENT"],
+          exclude: [],
+          match: "any",
+        },
+      }).labelFilter.include,
+    ).toEqual(["Urgent"]);
   });
 
   it("falls back to the legacy storage key when the new key is empty", async () => {

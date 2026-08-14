@@ -1,4 +1,4 @@
-import { buildStatusGroups, type StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
   type PinnedSidebarGroups,
@@ -14,14 +14,21 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
+import {
+  groupWorkspacesByLabel,
+  labelWorkspaceGroups,
+  statusWorkspaceGroups,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
+import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
-  statusGroups: StatusGroup[];
+  workspaceGroups: SidebarWorkspaceGroup[];
   shortcutModel: SidebarShortcutModel;
 }
 
-export function buildSidebarProjection(input: {
+export interface SidebarProjectionInput {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
   pinnedWorkspaceOrder: string[];
@@ -30,8 +37,12 @@ export function buildSidebarProjection(input: {
   groupMode: SidebarGroupMode;
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
-  collapsedStatusGroupKeys: ReadonlySet<string>;
-}): SidebarProjection {
+  collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  labelDefinitions?: readonly WorkspaceLabelDefinition[];
+  unlabelledLabel: string;
+}
+
+export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
   const pinnedGroups = splitPinnedSidebarGroups({
     projects: input.projects,
     keys: input.pinnedKeys,
@@ -47,16 +58,29 @@ export function buildSidebarProjection(input: {
           input.projectNamesByViewKey,
         )
       : [];
+  let workspaceGroups: SidebarWorkspaceGroup[] = [];
+  if (input.groupMode === "status") workspaceGroups = statusWorkspaceGroups(statusGroups);
+  if (input.groupMode === "label") {
+    workspaceGroups = labelWorkspaceGroups(
+      groupWorkspacesByLabel(
+        Array.from(input.workspaceEntriesByKey.values()).filter(
+          (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
+        ),
+        input.unlabelledLabel,
+        input.labelDefinitions,
+      ),
+    );
+  }
 
   const sections: SidebarShortcutSection[] = [];
   if (!input.pinnedCollapsed) {
     sections.push({ workspaces: pinnedGroups.pinnedChats });
   }
-  if (input.groupMode === "status") {
+  if (input.groupMode === "status" || input.groupMode === "label") {
     sections.push(
-      ...statusGroups.map((group) => ({
+      ...workspaceGroups.map((group) => ({
         workspaces: group.rows,
-        collapsed: input.collapsedStatusGroupKeys.has(group.bucket),
+        collapsed: input.collapsedWorkspaceGroupKeys.has(group.key),
       })),
     );
   } else {
@@ -70,7 +94,7 @@ export function buildSidebarProjection(input: {
 
   return {
     pinnedGroups,
-    statusGroups,
+    workspaceGroups,
     shortcutModel: buildSidebarShortcutSections({ sections }),
   };
 }

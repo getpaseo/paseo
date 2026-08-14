@@ -2075,8 +2075,9 @@ export class HostRuntimeStore {
       return;
     }
     const snapshot = controller.getSnapshot();
+    const directory = this.directorySyncByServer.get(serverId);
     const directorySourceChanged =
-      this.directorySyncByServer.get(serverId)?.connectionChanged({
+      directory?.connectionChanged({
         client: snapshot.client,
         status: snapshot.connectionStatus === "online" ? "online" : "offline",
         source: {
@@ -2137,7 +2138,7 @@ export class HostRuntimeStore {
               error: toErrorMessage(error),
             });
           }),
-        ]).then(() => undefined),
+        ]).then(() => directory?.connectWorkspaceLabels()),
       )
       .finally(() => {
         const inFlight = this.directoryBootstrapInFlight.get(serverId);

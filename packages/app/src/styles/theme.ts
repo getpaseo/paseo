@@ -105,6 +105,19 @@ export const baseColors = {
     500: "#f97316",
     600: "#ea580c",
   },
+
+  workspaceLabel: {
+    violet: "#8b5cf6",
+    sky: "#38bdf8",
+    emerald: "#10b981",
+    orange: "#f97316",
+    pink: "#ec4899",
+    indigo: "#6366f1",
+    teal: "#14b8a6",
+    red: "#ef4444",
+    amber: "#f59e0b",
+    blue: "#3b82f6",
+  },
 } as const;
 
 // Diff colors — the +/- inside a diff view, where the color *is* the signal and has to

@@ -94,7 +94,7 @@ import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reor
 import { confirmDialog } from "@/utils/confirm-dialog";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
-import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
@@ -233,14 +233,15 @@ function selectionForSelectedWorkspace(
 }
 
 interface SidebarWorkspaceListProps {
-  statusGroups: StatusGroup[];
+  workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
+  hasProjectsBeforeLabelFilter: boolean;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsedProjectKeys: ReadonlySet<string>;
   onToggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutIndexByWorkspaceKey: Map<string, number>;
-  groupMode: "project" | "status";
+  groupMode: "project" | "status" | "label";
   isRefreshing?: boolean;
   onRefresh?: () => void;
   onWorkspacePress?: () => void;
@@ -692,6 +693,9 @@ function WorkspaceRowRightGroup({
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
                 workspaceKey={workspace.workspaceKey}
+                serverId={workspace.serverId}
+                workspaceId={workspace.workspaceId}
+                workspaceLabels={workspace.labels}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
@@ -1084,9 +1088,9 @@ function WorkspaceRowInner({
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
-  const _isCompact = useIsCompactFormFactor();
+  const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
-  const isTouchPlatform = platformIsNative;
+  const isTouchPlatform = platformIsNative || isCompact;
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1918,9 +1922,10 @@ function areProjectBlockSelectionsEqual(
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
 export function SidebarWorkspaceList({
-  statusGroups,
+  workspaceGroups,
   pinnedGroups,
   projects,
+  hasProjectsBeforeLabelFilter,
   workspaceEntriesByKey,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
@@ -1951,6 +1956,13 @@ export function SidebarWorkspaceList({
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
+  const hasActiveLabelFilter = useSidebarViewStore(
+    (state) =>
+      state.labelFilter.include.length > 0 ||
+      state.labelFilter.exclude.length > 0 ||
+      state.labelFilter.includeUnlabelled ||
+      state.labelFilter.excludeUnlabelled,
+  );
   const handlePinnedWorkspaceReorder = useCallback(
     (reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
       const reorderedWorkspaceKeys = reorderedWorkspaces.map((workspace) => workspace.workspaceKey);
@@ -1984,10 +1996,14 @@ export function SidebarWorkspaceList({
     projects: statusProjectIconTargets,
   });
 
+  if (hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0) {
+    return <SidebarLabelFilterEmptyState listHeaderComponent={listHeaderComponent} />;
+  }
+
   const content =
-    groupMode === "status" ? (
+    groupMode === "status" || groupMode === "label" ? (
       <SidebarStatusModeWrapper
-        statusGroups={statusGroups}
+        workspaceGroups={workspaceGroups}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={statusProjectIconByProjectViewKey}
@@ -2028,7 +2044,7 @@ export function SidebarWorkspaceList({
 }
 
 function SidebarStatusModeWrapper({
-  statusGroups,
+  workspaceGroups,
   pinnedGroups,
   workspaceEntriesByKey,
   projectIconByProjectViewKey,
@@ -2042,7 +2058,7 @@ function SidebarStatusModeWrapper({
   parentGestureRef,
   dragGestureHostPresented,
 }: {
-  statusGroups: StatusGroup[];
+  workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
@@ -2068,7 +2084,7 @@ function SidebarStatusModeWrapper({
 
   return (
     <SidebarStatusWorkspaceList
-      groups={statusGroups}
+      groups={workspaceGroups}
       pinnedWorkspaces={pinnedWorkspaces}
       projectIconByProjectViewKey={projectIconByProjectViewKey}
       shortcutIndexByWorkspaceKey={_projectShortcutIndex}
@@ -2104,7 +2120,10 @@ function ProjectModeList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
-}: Omit<SidebarWorkspaceListProps, "statusGroups" | "groupMode" | "isRefreshing" | "onRefresh"> & {
+}: Omit<
+  SidebarWorkspaceListProps,
+  "workspaceGroups" | "groupMode" | "hasProjectsBeforeLabelFilter" | "isRefreshing" | "onRefresh"
+> & {
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
@@ -2478,6 +2497,35 @@ function ProjectModeList({
           {content}
         </ScrollView>
       )}
+    </View>
+  );
+}
+
+function SidebarLabelFilterEmptyState({
+  listHeaderComponent,
+}: {
+  listHeaderComponent?: ReactElement | null;
+}) {
+  const { t } = useTranslation();
+  const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
+
+  return (
+    <View style={styles.container}>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        testID="sidebar-label-filter-empty-scroll"
+      >
+        {listHeaderComponent}
+        <View style={styles.emptyContainer} testID="sidebar-label-filter-empty-state">
+          <Text style={styles.emptyTitle}>{t("workspaceLabels.filter.noMatchesTitle")}</Text>
+          <Text style={styles.emptyText}>{t("workspaceLabels.filter.noMatchesDescription")}</Text>
+          <Button variant="ghost" size="sm" onPress={clearLabelFilter}>
+            {t("workspaceLabels.filter.clear")}
+          </Button>
+        </View>
+      </ScrollView>
     </View>
   );
 }

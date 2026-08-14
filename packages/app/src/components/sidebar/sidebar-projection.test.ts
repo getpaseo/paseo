@@ -6,7 +6,11 @@ import type {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { buildSidebarProjection } from "./sidebar-projection";
 
-function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBucket"] = "done") {
+function makeWorkspace(
+  id: string,
+  statusBucket: SidebarWorkspaceEntry["statusBucket"] = "done",
+  labels: string[] = [],
+) {
   const placement: SidebarWorkspacePlacement = {
     workspaceKey: `srv:${id}`,
     serverId: "srv",
@@ -32,6 +36,7 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    labels,
   };
   return { placement, entry };
 }
@@ -54,8 +59,12 @@ function makeProject(workspaces: SidebarWorkspacePlacement[]): SidebarProjectEnt
   };
 }
 
+function workspaceIds(group: { rows: SidebarWorkspaceEntry[] }): string[] {
+  return group.rows.map((entry) => entry.workspaceId);
+}
+
 function projectionInput(options?: {
-  groupMode?: "project" | "status";
+  groupMode?: "project" | "status" | "label";
   pinnedCollapsed?: boolean;
 }) {
   const pinned = makeWorkspace("pinned", "running");
@@ -75,7 +84,8 @@ function projectionInput(options?: {
     groupMode: options?.groupMode ?? ("project" as const),
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
-    collapsedStatusGroupKeys: new Set<string>(),
+    collapsedWorkspaceGroupKeys: new Set<string>(),
+    unlabelledLabel: "Unlabelled",
   };
 }
 
@@ -97,8 +107,8 @@ describe("buildSidebarProjection", () => {
   it("keeps pinned chats above status groups and removes them from those groups", () => {
     const projection = buildSidebarProjection(projectionInput({ groupMode: "status" }));
 
-    expect(projection.statusGroups.map((group) => group.bucket)).toEqual(["needs_input"]);
-    expect(projection.statusGroups[0]?.rows.map((entry) => entry.workspaceId)).toEqual([
+    expect(projection.workspaceGroups.map((group) => group.key)).toEqual(["needs_input"]);
+    expect(projection.workspaceGroups[0]?.rows.map((entry) => entry.workspaceId)).toEqual([
       "unpinned",
     ]);
     expect(projection.shortcutModel.shortcutTargets).toEqual([
@@ -115,5 +125,34 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
+  });
+
+  it("keeps pinned workspaces out of label groups while preserving pinned shortcut order", () => {
+    const input = projectionInput({ groupMode: "label" });
+    input.workspaceEntriesByKey.get("srv:pinned")!.labels = ["Urgent"];
+    input.workspaceEntriesByKey.get("srv:unpinned")!.labels = ["Urgent", "Backend"];
+    const projection = buildSidebarProjection(input);
+
+    expect(
+      projection.workspaceGroups.map((group) => ({
+        key: group.key,
+        workspaces: workspaceIds(group),
+      })),
+    ).toEqual([
+      { key: "label:backend", workspaces: ["unpinned"] },
+      { key: "label:urgent", workspaces: ["unpinned"] },
+    ]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
+      { serverId: "srv", workspaceId: "unpinned" },
+      { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("uses the translated synthetic group heading supplied by the projection boundary", () => {
+    const input = projectionInput({ groupMode: "label" });
+    input.unlabelledLabel = "Sin etiqueta";
+
+    expect(buildSidebarProjection(input).workspaceGroups.at(-1)?.label).toBe("Sin etiqueta");
   });
 });
