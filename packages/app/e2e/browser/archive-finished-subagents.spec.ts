@@ -1,4 +1,3 @@
-import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -6,6 +5,8 @@ import {
   archiveFinishedSubagents,
   expectArchiveFinishedInProgress,
   expectArchiveFinishedRetry,
+  expectManagedSubagentArchived,
+  expectManagedSubagentUnarchived,
   expectSubagentRowGone,
   expectSubagentRowVisible,
   holdManagedSubagentArchiveRequest,
@@ -45,17 +46,9 @@ test.describe("Archive finished subagents", () => {
 
     await expectSubagentRowGone(page, agents.child.id);
     await expectArchiveFinishedInProgress(page, 0, 1);
-    await expect(workspace.client.fetchAgent({ agentId: agents.child.id })).resolves.toMatchObject({
-      agent: { id: agents.child.id, archivedAt: null },
-    });
+    await expectManagedSubagentUnarchived(workspace, agents.child.id);
     archiveGate.release();
-    await expect
-      .poll(
-        async () =>
-          (await workspace.client.fetchAgent({ agentId: agents.child.id }))?.agent.archivedAt,
-        { timeout: 30_000 },
-      )
-      .toEqual(expect.any(String));
+    await expectManagedSubagentArchived(workspace, agents.child.id);
   });
 
   test("restores a failed child and retries the archive", async ({ page }) => {
@@ -81,12 +74,6 @@ test.describe("Archive finished subagents", () => {
     await archiveFinishedSubagents(page);
 
     await expectSubagentRowGone(page, agents.child.id);
-    await expect
-      .poll(
-        async () =>
-          (await workspace.client.fetchAgent({ agentId: agents.child.id }))?.agent.archivedAt,
-        { timeout: 30_000 },
-      )
-      .toEqual(expect.any(String));
+    await expectManagedSubagentArchived(workspace, agents.child.id);
   });
 });

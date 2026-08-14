@@ -144,6 +144,24 @@ export async function expectSubagentRowGone(page: Page, childId: string): Promis
   });
 }
 
+export async function expectManagedSubagentUnarchived(
+  workspace: Pick<SeededWorkspace, "client">,
+  childId: string,
+): Promise<void> {
+  await expect(workspace.client.fetchAgent({ agentId: childId })).resolves.toMatchObject({
+    agent: { id: childId, archivedAt: null },
+  });
+}
+
+export async function expectManagedSubagentArchived(
+  workspace: Pick<SeededWorkspace, "client">,
+  childId: string,
+): Promise<void> {
+  await expect
+    .poll(() => workspace.client.fetchAgent({ agentId: childId }), { timeout: 30_000 })
+    .toMatchObject({ agent: { id: childId, archivedAt: expect.any(String) } });
+}
+
 export async function archiveFinishedSubagents(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Archive finished subagents" }).click();
 }
