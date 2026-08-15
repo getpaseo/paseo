@@ -16,6 +16,7 @@ interface PluginRuntimePort {
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
+  bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
 }
 
 export class PluginService {
@@ -45,6 +46,10 @@ export class PluginService {
     return () => this.listeners.delete(listener);
   }
 
+  bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {
+    this.runtime.bindPaseoSessionHost(sessionHost);
+  }
+
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
@@ -54,6 +59,7 @@ export class PluginService {
       for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
         if (source.enabled === false) continue;
         await this.startConfigured(pluginId);
+        this.notify(pluginId);
       }
     }
     this.configStore.onFieldChange("pluginsEnabled", (value) => {

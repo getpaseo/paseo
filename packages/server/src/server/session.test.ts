@@ -426,9 +426,12 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   return new Session(sessionOptions);
 }
 
-test("routes plugin management requests and catalog notifications", async () => {
+test("routes plugin requests and releases its owned catalog subscription on cleanup", async () => {
   const messages: SessionOutboundMessage[] = [];
   const listeners = new Set<(pluginId: string) => void>();
+  const releasePluginSubscription = vi.fn((listener: (pluginId: string) => void) => {
+    listeners.delete(listener);
+  });
   const plugin = {
     id: "example",
     path: "/plugins/example",
@@ -445,7 +448,7 @@ test("routes plugin management requests and catalog notifications", async () => 
     removePlugin: async () => undefined,
     subscribe: (listener) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => releasePluginSubscription(listener);
     },
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
@@ -489,6 +492,7 @@ test("routes plugin management requests and catalog notifications", async () => 
   });
   await session.cleanup();
   expect(listeners.size).toBe(0);
+  expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
 describe("session authorization scopes", () => {

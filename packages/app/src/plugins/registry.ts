@@ -100,7 +100,9 @@ class PluginRegistry {
     this.disposed.add(plugin);
     plugin.queryClient.clear();
     try {
-      plugin.cleanup();
+      void Promise.resolve(plugin.cleanup()).catch((error) => {
+        console.warn(`[Plugins] Cleanup failed for ${plugin.serverId}/${plugin.id}`, error);
+      });
     } catch (error) {
       console.warn(`[Plugins] Cleanup failed for ${plugin.serverId}/${plugin.id}`, error);
     }

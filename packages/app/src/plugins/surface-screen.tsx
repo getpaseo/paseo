@@ -2,6 +2,8 @@ import { router, useLocalSearchParams } from "expo-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { PluginSurfaceProps } from "@paseo/plugin";
 import { PluginRpcProvider } from "@paseo/plugin/host";
+import { PaseoApiProvider } from "@paseo/plugin/host";
+import type { PaseoApi } from "@getpaseo/client";
 import { ChevronDown, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
@@ -20,6 +22,7 @@ import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
 import { rememberPluginContributionHost } from "./sidebar-groups";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
+import { createPluginSurfaceRuntime } from "./surface-runtime";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const EMPTY_THEME_DTO: Record<string, unknown> = {};
@@ -49,6 +52,7 @@ const ThemedPluginHeaderIcon = withUnistyles(PluginHeaderIcon);
 function SurfaceRenderer({
   Surface,
   invoke,
+  paseo,
   plugin,
   layout,
   host,
@@ -56,6 +60,7 @@ function SurfaceRenderer({
 }: {
   Surface: ComponentType<PluginSurfaceProps>;
   invoke(method: string, input: unknown): Promise<unknown>;
+  paseo: PaseoApi;
   plugin: NonNullable<ReturnType<typeof useInstalledPlugin>>;
   layout: PluginSurfaceProps["layout"];
   host: PluginSurfaceProps["host"];
@@ -63,9 +68,11 @@ function SurfaceRenderer({
 }) {
   return (
     <QueryClientProvider client={plugin.queryClient}>
-      <PluginRpcProvider invoke={invoke}>
-        <Surface theme={themeDto} host={host} layout={layout} />
-      </PluginRpcProvider>
+      <PaseoApiProvider paseo={paseo}>
+        <PluginRpcProvider invoke={invoke}>
+          <Surface theme={themeDto} host={host} layout={layout} />
+        </PluginRpcProvider>
+      </PaseoApiProvider>
     </QueryClientProvider>
   );
 }
@@ -150,6 +157,7 @@ export function PluginSurfaceScreen() {
   const installations = usePluginInstallations(pluginId);
   const hosts = useHosts();
   const client = useHostRuntimeClient(serverId);
+  const runtime = useMemo(() => createPluginSurfaceRuntime(client, pluginId), [client, pluginId]);
   const compact = useIsCompactFormFactor();
   const sidebarItem = plugin?.sidebarItems.find((entry) => entry.id === contributionId) ?? null;
   const surface = plugin?.surfaces.find((entry) => entry.id === sidebarItem?.surface) ?? null;
@@ -163,13 +171,6 @@ export function PluginSurfaceScreen() {
   );
   const title = sidebarItem?.title ?? (pluginId || "Plugin");
   const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
-  const invoke = useCallback(
-    async (method: string, input: unknown) => {
-      if (!client) throw new Error("Plugin host is offline");
-      return client.invokePluginRpc(pluginId, method, input);
-    },
-    [client, pluginId],
-  );
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
@@ -217,7 +218,7 @@ export function PluginSurfaceScreen() {
     <View style={styles.screen}>
       <ScreenHeader left={headerLeft} right={headerRight} />
       <View style={styles.body}>
-        {plugin && surface ? (
+        {plugin && surface && runtime ? (
           <SurfaceErrorBoundary
             key={`${serverId}/${pluginId}/${contributionId}`}
             installation={plugin}
@@ -225,7 +226,8 @@ export function PluginSurfaceScreen() {
           >
             <ThemedSurfaceRenderer
               Surface={surface.Component}
-              invoke={invoke}
+              invoke={runtime.invoke}
+              paseo={runtime.paseo}
               plugin={plugin}
               host={host}
               layout={layout}
@@ -233,7 +235,9 @@ export function PluginSurfaceScreen() {
             />
           </SurfaceErrorBoundary>
         ) : (
-          <Text style={styles.errorText}>This plugin surface is unavailable.</Text>
+          <Text style={styles.errorText}>
+            {plugin && surface ? "Plugin host is offline." : "This plugin surface is unavailable."}
+          </Text>
         )}
       </View>
     </View>

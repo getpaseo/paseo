@@ -38,7 +38,46 @@ function createService(
   plugins: Record<string, { source: "directory"; path: string; enabled?: boolean }> = {},
   runtime?: ConstructorParameters<typeof PluginService>[2],
 ): PluginService {
-  return new PluginService(pino({ level: "silent" }), createStore(home, plugins), runtime);
+  return bindTestSessionHost(
+    new PluginService(pino({ level: "silent" }), createStore(home, plugins), runtime),
+  );
+}
+
+function bindTestSessionHost(service: PluginService): PluginService {
+  service.bindPaseoSessionHost({
+    async attachPluginSocket(_pluginId, socket) {
+      const closed = new Promise<void>((resolve) => socket.once("close", resolve));
+      socket.on("message", (data) => {
+        if (typeof data !== "string") return;
+        const message = JSON.parse(data);
+        if (message.type !== "hello") return;
+        socket.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "status",
+              payload: {
+                status: "server_info",
+                serverId: "plugin-service-test",
+                hostname: "plugin-service-test",
+                version: "0.4.0",
+                features: {},
+              },
+            },
+          }),
+        );
+      });
+      return { closed };
+    },
+  });
+  return service;
+}
+
+function catalogIds(service: PluginService): string[] {
+  return service
+    .catalog()
+    .map(({ id }) => id)
+    .sort();
 }
 
 afterEach(async () => {
@@ -69,6 +108,7 @@ function createPausedRuntime() {
       running.clear();
     },
     subscribe: () => () => undefined,
+    bindPaseoSessionHost: () => undefined,
   };
   return { runtime, started, releaseStart };
 }
@@ -101,11 +141,36 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
       running.clear();
     },
     subscribe: () => () => undefined,
+    bindPaseoSessionHost: () => undefined,
   };
   return { runtime, started, releaseStart, starts };
 }
 
 describe("PluginService", () => {
+  it("publishes each configured plugin after its startup state settles", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const first = await createPlugin(
+      "startup-first",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const second = await createPlugin(
+      "startup-second",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const service = createService(home, {
+      "startup-first": { source: "directory", path: first },
+      "startup-second": { source: "directory", path: second },
+    });
+    const snapshots: string[][] = [];
+    service.subscribe(() => snapshots.push(catalogIds(service)));
+
+    await service.start();
+
+    expect(snapshots).toEqual([["startup-first"], ["startup-first", "startup-second"]]);
+    await service.stopAllPlugins();
+  }, 20_000);
+
   it("uses an explicit config key, exposes reload failure, and retries from disk", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -114,7 +179,7 @@ describe("PluginService", () => {
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const store = createStore(home);
-    const service = new PluginService(pino({ level: "silent" }), store);
+    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
     await service.start();
 
     await expect(
@@ -140,7 +205,7 @@ describe("PluginService", () => {
     );
     await expect(service.reloadPlugin("work-plugin")).resolves.toMatchObject({ status: "running" });
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("disables and removes a plugin without touching its source directory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -155,7 +220,7 @@ export default function contribute(plugin: unknown) {
 }`,
     );
     const store = createStore(home);
-    const service = new PluginService(pino({ level: "silent" }), store);
+    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
     await service.start();
     await service.installDirectory({ path: directory });
 
@@ -168,7 +233,7 @@ export default function contribute(plugin: unknown) {
     expect(service.listPlugins()).toEqual([]);
     await expect(stat(directory)).resolves.toMatchObject({});
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("detaches every plugin synchronously when the global switch turns off and recovers", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -182,7 +247,7 @@ export default function contribute(plugin: unknown) {
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const store = createStore(home);
-    const service = new PluginService(pino({ level: "silent" }), store);
+    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
     await service.start();
     await service.installDirectory({ path: first });
     await service.installDirectory({ path: second });
@@ -200,7 +265,7 @@ export default function contribute(plugin: unknown) {
       { id: "second", status: "running" },
     ]);
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("does not publish an in-flight start after a later global disable", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));

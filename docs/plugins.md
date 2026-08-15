@@ -77,7 +77,7 @@ resolving dependencies.
 import { Text } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { defineRpc, type PluginContext, useRpc } from "@paseo/plugin";
+import { defineRpc, type PluginContext, usePaseo, useRpc } from "@paseo/plugin";
 
 const greetRpc = defineRpc({
   name: "greet",
@@ -86,16 +86,36 @@ const greetRpc = defineRpc({
 });
 
 function Greeting() {
+  const paseo = usePaseo();
   const greet = useRpc(greetRpc);
   const query = useQuery({
     queryKey: ["greeting", "Paseo"],
     queryFn: () => greet({ name: "Paseo" }),
   });
-  return <Text>{query.data?.message}</Text>;
+  const createWorkspace = () =>
+    paseo.workspaces
+      .create({
+        source: {
+          kind: "worktree",
+          cwd: "/absolute/path/to/project",
+          action: "checkout",
+          checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+        },
+      })
+      .then((workspace) =>
+        workspace.agents.create({
+          config: { provider: "codex/gpt-5" },
+          prompt: "Review PR #42",
+        }),
+      );
+  return <Text onPress={() => void createWorkspace()}>{query.data?.message}</Text>;
 }
 
 export default function contribute(plugin: PluginContext) {
-  plugin.handle(greetRpc, async ({ name }) => ({ message: `Hello, ${name}` }));
+  plugin.handle(greetRpc, async ({ name }, { paseo }) => {
+    const { config } = await paseo.config.get();
+    return { message: `${name}: ${config.pluginsEnabled ? "enabled" : "disabled"}` };
+  });
   plugin.addSurface("main", Greeting);
   plugin.addSidebarItem({
     id: "main",
@@ -107,10 +127,11 @@ export default function contribute(plugin: PluginContext) {
 }
 ```
 
-The contribution function must return cleanup. Paseo invokes it once when the plugin is reloaded,
-disabled, removed, disconnected, or shut down. Cleanup is for resources created by plugin code.
-Paseo removes registered contributions, unmounts surfaces, clears query state, rejects pending RPCs,
-and stops the subprocess. Cleanup errors are logged and do not interrupt host teardown.
+The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
+the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
+created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
+state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
+errors are logged and do not interrupt host teardown.
 
 Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
@@ -118,6 +139,19 @@ and render error boundary. The contributed component owns the complete body belo
 RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
+
+`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: workspaces, agents,
+providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+selected host's existing connection; switching the screen's host changes both `usePaseo()` and
+`useRpc()` to that host. An offline selected host fails there and never falls through to another
+installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
+Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
+
+Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
+normal clients, never resumes another session, and is cleaned immediately on exit without reconnect
+grace. During daemon startup, plugin sessions may connect while application WebSockets remain
+paused; the daemon accepts clients only after configured plugins have settled and the initial
+catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and

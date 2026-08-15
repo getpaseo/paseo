@@ -7,6 +7,7 @@ import type pino from "pino";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
+import { PluginSessionSocket } from "./session-socket.js";
 
 const ENTRY_FILENAME = "index.tsx";
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -33,10 +34,20 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   child: PluginChild;
   pending: Map<string, PendingInvocation>;
+  sessionSocket: PluginSessionSocket;
+  sessionClosed: Promise<void>;
 }
 
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
+  sessionHost?: PluginPaseoSessionHost;
+}
+
+export interface PluginPaseoSessionHost {
+  attachPluginSocket(
+    pluginId: string,
+    socket: PluginSessionSocket,
+  ): Promise<{ closed: Promise<void> }>;
 }
 
 function resolveWorkerUrl(): URL {
@@ -95,11 +106,19 @@ export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
+  private sessionHost: PluginPaseoSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
 
   constructor(logger: pino.Logger, dependencies: PluginRuntimeDependencies = {}) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
+    this.sessionHost = dependencies.sessionHost ?? null;
+  }
+
+  bindPaseoSessionHost(sessionHost: PluginPaseoSessionHost): void {
+    if (this.plugins.size > 0)
+      throw new Error("Cannot replace the plugin session host while running");
+    this.sessionHost = sessionHost;
   }
 
   subscribe(listener: (pluginId: string, error?: string) => void): () => void {
@@ -174,8 +193,18 @@ export class PluginRuntime {
     const entryPath = path.join(directory, ENTRY_FILENAME);
     await requireRegularFile(entryPath, "Plugin entry point");
     const bundles = await compilePlugin(entryPath);
+    const sessionHost = this.sessionHost;
+    if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
     const child = this.spawnChild();
+    const sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
+    const sessionAttachment = await sessionHost
+      .attachPluginSocket(pluginId, sessionSocket)
+      .catch((error) => {
+        terminatePluginChild(child);
+        throw error;
+      });
+    let loaded: LoadedPlugin | null = null;
     let methods: string[];
     try {
       methods = await new Promise<string[]>((resolve, reject) => {
@@ -191,31 +220,50 @@ export class PluginRuntime {
           reject(error);
         };
         child.on("message", (message) => {
-          if (message.type === "ready") {
+          if (message.type === "paseo_frame") {
+            sessionSocket.receive(message.data, message.isBinary);
+          } else if (message.type === "paseo_close") {
+            sessionSocket.peerClosed();
+          } else if (message.type === "ready") {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
             resolve(message.methods);
           } else if (message.type === "fatal") {
             fail(new Error(message.error));
+          } else if (loaded) {
+            this.handleChildMessage(loaded, message);
           }
         });
-        child.on("close", () => fail(new Error(`Plugin ${pluginId} exited during initialization`)));
-        void send(child, { type: "initialize", bundle: bundles.serverBundle }).catch(fail);
+        child.on("close", () => {
+          sessionSocket.peerClosed();
+          if (!loaded) {
+            fail(new Error(`Plugin ${pluginId} exited during initialization`));
+            return;
+          }
+          void this.handleChildClose(loaded);
+        });
+        void send(child, {
+          type: "initialize",
+          pluginId,
+          bundle: bundles.serverBundle,
+        }).catch(fail);
       });
     } catch (error) {
+      sessionSocket.close();
+      await sessionAttachment.closed;
       terminatePluginChild(child);
       throw error;
     }
-    const loaded: LoadedPlugin = {
+    loaded = {
       id: pluginId,
       clientBundle: bundles.clientBundle,
       methods: new Set(methods),
       child,
       pending,
+      sessionSocket,
+      sessionClosed: sessionAttachment.closed,
     };
-    child.on("message", (message) => this.handleChildMessage(loaded, message));
-    child.on("close", () => this.handleChildClose(loaded));
     this.logger.info({ pluginId, methods }, "Loaded plugin");
     return loaded;
   }
@@ -230,29 +278,34 @@ export class PluginRuntime {
     else pending.reject(new Error(message.error));
   }
 
-  private handleChildClose(loaded: LoadedPlugin): void {
-    if (this.plugins.get(loaded.id) === loaded) {
+  private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
+    loaded.sessionSocket.peerClosed();
+    const wasPublished = this.plugins.get(loaded.id) === loaded;
+    if (wasPublished) {
       this.plugins.delete(loaded.id);
-      this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
     }
     this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`);
+    await loaded.sessionClosed;
+    if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
-    if (loaded.child.killed) return;
-    let didClose = false;
+    if (loaded.child.killed) {
+      loaded.sessionSocket.peerClosed();
+      await loaded.sessionClosed;
+      return;
+    }
     const closed = new Promise<void>((resolve) =>
       loaded.child.on("close", () => {
-        didClose = true;
         resolve();
       }),
     );
     if (loaded.child.connected) {
       await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
     }
-    await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
-    if (!didClose) terminatePluginChild(loaded.child);
     await closed;
+    loaded.sessionSocket.peerClosed();
+    await loaded.sessionClosed;
   }
 
   private rejectPending(loaded: LoadedPlugin, message: string): void {

@@ -353,11 +353,14 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
-export interface PaseoClient {
+export interface PaseoApi {
   readonly workspaces: PaseoWorkspaceActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
   readonly config: PaseoConfigActions;
+}
+
+export interface PaseoClient extends PaseoApi {
   connect(): Promise<void>;
   close(): Promise<void>;
   ensureConnected(): void;
@@ -370,6 +373,16 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
     clientId: config.clientId ?? createGeneratedClientId(),
     clientType: "cli",
   });
+  return {
+    ...createPaseoApi(daemonClient),
+    connect: () => daemonClient.connect(),
+    close: () => daemonClient.close(),
+    ensureConnected: () => daemonClient.ensureConnected(),
+    getConnectionState: () => daemonClient.getConnectionState(),
+  };
+}
+
+export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
   const createAgentHandle = createAgentHandleFactory(daemonClient);
   const createAgent = async (
     options: PaseoAgentCreateOptions,
@@ -447,10 +460,6 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
     },
-    connect: () => daemonClient.connect(),
-    close: () => daemonClient.close(),
-    ensureConnected: () => daemonClient.ensureConnected(),
-    getConnectionState: () => daemonClient.getConnectionState(),
   };
 }
 
