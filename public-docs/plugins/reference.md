@@ -15,7 +15,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - normal Paseo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
 
-Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess on the daemon machine.
+Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
 
 ## Project files
 
@@ -232,6 +232,8 @@ Pass `--host <url>` to management commands when the target is not the CLI's defa
 Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
 
 The daemon-wide **Enable plugins** switch lives under **Settings → Plugins**. A configured plugin remains `disabled` until that switch and the plugin's own enabled state are both on.
+
+The switch is the root `pluginsEnabled` field in `config.json`. After changing it, run `paseo reload --json`. Enabling starts every configured plugin whose own `enabled` value is not `false`; disabling tears down all plugins. No daemon restart is required. Manual edits to plugin source entries are not reloaded—use the plugin lifecycle commands for those.
 
 ## Load failures
 

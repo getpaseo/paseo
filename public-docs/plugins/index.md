@@ -10,9 +10,17 @@ category: Plugins
 
 Paseo plugins add native surfaces, sidebar items, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
-Plugins are trusted local code. Install only code you trust: plugin backend code runs unsandboxed on the daemon machine.
+Plugins are trusted local code. Install only code you trust: backend code runs unsandboxed with access to the daemon machine, and client contributions run inside the Paseo app.
 
 On the target host, open **Settings → Plugins** and turn on **Enable plugins**. This is the global switch for every configured plugin on that daemon.
+
+You can also change the root `pluginsEnabled` field in the daemon's `config.json`, then apply it without restarting:
+
+```bash
+paseo reload --json
+```
+
+Enabling starts configured plugins; disabling tears them down. Automation must inspect the current value first and obtain your explicit permission before changing a disabled or omitted value to `true`.
 
 ## Create a plugin
 

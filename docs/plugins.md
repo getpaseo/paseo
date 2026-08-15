@@ -34,7 +34,10 @@ The daemon stores directory sources under the root `plugins` object:
 }
 ```
 
-The plugin system is disabled unless `pluginsEnabled` is `true`.
+The plugin system is disabled unless `pluginsEnabled` is `true`. Changing that root field is
+runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts every configured,
+enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
+remain lifecycle-owned and do not reload from manual config edits.
 
 The directory contains an identity-only manifest, one entry point, and local typechecking support:
 
@@ -61,6 +64,10 @@ The config key is the runtime plugin ID. The manifest ID is the default selected
 `--id` overrides it. Existing configuration is not renamed when the manifest changes, and the
 runtime does not compare the two IDs. The same directory can be installed under several config
 keys.
+
+Never enable plugins on a user's behalf without explicit permission. Before asking, check the
+target daemon's current `pluginsEnabled` value. State that plugins are trusted, unsandboxed code:
+backend code can access the daemon machine, while client contributions run inside the Paseo app.
 
 Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully tear down the old
 plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore

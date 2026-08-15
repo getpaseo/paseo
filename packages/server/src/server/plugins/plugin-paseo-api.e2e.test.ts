@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -80,6 +80,84 @@ export default function contribute(plugin: PluginContext) {
     expect(agents.entries.map((entry) => entry.agent.id)).toContain(
       Reflect.get(created, "agentId"),
     );
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
+test("daemon config reload enables and disables configured plugins without restarting", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reload-plugin-"));
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-reload-home-"));
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  roots.push(pluginDirectory, paseoHomeRoot);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "reloadable-plugin" }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.tsx"),
+    `export default function contribute(plugin: unknown) {
+  void plugin;
+  return () => undefined;
+    }`,
+  );
+
+  const plugins = {
+    "reloadable-plugin": { source: "directory" as const, path: pluginDirectory, enabled: true },
+  };
+  await mkdir(paseoHome, { recursive: true });
+  await writeFile(
+    path.join(paseoHome, "config.json"),
+    `${JSON.stringify({ version: 1, pluginsEnabled: false, plugins }, null, 2)}\n`,
+  );
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot,
+    cleanup: false,
+    pluginsEnabled: false,
+    plugins,
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+  const configPath = path.join(daemon.paseoHome, "config.json");
+
+  async function setPluginsEnabled(enabled: boolean): Promise<void> {
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    await writeFile(
+      configPath,
+      `${JSON.stringify({ ...config, pluginsEnabled: enabled }, null, 2)}\n`,
+    );
+  }
+
+  try {
+    await client.connect();
+    await expect(client.listPlugins()).resolves.toEqual([
+      expect.objectContaining({ id: "reloadable-plugin", status: "disabled" }),
+    ]);
+
+    await setPluginsEnabled(true);
+    await expect(client.reloadDaemonConfig()).resolves.toMatchObject({
+      requestId: expect.any(String),
+      appliedPaths: expect.arrayContaining(["pluginsEnabled"]),
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    await expect
+      .poll(async () => (await client.listPlugins()).find(({ id }) => id === "reloadable-plugin"))
+      .toMatchObject({ enabled: true, status: "running" });
+
+    await setPluginsEnabled(false);
+    await expect(client.reloadDaemonConfig()).resolves.toEqual({
+      requestId: expect.any(String),
+      appliedPaths: ["pluginsEnabled"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    await expect
+      .poll(async () => (await client.listPlugins()).find(({ id }) => id === "reloadable-plugin"))
+      .toMatchObject({ enabled: true, status: "disabled" });
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
