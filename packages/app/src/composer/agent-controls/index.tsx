@@ -772,6 +772,7 @@ function ControlledAgentControls({
             modeControl={modeControl}
             glyphSize={layoutContextValue.glyphSize}
             modelSelectorServerId={modelSelectorServerId}
+            canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
         )}
       </View>
@@ -1086,6 +1087,7 @@ interface SheetAgentControlsContentProps {
   modeControl?: AgentModeControlValue | null;
   glyphSize: number;
   modelSelectorServerId: string | null;
+  canSwitchProvider: boolean;
 }
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
@@ -1122,6 +1124,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     modeControl,
     glyphSize,
     modelSelectorServerId,
+    canSwitchProvider,
   } = props;
 
   const thinkingAnchorRef = useRef<View | null>(null);
@@ -1193,6 +1196,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       providers={modelSelectorProviders}
       selectedProvider={provider}
       selectedModel={selectedModelId ?? ""}
+      thinkingLabel={hasThinking ? displayThinking : null}
       onSelect={handleSheetModelSelect}
       profiles={agentProfiles}
       onApplyProfile={onApplyAgentProfile}
@@ -1205,6 +1209,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       isRetryingProvider={isRetryingModelProvider}
       serverId={modelSelectorServerId}
       glyphSize={glyphSize}
+      canSwitchProvider={canSwitchProvider}
     >
       {sheetControls}
     </CompactModelSheet>
@@ -1357,45 +1362,56 @@ function SheetFeatureItem({
   );
   const sheetHeader = useMemo<SheetHeader>(() => ({ title: feature.label }), [feature.label]);
 
-  const handleTogglePress = useCallback(() => {
-    if (feature.type === "toggle") {
-      onSetFeature?.(feature.id, !feature.value);
-    }
-  }, [feature, onSetFeature]);
-
   const handleSelectOption = useCallback(
     (optionId: string) => {
-      onSetFeature?.(feature.id, optionId);
+      onSetFeature?.(feature.id, feature.type === "toggle" ? optionId === "true" : optionId);
     },
-    [feature.id, onSetFeature],
+    [feature.id, feature.type, onSetFeature],
   );
-  const comboboxOptions = useMemo<ComboboxOption[]>(
-    () =>
-      feature.type === "select"
-        ? feature.options.map((option) => ({ id: option.id, label: option.label }))
-        : [],
-    [feature],
-  );
+  const comboboxOptions = useMemo<ComboboxOption[]>(() => {
+    if (feature.type === "select") {
+      return feature.options.map((option) => ({ id: option.id, label: option.label }));
+    }
+    return [
+      { id: "true", label: t("agentControls.features.on") },
+      { id: "false", label: t("agentControls.features.off") },
+    ];
+  }, [feature, t]);
 
   if (feature.type === "toggle") {
     const FeatureIcon = getAgentFeatureIcon(feature.icon);
     return (
-      <AgentControlTrigger
-        icon={FeatureIcon}
-        iconColor={getFeatureIconColor(
-          feature.id,
-          feature.value,
-          theme.colors.palette,
-          theme.colors.foregroundMuted,
-        )}
-        surface="sheet"
-        label={feature.label}
-        value={feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
-        disabled={disabled}
-        onPress={handleTogglePress}
-        accessibilityLabel={getFeatureTooltip(feature)}
-        testID={`agent-feature-${feature.id}`}
-      />
+      <>
+        <AgentControlTrigger
+          ref={featureAnchorRef}
+          icon={FeatureIcon}
+          iconColor={getFeatureIconColor(
+            feature.id,
+            feature.value,
+            theme.colors.palette,
+            theme.colors.foregroundMuted,
+          )}
+          surface="sheet"
+          label={feature.label}
+          value={feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
+          open={openSelector === featureSelector}
+          disabled={disabled}
+          onPress={handleSelectPress}
+          accessibilityLabel={getFeatureTooltip(feature)}
+          testID={`agent-feature-${feature.id}`}
+        />
+        <Combobox
+          options={comboboxOptions}
+          value={String(feature.value)}
+          onSelect={handleSelectOption}
+          open={openSelector === featureSelector}
+          onOpenChange={handleFeatureOpenChange}
+          anchorRef={featureAnchorRef}
+          presentation="push"
+          searchable={false}
+          header={sheetHeader}
+        />
+      </>
     );
   }
 

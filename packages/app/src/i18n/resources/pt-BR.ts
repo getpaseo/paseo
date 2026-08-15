@@ -1438,6 +1438,7 @@ export const ptBR: TranslationResources = {
     defaultModel: "Padrão",
     profiles: "Perfis",
     providers: "Provedores",
+    model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfis de agente",
     createProfile: "Criar perfil",

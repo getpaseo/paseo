@@ -1411,6 +1411,7 @@ export const ar: TranslationResources = {
     defaultModel: "تقصير",
     profiles: "الملفات الشخصية",
     providers: "المزودون",
+    model: "النموذج",
     editProfiles: "تحرير",
     editProfilesLabel: "تحرير ملفات الوكيل",
     createProfile: "إنشاء ملف شخصي",

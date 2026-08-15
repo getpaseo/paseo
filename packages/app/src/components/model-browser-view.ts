@@ -18,14 +18,17 @@ export type ModelBrowserAllView =
 export function resolveModelBrowserAllView({
   providers,
   normalizedQuery,
+  isSearchFocused,
 }: {
   providers: ProviderSelectorProvider[];
   normalizedQuery: string;
+  isSearchFocused: boolean;
 }): ModelBrowserAllView {
-  if (!normalizedQuery) {
+  if (!normalizedQuery && !isSearchFocused) {
     return { kind: "browse" };
   }
-  const rows = filterAndRankModelRows(getAllProviderModelRows(providers), normalizedQuery);
+  const allRows = getAllProviderModelRows(providers);
+  const rows = normalizedQuery ? filterAndRankModelRows(allRows, normalizedQuery) : allRows;
   if (rows.length === 0) {
     return { kind: "noSearchMatches" };
   }

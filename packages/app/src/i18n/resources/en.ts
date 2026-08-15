@@ -1421,6 +1421,7 @@ export const en = {
     defaultModel: "Default",
     profiles: "Profiles",
     providers: "Providers",
+    model: "Model",
     editProfiles: "Edit",
     editProfilesLabel: "Edit agent profiles",
     createProfile: "Create profile",

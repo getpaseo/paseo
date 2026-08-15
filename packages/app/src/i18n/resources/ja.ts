@@ -1425,6 +1425,7 @@ export const ja: TranslationResources = {
     defaultModel: "デフォルト",
     profiles: "プロファイル",
     providers: "プロバイダー",
+    model: "モデル",
     editProfiles: "編集",
     editProfilesLabel: "エージェントプロファイルを編集",
     createProfile: "プロファイルを作成",

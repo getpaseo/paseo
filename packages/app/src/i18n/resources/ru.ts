@@ -1443,6 +1443,7 @@ export const ru: TranslationResources = {
     defaultModel: "По умолчанию",
     profiles: "Профили",
     providers: "Провайдеры",
+    model: "Модель",
     editProfiles: "Изменить",
     editProfilesLabel: "Изменить профили агентов",
     createProfile: "Создать профиль",

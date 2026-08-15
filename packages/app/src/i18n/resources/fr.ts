@@ -1456,6 +1456,7 @@ export const fr: TranslationResources = {
     defaultModel: "Défaut",
     profiles: "Profils",
     providers: "Fournisseurs",
+    model: "Modèle",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d'agent",
     createProfile: "Créer un profil",

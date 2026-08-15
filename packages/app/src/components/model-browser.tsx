@@ -157,12 +157,14 @@ export interface ModelBrowserState {
   profiles: AgentProfilePicker | null;
   view: ModelBrowserView;
   searchQuery: string;
+  isSearchFocused: boolean;
   header: SheetHeader;
   selectedModelLabel: string;
   triggerLabel: string;
   desktopFixedHeight: number | undefined;
   isProviderView: boolean;
   prepareToOpen: () => void;
+  showAll: () => void;
   reset: () => void;
   drillDown: (providerId: string, providerLabel: string) => void;
 }
@@ -176,6 +178,10 @@ interface ModelBrowserProps {
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
   scrolling?: "sheet" | "independent";
+  /** Empty focused search shows all model rows instead of the browse root. */
+  searchAllOnFocus?: boolean;
+  /** Replaces provider rows only while the all-provider search is empty. */
+  rootBrowseContent?: React.ReactNode;
 }
 
 interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
@@ -184,9 +190,12 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   selectedProvider: string;
   selectedModel: string;
   searchQuery: string;
+  isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
+  searchAllOnFocus: boolean;
+  rootBrowseContent?: React.ReactNode;
 }
 
 type ProviderGlyphTone = "muted" | "foreground";
@@ -252,6 +261,7 @@ export function useModelBrowser({
   const { t } = useTranslation();
   const [view, setView] = useState<ModelBrowserView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
   const hasProfiles = (profiles?.rows.length ?? 0) > 0;
 
@@ -272,10 +282,11 @@ export function useModelBrowser({
 
   const reset = useCallback(() => {
     setSearchQuery("");
+    setIsSearchFocused(false);
     bumpSearchResetKey();
   }, []);
 
-  const handleBackToAll = useCallback(() => {
+  const showAll = useCallback(() => {
     setView({ kind: "all" });
     reset();
   }, [reset]);
@@ -299,6 +310,8 @@ export function useModelBrowser({
         title: t("modelSelector.title"),
         search: {
           onChange: handleSearchQueryChange,
+          onFocus: () => setIsSearchFocused(true),
+          onBlur: () => setIsSearchFocused(false),
           resetKey: `all:${searchResetKey}`,
           placeholder: t("modelSelector.searchAllPlaceholder"),
           autoFocus: isWeb,
@@ -311,7 +324,7 @@ export function useModelBrowser({
       leading: (
         <ModelProviderGlyph provider={view.providerId} size={ICON_SIZE.md} tone="foreground" />
       ),
-      back: singleProviderView ? undefined : { onPress: handleBackToAll },
+      back: singleProviderView ? undefined : { onPress: showAll },
       actions: (
         <View style={styles.headerActionRow}>
           <ProviderSettingsAction
@@ -325,21 +338,15 @@ export function useModelBrowser({
       ),
       search: {
         onChange: handleSearchQueryChange,
+        onFocus: () => setIsSearchFocused(true),
+        onBlur: () => setIsSearchFocused(false),
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: t("modelSelector.searchPlaceholder"),
         autoFocus: isWeb,
         testID: "model-search-input",
       },
     };
-  }, [
-    handleBackToAll,
-    handleSearchQueryChange,
-    searchResetKey,
-    serverId,
-    singleProviderView,
-    t,
-    view,
-  ]);
+  }, [handleSearchQueryChange, searchResetKey, serverId, singleProviderView, showAll, t, view]);
 
   const selectedModelLabel = useMemo(
     () =>
@@ -371,12 +378,14 @@ export function useModelBrowser({
     profiles,
     view,
     searchQuery,
+    isSearchFocused,
     header,
     selectedModelLabel,
     triggerLabel,
     desktopFixedHeight,
     isProviderView: view.kind === "provider",
     prepareToOpen,
+    showAll,
     reset,
     drillDown,
   };
@@ -856,6 +865,7 @@ function IndependentModelList({
         keyExtractor={getModelRowKey}
         style={styles.virtualizedModelList}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.virtualizedModelListContent}
         nestedScrollEnabled
@@ -879,6 +889,7 @@ function IndependentProviderList({ children }: { children: React.ReactNode }) {
           styles.virtualizedProviderListContent,
         ]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
         testID="compact-provider-list"
@@ -1078,6 +1089,7 @@ function ModelBrowserContent({
   selectedProvider,
   selectedModel,
   searchQuery,
+  isSearchFocused,
   profiles,
   onSelect,
   onApplyProfile,
@@ -1086,6 +1098,8 @@ function ModelBrowserContent({
   onRetryProvider,
   isRetryingProvider = false,
   scrolling,
+  searchAllOnFocus,
+  rootBrowseContent,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
@@ -1097,10 +1111,15 @@ function ModelBrowserContent({
     [providers, view],
   );
   const allView = useMemo(
-    () => resolveModelBrowserAllView({ providers, normalizedQuery }),
-    [normalizedQuery, providers],
+    () =>
+      resolveModelBrowserAllView({
+        providers,
+        normalizedQuery,
+        isSearchFocused: searchAllOnFocus && isSearchFocused,
+      }),
+    [isSearchFocused, normalizedQuery, providers, searchAllOnFocus],
   );
-  const hasResults = profiles !== null || providers.length > 0;
+  const hasResults = profiles !== null || providers.length > 0 || rootBrowseContent != null;
 
   if (view.kind === "provider") {
     return (
@@ -1154,16 +1173,17 @@ function ModelBrowserContent({
           onEditProfiles={onEditProfiles}
         />
       ) : null}
-      {providers.length > 0 ? (
-        <View>
-          {profiles ? (
-            <View style={styles.sectionHeading}>
-              <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
-            </View>
-          ) : null}
-          <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
-        </View>
-      ) : null}
+      {rootBrowseContent ??
+        (providers.length > 0 ? (
+          <View>
+            {profiles ? (
+              <View style={styles.sectionHeading}>
+                <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
+              </View>
+            ) : null}
+            <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+          </View>
+        ) : null)}
       {!hasResults ? <ModelSearchEmptyState /> : null}
     </View>
   );
@@ -1183,6 +1203,8 @@ export function ModelBrowser({
   onRetryProvider,
   isRetryingProvider = false,
   scrolling = "sheet",
+  searchAllOnFocus = false,
+  rootBrowseContent,
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
@@ -1191,6 +1213,7 @@ export function ModelBrowser({
       selectedProvider={state.selectedProvider}
       selectedModel={state.selectedModel}
       searchQuery={state.searchQuery}
+      isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
@@ -1199,6 +1222,8 @@ export function ModelBrowser({
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
       scrolling={scrolling}
+      searchAllOnFocus={searchAllOnFocus}
+      rootBrowseContent={rootBrowseContent}
     />
   );
 }

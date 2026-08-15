@@ -1421,6 +1421,7 @@ export const ko: TranslationResources = {
     defaultModel: "기본값",
     profiles: "프로필",
     providers: "제공자",
+    model: "모델",
     editProfiles: "편집",
     editProfilesLabel: "에이전트 프로필 편집",
     createProfile: "프로필 만들기",

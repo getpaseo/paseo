@@ -1394,6 +1394,7 @@ export const zhCN: TranslationResources = {
     defaultModel: "默认",
     profiles: "配置文件",
     providers: "提供方",
+    model: "模型",
     editProfiles: "编辑",
     editProfilesLabel: "编辑智能体配置文件",
     createProfile: "创建配置文件",
