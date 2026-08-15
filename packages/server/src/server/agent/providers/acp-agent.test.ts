@@ -2312,6 +2312,7 @@ describe("ACPAgentClient fetchCatalog", () => {
       mcpServers: [],
       runRequest: expect.any(Function),
       registerProbeSession: expect.any(Function),
+      signal: expect.any(AbortSignal),
     });
     expect(probeSessionCloser).toHaveBeenCalledWith({
       response: {
@@ -2451,16 +2452,18 @@ describe("ACPAgentClient fetchCatalog", () => {
     });
   });
 
-  test("closes custom catalog probe sessions that finish after refresh abort", async () => {
+  test("does not wait for unregistered catalog probe sessions after refresh abort", async () => {
     const started = createDeferred<void>();
     const session = createDeferred<SessionStateResponse>();
+    let startupSignal: AbortSignal | undefined;
     const lateResponse: SessionStateResponse = {
       sessionId: "late-probe-session",
       modes: null,
       models: null,
       configOptions: [],
     };
-    const newSessionStarter = vi.fn(() => {
+    const newSessionStarter = vi.fn((context: { signal?: AbortSignal }) => {
+      startupSignal = context.signal;
       started.resolve(undefined);
       return session.promise;
     });
@@ -2500,24 +2503,14 @@ describe("ACPAgentClient fetchCatalog", () => {
     );
     await started.promise;
 
-    let refreshSettled = false;
-    void refresh.then(
-      () => {
-        refreshSettled = true;
-        return undefined;
-      },
-      () => {
-        refreshSettled = true;
-        return undefined;
-      },
-    );
     controller.abort(new Error("refresh aborted"));
-    await Promise.resolve();
-    expect(refreshSettled).toBe(false);
-    expect(probeSessionCloser).not.toHaveBeenCalled();
-
-    session.resolve(lateResponse);
     await expect(refresh).rejects.toThrow("refresh aborted");
+
+    expect(startupSignal?.aborted).toBe(true);
+    expect(probeSessionCloser).not.toHaveBeenCalled();
+    session.resolve(lateResponse);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(probeSessionCloser).toHaveBeenCalledWith({
       response: lateResponse,

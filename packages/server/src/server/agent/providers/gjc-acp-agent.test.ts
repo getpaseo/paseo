@@ -258,6 +258,13 @@ describe("GjcACPAgentClient", () => {
       expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(40_000);
+      await expect(diagnostic).resolves.toEqual({
+        diagnostic: expect.stringContaining(
+          "ACP session/new: error: ACP session/new timed out after 60000ms",
+        ),
+      });
+      expect(execFile).toHaveBeenCalledTimes(1);
+
       resolveCreate({
         stdout: JSON.stringify({
           ok: true,
@@ -267,12 +274,7 @@ describe("GjcACPAgentClient", () => {
         }),
         stderr: "",
       });
-      await expect(diagnostic).resolves.toEqual({
-        diagnostic: expect.stringContaining(
-          "ACP session/new: error: ACP session/new timed out after 60000ms",
-        ),
-      });
-      expect(execFile).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(execFile).toHaveBeenCalledTimes(2));
     } finally {
       vi.useRealTimers();
     }
@@ -545,6 +547,77 @@ describe("GjcACPAgentClient", () => {
     ).rejects.toThrow("load failed");
 
     expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile.mock.calls[1]![1]).toEqual([
+      "sdk",
+      "session",
+      "raw",
+      "control",
+      "gjc-session-1",
+      "--op",
+      "session.close",
+      "--json-input",
+      "{}",
+      "--confirm",
+      "--json",
+      "--repo",
+      "/repo",
+    ]);
+  });
+
+  test("closes a gjc lifecycle session when startup is aborted after create", async () => {
+    const controller = new AbortController();
+    const abortError = new Error("startup cancelled");
+    controller.abort(abortError);
+    const execFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            sessionId: "gjc-session-1",
+          },
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            closed: true,
+          },
+        }),
+        stderr: "",
+      });
+    const loadSession = vi.fn();
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+    });
+
+    await expect(
+      starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("startup cancelled");
+
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(runRequest).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile.mock.calls[0]![2]).toEqual(
+      expect.objectContaining({
+        signal: controller.signal,
+      }),
+    );
     expect(execFile.mock.calls[1]![1]).toEqual([
       "sdk",
       "session",

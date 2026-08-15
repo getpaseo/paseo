@@ -56,6 +56,7 @@ type GjcExecFile = (
     timeout: number;
     maxBuffer: number;
     encoding: BufferEncoding;
+    signal?: AbortSignal;
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
@@ -179,7 +180,7 @@ export function createGjcACPNewSessionStarter(options: {
 }): ACPNewSessionStarter {
   const runExecFile = options.execFile ?? execFile;
 
-  return async ({ connection, config, mcpServers, runRequest, registerProbeSession }) => {
+  return async ({ connection, config, mcpServers, runRequest, registerProbeSession, signal }) => {
     const lifecycleInput: GjcLifecycleCreateInput = {
       cwd: config.cwd,
       target: {
@@ -210,6 +211,7 @@ export function createGjcACPNewSessionStarter(options: {
             timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
             maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
             encoding: "utf8",
+            signal,
           });
         },
         options.removeInputDirectory,
@@ -254,6 +256,17 @@ export function createGjcACPNewSessionStarter(options: {
           cause: createCleanup.error,
         },
       );
+    }
+    const abortError = getGjcLifecycleAbortError(signal);
+    if (abortError) {
+      await closeGjcLifecycleSession({
+        command: options.command,
+        env: options.env,
+        execFile: runExecFile,
+        cwd: config.cwd,
+        sessionId: createResult.sessionId,
+      }).catch(() => undefined);
+      throw abortError;
     }
     registerProbeSession?.({ sessionId: createResult.sessionId });
 
@@ -524,6 +537,15 @@ function assertGjcLifecycleCommandSucceeded(stdout: string): void {
   if (isRecord(result) && result.ok === false) {
     throw new Error(formatGjcBrokerError(result));
   }
+}
+
+function getGjcLifecycleAbortError(signal: AbortSignal | undefined): Error | null {
+  if (!signal?.aborted) {
+    return null;
+  }
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("GJC lifecycle session startup cancelled");
 }
 
 function getSessionStateResponseId(response: SessionStateResponse): string | null {

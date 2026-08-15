@@ -412,6 +412,7 @@ export interface ACPNewSessionStarterContext {
   mcpServers: McpServer[];
   runRequest: <T>(request: () => Promise<T>) => Promise<T>;
   registerProbeSession?: (response: SessionStateResponse) => void;
+  signal?: AbortSignal;
 }
 
 export type ACPNewSessionStarter = (
@@ -1527,6 +1528,7 @@ export class ACPAgentClient implements AgentClient {
     config: AgentSessionConfig;
     mcpServers: McpServer[];
     registerProbeSession?: (response: SessionStateResponse) => void;
+    signal?: AbortSignal;
   }): Promise<SessionStateResponse> {
     if (this.newSessionStarter) {
       return await this.newSessionStarter({
@@ -1549,11 +1551,13 @@ export class ACPAgentClient implements AgentClient {
     mcpServers: McpServer[];
   }): TrackedACPProbeSession {
     let response: SessionStateResponse | null = null;
+    let closeRequested = false;
     let closePromise: Promise<void> | null = null;
     let resolveTrackedResponse: (sessionResponse: SessionStateResponse) => void = () => undefined;
     const trackedResponse = new Promise<SessionStateResponse>((resolve) => {
       resolveTrackedResponse = resolve;
     });
+    const startupAbortController = new AbortController();
 
     const closeResponse = (sessionResponse: SessionStateResponse): Promise<void> => {
       closePromise ??= this.closeProbeSession(
@@ -1573,11 +1577,15 @@ export class ACPAgentClient implements AgentClient {
       if (!hadResponse) {
         resolveTrackedResponse(sessionResponse);
       }
+      if (closeRequested && this.probeSessionCloser) {
+        void closeResponse(sessionResponse).catch(() => undefined);
+      }
     };
 
     const promise = this.startProbeSession({
       ...context,
       registerProbeSession: rememberResponse,
+      signal: startupAbortController.signal,
     }).then((sessionResponse) => {
       rememberResponse(sessionResponse);
       return sessionResponse;
@@ -1586,23 +1594,20 @@ export class ACPAgentClient implements AgentClient {
     return {
       promise,
       close: async () => {
+        closeRequested = true;
         if (!this.probeSessionCloser) {
+          startupAbortController.abort(new Error(`${this.provider} ACP probe startup cancelled`));
           return;
         }
         if (response) {
           await closeResponse(response);
           return;
         }
-        const sessionResponse = await Promise.race([
-          trackedResponse,
-          promise.then(
-            () => response,
-            () => null,
-          ),
-        ]).catch(() => null);
-        if (sessionResponse) {
-          await closeResponse(sessionResponse);
-        }
+        startupAbortController.abort(new Error(`${this.provider} ACP probe startup cancelled`));
+        void trackedResponse
+          .then((sessionResponse) => closeResponse(sessionResponse))
+          .catch(() => undefined);
+        void promise.catch(() => undefined);
       },
     };
   }
