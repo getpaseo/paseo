@@ -2746,6 +2746,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       let messageAttempts = 0;
 
       try {
+        await vi.waitFor(() => expect(openCode.calls.sessionChildren).toHaveLength(1));
         await session.startTurn("recover me");
         const dispatch = openCode.calls.sessionPromptAsync[0] as { messageID: string };
         const recoveredMessages = {
@@ -2811,12 +2812,36 @@ describe("OpenCode adapter startTurn error handling", () => {
         );
         expect(countEvents(events, "turn_failed")).toBe(0);
         expect(failedRequest === "status" ? statusAttempts : messageAttempts).toBe(2);
+        expect(openCode.calls.sessionChildren).toHaveLength(2);
       } finally {
         vi.useRealTimers();
         await session.close();
       }
     },
   );
+
+  test("does not poll a successful snapshot without the active dispatch", async () => {
+    vi.useFakeTimers();
+    const { parent: session, openCode } = await createParentSession("ses_missing_dispatch");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionStatusResponse = { data: {} };
+    openCode.sessionMessagesResponse = { data: [] };
+
+    try {
+      await session.startTurn("missing dispatch");
+      openCode.emitEvent({ type: "reconnected" });
+      await vi.waitFor(() => expect(countEvents(events, "turn_failed")).toBe(1));
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(openCode.calls.sessionStatus).toHaveLength(1);
+      expect(openCode.calls.sessionMessages).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
 
   test("preserves failed blocking-request snapshots and resolves successful empty ones", async () => {
     const { parent: session, openCode } = await createParentSession("ses_request_recovery");

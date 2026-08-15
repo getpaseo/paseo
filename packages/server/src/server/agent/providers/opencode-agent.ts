@@ -170,11 +170,7 @@ function waitForOpenCodeRetryDelay(delayMs: number, signal: AbortSignal): Promis
   });
 }
 
-function recoveredChildStatus(
-  snapshot: boolean,
-  type: unknown,
-  assistant: OpenCodeSessionMessage | undefined,
-) {
+function recoverChildStatus(snapshot: boolean, type: unknown, assistant?: OpenCodeSessionMessage) {
   if (type === "busy" || type === "retry") return "running";
   if (assistant && "error" in assistant.info && assistant.info.error) return "failed";
   const time = assistant?.info.time;
@@ -3882,7 +3878,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     if (!recovered) return;
     const latestAssistant = messages.findLast((message) => message.info.role === "assistant");
-    const recoveredStatus = recoveredChildStatus(snapshot !== null, status?.type, latestAssistant);
+    const recoveredStatus = recoverChildStatus(snapshot !== null, status?.type, latestAssistant);
     const statusEvent: AgentStreamEvent = {
       type: "provider_subagent",
       provider: "opencode",
@@ -4032,10 +4028,7 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     if ("type" in input && input.type === "server-exited") {
-      if (this.turnState.status === "stopping") {
-        this.finishStoppingTurn(this.turnState.stop);
-        return;
-      }
+      if (this.turnState.status === "stopping") return this.finishStoppingTurn(this.turnState.stop);
       const turnId = this.activeForegroundTurnId;
       if (turnId) {
         this.finishForegroundTurn(
@@ -4049,14 +4042,14 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async reconcileAfterGap(): Promise<void> {
+    await this.hydrateChildSessions(true).catch(() => undefined);
+    await this.reconcileBlockingRequests();
     let delayMs = 100;
     while (!this.closed && !this.recoveryAbortController.signal.aborted) {
-      try {
-        await this.hydrateChildSessions(true);
-        await this.reconcileBlockingRequests();
-        const turnId = this.activeForegroundTurnId;
-        if (!turnId) return;
-        const runnerStatus = await this.readProviderRunnerStatus();
+      const turnId = this.activeForegroundTurnId;
+      if (!turnId) return;
+      const runnerStatus = await this.readProviderRunnerStatus().catch(() => null);
+      if (runnerStatus !== null) {
         if (this.activeDispatchMessageId === null) {
           if (runnerStatus === "idle") {
             this.suppressAssistantMessagesUntilIdle.active = false;
@@ -4068,12 +4061,23 @@ class OpenCodeAgentSession implements AgentSession {
           this.client,
           { id: this.sessionId, directory: this.config.cwd } as OpenCodePersistedSession,
           this.recoveryAbortController.signal,
-        );
+        ).catch(() => null);
+        if (messages === null) {
+          await waitForOpenCodeRetryDelay(delayMs, this.recoveryAbortController.signal);
+          delayMs = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
+          continue;
+        }
         const boundary = messages.findIndex(
           (message) => message.info.id === this.activeDispatchMessageId,
         );
         if (boundary < 0) {
-          throw new Error("OpenCode reconnect snapshot omitted the active dispatch");
+          if (runnerStatus === "idle") {
+            this.finishForegroundTurn(
+              { type: "turn_failed", provider: "opencode", error: "Active dispatch not found" },
+              turnId,
+            );
+          }
+          return;
         }
         for (const message of messages.slice(boundary)) {
           await this.consumeOpenCodeStreamEvent({
@@ -4118,8 +4122,6 @@ class OpenCodeAgentSession implements AgentSession {
           });
         }
         return;
-      } catch {
-        if (this.closed || this.recoveryAbortController.signal.aborted) return;
       }
       await waitForOpenCodeRetryDelay(delayMs, this.recoveryAbortController.signal);
       delayMs = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
