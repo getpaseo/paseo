@@ -4022,6 +4022,7 @@ describe("ACPAgentSession initialization cleanup", () => {
     };
     const newSessionStarter = vi.fn(async () => response);
     const newSessionFailureCloser = vi.fn(async () => undefined);
+    const sessionCloser = vi.fn(async () => undefined);
     const thinkingOptionWriter = vi.fn(async () => {
       throw new Error("thinking override failed");
     });
@@ -4051,6 +4052,7 @@ describe("ACPAgentSession initialization cleanup", () => {
         defaultModes: [],
         newSessionStarter,
         newSessionFailureCloser,
+        sessionCloser,
         thinkingOptionWriter,
         launchEnv: {
           PASEO_AGENT_ID: "agent-1",
@@ -4077,6 +4079,7 @@ describe("ACPAgentSession initialization cleanup", () => {
       },
       mcpServers: [],
     });
+    expect(sessionCloser).not.toHaveBeenCalled();
     expect(terminator.terminated).toContain(child);
   });
 

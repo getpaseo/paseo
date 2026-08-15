@@ -1876,6 +1876,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (newSessionCleanupContext && this.newSessionFailureCloser) {
       try {
         await this.newSessionFailureCloser(newSessionCleanupContext);
+        const closedSessionId = getACPResponseSessionId(newSessionCleanupContext.response);
+        if (closedSessionId && this.sessionId === closedSessionId) {
+          this.sessionId = null;
+        }
       } catch (closeError) {
         this.logger.warn(
           { err: closeError, initializationError: error },
