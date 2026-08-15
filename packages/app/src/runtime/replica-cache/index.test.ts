@@ -278,6 +278,43 @@ describe("ReplicaCache", () => {
     });
   });
 
+  it("restores canonical turn membership without downgrading tagged rows", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    const initial: StreamItem = {
+      kind: "user_message",
+      id: "initial",
+      text: "initial",
+      timestamp: new Date(1),
+      turnId: "turn-1",
+    };
+    const hello: StreamItem = {
+      kind: "user_message",
+      id: "hello",
+      text: "hello",
+      timestamp: new Date(2),
+      turnId: "turn-1",
+      clientMessageId: "hello-client",
+      messageId: "hello-client",
+    };
+    useSessionStore
+      .getState()
+      .setAgentStreamTail(
+        SERVER_ID,
+        new Map([["agent-1", [initial, message("assistant", "done"), hello]]]),
+      );
+    await writer.flush();
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+    const tail =
+      useSessionStore.getState().sessions[SERVER_ID]?.agentStreamTail.get("agent-1") ?? [];
+    expect(tail.find((item) => item.id === "hello")?.turnId).toBe("turn-1");
+  });
+
   it("restores tool calls inside an authoritative cached window", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);

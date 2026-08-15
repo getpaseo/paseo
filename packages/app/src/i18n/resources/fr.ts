@@ -99,6 +99,7 @@ export const fr: TranslationResources = {
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
       sendAndInterrupt: "Envoyer et interrompre",
+      sendAndSteer: "Envoyer et guider",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
       send: "Envoyer",
@@ -1872,11 +1873,14 @@ export const fr: TranslationResources = {
         descriptions: {
           interrupt:
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
+          steer:
+            "Lorsque l’agent est en cours d’exécution, Entrée oriente le tour actif. Commande/Ctrl+Entrée met en file d’attente.",
           queue:
             "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
         },
         options: {
           interrupt: "Interrompre",
+          steer: "Orienter",
           queue: "File d'attente",
         },
       },

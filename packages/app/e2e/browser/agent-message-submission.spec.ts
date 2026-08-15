@@ -36,6 +36,7 @@ import {
   rememberTimelineRequestCounts,
 } from "../support/helpers/timeline-resume";
 import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
+import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
   scrollTimelineUntilOlderHistoryIsReachable,
@@ -263,14 +264,20 @@ async function submitMessageThatWillBeRejected(page: Page, prompt: string): Prom
 
 async function expectRejectedSubmissionRestored(
   page: Page,
-  input: { prompt: string; errorMessage: string },
+  input: { prompt: string; errorMessage: string; preservesActiveTurn?: boolean },
 ): Promise<void> {
-  await expect(page.getByText(input.errorMessage)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("alert").filter({ hasText: input.errorMessage })).toBeVisible({
+    timeout: 30_000,
+  });
   await expectComposerDraft(page, input.prompt);
   await expectComposerEditable(page);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
-  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
   await expect(page.getByTestId("user-message").filter({ hasText: input.prompt })).toHaveCount(0);
+  if (input.preservesActiveTurn) {
+    await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+    return;
+  }
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
   await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
 }
 
@@ -281,6 +288,61 @@ async function retryRestoredSubmission(page: Page, prompt: string): Promise<void
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+}
+
+async function configureSteerInSettings(page: Page): Promise<void> {
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+Comma`);
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await page.getByRole("button", { name: "Steer", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
+      return raw ? (JSON.parse(raw) as { sendBehavior?: unknown }).sendBehavior : null;
+    })
+    .toBe("steer");
+}
+
+async function replaySteeredSleepTurnInBrowser(
+  page: Page,
+  testInfo: { workerIndex: number },
+  shape: "claude" | "codex",
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  gate.setShellToolCommandOverride("sleep 5");
+  gate.holdNextShellToolCall("completed");
+  if (shape === "claude") gate.setAgentStreamItemSuppressed("assistant_message", true);
+  const agent = await startRunningMockAgent(page, {
+    prefix: `steer-replay-${shape}-${testInfo.workerIndex}-`,
+    model: "ten-second-stream",
+    prompt: "Replay a foreground shell tool call while the user steers this turn.",
+  });
+  try {
+    await expect(page.getByTestId("tool-call-badge").last()).toBeVisible({ timeout: 30_000 });
+    if (shape === "codex") gate.setAgentStreamItemSuppressed("assistant_message", true);
+    await configureSteerInSettings(page);
+    await page.goBack();
+    await expectComposerVisible(page);
+    await submitMessage(page, "hello");
+
+    await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+    await expectInFlightForkAvailable(page);
+
+    await gate.waitForHeldServerMessage();
+    if (shape === "claude") gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.releaseHeldServerMessage();
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+
+    await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    await expect(page.getByText(/^Worked for/)).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Fork chat" }).last()).toBeVisible();
+  } finally {
+    gate.setShellToolCommandOverride(null);
+    gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.restore();
+    await agent.cleanup();
+  }
 }
 
 async function queueMessage(page: Page, prompt: string): Promise<void> {
@@ -1025,6 +1087,83 @@ test.describe("Agent message submission", () => {
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await retryRestoredSubmission(page, prompt);
+  });
+
+  test("restores an ambiguous Steer failure without retrying or interrupting", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const prompt = "Restore this ambiguous Steer submission.";
+    const agent = await startRunningMockAgent(page, {
+      prefix: `steer-ambiguous-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active while a Steer request fails.",
+      featureValues: { mockSteerAmbiguousFailures: 1 },
+    });
+    try {
+      await configureSteerInSettings(page);
+      await page.goBack();
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+      const sendsBefore = gate.getClientRequestCount("send_agent_message_request");
+      const cancelsBefore = gate.getClientRequestCount("cancel_agent_request");
+
+      await submitMessageThatWillBeRejected(page, prompt);
+      await expectRejectedSubmissionRestored(page, {
+        prompt,
+        errorMessage: "Requested mock steer transport failure",
+        preservesActiveTurn: true,
+      });
+
+      expect(gate.getClientRequestCount("send_agent_message_request")).toBe(sendsBefore + 1);
+      expect(gate.getClientRequestCount("cancel_agent_request")).toBe(cancelsBefore);
+      expect(gate.getClientRequests("send_agent_message_request").at(-1)).toMatchObject({
+        text: prompt,
+        activeTurnBehavior: "steer",
+      });
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("keeps an optimistic Steer prompt inside the active turn before acknowledgement", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: `steer-optimistic-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active while the user steers it.",
+    });
+    try {
+      await configureSteerInSettings(page);
+      await page.goBack();
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+      gate.holdNextServerMessage("send_agent_message_response");
+      await submitMessage(page, "hello");
+      await gate.waitForHeldServerMessage("send_agent_message_response");
+      await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+      await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+      gate.releaseHeldServerMessage("send_agent_message_response");
+      await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("replays Claude-shaped steering inside one active turn", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await replaySteeredSleepTurnInBrowser(page, testInfo, "claude");
+  });
+
+  test("replays Codex-shaped steering inside one active turn", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await replaySteeredSleepTurnInBrowser(page, testInfo, "codex");
   });
 
   test("restores overlapping queued sends when their connection fails", async ({

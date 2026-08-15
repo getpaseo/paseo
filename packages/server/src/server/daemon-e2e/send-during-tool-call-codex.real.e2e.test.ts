@@ -5,15 +5,12 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
+import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import type { SessionOutboundMessage } from "../messages.js";
-import {
-  canRunRealProvider,
-  createRealProviderClients,
-  getRealProviderConfig,
-} from "./real-provider-test-config.js";
+import { canRunRealProvider } from "./real-provider-test-config.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-codex-tool-interrupt-"));
@@ -21,6 +18,23 @@ function tmpCwd(): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function within<T>(label: string, timeoutMs: number, operation: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out after ${timeoutMs}ms: ${label}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function generateClientMessageId(): string {
@@ -102,24 +116,84 @@ function summarizeTimelineItems(timeline: Awaited<ReturnType<DaemonClient["fetch
   });
 }
 
-async function waitForAssistantWaitingOnSleep(
+interface ObservedForegroundSleep {
+  callId: string;
+}
+
+function getRunningCodexSleep(
+  message: SessionOutboundMessage,
+  agentId: string,
+  command: RegExp,
+): ObservedForegroundSleep | null {
+  if (
+    message.type !== "agent_stream" ||
+    message.payload.agentId !== agentId ||
+    message.payload.event.type !== "timeline" ||
+    message.payload.event.item.type !== "tool_call"
+  ) {
+    return null;
+  }
+  const tool = message.payload.event.item;
+  if (
+    tool.status !== "running" ||
+    tool.detail.type !== "shell" ||
+    !command.test(tool.detail.command)
+  ) {
+    return null;
+  }
+  return { callId: tool.callId };
+}
+
+function isCapturedSleepCompletion(
+  message: SessionOutboundMessage,
+  agentId: string,
+  callId: string,
+): boolean {
+  return (
+    message.type === "agent_stream" &&
+    message.payload.agentId === agentId &&
+    message.payload.event.type === "timeline" &&
+    message.payload.event.item.type === "tool_call" &&
+    message.payload.event.item.callId === callId &&
+    message.payload.event.item.status === "completed"
+  );
+}
+
+function isCapturedSleepCancellation(
+  message: SessionOutboundMessage,
+  agentId: string,
+  callId: string,
+): boolean {
+  return (
+    message.type === "agent_stream" &&
+    message.payload.agentId === agentId &&
+    message.payload.event.type === "timeline" &&
+    message.payload.event.item.type === "tool_call" &&
+    message.payload.event.item.callId === callId &&
+    (message.payload.event.item.status === "canceled" ||
+      message.payload.event.item.status === "failed")
+  );
+}
+
+async function waitForRunningCodexSleep(
   client: DaemonClient,
+  collector: ReturnType<typeof createMessageCollector>,
   agentId: string,
   timeoutMs = 75_000,
-): Promise<void> {
+  command = /\bsleep 5\b/,
+): Promise<ObservedForegroundSleep> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const timeline = await client.fetchAgentTimeline(agentId, { limit: 100 });
-    assertNoProviderLimit(timeline);
-    const assistantText = timeline.entries
-      .filter((entry) => entry.item.type === "assistant_message")
-      .map((entry) => entry.item.text)
-      .join("\n");
-    if (/still running|waiting/i.test(assistantText) && !/`done`|\bdone\b/i.test(assistantText)) {
-      return;
+    const observed = collector.messages
+      .map((message) => getRunningCodexSleep(message, agentId, command))
+      .find((event): event is ObservedForegroundSleep => event !== null);
+    if (observed) {
+      return observed;
     }
-
-    await sleep(500);
+    // Timeline fetches are diagnostic only: projection collapses the lifecycle row.
+    const timeline = await client.fetchAgentTimeline(agentId, { limit: 100 }).catch(() => null);
+    if (timeline) assertNoProviderLimit(timeline);
+    await sleep(50);
   }
 
   const timeline = await client.fetchAgentTimeline(agentId, { limit: 100 }).catch(() => null);
@@ -144,6 +218,12 @@ async function waitForAssistantWaitingOnSleep(
 
 describe("daemon E2E (real codex) - send message during tool call", () => {
   let canRun = false;
+  interface SteeringResources {
+    cwd: string | null;
+    daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null;
+    client: DaemonClient | null;
+    collector: ReturnType<typeof createMessageCollector> | null;
+  }
 
   beforeAll(async () => {
     canRun = await canRunRealProvider("codex");
@@ -155,11 +235,164 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
     }
   });
 
+  test("steers one active Codex turn without starting another", async () => {
+    const logger = pino({ level: "silent" });
+    const resources: SteeringResources = {
+      cwd: tmpCwd(),
+      daemon: null,
+      client: null,
+      collector: null,
+    };
+    try {
+      resources.daemon = await createTestPaseoDaemon({
+        // Use the installed app-server so this regression exercises the native
+        // steering method rather than the broad provider smoke-test path.
+        agentClients: { codex: new CodexAppServerAgentClient(logger) },
+        logger,
+      });
+      resources.client = new DaemonClient({ url: `ws://127.0.0.1:${resources.daemon.port}/ws` });
+      const { client, cwd } = resources;
+      if (!client) throw new Error("Codex steering test client was not created");
+      await within("connect steering test client", 15_000, client.connect());
+      await within(
+        "subscribe steering test client",
+        15_000,
+        client.fetchAgents({ subscribe: { subscriptionId: "steer" } }),
+      );
+      const agent = await within(
+        "create Codex steering test agent",
+        30_000,
+        client.createAgent({
+          cwd: cwd ?? process.cwd(),
+          title: "codex-exact-turn-steer",
+          provider: "codex",
+          model: "gpt-5.4",
+          thinkingOptionId: "low",
+          modeId: "full-access",
+        }),
+      );
+      resources.collector = createMessageCollector(client);
+      await within(
+        "submit Codex foreground sleep turn",
+        30_000,
+        client.sendAgentMessage(
+          agent.id,
+          "Use the shell tool to run exactly: sleep 5. Run it in the foreground. Do not finish until a later user message arrives; after it arrives, reply exactly: STEERED_SAME_TURN.",
+          { messageId: generateClientMessageId() },
+        ),
+      );
+      const foregroundSleep = await within(
+        "wait for live Codex foreground sleep tool",
+        90_000,
+        waitForRunningCodexSleep(client, resources.collector, agent.id, 80_000),
+      );
+      await within(
+        "confirm Codex remains active at the first tool boundary",
+        15_000,
+        client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 10_000),
+      );
+      const initialTurnStarts = resources.collector.messages.filter(
+        (message) =>
+          message.type === "agent_stream" &&
+          message.payload.agentId === agent.id &&
+          message.payload.event.type === "turn_started",
+      );
+      expect(initialTurnStarts).toHaveLength(1);
+      const initialTurnId = initialTurnStarts[0]?.payload.event.turnId;
+      expect(initialTurnId).toEqual(expect.any(String));
+      const steeringMessageId = generateClientMessageId();
+      const messagesBeforeSteer = resources.collector.messages.length;
+      await within(
+        "submit Codex active-turn steer",
+        30_000,
+        client.sendAgentMessage(agent.id, "hello", {
+          messageId: steeringMessageId,
+          activeTurnBehavior: "steer",
+        }),
+      );
+      const finish = await within(
+        "wait for steered Codex turn to finish",
+        150_000,
+        client.waitForFinish(agent.id, 140_000),
+      );
+      expect(finish.status).toBe("idle");
+      const postSteerMessages = resources.collector.messages.slice(messagesBeforeSteer);
+      const turnStarts = postSteerMessages.filter(
+        (message) =>
+          message.type === "agent_stream" &&
+          message.payload.agentId === agent.id &&
+          message.payload.event.type === "turn_started",
+      );
+      expect(turnStarts).toHaveLength(0);
+      expect(
+        postSteerMessages.filter(
+          (message) =>
+            message.type === "agent_stream" &&
+            message.payload.agentId === agent.id &&
+            message.payload.event.type === "turn_canceled",
+        ),
+      ).toHaveLength(0);
+      expect(
+        postSteerMessages.filter(
+          (message) =>
+            message.type === "agent_stream" &&
+            message.payload.agentId === agent.id &&
+            message.payload.event.type === "turn_completed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        postSteerMessages.some((message) =>
+          isCapturedSleepCompletion(message, agent.id, foregroundSleep.callId),
+        ),
+        "the exact live sleep 5 call must complete after hello is submitted",
+      ).toBe(true);
+      expect(
+        postSteerMessages.some((message) =>
+          isCapturedSleepCancellation(message, agent.id, foregroundSleep.callId),
+        ),
+        "the exact live sleep 5 call must not be canceled or fail after hello",
+      ).toBe(false);
+      const timeline = await within(
+        "fetch steered Codex timeline",
+        15_000,
+        client.fetchAgentTimeline(agent.id, { limit: 100 }),
+      );
+      const assistantText = timeline.entries
+        .filter((entry) => entry.item.type === "assistant_message")
+        .map(
+          (entry) => (entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>).text,
+        )
+        .join("\n");
+      const steeringRows = timeline.entries.filter(
+        (entry) =>
+          entry.item.type === "user_message" && entry.item.clientMessageId === steeringMessageId,
+      );
+      expect(steeringRows).toHaveLength(1);
+      expect(steeringRows[0]?.item).toMatchObject({
+        messageId: steeringMessageId,
+        clientMessageId: steeringMessageId,
+      });
+      expect(steeringRows[0]?.turnId).toBe(initialTurnId);
+      expect(assistantText).toContain("STEERED_SAME_TURN");
+    } finally {
+      const cleanup = await Promise.allSettled([
+        Promise.resolve(resources.collector?.unsubscribe()),
+        resources.client?.close() ?? Promise.resolve(),
+        resources.daemon?.close() ?? Promise.resolve(),
+      ]);
+      if (resources.cwd) rmSync(resources.cwd, { recursive: true, force: true });
+      const failures = cleanup.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      expect(failures, "Codex steering E2E cleanup failures").toEqual([]);
+    }
+  }, 210_000);
+
   test("does not emit an idle agent_update between UI send and the replacement Codex turn", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: createRealProviderClients(["codex"], logger),
+      agentClients: { codex: new CodexAppServerAgentClient(logger) },
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -172,7 +405,10 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-tool-interrupt-repro",
-        ...getRealProviderConfig("codex"),
+        provider: "codex",
+        model: "gpt-5.4",
+        thinkingOptionId: "low",
+        modeId: "full-access",
       });
 
       collector = createMessageCollector(client);
@@ -186,7 +422,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
         (snapshot) => snapshot.status === "running",
         60_000,
       );
-      await waitForAssistantWaitingOnSleep(client, agent.id);
+      await waitForRunningCodexSleep(client, collector, agent.id, 75_000, /\bsleep 60\b/);
 
       collector.clear();
 
@@ -235,7 +471,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
     const daemon = await createTestPaseoDaemon({
-      agentClients: createRealProviderClients(["codex"], logger),
+      agentClients: { codex: new CodexAppServerAgentClient(logger) },
       logger,
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -248,7 +484,10 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const agent = await client.createAgent({
         cwd,
         title: "codex-quick-follow-up-repro",
-        ...getRealProviderConfig("codex"),
+        provider: "codex",
+        model: "gpt-5.4",
+        thinkingOptionId: "low",
+        modeId: "full-access",
       });
 
       collector = createMessageCollector(client);

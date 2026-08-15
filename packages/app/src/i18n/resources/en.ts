@@ -94,6 +94,7 @@ export const en = {
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",
       sendAndInterrupt: "Send and interrupt",
+      sendAndSteer: "Send and steer",
       sendMessage: "Send message",
       queue: "Queue",
       send: "Send",
@@ -1879,10 +1880,13 @@ export const en = {
         label: "Default send",
         descriptions: {
           interrupt: "When the agent is running, Enter interrupts. Command/Ctrl+Enter queues.",
+          steer:
+            "When the agent is running, Enter steers the active turn. Command/Ctrl+Enter queues.",
           queue: "When the agent is running, Enter queues. Command/Ctrl+Enter submits.",
         },
         options: {
           interrupt: "Interrupt",
+          steer: "Steer",
           queue: "Queue",
         },
       },

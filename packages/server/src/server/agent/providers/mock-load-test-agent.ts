@@ -25,6 +25,8 @@ import type {
   ImportProviderSessionContext,
   ImportProviderSessionInput,
   ProviderCatalog,
+  SteerActiveTurnOptions,
+  SteerResult,
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -37,6 +39,10 @@ export const MOCK_LOAD_TEST_HANDLED_COMMAND = "/mock handled-command";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+
+function getPositiveFeatureInteger(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
 const ONE_PIXEL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl4Kj8AAAAASUVORK5CYII=";
 
@@ -648,6 +654,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
+  private remainingSteerFailures: number;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
@@ -681,6 +688,9 @@ export class MockLoadTestAgentSession implements AgentSession {
       requestedPromptRejections > 0
         ? requestedPromptRejections
         : 0;
+    this.remainingSteerFailures = getPositiveFeatureInteger(
+      options.config.featureValues?.mockSteerAmbiguousFailures,
+    );
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -926,6 +936,20 @@ export class MockLoadTestAgentSession implements AgentSession {
       timeline: [],
       canceled: true,
     });
+  }
+
+  async steerActiveTurn(
+    _prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.activeTurn?.turnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    if (this.remainingSteerFailures > 0) {
+      this.remainingSteerFailures -= 1;
+      throw new Error("Requested mock steer transport failure");
+    }
+    return { status: "accepted" };
   }
 
   async close(): Promise<void> {

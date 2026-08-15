@@ -97,6 +97,7 @@ export const es: TranslationResources = {
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
       sendAndInterrupt: "Enviar e interrumpir",
+      sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
       queue: "Cola",
       send: "Enviar",
@@ -1869,11 +1870,14 @@ export const es: TranslationResources = {
         descriptions: {
           interrupt:
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          steer:
+            "Cuando el agente se está ejecutando, Enter dirige el turno activo. Command/Ctrl+Enter pone en cola.",
           queue:
             "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
         },
         options: {
           interrupt: "Interrumpir",
+          steer: "Dirigir",
           queue: "Cola",
         },
       },

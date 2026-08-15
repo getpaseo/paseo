@@ -97,6 +97,7 @@ export const zhCN: TranslationResources = {
       interruptAgent: "中断 Agent",
       queueMessage: "消息排队",
       sendAndInterrupt: "发送并中断",
+      sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
       queue: "排队",
       send: "发送",
@@ -1802,10 +1803,12 @@ export const zhCN: TranslationResources = {
         label: "默认发送",
         descriptions: {
           interrupt: "Agent 运行时，Enter 会中断。Command/Ctrl+Enter 会排队。",
+          steer: "Agent 运行时，Enter 会引导当前回合。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
         },
         options: {
           interrupt: "中断",
+          steer: "引导",
           queue: "排队",
         },
       },
