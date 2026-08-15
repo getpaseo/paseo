@@ -1,13 +1,16 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
   type ReactNode,
   createElement,
 } from "react";
+import { createPortal } from "react-dom";
 import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   ArrowLeft,
@@ -50,6 +53,7 @@ import {
   isElectronRuntime,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
+import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
   type BrowserViewport,
   createFixedBrowserViewport,
@@ -332,6 +336,24 @@ function clearWebviewSelector(webview: ElectronWebview): void {
 interface BrowserAnnotationMarker {
   index: number;
   selector: string;
+}
+
+interface BrowserPaneOverlayFrame {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function readBrowserPaneOverlayFrame(element: HTMLElement | null): BrowserPaneOverlayFrame | null {
+  if (!element) {
+    return null;
+  }
+  const { left, top, width, height } = element.getBoundingClientRect();
+  if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { left, top, width, height };
 }
 
 // Draws numbered badges over annotated elements inside the guest page. The
@@ -1794,6 +1816,7 @@ export function BrowserPane({
         })}
         {pendingSelection ? (
           <BrowserElementAnnotationCard
+            clipRef={webviewClipRef}
             selection={pendingSelection}
             onSubmit={submitAnnotation}
             onCancel={cancelAnnotation}
@@ -1805,18 +1828,45 @@ export function BrowserPane({
 }
 
 function BrowserElementAnnotationCard({
+  clipRef,
   selection,
   onSubmit,
   onCancel,
 }: {
+  clipRef: RefObject<HTMLElement | null>;
   selection: BrowserElementSelection;
   onSubmit: (annotation: BrowserElementAnnotation) => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const [comment, setComment] = useState("");
+  const [overlayFrame, setOverlayFrame] = useState<BrowserPaneOverlayFrame | null>(null);
   const commentRef = useRef(comment);
   commentRef.current = comment;
+
+  useLayoutEffect(() => {
+    const updateFrame = () => {
+      setOverlayFrame(readBrowserPaneOverlayFrame(clipRef.current));
+    };
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFrame);
+
+    updateFrame();
+    const retryFrame = window.requestAnimationFrame(updateFrame);
+    const clip = clipRef.current;
+    if (clip) {
+      resizeObserver?.observe(clip);
+    }
+    window.addEventListener("resize", updateFrame);
+    window.addEventListener("scroll", updateFrame, true);
+
+    return () => {
+      window.cancelAnimationFrame(retryFrame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateFrame);
+      window.removeEventListener("scroll", updateFrame, true);
+    };
+  }, [clipRef]);
 
   const handleSubmit = useCallback(() => {
     onSubmit({ comment: commentRef.current });
@@ -1845,8 +1895,12 @@ function BrowserElementAnnotationCard({
   const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
   const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
 
-  return (
-    <View style={styles.annotationOverlay} pointerEvents="box-none">
+  if (!overlayFrame) {
+    return null;
+  }
+
+  return createPortal(
+    <View style={[styles.annotationOverlay, overlayFrame]}>
       <View style={styles.annotationCard}>
         <View style={styles.annotationHeader}>
           <Text numberOfLines={1} style={styles.annotationTitle}>
@@ -1883,7 +1937,8 @@ function BrowserElementAnnotationCard({
           </Button>
         </View>
       </View>
-    </View>
+    </View>,
+    getOverlayRoot(),
   );
 }
 
@@ -1993,12 +2048,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   annotationOverlay: {
     position: "absolute",
-    zIndex: 1,
+    zIndex: OVERLAY_Z.modal,
     left: 0,
-    right: 0,
-    bottom: 0,
+    top: 0,
     padding: theme.spacing[3],
     alignItems: "center",
+    justifyContent: "flex-end",
+    pointerEvents: "none",
   },
   annotationCard: {
     width: "100%",
@@ -2013,6 +2069,7 @@ const styles = StyleSheet.create((theme) => ({
     shadowOpacity: 0.18,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
+    pointerEvents: "auto",
   },
   annotationHeader: {
     flexDirection: "row",

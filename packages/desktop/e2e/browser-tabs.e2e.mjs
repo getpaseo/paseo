@@ -683,6 +683,26 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     failures.push("reused loaded browser remains ready for element annotation after remount");
   }
 
+  await clickGuestElement(page, client, browserId, "#bridge-target");
+  const annotationInput = originalDeck.getByPlaceholder("Message to the agent about this element…");
+  await annotationInput.waitFor({ state: "visible", timeout: timeoutMs });
+  const annotationInputBounds = await annotationInput.boundingBox();
+  const browserClipBounds = await originalDeck
+    .getByTestId(`browser-webview-clip-${browserId}`)
+    .boundingBox();
+  assert(annotationInputBounds, "Element annotation input had no bounds");
+  assert(browserClipBounds, "Browser pane had no bounds while annotating an element");
+  assert(
+    annotationInputBounds.x >= browserClipBounds.x &&
+      annotationInputBounds.y >= browserClipBounds.y &&
+      annotationInputBounds.x + annotationInputBounds.width <=
+        browserClipBounds.x + browserClipBounds.width &&
+      annotationInputBounds.y + annotationInputBounds.height <=
+        browserClipBounds.y + browserClipBounds.height,
+    "Element annotation input is outside the browser pane",
+  );
+  await originalDeck.getByRole("button", { name: "Cancel" }).click();
+
   if (failures.length > 0) {
     throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);
   }
