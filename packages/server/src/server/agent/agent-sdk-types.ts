@@ -1,12 +1,13 @@
 import type {
   AgentProviderNotice,
+  AgentTaskItem,
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice };
+export type { AgentProviderNotice, AgentTaskItem };
 
 export type AgentProvider = string;
 
@@ -383,7 +384,7 @@ export type AgentTimelineItem =
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
-  | { type: "todo"; items: { text: string; completed: boolean }[] }
+  | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
   | CompactionTimelineItem;
 
@@ -667,14 +668,18 @@ export type FetchCatalogOptions =
   | {
       scope: "global";
       force: boolean;
-      timeoutMs?: number;
     }
   | {
       scope: "workspace";
       cwd: string;
       force: boolean;
-      timeoutMs?: number;
     };
+
+export interface ProviderRefreshContext {
+  readonly signal: AbortSignal;
+  /** Track an upstream operation so timeout errors identify the work still pending. */
+  runActivity<T>(name: string, operation: () => Promise<T>): Promise<T>;
+}
 
 export interface ProviderCatalog {
   models: AgentModelDefinition[];
@@ -685,6 +690,7 @@ export interface ProviderCatalog {
 export interface ResolveAgentDefaultModeInput {
   config: AgentSessionConfig;
   env?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export interface AgentClient {
@@ -706,8 +712,13 @@ export interface AgentClient {
    * process, separate upstream calls, static modes, or private helpers; callers
    * outside the provider do not get separate runtime model/mode probes.
    * The registry is responsible for merging configured model overrides.
+   * ProviderSnapshotManager supplies a shared context. Providers must pass its
+   * signal downstream and finish resource cleanup before rejecting on abort.
    */
-  fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
+  fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog>;
   /** Apply provider-owned defaults to a model supplied through provider configuration. */
   resolveConfiguredModel?(model: AgentModelDefinition): AgentModelDefinition;
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
@@ -726,7 +737,7 @@ export interface AgentClient {
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(): Promise<boolean>;
+  isAvailable(signal?: AbortSignal): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

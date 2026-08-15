@@ -32,7 +32,7 @@ export type ShortcutAction =
   | { kind: "router-push"; route: string }
   | { kind: "open-project-picker" }
   | { kind: "callback"; name: ShortcutCallbackName }
-  | { kind: "command-center-toggle"; nextOpen: boolean }
+  | { kind: "command-center-toggle"; nextOpen: boolean; scope?: "files" }
   | { kind: "shortcuts-dialog-toggle"; nextOpen: boolean };
 
 const NONE: ShortcutAction = { kind: "none" };
@@ -206,6 +206,11 @@ export function routeKeyboardShortcut(
       return routeSettingsToggle(ctx);
     case "command-center.toggle":
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
+    case "command-center.files":
+      if (parseHostWorkspaceRouteFromPathname(ctx.pathname)) {
+        return { kind: "command-center-toggle", nextOpen: true, scope: "files" };
+      }
+      return dispatch({ id: "workspace.project.pick", scope: "workspace" });
     case "shortcuts.dialog.toggle":
       return { kind: "shortcuts-dialog-toggle", nextOpen: !ctx.shortcutsDialogOpen };
     default:

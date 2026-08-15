@@ -1,6 +1,20 @@
-import { useMemo, type ReactElement, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactElement, type ReactNode } from "react";
 import { withUnistyles } from "react-native-unistyles";
-import { Copy, Download, FileText, MessageSquarePlus, type LucideIcon } from "lucide-react-native";
+import {
+  Copy,
+  CopyPlus,
+  Download,
+  FilePlus,
+  FileText,
+  FolderMinus,
+  FolderOpen,
+  FolderPlus,
+  MessageSquarePlus,
+  Pencil,
+  Trash2,
+  Undo2,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
@@ -10,11 +24,14 @@ import {
 } from "@/components/ui/context-menu";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
 interface FileAction {
   key: string;
   label: string;
   icon: LucideIcon;
   onSelect: () => void;
+  destructive?: boolean;
+  separatorBefore?: boolean;
   testID?: string;
 }
 
@@ -23,8 +40,18 @@ interface FileActionsContextMenuContentProps {
   fileExists?: boolean;
   onOpenFile?: () => void;
   onCopyPath?: () => void;
+  onCopyRelativePath?: () => void;
+  onReveal?: () => void;
+  revealTargetName?: string;
   onDownload?: () => void;
   onAddToChat?: () => void;
+  onNewFile?: () => void;
+  onNewFolder?: () => void;
+  onCollapseFolder?: () => void;
+  onRename?: () => void;
+  onDuplicate?: () => void;
+  onRevert?: () => void;
+  onDelete?: () => void;
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
   header?: ReactNode;
   testIDPrefix?: string;
@@ -39,51 +66,161 @@ export function FileActionsContextMenuContent({
   fileExists = true,
   onOpenFile,
   onCopyPath,
+  onCopyRelativePath,
+  onReveal,
+  revealTargetName,
   onDownload,
   onAddToChat,
+  onNewFile,
+  onNewFolder,
+  onCollapseFolder,
+  onRename,
+  onDuplicate,
+  onRevert,
+  onDelete,
   header,
   testIDPrefix,
 }: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
-    const next: FileAction[] = [];
-    if (availableFile && onOpenFile) {
-      next.push({
-        key: "open-file",
-        label: t("workspace.fileActions.openFile"),
-        icon: FileText,
-        onSelect: onOpenFile,
-        testID: testIDPrefix ? `${testIDPrefix}-open-file` : undefined,
-      });
-    }
-    if (onCopyPath) {
-      next.push({
-        key: "copy-path",
-        label: t("workspace.fileActions.copyPath"),
-        icon: Copy,
-        onSelect: onCopyPath,
-      });
-    }
-    if (availableFile && onDownload) {
-      next.push({
-        key: "download",
-        label: t("workspace.fileActions.download"),
-        icon: Download,
-        onSelect: onDownload,
-      });
-    }
-    if (availableFile && onAddToChat) {
-      next.push({
-        key: "add-to-chat",
-        label: t("workspace.fileActions.addToChat"),
-        icon: MessageSquarePlus,
-        onSelect: onAddToChat,
-        testID: testIDPrefix ? `${testIDPrefix}-add-to-chat` : undefined,
-      });
-    }
-    return next;
-  }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
+    const specs: Array<FileAction | null> = [
+      onNewFile
+        ? {
+            key: "new-file",
+            label: t("workspace.fileActions.newFile"),
+            icon: FilePlus,
+            onSelect: onNewFile,
+          }
+        : null,
+      onNewFolder
+        ? {
+            key: "new-folder",
+            label: t("workspace.fileActions.newFolder"),
+            icon: FolderPlus,
+            onSelect: onNewFolder,
+          }
+        : null,
+      onCollapseFolder
+        ? {
+            key: "collapse-folder",
+            label: t("workspace.fileActions.collapseFolder"),
+            icon: FolderMinus,
+            onSelect: onCollapseFolder,
+          }
+        : null,
+      availableFile && onOpenFile
+        ? {
+            key: "open-file",
+            label: t("workspace.fileActions.openFile"),
+            icon: FileText,
+            onSelect: onOpenFile,
+          }
+        : null,
+      onRename
+        ? {
+            key: "rename",
+            label: t("workspace.fileActions.rename"),
+            icon: Pencil,
+            onSelect: onRename,
+          }
+        : null,
+      onDuplicate
+        ? {
+            key: "duplicate",
+            label: t("workspace.fileActions.duplicate"),
+            icon: CopyPlus,
+            onSelect: onDuplicate,
+          }
+        : null,
+      onCopyPath
+        ? {
+            key: "copy-path",
+            label: t("workspace.fileActions.copyPath"),
+            icon: Copy,
+            onSelect: onCopyPath,
+          }
+        : null,
+      onCopyRelativePath
+        ? {
+            key: "copy-relative-path",
+            label: t("workspace.fileActions.copyRelativePath"),
+            icon: Copy,
+            onSelect: onCopyRelativePath,
+          }
+        : null,
+      onReveal && revealTargetName
+        ? {
+            key: "reveal",
+            label: t("workspace.fileActions.revealIn", { target: revealTargetName }),
+            icon: FolderOpen,
+            onSelect: onReveal,
+          }
+        : null,
+      availableFile && onDownload
+        ? {
+            key: "download",
+            label: t("workspace.fileActions.download"),
+            icon: Download,
+            onSelect: onDownload,
+          }
+        : null,
+      availableFile && onAddToChat
+        ? {
+            key: "add-to-chat",
+            label: t("workspace.fileActions.addToChat"),
+            icon: MessageSquarePlus,
+            onSelect: onAddToChat,
+          }
+        : null,
+      onRevert
+        ? {
+            key: "revert",
+            label: t("workspace.fileActions.revert"),
+            icon: Undo2,
+            onSelect: onRevert,
+            destructive: true,
+          }
+        : null,
+      onDelete
+        ? {
+            key: "delete",
+            label: t("workspace.fileActions.delete"),
+            icon: Trash2,
+            onSelect: onDelete,
+            destructive: true,
+          }
+        : null,
+    ];
+    const availableActions = specs.filter((action): action is FileAction => action !== null);
+    return availableActions.map((action, index) =>
+      Object.assign(action, {
+        separatorBefore: Boolean(
+          action.destructive && index > 0 && !availableActions[index - 1].destructive,
+        ),
+        testID: testIDPrefix ? `${testIDPrefix}-${action.key}` : undefined,
+      }),
+    );
+  }, [
+    fileExists,
+    fileKind,
+    onAddToChat,
+    onCollapseFolder,
+    onCopyPath,
+    onCopyRelativePath,
+    onDelete,
+    onDownload,
+    onDuplicate,
+    onNewFile,
+    onNewFolder,
+    onOpenFile,
+    onRename,
+    onReveal,
+    onRevert,
+    revealTargetName,
+    t,
+    testIDPrefix,
+  ]);
 
   if (actions.length === 0) {
     return null;
@@ -101,21 +238,32 @@ export function FileActionsContextMenuContent({
         </>
       ) : null}
       {actions.map((action) => (
-        <FileActionMenuItem key={action.key} action={action} />
+        <Fragment key={action.key}>
+          {action.separatorBefore ? <ContextMenuSeparator /> : null}
+          <FileActionMenuItem action={action} />
+        </Fragment>
       ))}
     </ContextMenuContent>
   );
 }
 
 function FileActionMenuItem({ action }: { action: FileAction }): ReactElement {
-  const Icon = action.icon;
-  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
-  const leading = useMemo(
-    () => <ThemedIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />,
-    [ThemedIcon],
-  );
+  const leading = useMemo(() => {
+    const ThemedIcon = withUnistyles(action.icon);
+    return (
+      <ThemedIcon
+        size={ICON_SIZE.sm}
+        uniProps={action.destructive ? destructiveColorMapping : foregroundMutedColorMapping}
+      />
+    );
+  }, [action.destructive, action.icon]);
   return (
-    <ContextMenuItem leading={leading} onSelect={action.onSelect} testID={action.testID}>
+    <ContextMenuItem
+      leading={leading}
+      onSelect={action.onSelect}
+      destructive={action.destructive}
+      testID={action.testID}
+    >
       {action.label}
     </ContextMenuItem>
   );

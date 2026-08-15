@@ -2,14 +2,17 @@ import type { Command } from "commander";
 import { withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
 import { resolveHubCredential, resolveHubOrigin } from "./authority.js";
-import { HubHttpClient, type HubInstallResult, type HubValidationResult } from "./client.js";
+import {
+  HubHttpClient,
+  type HubInstallResult,
+  type HubValidationResult,
+} from "./hub-client/index.js";
 import { PrivateHubCredentialStore, type HubCredentialStore } from "./credentials.js";
-import { resolveHubDeployInput } from "./deploy-input.js";
+import { discoverHubBundle, type HubDeployBundle } from "./deploy-bundle.js";
 import { processHubReporter, reportHubProgress, type HubReporter } from "./reporter.js";
 import { addHubResolutionHelp } from "./help.js";
 
 export interface HubDeployOptions {
-  file?: string;
   project?: string;
   hub?: string;
   apiKey?: string;
@@ -17,7 +20,7 @@ export interface HubDeployOptions {
   json?: boolean;
 }
 
-interface HubDeployEnvironment {
+export interface HubDeployEnvironment {
   cwd: string;
   env: Readonly<Record<string, string | undefined>>;
   credentials?: HubCredentialStore;
@@ -35,10 +38,12 @@ export interface HubDeployCommandDependencies {
 
 interface HubDeployResult extends HubInstallResult {
   origin: string;
+  workflows: number;
 }
 
 interface HubDryRunResult extends HubValidationResult {
   origin: string;
+  workflows: number;
 }
 
 const resultSchema: OutputSchema<HubDeployResult> = {
@@ -48,6 +53,7 @@ const resultSchema: OutputSchema<HubDeployResult> = {
     { header: "VERSION", field: "version" },
     { header: "VERSION ID", field: "versionId" },
     { header: "ACTIVE", field: "active" },
+    { header: "WORKFLOWS", field: "workflows" },
     { header: "HUB", field: "origin" },
   ],
 };
@@ -57,6 +63,7 @@ const validationSchema: OutputSchema<HubDryRunResult> = {
   columns: [
     { header: "PROJECT", field: "projectSlug" },
     { header: "VALID", field: "valid" },
+    { header: "WORKFLOWS", field: "workflows" },
     { header: "HUB", field: "origin" },
   ],
 };
@@ -70,6 +77,18 @@ export async function runHubDeploy(
     hub: new HubHttpClient(),
   },
 ): Promise<SingleResult<HubDeployResult> | SingleResult<HubDryRunResult>> {
+  const deployInput = await discoverHubBundle({
+    cwd: environment.cwd,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  });
+  return runHubDeployBundle(options, deployInput, environment);
+}
+
+export async function runHubDeployBundle(
+  options: HubDeployOptions,
+  deployInput: HubDeployBundle,
+  environment: HubDeployEnvironment,
+): Promise<SingleResult<HubDeployResult> | SingleResult<HubDryRunResult>> {
   const credentials = environment.credentials ?? new PrivateHubCredentialStore(environment.env);
   const resolution = {
     options: { origin: options.hub, apiKey: options.apiKey },
@@ -77,11 +96,6 @@ export async function runHubDeploy(
     credentials,
   };
   const origin = resolveHubOrigin(resolution);
-  const deployInput = await resolveHubDeployInput({
-    cwd: environment.cwd,
-    ...(options.file === undefined ? {} : { file: options.file }),
-    ...(options.project === undefined ? {} : { project: options.project }),
-  });
   const action = options.dryRun === true ? "Validating" : "Deploying";
   reportHubProgress(
     environment.reporter ?? processHubReporter,
@@ -96,11 +110,19 @@ export async function runHubDeploy(
   };
   if (options.dryRun === true) {
     const validated = await (environment.hub ?? new HubHttpClient()).validateConfiguration(request);
-    return { type: "single", data: { ...validated, origin }, schema: validationSchema };
+    return {
+      type: "single",
+      data: { ...validated, workflows: deployInput.workflowCount, origin },
+      schema: validationSchema,
+    };
   }
   const deployed = await (environment.hub ?? new HubHttpClient()).installConfiguration(request);
 
-  return { type: "single", data: { ...deployed, origin }, schema: resultSchema };
+  return {
+    type: "single",
+    data: { ...deployed, workflows: deployInput.workflowCount, origin },
+    schema: resultSchema,
+  };
 }
 
 export function addHubDeployCommand(
@@ -111,8 +133,7 @@ export function addHubDeployCommand(
     addHubResolutionHelp(
       hub
         .command("deploy")
-        .description("Install and activate a Hub configuration")
-        .argument("[file]", "Hub configuration YAML", ".paseo/hub.yml")
+        .description("Discover, validate, and activate the canonical .paseo Hub bundle")
         .option("-p, --project <slug>", "Target project slug")
         .option("--hub <origin>", "Paseo Hub origin")
         .option("--api-key <secret>", "Organization API key")
@@ -120,18 +141,14 @@ export function addHubDeployCommand(
     ),
   ).action(
     withOutput<HubDeployResult | HubDryRunResult, unknown[]>(async (...args) => {
-      const file = args[0] as string;
       const options = args.at(-2) as HubDeployOptions;
-      return runHubDeploy(
-        { ...options, file },
-        {
-          cwd: dependencies.cwd(),
-          env: dependencies.env,
-          credentials: dependencies.credentials,
-          hub: dependencies.hub,
-          reporter: dependencies.reporter,
-        },
-      );
+      return runHubDeploy(options, {
+        cwd: dependencies.cwd(),
+        env: dependencies.env,
+        credentials: dependencies.credentials,
+        hub: dependencies.hub,
+        reporter: dependencies.reporter,
+      });
     }),
   );
 }

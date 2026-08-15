@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   common: {
@@ -55,14 +56,19 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Rechercher des commandes, espaces de travail et agents...",
+      placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents...",
+      filePlaceholder: "Rechercher des fichiers...",
+      searchingFiles: "Recherche de fichiers...",
       noMatches: "Aucune correspondance",
       actions: "Actes",
+      files: "Fichiers",
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
       addProject: "Ajouter un projet",
       home: "Maison",
+      groupByProject: "Grouper par projet",
+      groupByStatus: "Grouper par statut",
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
@@ -273,6 +279,14 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagramme",
+      zoomIn: "Zoomer",
+      zoomOut: "Dézoomer",
+      resetZoom: "Réinitialiser la vue",
+      viewSource: "Afficher la source",
+      viewDiagram: "Afficher le diagramme",
+    },
     actions: {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
@@ -324,6 +338,15 @@ export const fr: TranslationResources = {
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",
+      tasksProgress: "{{completed}}/{{total}} tâches",
+      tasksProgressCurrent: "{{completed}}/{{total}} tâches · {{task}}",
+      activity: {
+        created: "{{count}} tâches créées",
+        added: "Ajoutée",
+        started: "Commencée",
+        completed: "Terminée",
+        reopened: "Rouverte",
+      },
     },
     compaction: {
       loading: "Compactage...",
@@ -394,9 +417,32 @@ export const fr: TranslationResources = {
     fileActions: {
       openFile: "Ouvrir le fichier",
       copyPath: "Copier le chemin",
+      copyRelativePath: "Copier le chemin relatif",
+      revealIn: "Afficher dans {{target}}",
       download: "Télécharger",
       addToChat: "Ajouter au chat",
       moreActions: "Plus de propositions",
+      newFile: "Nouveau fichier",
+      newFolder: "Nouveau dossier",
+      collapseFolder: "Replier le dossier",
+      rename: "Renommer",
+      duplicate: "Dupliquer",
+      revert: "Abandonner les modifications",
+      delete: "Supprimer",
+      confirmDelete: {
+        fileTitle: "Supprimer le fichier ?",
+        folderTitle: "Supprimer le dossier ?",
+        message: "« {{name}} » sera définitivement supprimé.",
+        confirm: "Supprimer",
+        cancel: "Annuler",
+      },
+      confirmRevert: {
+        title: "Abandonner les modifications ?",
+        message: "Les modifications de « {{name}} » seront définitivement abandonnées.",
+        confirm: "Abandonner",
+        cancel: "Annuler",
+        failed: "Échec de l'abandon des modifications",
+      },
     },
     fileExplorer: {
       sort: {
@@ -426,6 +472,15 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToListDirectory: "Échec de la liste du répertoire",
+        createFailed: "Échec de la création de l'entrée",
+        renameFailed: "Échec du renommage de l'entrée",
+        duplicateFailed: "Échec de la duplication de l'entrée",
+        revealFailed: "Échec de l'affichage de l'entrée",
+        deleteFailed: "Échec de la suppression de l'entrée",
+      },
+      draft: {
+        filePlaceholder: "Nom du fichier",
+        folderPlaceholder: "Nom du dossier",
       },
     },
     setup: {
@@ -473,6 +528,8 @@ export const fr: TranslationResources = {
         screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
         elementCopied: "Élément copié dans le presse-papiers",
         screenshotFailed: "Impossible de copier la capture",
+        selectorLoading: "Attendez la fin du chargement de la page",
+        selectorFailed: "Impossible de démarrer le sélecteur d’élément",
       },
       annotate: {
         title: "Annoter l'élément",
@@ -565,6 +622,7 @@ export const fr: TranslationResources = {
         reloadingAgent: "Agent de rechargement...",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Échec du rechargement de l'agent",
+        failedToCloseAgent: "Échec de la fermeture de l'agent",
       },
       confirmations: {
         unsavedTitle: "Modifications non enregistrées",
@@ -1396,14 +1454,18 @@ export const fr: TranslationResources = {
     loadingSelector: "Chargement du sélecteur de modèle...",
     error: "Erreur",
     defaultModel: "Défaut",
-    favorites: "Favoris",
-    favoriteModel: "Modèle préféré",
-    unfavoriteModel: "Modèle défavorisé",
+    profiles: "Profils",
+    providers: "Fournisseurs",
+    editProfiles: "Modifier",
+    editProfilesLabel: "Modifier les profils d'agent",
+    createProfile: "Créer un profil",
     modelCount: "{{count}} modèle",
     modelCountPlural: "{{count}} modèles",
     retry: "Réessayer",
     retrying: "Nouvelle tentative...",
     noMatches: "Aucun modèle ne correspond à votre recherche",
+    noMatchesForQuery: "Aucun modèle ne correspond à « {{query}} »",
+    searchAllPlaceholder: "Rechercher dans tous les modèles...",
     searchPlaceholder: "Rechercher des modèles...",
     openProviderSettings: "Ouvrir les paramètres{{provider}}",
   },
@@ -1470,19 +1532,6 @@ export const fr: TranslationResources = {
         label: "Avancé",
         show: "Afficher avancé",
         hide: "Masquer avancé",
-      },
-      headers: {
-        title: "En-têtes personnalisés",
-        add: "Ajouter un en-tête",
-        name: "Nom",
-        value: "Valeur",
-        remove: "Supprimer l'en-tête",
-        errors: {
-          missingName: "Saisissez un nom pour chaque en-tête",
-          invalidName: "{{name}} n'est pas un nom d'en-tête valide",
-          invalidValue: "{{name}} contient un saut de ligne non valide",
-          duplicateName: "{{name}} est saisi plusieurs fois",
-        },
       },
       passwordVisibility: {
         show: "Afficher le mot de passe",
@@ -1616,6 +1665,7 @@ export const fr: TranslationResources = {
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedTooltip: "Archiver les terminés",
+    archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1779,11 +1829,28 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Relations",
       agents: "Agents",
+      metadata: "Métadonnées",
       workspaces: "Workspaces",
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Aperçu",
+    },
+    plugins: pluginSettings.fr,
+    metadataGeneration: {
+      title: "Génération de métadonnées",
+      description:
+        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+      selection: "Sélection du modèle",
+      automatic: "Automatique",
+      preferred: "Manuel",
+      automaticHint: "Paseo choisit un modèle rapide disponible",
+      preferredHint: "Choisissez le modèle utilisé par Paseo",
+      model: "Modèle",
+      fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
+      docs: "Documentation",
+      saveError: "Impossible de mettre à jour la génération de métadonnées",
     },
     general: {
       title: "Général",
@@ -1976,10 +2043,10 @@ export const fr: TranslationResources = {
         resetAll: "Tout réinitialiser",
       },
       sections: {
-        navigation: "Navigation",
+        general: "Général",
+        workspaces: "Projets et espaces de travail",
         tabsPanes: "Onglets et volets",
-        projects: "Projets",
-        panels: "Panneaux",
+        layout: "Disposition",
         agentInput: "EntréeAgent",
       },
       help: {
@@ -2007,6 +2074,7 @@ export const fr: TranslationResources = {
         moveTabDown: "Déplacer l'onglet vers le bas",
         closePane: "Fermer le volet",
         newTerminal: "Nouvelle borne",
+        searchFiles: "Rechercher des fichiers",
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",
@@ -2200,6 +2268,46 @@ export const fr: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentProfiles: {
+        sectionTitle: "Profils d'agent",
+        unavailable: "Connectez-vous à cet hôte pour gérer les profils d'agent",
+        unsupported:
+          "Cet hôte exécute un daemon qui ne prend pas encore en charge les profils d'agent",
+        emptyState:
+          "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents à partir d'un fournisseur et d'un modèle enregistrés.",
+        addProfileTitle: "Ajouter un profil d'agent",
+        newProfile: "Nouveau profil",
+        editProfile: "Modifier le profil",
+        editProfileTitle: "Modifier le profil d'agent",
+        nameLabel: "Nom",
+        namePlaceholder: "Travail sur l'UI",
+        iconLabel: "Icône",
+        noIcon: "Aucune",
+        providerLabel: "Fournisseur",
+        providerPlaceholder: "Sélectionner un fournisseur",
+        noProviders: "Aucun fournisseur n'est disponible sur cet hôte",
+        modelLabel: "Modèle",
+        noModels: "Ce fournisseur n'a aucun modèle à choisir",
+        modeLabel: "Mode",
+        noModes: "Ce fournisseur n'a aucun mode à choisir",
+        thinkingLabel: "Pensée",
+        noThinkingOptions: "Ce modèle n'a aucun niveau de pensée",
+        featuresLabel: "Caractéristiques",
+        featureCount: "{{count}} caractéristiques",
+        featureCountOne: "{{count}} caractéristique",
+        notesLabel: "Notes pour les agents",
+        notesPlaceholder:
+          "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
+        notesHint:
+          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        save: "Enregistrer",
+        saving: "Enregistrement...",
+        remove: "Supprimer",
+        removeConfirmTitle: "Supprimer le profil ?",
+        removeConfirmMessage: "Supprimer « {{name}} » ?",
+        moveUp: "Déplacer vers le haut",
+        moveDown: "Déplacer vers le bas",
+      },
       daemon: {
         rename: {
           editLabel: "Modifier l'étiquette",
@@ -2368,6 +2476,9 @@ export const fr: TranslationResources = {
           "Voir la documentation pour plus de détails et les variables d'environnement disponibles pour ces commandes",
         setup: "Installation",
         setupAccessibility: "Commandes de configuration de Worktree",
+        uncommittedTitle: "Validez les modifications de paseo.json",
+        uncommittedDescription:
+          "Les nouveaux worktrees utilisent le script de configuration de la branche de base sélectionnée.",
         teardown: "Démolir",
         teardownAccessibility: "Commandes de démontage de Worktree",
       },

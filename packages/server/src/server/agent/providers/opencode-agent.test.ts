@@ -480,6 +480,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
             models: {
               "big-pickle": {
                 name: "Big Pickle",
+                variants: { max: { reasoningEffort: "max" } },
                 limit: {
                   context: 200_000,
                 },
@@ -529,6 +530,11 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(catalog.models[0]).toMatchObject({
       id: TEST_MODEL,
       label: "Big Pickle",
+      thinkingOptions: [
+        { id: "default", label: "Default", isDefault: true },
+        { id: "max", label: "max" },
+      ],
+      defaultThinkingOptionId: "default",
       metadata: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -824,7 +830,40 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
   }, 180_000);
 });
 
-describe("OpenCode adapter context-window normalization", () => {
+describe("OpenCode adapter normalization", () => {
+  test("omits OpenCode's implicit default variant from new and updated sessions", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateResponse = { data: { id: "ses_default_variant" } };
+    openCode.sessionPromptAsyncEvents = [
+      { type: "session.idle", properties: { sessionID: "ses_default_variant" } },
+    ];
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+      model: "catalog-provider/single-variant-model",
+      thinkingOptionId: "default",
+    });
+
+    await collectTurnEvents(streamSession(session, "Use the model default"));
+    await session.setThinkingOption?.("max");
+    await collectTurnEvents(streamSession(session, "Use max"));
+    await session.setThinkingOption?.("default");
+    await collectTurnEvents(streamSession(session, "Return to the model default"));
+
+    expect(openCode.calls.sessionPromptAsync).toEqual([
+      expect.not.objectContaining({ variant: expect.anything() }),
+      expect.objectContaining({ variant: "max" }),
+      expect.not.objectContaining({ variant: expect.anything() }),
+    ]);
+    await session.close();
+  });
+
   test("builds OpenCode file parts for image prompt blocks", () => {
     expect(
       __openCodeInternals.buildOpenCodePromptParts([
@@ -1878,7 +1917,13 @@ describe("OpenCode adapter startTurn error handling", () => {
         provider: "opencode",
         item: {
           type: "todo",
-          items: [{ text: "Inspect current directory and existing files", completed: true }],
+          items: [
+            {
+              text: "Inspect current directory and existing files",
+              status: "completed",
+              completed: true,
+            },
+          ],
         },
       },
     ]);

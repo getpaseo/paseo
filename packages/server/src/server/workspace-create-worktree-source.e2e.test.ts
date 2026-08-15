@@ -95,3 +95,132 @@ test("workspace.create keeps a branch-off name separate from its worktree slug",
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }, 180000);
+
+test("workspace.create always creates a new worktree when the slug is already occupied", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const first = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        worktreeSlug: "same-slug",
+        baseBranch: "main",
+      },
+    });
+    const second = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        worktreeSlug: "same-slug",
+        baseBranch: "main",
+      },
+    });
+
+    expect(first.error).toBeNull();
+    expect(second.error).toBeNull();
+    expect(path.basename(first.workspace?.workspaceDirectory ?? "")).toBe("same-slug");
+    expect(path.basename(second.workspace?.workspaceDirectory ?? "")).toBe("same-slug-1");
+    expect(second.workspace?.id).not.toBe(first.workspace?.id);
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
+test("workspace.create suffixes past an occupied detached worktree", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const first = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        worktreeSlug: "detached-slug",
+        baseBranch: "main",
+      },
+    });
+    expect(first.error).toBeNull();
+    expect(first.workspace?.workspaceDirectory).toBeTypeOf("string");
+    const firstPath = first.workspace?.workspaceDirectory as string;
+    execFileSync("git", ["checkout", "--detach"], { cwd: firstPath, stdio: "pipe" });
+
+    const second = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        worktreeSlug: "detached-slug",
+        baseBranch: "main",
+      },
+    });
+
+    expect(second.error).toBeNull();
+    expect(path.basename(second.workspace?.workspaceDirectory ?? "")).toBe("detached-slug-1");
+    expect(second.workspace?.gitRuntime?.currentBranch).toBe("detached-slug-1");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
+test("workspace.create suffixes an occupied checkout branch", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const first = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "checkout",
+        refName: "feature/existing-branch",
+        worktreeSlug: "existing-branch",
+      },
+    });
+    const second = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "checkout",
+        refName: "feature/existing-branch",
+        worktreeSlug: "existing-branch",
+      },
+    });
+
+    expect(first.error).toBeNull();
+    expect(first.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+    expect(second.error).toBeNull();
+    expect(path.basename(second.workspace?.workspaceDirectory ?? "")).toBe("existing-branch-1");
+    expect(second.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch-1");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);

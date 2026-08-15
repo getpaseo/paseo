@@ -1,130 +1,208 @@
 ---
-title: hub.yml reference
-description: The authored Hub configuration: environments, triggers, typed inputs, workflow steps, routing, and prompt partials.
-nav: hub.yml reference
-order: 69
+title: Hub configuration reference
+description: Canonical Hub resource, workflow, agent, expression, and prompt fields.
+nav: Configuration reference
+order: 71
 category: Hub
 ---
 
-# `hub.yml` reference
+# Hub configuration reference
 
-A configuration has `environments` and `triggers`. It may also include top-level `project` deployment metadata for `paseo hub deploy`. Execution fields belong to each trigger's `steps`.
+Hub accepts YAML in this layout:
 
-```yaml
-project: my-project
-
-environments:
-  - name: development
-    kind: daemon
-    daemon: my-macbook
-    cwd: /Users/you/code/project
-
-triggers:
-  - name: request
-    on: manual.run
-    max_runtime: 2h
-    filters:
-      from_users: [automation]
-    steps:
-      - id: work
-        environment: development
-        max_runtime: 90m
-        idle_timeout: 10m
-        agent:
-          provider: codex
-          mode: full-access
-        prompt:
-          - text: ${{ paseo.prompt }}
+```text
+.paseo/
+├── hub.yml
+└── workflows/
+    ├── <workflow>.yml
+    └── partials/
+        └── <partial>.md
 ```
 
-`project` is an optional bare project slug. The deploy CLI uses it to choose the target project when `-p, --project` is absent. The flag takes precedence over this metadata without rewriting the YAML. `project` is not available to triggers, expressions, or agents.
+Only direct `.yml` children of `.paseo/workflows/` are workflows. Each file contains one trigger and its ordered steps. There is no manifest, `includes`, `uses`, reusable step, workflow call, or inheritance.
 
-## Environments
+## `hub.yml`
 
-| Field      | Required    | Notes                                                                                                     |
-| ---------- | ----------- | --------------------------------------------------------------------------------------------------------- |
-| `name`     | yes         | Lowercase identifier referenced by a step.                                                                |
-| `kind`     | yes         | `daemon`, `fly`, or `docker` in the authored schema; workflow steps must resolve to a daemon environment. |
-| `daemon`   | daemon only | Friendly daemon slug, resolved to its immutable ID when the revision activates.                           |
-| `cwd`      | daemon only | Absolute path on the daemon.                                                                              |
-| `image`    | fly/docker  | Image name.                                                                                               |
-| `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                                                 |
-
-The `worktree` object is part of the environment. Its fields are exact authored names: `newBranch` and optional `base` for `branch-off`, `branch` for `checkout-branch`, and positive integer `prNumber` for `checkout-pr`.
-
-## Triggers
-
-| Field         | Required     | Notes                                                                                           |
-| ------------- | ------------ | ----------------------------------------------------------------------------------------------- |
-| `name`        | yes          | Lowercase identifier, unique in the configuration.                                              |
-| `on`          | yes          | `provider.event`, such as `slack.mention` or `manual.run`.                                      |
-| `max_runtime` | yes          | Positive duration for the complete trigger run, up to 24h.                                      |
-| `filters`     | no in schema | Provider filters; externally sourced triggers still require a non-empty `from_users` allowlist. |
-| `inputs`      | no           | Typed leading `key=value` invocation headers.                                                   |
-| `values`      | no           | Derived expressions.                                                                            |
-| `steps`       | yes          | One or more ordered steps.                                                                      |
-
-### Inputs
-
-Each input has:
+`.paseo/hub.yml` contains named project resources. Names are map keys and are not repeated inside each object.
 
 ```yaml
+environments:
+  paseo:
+    kind: daemon
+    daemon: laptop
+    cwd: /Users/you/code/paseo
+  hub:
+    kind: daemon
+    daemon: devbox
+    cwd: /workspace/hub
+
+agents:
+  codex-safe:
+    provider: codex
+    model: gpt-5.5
+    thinkingOptionId: xhigh
+    options:
+      sandbox_workspace_write:
+        writable_roots: [/var/cache/npm]
+        network_access: false
+  claude:
+    provider: claude
+    mode: bypassPermissions
+```
+
+The only top-level keys are `environments` and `agents`. A `triggers` key is rejected with a migration error.
+
+### Environments
+
+| Field      | Required    | Notes                                                                          |
+| ---------- | ----------- | ------------------------------------------------------------------------------ |
+| `kind`     | yes         | `daemon`, `fly`, or `docker`; workflow steps must select a daemon environment. |
+| `daemon`   | daemon only | Registered daemon slug, resolved when the revision activates.                  |
+| `cwd`      | daemon only | Absolute working directory on the daemon.                                      |
+| `image`    | fly/docker  | Image name.                                                                    |
+| `worktree` | no          | `branch-off`, `checkout-branch`, or `checkout-pr` target.                      |
+
+For `worktree`, use `newBranch` and optional `base` with `branch-off`, `branch` with `checkout-branch`, or positive `prNumber` with `checkout-pr`.
+
+```yaml
+environments:
+  review:
+    kind: daemon
+    daemon: build-server
+    cwd: /workspace/project
+    worktree:
+      mode: branch-off
+      newBranch: trigger-${{ paseo.execution.id }}
+      base: origin/main
+```
+
+`newBranch` is a branch-name string. Embed `${{ paseo.execution.id }}`, which renders the execution's UUID, so every execution branches off `base` on its own branch and keeps it when Hub retries or recovers that execution.
+
+One execution is one step run, so two steps selecting the same environment get separate branches.
+
+`${{ paseo.execution.id }}` is the only expression `newBranch` accepts. `paseo.prompt`, `paseo.context`, `paseo.inputs.*`, `values.*`, `steps.<id>.outputs.*`, and provider event fields are unavailable here, and each one fails bundle activation at the authored field, such as `.paseo/hub.yml.environments.review.worktree.newBranch`.
+
+`${{ paseo.execution.id }}` fails activation the same way anywhere else in a bundle. `branch` and `prNumber` take literal values.
+
+An environment is a complete named object. A step selects its name; objects are not inherited, merged, or partially overridden.
+
+### Named agents
+
+Each agent is one complete provider configuration:
+
+| Field              | Required | Notes                                                            |
+| ------------------ | -------- | ---------------------------------------------------------------- |
+| `provider`         | yes      | Provider ID.                                                     |
+| `model`            | no       | Provider model ID.                                               |
+| `mode`             | no       | Paseo mode ID.                                                   |
+| `thinkingOptionId` | no       | Provider thinking option.                                        |
+| `options`          | no       | JSON-safe provider-native options, preserving names and nesting. |
+
+A named selection preserves the complete object, including structured options. Named agents have no parent, patch, or per-step override.
+
+Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
+
+## Workflow files
+
+`.paseo/workflows/review.yml`:
+
+```yaml
+name: review
+on: manual.run
+max_runtime: 2h
+filters:
+  from_users: [automation]
 inputs:
   repo:
     type: string
-    required: false
-    choices: [project, paseo]
-  agent:
-    type: string
-    default: codex
-    choices: [codex, claude]
+    required: true
+    choices: [paseo, hub]
+steps:
+  - id: inspect
+    environment: ${{ paseo.inputs.repo }}
+    max_runtime: 30m
+    idle_timeout: 5m
+    agent: codex-safe
+    prompt:
+      - text: ${{ paseo.prompt }}
 ```
 
-`type` is `string`, `number`, or `boolean`. `required`, `default`, and `choices` are optional. `required` and `default` cannot be combined. Defaults and choices must match the declared type; a default must be one of the choices.
+| Field         | Required | Notes                                                     |
+| ------------- | -------- | --------------------------------------------------------- |
+| `name`        | yes      | Workflow name, unique across the bundle.                  |
+| `on`          | yes      | Provider event such as `manual.run` or `discord.mention`. |
+| `max_runtime` | yes      | Hard limit for the complete run, up to 24h.               |
+| `filters`     | yes      | Provider resource filters and the sender allowlist.       |
+| `inputs`      | no       | Typed invocation headers.                                 |
+| `values`      | no       | Named expressions.                                        |
+| `steps`       | yes      | One or more ordered inline steps.                         |
 
-Inputs may be referenced as `${{ paseo.inputs.name }}`. A dynamic authority-bearing field such as a provider, model, mode, or environment requires finite `choices` at activation. A prompt cannot supply authority.
+### Inputs and values
 
-### Values
+Inputs have `type: string | number | boolean`, plus optional `required`, `default`, and `choices`. `required` and `default` cannot be combined. Finite `choices` are required when an input can choose authority such as an environment or named agent.
 
-Values bind expressions under their own namespace:
+Values bind expressions:
 
 ```yaml
 values:
-  selected_repo: ${{ paseo.inputs.repo ?? steps.classify.outputs.repo }}
+  selected_environment: ${{ steps.classify.outputs.environment }}
+  selected_agent: ${{ steps.classify.outputs.agent }}
 ```
 
-The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `||`, and `??`. It does not support function calls, JavaScript, arithmetic, mutation, or implicit string coercion. Referenced steps must exist and value dependencies cannot cycle.
+Expressions may read declared `paseo.inputs`, earlier `steps.<id>.outputs`, and `values`. The grammar supports paths, JSON literals, parentheses, `!`, `==`, `!=`, `&&`, `||`, and `??`.
+
+An environment or dynamic named-agent expression must have a finite set of possible string results at activation. Every result must name a configured resource. Runtime selection never falls back to another environment or agent.
 
 ### Steps
 
-| Field           | Required | Notes                                                                                                             |
-| --------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `id`            | yes      | Lowercase step identifier, unique within the trigger.                                                             |
-| `environment`   | yes      | Environment name or a finite input expression resolving to one.                                                   |
-| `max_runtime`   | yes      | Positive step hard limit, up to 24h.                                                                              |
-| `idle_timeout`  | yes      | Positive idle limit, no longer than the step hard limit.                                                          |
-| `agent`         | yes      | `provider`, optional `model`, `mode`, `thinkingOptionId`, and provider-native `options`.                          |
-| `prompt`        | yes      | Non-empty list of `text` and GitHub-only `include` blocks.                                                        |
-| `if`            | no       | Expression deciding whether this ordered step runs.                                                               |
-| `output`        | no       | `{ schema: <JSON Schema> }` for structured `finish_execution`.                                                    |
-| `allow_outputs` | no       | Registered output capabilities such as `slack.reply` or `discord.reply`, each with optional `max` and `required`. |
-| `auto_archive`  | no       | Archives the step's agent when it ends.                                                                           |
+| Field           | Required | Notes                                                                                    |
+| --------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `id`            | yes      | Unique within the workflow.                                                              |
+| `environment`   | yes      | Literal environment name or finite expression resolving to one.                          |
+| `max_runtime`   | yes      | Step hard limit.                                                                         |
+| `idle_timeout`  | yes      | Idle limit no longer than `max_runtime`.                                                 |
+| `agent`         | yes      | Named agent, finite expression selecting a named agent, or complete static inline agent. |
+| `prompt`        | yes      | Ordered `text` and `include` blocks.                                                     |
+| `if`            | no       | Expression deciding whether the step runs.                                               |
+| `env`           | no       | Environment variables from connection values.                                            |
+| `output.schema` | no       | JSON Schema for structured step output.                                                  |
+| `allow_outputs` | no       | Provider output capabilities with optional `max` and `required`.                         |
+| `auto_archive`  | no       | Archive the agent after the step ends.                                                   |
+| `github`        | no       | Explicit GitHub authority for this step.                                                 |
 
-Prompt blocks are objects, not a scalar prompt:
+An inline agent is static and complete:
+
+```yaml
+agent:
+  provider: codex
+  model: gpt-5.5
+  options:
+    approval_policy: never
+    sandbox_mode: read-only
+```
+
+An expression-valued `agent` selects a named agent. Dynamic provider fields inside an inline object are rejected.
+
+### Prompt semantics
 
 ```yaml
 prompt:
-  - text: Request: ${{ paseo.prompt }}
-  - include: developer.md
+  - include: partials/review.md
+  - text: |
+      <user-prompt>
+      ${{ paseo.prompt }}
+      </user-prompt>
 ```
 
-Use `${{ paseo.prompt }}`, `${{ paseo.inputs.* }}`, `${{ steps.*.outputs.* }}`, and `${{ values.* }}` in prompts, conditions, and agent selection fields. Provider event payloads are not part of this workflow expression namespace; provider adapters put the normalized request into the prompt and preserve the raw event as evidence.
+`${{ paseo.prompt }}` is the normalized request after the provider marker and declared leading `key=value` inputs are removed. It is not rewritten or augmented with event context.
 
-`agent.options` carries JSON-safe options using the selected provider's native names and nesting. Paseo validates them with that provider's strict schema before starting the session. See [Hub security](/docs/hub/security) for the trust boundary and copyable provider examples.
+`${{ paseo.context }}` opts that step into provider context materialization and renders the result as JSON in the prompt. It is available only in prompt text. Hub does not inject it unless the workflow authors that expression.
 
-#### Output capabilities
+Includes resolve relative to `.paseo/workflows/`, so shared partials use `partials/<name>.md`. Missing files, absolute or traversing paths, symlinks, content mismatches, and files outside the partial tree are rejected.
 
-`allow_outputs` separates permission from obligation. `max` limits how many times a capability may be emitted and defaults to `1`. Set `required: true` when the step must emit that capability at least once before it can finish successfully:
+### Output capabilities
+
+Authority stays on the step that uses it:
 
 ```yaml
 allow_outputs:
@@ -133,41 +211,14 @@ allow_outputs:
     required: true
 ```
 
-Hub counts an actual capability emission; ordinary assistant text does not satisfy a required output. A required declaration must resolve to a registered, available Hub capability for that execution context, or dispatch rejects the step with an actionable configuration error. If delivery fails, the attempt is retryable; if the agent tries to finish first, Hub keeps the execution recoverable and names the concrete output tool before retrying `finish_execution`. A required output must have an effective `max` of at least `1`, or activation rejects the configuration. Omitting `required` preserves optional-output behavior and does not change the agent's permission mode. GitHub-triggered agents reply with their scoped `GH_TOKEN` (for example, through `gh issue comment`) rather than a Hub `github.reply` tool.
+Slack workflows use `slack.reply`; Discord workflows use `discord.reply`. The declaration grants `hub.reply`, and the prompt must tell the agent to call it. GitHub has no reply output; use an explicit [`github` block](/docs/hub/github).
 
-## Prompt partials
+Every step receives `hub.finish_execution`. The prompt must tell the agent when to call it; Hub does not append completion or reply instructions. If `output.schema` is present, `hub.finish_execution` requires an `output` value that matches the schema. If an `allow_outputs` entry is `required: true`, the agent must emit that output before finishing. `max` defaults to `1`.
 
-`include` paths are relative to `.paseo/partials/`. For GitHub configuration, Hub reads them at the exact configuration commit and stores the resolved content and SHA-256 hash in the immutable revision. For `paseo hub deploy`, the CLI reads the referenced files from the local project root and sends them in the optional `partials` bundle; the bundle path omits the `.paseo/partials/` prefix. Missing files, unsafe paths, symlinks, submodules, directories, duplicate or unexpected bundle entries, and nested includes are rejected. Manual configurations cannot use repository partials.
+## Migrating a monolithic file
 
-## Deadlines
+Keep `environments` in `hub.yml`, convert the environment list to a named map, and move each former trigger into its own `.paseo/workflows/<name>.yml` file. Move shared prompt files to `.paseo/workflows/partials/`. Define complete named agent configurations under `agents` and replace dynamic provider fields with finite named-agent selection.
 
-The trigger's `max_runtime` is the hard limit for the complete workflow run. Each step also has `max_runtime` and `idle_timeout`:
+Hub does not read TOML or a monolithic `triggers` section, and the CLI does not rewrite either format.
 
-```yaml
-max_runtime: 2h
-steps:
-  - id: classify
-    max_runtime: 2m
-    idle_timeout: 30s
-  - id: implement
-    max_runtime: 90m
-    idle_timeout: 10m
-```
-
-The effective step hard and idle deadlines are capped by the remaining trigger deadline. Meaningful daemon activity refreshes idle time, but cannot extend a hard deadline. Hub persists absolute deadlines, so a restart or deployment does not reset them. A step timeout fails the run; a trigger timeout stops later steps and interrupts a live agent.
-
-## Provider invocation
-
-The provider removes its mention or marker before Hub parses leading declared input tokens. Slack and Discord place the inputs immediately after the bot mention. GitHub places them after the configured marker. Manual runs send the same string as the API `input`:
-
-```text
-@Paseo repo=project investigate the failed sync
-```
-
-The first token that is not a declared input begins the prompt. The clean prompt is available as `${{ paseo.prompt }}`. The raw provider message remains separate Activity evidence. See [provider triggers](/docs/hub/triggers) for provider-specific marker and filter behavior.
-
-## Removed fields
-
-Do not put execution fields directly on a trigger. `environment`, `agent`, `prompt`, `timeout`, `idle_timeout`, `auto_archive`, and `allow_outputs` are step fields now. The duration field is `max_runtime`; `timeout` is not an alias.
-
-Next: [Hub workflows](/docs/hub/workflows) for routing patterns and copyable configurations.
+See [Workflows](/docs/hub/workflows) for complete routing examples.

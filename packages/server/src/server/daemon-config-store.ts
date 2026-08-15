@@ -15,6 +15,22 @@ type MutableDaemonConfig = import("@getpaseo/protocol/messages").MutableDaemonCo
 type MutableDaemonConfigPatch = import("@getpaseo/protocol/messages").MutableDaemonConfigPatch;
 type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
+interface SupportedMutableConfigPatch {
+  relay?: { enabled?: boolean };
+  mcp?: { injectIntoAgents?: boolean };
+  browserTools?: { enabled?: boolean };
+  providers?: MutableDaemonConfig["providers"];
+  removeProviders?: string[];
+  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  autoArchiveAfterMerge?: boolean;
+  enableTerminalAgentHooks?: boolean;
+  appendSystemPrompt?: string;
+  terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
+  agentProfiles?: MutableDaemonConfig["agentProfiles"];
+  pluginsEnabled?: boolean;
+  plugins?: MutableDaemonConfig["plugins"];
+}
+
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
   info(...args: unknown[]): void;
@@ -24,7 +40,26 @@ export interface DaemonConfigChangeDetails {
   removedProviders: readonly string[];
 }
 
+export interface DaemonConfigReloadResult {
+  appliedPaths: string[];
+  restartRequiredPaths: string[];
+  overrideControlledPaths: string[];
+}
+
+export interface DaemonConfigReloadSource {
+  resolve(persisted: PersistedConfig): {
+    mutable: MutableDaemonConfig;
+    overrideControlledPaths: readonly string[];
+  };
+}
+
 type ConfigListener = (config: MutableDaemonConfig, details: DaemonConfigChangeDetails) => void;
+type ConfigApplyRollback = () => void;
+type ConfigApplyListener = (
+  config: MutableDaemonConfig,
+  previous: MutableDaemonConfig,
+  details: DaemonConfigChangeDetails,
+) => ConfigApplyRollback;
 type FieldChangeHandler = (value: unknown) => void;
 
 interface AppliedFieldChange {
@@ -121,17 +156,6 @@ function omitProvidersFromOverrides(
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
 }
 
-function omitProvidersFromPersistedAgents(
-  agents: PersistedConfig["agents"],
-): Record<string, unknown> | undefined {
-  if (!agents) {
-    return undefined;
-  }
-
-  const { providers: _providers, ...rest } = agents as Record<string, unknown>;
-  return Object.keys(rest).length > 0 ? rest : undefined;
-}
-
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
   return path
     .split(".")
@@ -140,6 +164,115 @@ function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
 
 function isEqualValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+const RELOADABLE_PATHS = [
+  "daemon.relay.enabled",
+  "daemon.mcp.enabled",
+  "daemon.mcp.injectIntoAgents",
+  "daemon.browserTools.enabled",
+  "daemon.hostnames",
+  "daemon.cors.allowedOrigins",
+  "daemon.trustedProxies",
+  "daemon.git.maxProcessesPerSecond",
+  "daemon.git.maxProcessConcurrency",
+  "daemon.autoArchiveAfterMerge",
+  "daemon.enableTerminalAgentHooks",
+  "daemon.appendSystemPrompt",
+  "daemon.terminalProfiles",
+  "daemon.agentProfiles",
+  "app.baseUrl",
+  "agents.providers",
+  "agents.catalogRefreshTimeoutMs",
+  "agents.metadataGeneration",
+  "pluginsEnabled",
+] as const;
+
+const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
+  ["daemon.relay.enabled", "relay.enabled"],
+  ["daemon.mcp.enabled", "mcp.enabled"],
+  ["daemon.mcp.injectIntoAgents", "mcp.injectIntoAgents"],
+  ["daemon.browserTools.enabled", "browserTools.enabled"],
+  ["daemon.hostnames", "hostnames"],
+  ["daemon.cors.allowedOrigins", "cors.allowedOrigins"],
+  ["daemon.trustedProxies", "trustedProxies"],
+  ["daemon.git.maxProcessesPerSecond", "git.maxProcessesPerSecond"],
+  ["daemon.git.maxProcessConcurrency", "git.maxProcessConcurrency"],
+  ["daemon.autoArchiveAfterMerge", "autoArchiveAfterMerge"],
+  ["daemon.enableTerminalAgentHooks", "enableTerminalAgentHooks"],
+  ["daemon.appendSystemPrompt", "appendSystemPrompt"],
+  ["daemon.terminalProfiles", "terminalProfiles"],
+  ["daemon.agentProfiles", "agentProfiles"],
+  ["app.baseUrl", "app.baseUrl"],
+  ["agents.providers", "providers"],
+  ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
+  ["agents.metadataGeneration", "metadataGeneration"],
+  ["pluginsEnabled", "pluginsEnabled"],
+]);
+
+function pathBelongsTo(path: string, owner: string): boolean {
+  return path === owner || path.startsWith(`${owner}.`);
+}
+
+function diffPaths(previous: unknown, next: unknown, prefix = ""): string[] {
+  if (isEqualValue(previous, next)) return [];
+  if (!isRecord(previous) || !isRecord(next)) {
+    if (isRecord(previous)) return leafPaths(previous, prefix);
+    if (isRecord(next)) return leafPaths(next, prefix);
+    return prefix ? [prefix] : [];
+  }
+
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  return Array.from(keys).flatMap((key) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return diffPaths(previous[key], next[key], path);
+  });
+}
+
+function leafPaths(record: Record<string, unknown>, prefix: string): string[] {
+  return Object.entries(record).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return isRecord(value) ? leafPaths(value, path) : [path];
+  });
+}
+
+function compactOwnedPaths(paths: readonly string[], owners: readonly string[]): string[] {
+  const compacted = new Set<string>();
+  for (const path of paths) {
+    const owner = owners.find((candidate) => pathBelongsTo(path, candidate));
+    compacted.add(owner ?? path);
+  }
+  return Array.from(compacted).sort();
+}
+
+function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
+  return {
+    ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
+    ...(patch.mcp?.injectIntoAgents !== undefined
+      ? { mcp: { injectIntoAgents: patch.mcp.injectIntoAgents } }
+      : {}),
+    ...(patch.browserTools?.enabled !== undefined
+      ? { browserTools: { enabled: patch.browserTools.enabled } }
+      : {}),
+    ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
+    ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
+    ...(patch.metadataGeneration?.providers !== undefined
+      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
+      : {}),
+    ...(patch.autoArchiveAfterMerge !== undefined
+      ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
+      : {}),
+    ...(patch.enableTerminalAgentHooks !== undefined
+      ? { enableTerminalAgentHooks: patch.enableTerminalAgentHooks }
+      : {}),
+    ...(patch.appendSystemPrompt !== undefined
+      ? { appendSystemPrompt: patch.appendSystemPrompt }
+      : {}),
+    ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
+    ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
+    ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+  };
 }
 
 export function applyMutableProviderConfigToOverrides(
@@ -166,14 +299,22 @@ export class DaemonConfigStore {
   private readonly paseoHome: string;
   private readonly logger: LoggerLike | undefined;
   private readonly changeListeners = new Set<ConfigListener>();
+  private readonly applyListeners = new Set<ConfigApplyListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
   private readonly relayEnabledMutable: boolean;
+  private readonly reloadSource: DaemonConfigReloadSource | undefined;
+  private readonly startupPersisted: PersistedConfig;
+  private lastKnownPersisted: PersistedConfig;
 
   constructor(
     paseoHome: string,
     initial: MutableDaemonConfig,
     logger?: LoggerLike,
-    options: { relayEnabledMutable?: boolean } = {},
+    options: {
+      relayEnabledMutable?: boolean;
+      reloadSource?: DaemonConfigReloadSource;
+      startupPersisted?: PersistedConfig;
+    } = {},
   ) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
@@ -182,6 +323,9 @@ export class DaemonConfigStore {
       relay: initial.relay ?? { enabled: true },
     });
     this.relayEnabledMutable = options.relayEnabledMutable ?? true;
+    this.reloadSource = options.reloadSource;
+    this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
+    this.lastKnownPersisted = this.startupPersisted;
   }
 
   public get(): MutableDaemonConfig {
@@ -189,7 +333,7 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
+    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
     if (parsedPatch.relay?.enabled !== undefined && !this.relayEnabledMutable) {
       throw new Error(
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
@@ -198,6 +342,7 @@ export class DaemonConfigStore {
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
+    if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -205,20 +350,99 @@ export class DaemonConfigStore {
       ),
     );
 
-    const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
-      return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
-    });
     const configChanged = !isEqualValue(this.current, next);
 
     if (!configChanged && removedProviders.length === 0) {
       return this.current;
     }
 
-    const persistedBeforePatch = this.persistConfig(next, removedProviders);
-    if (!configChanged) return this.current;
+    const { previous: persistedBeforePatch, knownNext } = this.persistConfig(
+      configPatch,
+      removedProviders,
+    );
+    if (!configChanged) {
+      this.lastKnownPersisted = knownNext;
+      return this.current;
+    }
+
+    try {
+      this.applyReplacement(next, { removedProviders });
+      this.lastKnownPersisted = knownNext;
+    } catch (error) {
+      savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+      throw error;
+    }
+
+    return this.current;
+  }
+
+  public reload(): DaemonConfigReloadResult {
+    if (!this.reloadSource) {
+      throw new Error("Daemon config reload is unavailable for this daemon instance");
+    }
+
+    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+    const resolved = this.reloadSource.resolve(persisted);
+    // Plugin source changes require the plugin lifecycle operation or a daemon
+    // restart. The global switch is independently reloadable.
+    const desired = MutableDaemonConfigSchema.parse({
+      ...resolved.mutable,
+      plugins: this.current.plugins,
+    });
+    const changedSinceLastApply = diffPaths(this.lastKnownPersisted, persisted);
+    const overrideControlledPaths = compactOwnedPaths(
+      changedSinceLastApply.filter((path) =>
+        resolved.overrideControlledPaths.some((owner) => pathBelongsTo(path, owner)),
+      ),
+      resolved.overrideControlledPaths,
+    );
+    const appliedPaths = RELOADABLE_PATHS.filter((persistedPath) => {
+      if (resolved.overrideControlledPaths.some((owner) => pathBelongsTo(persistedPath, owner))) {
+        return false;
+      }
+      const mutablePath = PERSISTED_TO_MUTABLE_PATH.get(persistedPath);
+      return (
+        mutablePath !== undefined &&
+        !isEqualValue(
+          getValueAtPath(this.current, mutablePath),
+          getValueAtPath(desired, mutablePath),
+        )
+      );
+    });
+    const restartRequiredPaths = compactOwnedPaths(
+      diffPaths(this.startupPersisted, persisted).filter((path) => {
+        if (path === "$schema" || path === "version") return false;
+        if (RELOADABLE_PATHS.some((owner) => pathBelongsTo(path, owner))) return false;
+        return !resolved.overrideControlledPaths.some((owner) => pathBelongsTo(path, owner));
+      }),
+      [],
+    );
+
+    const removedProviders = Object.keys(this.current.providers).filter(
+      (provider) => !(provider in desired.providers),
+    );
+    this.applyReplacement(desired, { removedProviders });
+    this.lastKnownPersisted = persisted;
+
+    return {
+      appliedPaths: [...appliedPaths].sort(),
+      restartRequiredPaths,
+      overrideControlledPaths,
+    };
+  }
+
+  private applyReplacement(
+    next: MutableDaemonConfig,
+    changeDetails: DaemonConfigChangeDetails,
+  ): void {
+    const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
+      return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
+    });
+    if (isEqualValue(this.current, next) && changeDetails.removedProviders.length === 0) return;
 
     const previous = this.current;
     const appliedFieldChanges: AppliedFieldChange[] = [];
+    const applyRollbacks: ConfigApplyRollback[] = [];
     this.current = next;
     try {
       for (const path of changedFieldPaths) {
@@ -233,21 +457,44 @@ export class DaemonConfigStore {
           handler(value);
         }
       }
+      for (const listener of this.applyListeners) {
+        applyRollbacks.push(listener(next, previous, changeDetails));
+      }
     } catch (error) {
       this.current = previous;
-      for (const change of appliedFieldChanges.toReversed()) {
-        change.handler(change.previousValue);
+      const rollbackErrors: unknown[] = [];
+      for (const rollback of applyRollbacks.toReversed()) {
+        try {
+          rollback();
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
       }
-      savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+      for (const change of appliedFieldChanges.toReversed()) {
+        try {
+          change.handler(change.previousValue);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        const rollbackFailure = new Error(
+          "Daemon config apply failed and one or more live owners could not roll back",
+          { cause: error },
+        );
+        Object.assign(rollbackFailure, { rollbackErrors });
+        throw rollbackFailure;
+      }
       throw error;
     }
 
-    const changeDetails: DaemonConfigChangeDetails = { removedProviders };
     for (const listener of this.changeListeners) {
-      listener(next, changeDetails);
+      try {
+        listener(next, changeDetails);
+      } catch (error) {
+        this.logger?.info({ error }, "Daemon config change notification failed");
+      }
     }
-
-    return next;
   }
 
   public onFieldChange(path: string, handler: FieldChangeHandler): () => void {
@@ -274,127 +521,115 @@ export class DaemonConfigStore {
     };
   }
 
+  public onApply(listener: ConfigApplyListener): () => void {
+    // A live owner must either throw before changing its state or return a
+    // rollback that restores the previous config. Notifications belong in
+    // onChange so they run only after every live owner commits.
+    this.applyListeners.add(listener);
+    return () => {
+      this.applyListeners.delete(listener);
+    };
+  }
+
   private persistConfig(
-    config: MutableDaemonConfig,
+    patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
     removeProviders: readonly string[],
-  ): PersistedConfig {
+  ): { previous: PersistedConfig; knownNext: PersistedConfig } {
     const persisted = loadPersistedConfig(this.paseoHome, this.logger);
-    const nextPersisted = mergeMutableConfigIntoPersistedConfig({
-      persisted,
-      mutable: config,
-      removeProviders,
-      persistRelayEnabled: this.relayEnabledMutable,
-    });
+    const merge = (source: PersistedConfig) =>
+      mergeMutablePatchIntoPersistedConfig({
+        persisted: source,
+        patch,
+        removeProviders,
+        persistRelayEnabled: this.relayEnabledMutable,
+      });
+    const nextPersisted = merge(persisted);
+    const knownNext = merge(this.lastKnownPersisted);
     savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
-    return persisted;
+    return { previous: persisted, knownNext };
   }
 }
 
-function mergeMutableConfigIntoPersistedConfig(params: {
+function mergeMutablePatchIntoPersistedConfig(params: {
   persisted: PersistedConfig;
-  mutable: MutableDaemonConfig;
+  patch: Omit<SupportedMutableConfigPatch, "removeProviders">;
   removeProviders: readonly string[];
   persistRelayEnabled: boolean;
 }): PersistedConfig {
-  const { persisted, mutable, removeProviders, persistRelayEnabled } = params;
-  if (!mutable.relay) {
-    throw new Error("Mutable daemon config is missing relay state");
+  const { persisted, patch, removeProviders, persistRelayEnabled } = params;
+  const daemon = mergeMutableDaemonPatch(persisted.daemon, patch, persistRelayEnabled);
+  const agents = mergeMutableAgentPatch(persisted.agents, patch, removeProviders);
+  return {
+    ...persisted,
+    ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
+    ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+    ...(daemon ? { daemon } : { daemon: undefined }),
+    ...(agents ? { agents } : { agents: undefined }),
+  } as PersistedConfig;
+}
+
+function mergeMutableAgentPatch(
+  persistedAgents: PersistedConfig["agents"],
+  patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
+  removeProviders: readonly string[],
+): PersistedConfig["agents"] {
+  if (
+    patch.providers === undefined &&
+    patch.metadataGeneration === undefined &&
+    removeProviders.length === 0
+  ) {
+    return persistedAgents;
   }
-  const browserToolsEnabled = readBrowserToolsEnabled(mutable);
-  const metadataGenerationProviders = readMetadataGenerationProviders(mutable);
+
+  const next = { ...persistedAgents } as Record<string, unknown>;
   const persistedProviderOverrides = omitProvidersFromOverrides(
-    persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
+    persistedAgents?.providers as Record<string, ProviderOverride> | undefined,
     removeProviders,
   );
   const providerOverrides = applyMutableProviderConfigToOverrides(
     persistedProviderOverrides,
-    mutable.providers,
+    patch.providers,
   );
-  const persistedAgents = omitProvidersFromPersistedAgents(persisted.agents);
-  const persistedMetadataGeneration = {
-    providers: metadataGenerationProviders,
-  };
-  const shouldPersistMetadataGeneration =
-    metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
+  if (providerOverrides) next["providers"] = providerOverrides;
+  else delete next["providers"];
 
-  let nextAgents = persistedAgents as PersistedConfig["agents"];
-  if (providerOverrides && Object.keys(providerOverrides).length > 0) {
-    nextAgents = {
-      ...persistedAgents,
-      providers: providerOverrides,
-      ...(shouldPersistMetadataGeneration
-        ? { metadataGeneration: persistedMetadataGeneration }
-        : {}),
-    } as PersistedConfig["agents"];
-  } else if (shouldPersistMetadataGeneration) {
-    nextAgents = {
-      ...persistedAgents,
-      metadataGeneration: persistedMetadataGeneration,
-    } as PersistedConfig["agents"];
+  if (patch.metadataGeneration?.providers !== undefined) {
+    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
+  } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
+    const removed = new Set(removeProviders);
+    next["metadataGeneration"] = {
+      providers: persistedAgents.metadataGeneration.providers.filter(
+        (entry) => !removed.has(entry.provider),
+      ),
+    };
   }
 
-  return {
-    ...persisted,
-    daemon: {
-      ...persisted.daemon,
-      ...(persistRelayEnabled
-        ? {
-            relay: {
-              ...persisted.daemon?.relay,
-              enabled: mutable.relay.enabled,
-            },
-          }
-        : {}),
-      mcp: {
-        ...persisted.daemon?.mcp,
-        injectIntoAgents: mutable.mcp.injectIntoAgents,
-      },
-      browserTools: {
-        ...persisted.daemon?.browserTools,
-        enabled: browserToolsEnabled,
-      },
-      autoArchiveAfterMerge: mutable.autoArchiveAfterMerge,
-      enableTerminalAgentHooks: mutable.enableTerminalAgentHooks,
-      appendSystemPrompt: mutable.appendSystemPrompt,
-      ...(mutable.terminalProfiles !== undefined
-        ? { terminalProfiles: mutable.terminalProfiles }
-        : {}),
-    },
-    agents: nextAgents,
-  } as PersistedConfig;
+  return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;
 }
 
-function readBrowserToolsEnabled(mutable: MutableDaemonConfig): boolean {
-  const browserTools = mutable.browserTools;
-  if (!isRecord(browserTools)) {
-    return false;
+function mergeMutableDaemonPatch(
+  persistedDaemon: PersistedConfig["daemon"],
+  patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
+  persistRelayEnabled: boolean,
+): PersistedConfig["daemon"] {
+  const next = { ...persistedDaemon } as NonNullable<PersistedConfig["daemon"]>;
+  if (persistRelayEnabled && patch.relay?.enabled !== undefined) {
+    next.relay = { ...next.relay, enabled: patch.relay.enabled };
   }
-  return browserTools["enabled"] === true;
-}
-
-function readMetadataGenerationProviders(
-  mutable: MutableDaemonConfig,
-): Array<{ provider: string; model?: string; thinkingOptionId?: string }> {
-  const metadataGeneration = mutable.metadataGeneration;
-  if (!isRecord(metadataGeneration)) {
-    return [];
+  if (patch.mcp?.injectIntoAgents !== undefined) {
+    next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };
   }
-  const providers = metadataGeneration["providers"];
-  if (!Array.isArray(providers)) {
-    return [];
+  if (patch.browserTools?.enabled !== undefined) {
+    next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
   }
-  return providers.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry["provider"] !== "string") {
-      return [];
-    }
-    return [
-      {
-        provider: entry["provider"],
-        ...(typeof entry["model"] === "string" ? { model: entry["model"] } : {}),
-        ...(typeof entry["thinkingOptionId"] === "string"
-          ? { thinkingOptionId: entry["thinkingOptionId"] }
-          : {}),
-      },
-    ];
-  });
+  if (patch.autoArchiveAfterMerge !== undefined) {
+    next.autoArchiveAfterMerge = patch.autoArchiveAfterMerge;
+  }
+  if (patch.enableTerminalAgentHooks !== undefined) {
+    next.enableTerminalAgentHooks = patch.enableTerminalAgentHooks;
+  }
+  if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
+  if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
+  if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  return Object.keys(next).length > 0 ? next : undefined;
 }

@@ -203,7 +203,10 @@ class ControlledAgentClient implements AgentClient {
   resumes = 0;
   createdConfigs: AgentSessionConfig[] = [];
 
-  constructor(private readonly client: AgentClient) {
+  constructor(
+    private readonly client: AgentClient,
+    private readonly internalClient: AgentClient,
+  ) {
     this.provider = client.provider;
     this.capabilities = client.capabilities;
   }
@@ -230,6 +233,9 @@ class ControlledAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    if (config.internal) {
+      return this.internalClient.createSession(config, launchContext, options);
+    }
     this.creations++;
     this.createdConfigs.push({ ...config });
     this.creationObserved.resolve();
@@ -242,6 +248,9 @@ class ControlledAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    if (overrides?.internal) {
+      return this.internalClient.resumeSession(handle, overrides, launchContext);
+    }
     this.resumes++;
     return this.client.resumeSession(handle, overrides, launchContext);
   }
@@ -275,6 +284,7 @@ class InMemoryHubRelationships implements HubRelationshipRemote {
   private enrollmentRejection: 401 | 403 | null = null;
   private enrollmentScopes = ["hub.execution.*"];
   private revokeFailures = 0;
+  private revocationGate: Deferred<void> | null = null;
   private readonly relationships = new Set<string>();
   readonly enrollmentSnapshots: RelationshipInvocationSnapshot[] = [];
   readonly socketSnapshots: RelationshipInvocationSnapshot[] = [];
@@ -344,8 +354,19 @@ class InMemoryHubRelationships implements HubRelationshipRemote {
     this.revokeFailures = count;
   }
 
+  holdRevocation(): void {
+    this.revocationGate = deferred<void>();
+  }
+
+  completeRevocation(): void {
+    if (!this.revocationGate) throw new Error("No revocation is waiting");
+    this.revocationGate.resolve();
+    this.revocationGate = null;
+  }
+
   async revoke(input: HubRevocation): Promise<void> {
     this.revocations.push({ ...input });
+    await this.revocationGate?.promise;
     if (this.revokeFailures > 0) {
       this.revokeFailures--;
       throw new Error("Hub is offline");
@@ -438,6 +459,7 @@ export class HubRelationshipHarness {
           this.providerPrompts.push(prompt);
         },
       }).codex,
+      createTestAgentClients({ supportsMcpServers: mcpEnabled }).codex,
     );
   }
 
@@ -498,6 +520,14 @@ export class HubRelationshipHarness {
     } finally {
       watcher.close();
     }
+  }
+
+  async connectionStateBecomes(expected: string): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await this.status()).state === expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Hub connection state did not become ${expected}`);
   }
 
   async manageRelationshipFromExternalSocket(): Promise<SessionOutboundMessage[]> {
@@ -584,6 +614,14 @@ export class HubRelationshipHarness {
 
   failRevocations(count: number): void {
     this.remote.failRevocations(count);
+  }
+
+  holdRevocation(): void {
+    this.remote.holdRevocation();
+  }
+
+  completeRevocation(): void {
+    this.remote.completeRevocation();
   }
 
   failProviderPromptStart(prompt = "Create through the Hub"): void {
@@ -822,6 +860,10 @@ export class HubRelationshipHarness {
 
   providerCreations(): number {
     return this.codex.creations;
+  }
+
+  executionProviderCreations(): number {
+    return this.codex.createdConfigs.filter((config) => config.internal !== true).length;
   }
 
   providerResumes(): number {

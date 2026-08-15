@@ -1,86 +1,84 @@
 ---
 title: Hub configuration
-description: Where a project's configuration comes from, how GitHub sync works, and how revisions activate and roll back.
+description: Configuration bundles, GitHub sync, CLI deployment, and revisions.
 nav: Configuration
-order: 68
+order: 70
 category: Hub
 ---
 
 # Hub configuration
 
-A project is configured by one versioned document. The project's **Configuration** tab shows the active revision, its source, and the last synchronization attempt.
+A project configuration is one versioned bundle:
+
+```text
+.paseo/
+├── hub.yml
+└── workflows/
+    ├── <workflow>.yml
+    └── partials/
+        └── <partial>.md
+```
+
+`hub.yml` owns named environments and agents. Each direct-child workflow file owns one trigger and its ordered inline steps. Prompt partials referenced by those workflows live below `workflows/partials/`. Workflow discovery is fixed by convention; there is no manifest or include list.
+
+[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle in this shape: Discord, Slack, and GitHub workflows running a classifier and a worker on shared partials. Copy `.paseo/` into your repository and replace the placeholders its README lists.
 
 ## Sources
 
-A configuration comes from exactly one source:
+A configuration comes from one source:
 
-- **GitHub source**: one repository, the file `.paseo/hub.yml`, on the repository's current default branch.
-- **Manual source**: edited in the dashboard and saved with **Save and activate**.
-- **CLI/API install**: YAML sent explicitly with an organization API key.
+- **GitHub source**: the complete `.paseo` bundle on the repository's default branch.
+- **Manual source**: source files edited and activated in the dashboard.
+- **CLI/API install**: a complete bundle sent with organization authority.
 
-Pick a GitHub source by choosing a repository and clicking **Use for configuration**. That syncs immediately and enables automatic deployment.
-
-The path and the branch are fixed. There is no setting for either.
+The **Configuration** tab shows the active revision, source files, and latest synchronization attempt.
 
 ## Deploy from the CLI
 
-From a project checkout, add the target project slug as optional deployment metadata:
-
-```yaml
-project: my-project
-```
-
-Then deploy:
+Run from the project root:
 
 ```sh
 paseo hub login https://hub.example.com
-paseo hub deploy --dry-run
-paseo hub deploy
+paseo hub deploy -p my-project --dry-run
+paseo hub deploy -p my-project
 ```
 
-The default path is exactly `.paseo/hub.yml` relative to the current directory. The CLI does not search parent directories or alternate filenames. Use `paseo hub deploy path/to/config.yml` for another file. The bundle root remains the current directory, so partials are always read from `.paseo/partials/` under that directory. `-p, --project <slug>` overrides the file's `project` value without changing the YAML sent to Hub.
+Both commands discover `.paseo/hub.yml`, every direct `.paseo/workflows/*.yml` file, and each referenced file below `.paseo/workflows/partials/`. Files are sent in deterministic path order through the same bundle request. Dry-run calls server-side validation and does not create or activate a revision.
 
-For each prompt `include`, the CLI sends one `{ path, content }` entry whose path is relative to `.paseo/partials/`. It sends only files referenced by the main YAML; nested include-looking text inside a partial is not scanned. Missing, unsafe, duplicate, unreadable, non-file, or oversized inputs fail locally before the Hub request. A configuration with only inline prompt blocks sends no `partials` field.
+The CLI rejects missing resource or workflow files, `.yaml` workflow extensions, nested workflow files, unsafe partial paths, symlinked bundle paths, and unreadable files before contacting Hub. Errors name paths but never print file contents or credentials.
 
-`--dry-run` sends the identical resolved YAML, project slug, and prompt-partial bundle to `POST /api/v1/configurations/validate`. Hub performs the same compilation and resource resolution as installation but records and activates nothing.
+Origin precedence:
 
-Origin precedence is `--hub`, `PASEO_HUB_URL`, the active stored login, then `https://hub.paseo.sh`. Credential precedence is `--api-key`, `PASEO_HUB_API_KEY`, then an exact-origin stored login. API keys passed by flag or environment are not stored. A stored credential is organization-scoped and is never reused for a different Hub origin. Deploy and dry-run report the normalized destination before sending anything and include it in structured results.
+1. `--hub`
+2. `PASEO_HUB_URL`
+3. Active stored login
+4. `https://hub.paseo.sh`
 
-## Sync
+Credential precedence:
 
-A push to the default branch of the configuration repository triggers a sync:
+1. `--api-key`
+2. `PASEO_HUB_API_KEY`
+3. Stored login for the exact resolved origin
 
-1. Hub fetches `.paseo/hub.yml` at that exact commit.
-2. It validates the document and resolves every repository, workspace, guild, and daemon it names.
-3. On success the revision becomes active.
+Flags and environment keys are not stored. Endpoint and credential behavior is unchanged between deploy and dry-run.
 
-**Sync now** does the same on demand.
+## GitHub sync
 
-Every attempt is recorded, including failures. The outcomes you will see:
+A push to the configuration repository's default branch starts a sync:
 
-| Outcome                 | What happened                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| Activated               | Valid document, everything resolved, now serving events.                        |
-| Invalid                 | The document failed validation or named something the organization can't reach. |
-| Fetch failed            | The file is missing, or GitHub could not be read.                               |
-| Superseded push ignored | A newer commit already moved the branch head.                                   |
+1. Hub discovers the canonical bundle at that exact commit.
+2. It parses every source file and resolves prompt partials.
+3. It validates named resources, expressions, connections, and daemon availability.
+4. On success, the new immutable revision becomes active.
 
-A failed sync never replaces the active revision. A repository with a broken `hub.yml` keeps serving the last good one.
+**Sync now** performs the same operation on demand. Failures retain their source path and authored field. A failed sync never replaces the active revision.
 
-## Revisions
+## Revisions and source changes
 
-Revisions are immutable and numbered per project. Rolling back selects an earlier revision and recompiles its routes. The next valid push activates again, so rollback holds only until the next push.
+Revisions retain the exact authored files needed to inspect or redeploy them. Rolling back activates an earlier revision. The next valid GitHub push activates a new revision again.
 
-## Switching source
+GitHub-backed configuration is read-only in the dashboard. Switching to manual preserves source documents; it does not collapse the bundle into one generated file.
 
-Switching from GitHub to manual copies the active revision into the editor and stops syncing. Switching back means choosing a repository again.
+The configuration repository may differ from repositories named by `filters.repo`. Protect it because changing the bundle can select connections, daemons, working directories, agents, and outputs. See [Hub security](/docs/hub/security).
 
-While a project uses a GitHub source, the dashboard editor is read-only. The repository is the source of truth.
-
-## The configuration repository does not have to be the repository you watch
-
-`filters.repo` can name any repository the organization has a connection for. Keeping `hub.yml` in a private repository while triggers watch several public ones is a common setup, because push access to the configuration repository grants access to the organization's connections.
-
-Treat the configuration repository as part of the security boundary. [Hub security](/docs/hub/security) covers what a changed configuration can authorize and how to limit the resulting agent process.
-
-Next: [Hub workflows](/docs/hub/workflows), then the [`hub.yml` reference](/docs/hub/configuration/hub-yml).
+Next: the [configuration reference](/docs/hub/configuration/hub-yml) and [workflow examples](/docs/hub/workflows).

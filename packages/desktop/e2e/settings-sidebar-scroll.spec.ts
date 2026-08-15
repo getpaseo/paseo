@@ -1,15 +1,24 @@
 import { test, expect } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
-import { getServerId } from "../../app/e2e/support/helpers/server-id";
-import { installDesktopRuntime } from "./support/runtime";
 
 test.describe("Settings sidebar scrolling", () => {
   test.use({ viewport: { width: 900, height: 260 } });
 
   test("desktop drag region does not cover the scroll body", async ({ page }) => {
-    await installDesktopRuntime(page, {
-      serverId: getServerId(),
-      manageBuiltInDaemon: true,
+    await page.addInitScript(() => {
+      window.paseoDesktop = {
+        platform: "darwin",
+        events: { on: () => () => {} },
+        invoke: async (command: string) => {
+          if (command === "get_desktop_settings") {
+            return {
+              releaseChannel: "stable",
+              daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+            };
+          }
+          return null;
+        },
+      };
     });
 
     await gotoAppShell(page);

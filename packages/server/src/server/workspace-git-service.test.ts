@@ -200,7 +200,10 @@ function createDeferred<T>() {
 }
 
 function createAsyncSubscription() {
-  return { unsubscribe: vi.fn(() => Promise.resolve()) };
+  return {
+    updateIgnore: vi.fn(() => Promise.resolve()),
+    unsubscribe: vi.fn(() => Promise.resolve()),
+  };
 }
 
 function createGitHubServiceStub(): ForgeService {
@@ -262,8 +265,15 @@ interface CreateServiceTestOptions {
 
 function buildDefaultTestServiceDeps() {
   return {
-    subscribe: vi.fn(async () => ({ unsubscribe: vi.fn(async () => {}) })),
+    subscribe: vi.fn(async () => ({
+      updateIgnore: vi.fn(async () => {}),
+      unsubscribe: vi.fn(async () => {}),
+    })),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutSnapshotFacts(cwd)),
+    getCheckoutRefDerivedState: vi.fn(async (_cwd, facts, current) => ({
+      ...current,
+      upstreamStatus: facts.upstreamStatus,
+    })),
     getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
     getCheckoutShortstat: vi.fn(async () => ({
       additions: 1,
@@ -274,7 +284,7 @@ function buildDefaultTestServiceDeps() {
     forgeOverrides: { github: createGitHubServiceStub() },
     resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
-    runGitFetch: vi.fn(async () => {}),
+    runGitFetch: vi.fn(async () => ({ changes: [], error: null })),
     runGitCommand: vi.fn(async () => ({
       stdout: `${REPO_CWD}\n`,
       stderr: "",
@@ -283,6 +293,11 @@ function buildDefaultTestServiceDeps() {
       signal: null,
     })),
     getWorkspaceGitSelfHealPhaseMs: vi.fn(() => 30_000),
+    createWatcherLivenessCanary: vi.fn(() => ({
+      path: "",
+      filterEvents: (events) => events,
+      verify: vi.fn(async () => {}),
+    })),
     now: () => new Date("2026-04-12T00:00:00.000Z"),
   };
 }
@@ -842,17 +857,28 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
     const firstFetch = createDeferred<void>();
-    const runGitFetch = vi.fn(() => firstFetch.promise);
+    const runGitFetch = vi.fn(async () => {
+      await firstFetch.promise;
+      return {
+        changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+        error: null,
+      };
+    });
     const hasOriginRemote = vi.fn(async () => true);
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutSnapshotFacts(cwd),
       gitCommonDir: join(REPO_CWD, ".git"),
       absoluteGitDir: join(REPO_CWD, ".git"),
     }));
+    const getCheckoutRefDerivedState = vi.fn(async (_cwd, facts, current) => ({
+      ...current,
+      upstreamStatus: facts.upstreamStatus,
+    }));
     const resolveAbsoluteGitDir = vi.fn(async () => join(REPO_CWD, ".git"));
 
     const service = createService({
       getCheckoutSnapshotFacts,
+      getCheckoutRefDerivedState,
       resolveAbsoluteGitDir,
       hasOriginRemote,
       runGitFetch,
@@ -877,7 +903,8 @@ describe("WorkspaceGitServiceImpl", () => {
     await flushPromises();
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
     });
 
     await vi.advanceTimersByTimeAsync(180_000);
@@ -887,6 +914,165 @@ describe("WorkspaceGitServiceImpl", () => {
 
     first.unsubscribe();
     second.unsubscribe();
+    service.dispose();
+  });
+
+  test("remote ref name drift outside the fetch interval takes the structural fallback", async () => {
+    const runGitFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        changes: [],
+        nonRemoteRefsChanged: false,
+        remoteRefs: new Set(["origin/main"]),
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        changes: [],
+        nonRemoteRefsChanged: false,
+        remoteRefs: new Set(["origin/main", "origin/new"]),
+        error: null,
+      });
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch,
+    });
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const second = service.registerWorkspace(
+      { cwd: join(REPO_CWD, "packages", "server") },
+      vi.fn(),
+    );
+    await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+    getCheckoutSnapshotFacts.mockClear();
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    await vi.waitFor(() => {
+      expect(runGitFetch).toHaveBeenCalledTimes(2);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test.each([
+    {
+      name: "an added remote ref",
+      result: {
+        changes: [{ kind: "added" as const, ref: "origin/new", afterOid: "b" }],
+        error: null,
+      },
+    },
+    {
+      name: "a deleted remote ref",
+      result: {
+        changes: [{ kind: "deleted" as const, ref: "origin/main", beforeOid: "a" }],
+        error: null,
+      },
+    },
+    {
+      name: "a concurrent local ref change",
+      result: { changes: [], nonRemoteRefsChanged: true, error: null },
+    },
+  ])("$name takes the repository-wide structural fallback", async ({ result }) => {
+    const releaseFetch = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+    const getCheckoutRefDerivedState = vi.fn();
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutRefDerivedState,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => {
+        await releaseFetch.promise;
+        return result;
+      }),
+    });
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const second = service.registerWorkspace(
+      { cwd: join(REPO_CWD, "packages", "server") },
+      vi.fn(),
+    );
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+
+    releaseFetch.resolve();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+    });
+    expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test("a failed narrow remote-ref refresh falls back for that workspace", async () => {
+    const releaseFetch = createDeferred<void>();
+    const getCheckoutShortstat = vi
+      .fn()
+      .mockResolvedValueOnce({ additions: 1, deletions: 0 })
+      .mockResolvedValue({ additions: 2, deletions: 0 });
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+    const getCheckoutRefDerivedState = vi.fn(async () => {
+      throw new Error("ref moved again");
+    });
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutRefDerivedState,
+      getCheckoutShortstat,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => {
+        await releaseFetch.promise;
+        return {
+          changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+          error: null,
+        };
+      }),
+    });
+    const listener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    });
+
+    releaseFetch.resolve();
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
+    });
+    expect(listener.mock.lastCall?.[0].git.diffStat).toEqual({ additions: 2, deletions: 0 });
+
+    subscription.unsubscribe();
     service.dispose();
   });
 
@@ -1060,7 +1246,11 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("watches nested repository changes through one recursive checkout subscription", async () => {
     const unsubscribe = vi.fn(async () => {});
-    const subscribe = vi.fn(async () => ({ unsubscribe }));
+    const updateIgnore = vi.fn(async () => {});
+    const subscribe = vi.fn(async () => ({
+      updateIgnore,
+      unsubscribe,
+    }));
     const service = createService({ subscribe });
 
     const subscription = await service.requestWorkingTreeWatch(
@@ -1081,7 +1271,11 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("requestWorkingTreeWatch reference-counts watchers by cwd", async () => {
     const unsubscribe = vi.fn(async () => {});
-    const subscribe = vi.fn(async () => ({ unsubscribe }));
+    const updateIgnore = vi.fn(async () => {});
+    const subscribe = vi.fn(async () => ({
+      updateIgnore,
+      unsubscribe,
+    }));
     const service = createService({ subscribe });
 
     const firstListener = vi.fn();
@@ -1180,7 +1374,10 @@ describe("WorkspaceGitServiceImpl", () => {
     const backgroundFetch = createDeferred<void>();
     const service = createService({
       getCheckoutWorktreeState,
-      runGitFetch: vi.fn(() => backgroundFetch.promise),
+      runGitFetch: vi.fn(async () => {
+        await backgroundFetch.promise;
+        return { changes: [], error: null };
+      }),
       subscribe,
     });
     const workspaceListener = vi.fn();

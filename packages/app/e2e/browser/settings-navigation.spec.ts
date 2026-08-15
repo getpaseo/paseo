@@ -114,16 +114,6 @@ test.describe("Settings sidebar navigation", () => {
     await expectDirectHostUriHidden(page);
   });
 
-  test("browser web hides direct connection custom headers", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openAddHostFlow(page);
-    await selectHostConnectionType(page, "direct");
-    await toggleHostAdvanced(page);
-
-    await expect(page.getByTestId("direct-header-add")).toHaveCount(0);
-  });
-
   test("sidebar shows a Back to workspace row that leaves /settings", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);

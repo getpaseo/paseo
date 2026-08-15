@@ -18,15 +18,17 @@ Log in from the machine first:
 paseo hub login https://hub.example.com
 ```
 
-The CLI prints a URL and verification code, opens your browser when the terminal is interactive, and stores the approved organization-scoped CLI credential under `PASEO_HOME`. Then enroll the daemon:
+The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`. Then enroll the daemon:
 
 ```sh
 paseo hub connect
 ```
 
-`connect` resolves the active login's Hub origin and uses its credential to request a short-lived, single-use enrollment token. The daemon exchanges that token and retains its own independently generated relationship credential. The human CLI credential is never stored as daemon authority.
+`connect` uses the active login to request a single-use enrollment token. The daemon exchanges it for its own relationship credential; your CLI login is never stored as daemon authority.
 
-Each daemon has two identifiers: an immutable generated ID and a friendly slug. Hub normalizes the slug you enter with lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. The slug is what the dashboard shows and what configuration references.
+Hub derives the daemon's initial slug from its hostname. If that slug is already used in the organization, Hub adds a short daemon ID suffix. You can rename the daemon later in Hub.
+
+Each daemon has two identifiers: an immutable generated ID and a friendly slug. Hub normalizes slugs with lowercase words joined by hyphens, so `Build Studio` becomes `build-studio`. The slug is what the dashboard shows and what configuration references.
 
 You can rename the slug later without changing the daemon ID. Renaming after a configuration is active means updating that configuration.
 
@@ -48,13 +50,22 @@ paseo hub disconnect --force   # drop local authority when Hub is unreachable
 
 One daemon has one Hub relationship. Connecting a daemon that already has one is refused.
 
-`paseo hub logout` removes only the active human CLI credential. In an interactive terminal, it checks the relationship and offers to disconnect when the daemon uses the same Hub. It performs an accepted disconnect before deleting the login, so a failed disconnection preserves the human credential. Declining leaves the daemon connected and removes only the login. JSON and noninteractive logout never disconnect implicitly; use `paseo hub logout --disconnect-daemon` when automation intends to remove both identities. Add `--force` only when that daemon disconnection should remove local authority while Hub is unreachable.
+`paseo hub logout` removes the active CLI login. The daemon's relationship is a separate identity and stays connected.
+
+In an interactive terminal, logout offers to disconnect a daemon enrolled with the same Hub. Accepting disconnects first and then deletes the login, so a failed disconnection keeps your credential. Declining removes only the login.
+
+Noninteractive and `--json` logout never disconnect implicitly:
+
+```sh
+paseo hub logout --disconnect-daemon           # remove both identities
+paseo hub logout --disconnect-daemon --force   # drop local authority when Hub is unreachable
+```
 
 ## Reference it from configuration
 
 ```yaml
 environments:
-  - name: dev
+  dev:
     kind: daemon
     daemon: my-macbook
     cwd: /Users/you/code/your-repo
@@ -69,11 +80,13 @@ To keep executions off your working tree, add a worktree:
 ```yaml
 worktree:
   mode: branch-off
-  newBranch: hub/investigation
-  base: main
+  newBranch: trigger-${{ paseo.execution.id }}
+  base: origin/main
 ```
 
-See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
+`${{ paseo.execution.id }}` renders the execution's UUID, so every execution gets its own branch off `origin/main`.
+
+[Environment fields](/docs/hub/configuration/hub-yml#environments) lists what `newBranch` accepts. See [Git worktrees](/docs/worktrees) for setup hooks and scripts.
 
 ## What Hub owns
 

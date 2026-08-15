@@ -1,6 +1,6 @@
 import {
   planTimelineCatchUpAfter,
-  planTimelineTailFetch,
+  planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
 
@@ -12,10 +12,12 @@ interface TimelinePageResult {
 interface ViewedTimelineSyncPorts {
   initialDeliveryMode: TimelineDeliveryMode;
   setSubscription(agentIds: string[]): Promise<void>;
+  readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
   ): Promise<TimelinePageResult>;
+  fetchLatestTail(agentId: string): Promise<TimelinePageResult>;
   reportError(error: unknown): void;
   schedule(task: () => void, delayMs: number): () => void;
 }
@@ -136,6 +138,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
 
   const isAcknowledged = (agentId: string) => acknowledged.includes(agentId);
   const isDesired = (agentId: string) => desired.includes(agentId);
+  const ownsCatchUp = (agentId: string, generation: number) =>
+    !disposed &&
+    connected &&
+    isDesired(agentId) &&
+    isAcknowledged(agentId) &&
+    catchUps.get(agentId)?.generation === generation;
 
   const notifyListeners = () => {
     for (const listener of listeners) listener();
@@ -168,30 +176,26 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     agentId: string,
     generation: number,
     request: ProjectedTimelineForwardFetchPlan,
+    fallbackToLatestTailOnOverflow: boolean,
   ): Promise<void> => {
-    if (
-      disposed ||
-      !connected ||
-      !isDesired(agentId) ||
-      !isAcknowledged(agentId) ||
-      catchUps.get(agentId)?.generation !== generation
-    ) {
-      return;
-    }
+    if (!ownsCatchUp(agentId, generation)) return;
 
     try {
       const page = await ports.fetchPage(agentId, request);
-      if (
-        disposed ||
-        !connected ||
-        !isDesired(agentId) ||
-        !isAcknowledged(agentId) ||
-        catchUps.get(agentId)?.generation !== generation
-      ) {
-        return;
-      }
+      if (!ownsCatchUp(agentId, generation)) return;
       if (page.hasNewer && page.endCursor) {
-        await fetchUntilCurrent(agentId, generation, planTimelineCatchUpAfter(page.endCursor));
+        if (fallbackToLatestTailOnOverflow) {
+          await ports.fetchLatestTail(agentId);
+          catchUps.set(agentId, { generation, status: "complete" });
+          setVisibilityCatchUpReady(agentId);
+          return;
+        }
+        await fetchUntilCurrent(
+          agentId,
+          generation,
+          planTimelineCatchUpAfter(page.endCursor),
+          false,
+        );
         return;
       }
       if (page.hasNewer) {
@@ -230,7 +234,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       if (request) pendingCatchUps.set(agentId, request);
       return;
     }
-    const nextRequest = request ?? planTimelineTailFetch();
+    const nextRequest = request ?? planTimelineResumeFetch(ports.readCursor(agentId));
     const current = catchUps.get(agentId);
     const decision = decideCatchUp({ current, request: nextRequest, supersede });
     if (decision === "keep-and-park") {
@@ -245,7 +249,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingCatchUps.delete(agentId);
-    void fetchUntilCurrent(agentId, generation, nextRequest);
+    void fetchUntilCurrent(
+      agentId,
+      generation,
+      nextRequest,
+      request === undefined && nextRequest.direction === "after",
+    );
   };
 
   const startAcknowledgedCatchUps = () => {

@@ -1,53 +1,53 @@
 ---
 title: GitHub triggers
-description: Configure GitHub events as Hub triggers and route them into durable workflows.
+description: Configure GitHub events with explicit step-scoped GitHub authority.
 nav: GitHub
-order: 65
+order: 67
 category: Hub
 ---
 
 # GitHub triggers
 
-## Events
+| `on`                                 | Event                                |
+| ------------------------------------ | ------------------------------------ |
+| `github.issue_comment`               | Comment on an issue or pull request. |
+| `github.issues`                      | Issue event.                         |
+| `github.pull_request_review`         | Pull request review.                 |
+| `github.pull_request_review_comment` | Diff comment.                        |
 
-| `on`                                 | Fires when                                        |
-| ------------------------------------ | ------------------------------------------------- |
-| `github.issue_comment`               | A comment on an issue or pull request is created. |
-| `github.issues`                      | An issue is opened or edited.                     |
-| `github.pull_request_review`         | A review is submitted.                            |
-| `github.pull_request_review_comment` | A comment is added to a diff.                     |
+GitHub sends every subscribed action. Each delivery that passes the filters starts a run.
 
-Which repositories produce events is set on the GitHub App installation. `filters.repo` narrows a trigger to one `owner/name` repository.
-
-## Filters
+`.paseo/workflows/github-change.yml`:
 
 ```yaml
+name: github-change
+on: github.issue_comment
+max_runtime: 2h
 filters:
   repo: example/project
   contains: "@paseo"
   from_users: [maintainer]
+steps:
+  - id: implement
+    environment: dev
+    max_runtime: 90m
+    idle_timeout: 10m
+    agent: codex
+    github:
+      connection: example-github
+      repositories: [example/project]
+      permissions:
+        contents: write
+        pull_requests: write
+    prompt:
+      - text: |
+          Implement the request and open a pull request with gh.
+          Call hub.finish_execution when done.
+          ${{ paseo.prompt }}
 ```
 
-`from_users` matches the sender's GitHub login. `contains` checks the event text; `pattern` checks its start. The text is the comment body for comments and reviews, and the issue title plus body for issues. All filters must pass.
+`from_users` matches the GitHub login. `contains` checks event text and `pattern` checks its start. Comment events use the comment body; issue events use title plus body.
 
-## Invocation
+A GitHub trigger grants no token. Authority is the `github` block on the step that needs it. GitHub has no `hub.reply` capability; the agent acts through `gh` within the declared connection, repositories, and permissions.
 
-Put the configured marker in the message, then put leading inputs in the text parsed after that marker:
-
-```text
-@paseo repo=project agent=claude investigate the failed sync
-```
-
-Hub consumes only declared consecutive headers and passes `investigate the failed sync` as `${{ paseo.prompt }}`. See [Hub workflows](/docs/hub/workflows) for input types, defaults, choices, and rejected Activity records.
-
-## Credentials and replies
-
-GitHub-triggered steps receive a scoped `GH_TOKEN` for the triggering repository. The agent can use `gh` to comment, push, and open a pull request. A step may also declare:
-
-```yaml
-allow_outputs:
-  - type: github.reply
-    max: 5
-```
-
-See the [workflow examples](/docs/hub/configuration/examples) for review and PR workflows.
+On comment events, Hub reacts with 👀 when accepted, 🚀 when the agent starts, 👍 on completion, and 👎 on failure. `${{ paseo.prompt }}` contains normalized request text, not event identifiers. Use `${{ paseo.context }}` in prompt text when the step explicitly needs provider context.
