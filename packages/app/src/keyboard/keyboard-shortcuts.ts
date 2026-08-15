@@ -192,6 +192,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
+    "agent-prompt-previous",
+    "agent-prompt-next",
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
@@ -630,7 +632,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     when: { mac: true, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "agent-prompt-previous",
-      section: "navigation",
+      section: "agent-input",
       label: "Previous prompt",
     },
   },
@@ -641,7 +643,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "agent-prompt-previous",
-      section: "navigation",
+      section: "agent-input",
       label: "Previous prompt",
     },
   },
@@ -652,7 +654,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     when: { mac: true, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "agent-prompt-next",
-      section: "navigation",
+      section: "agent-input",
       label: "Next prompt",
     },
   },
@@ -663,7 +665,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "agent-prompt-next",
-      section: "navigation",
+      section: "agent-input",
       label: "Next prompt",
     },
   },
