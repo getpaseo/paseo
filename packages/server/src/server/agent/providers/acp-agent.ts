@@ -518,6 +518,10 @@ interface TrackedACPProbeSession {
   close: () => Promise<void>;
 }
 
+interface ACPProbeSessionCloseOptions {
+  throwOnFailure?: boolean;
+}
+
 export interface ACPToolSnapshot {
   toolCallId: string;
   title: string;
@@ -992,6 +996,9 @@ export class ACPAgentClient implements AgentClient {
     const mcpServers: McpServer[] = [];
     let response: SessionStateResponse | null = null;
     let probeSession: TrackedACPProbeSession | null = null;
+    let catalog: ProviderCatalog | null = null;
+    let operationFailed = false;
+    let operationError: unknown;
 
     try {
       const initializedProbe = await runProviderRefreshActivity(context, "initialize", () =>
@@ -1051,15 +1058,42 @@ export class ACPAgentClient implements AgentClient {
         transformed.modes,
         transformed.configOptions,
       );
-      return {
+      catalog = {
         models: this.modelTransformer ? this.modelTransformer(models) : models,
         modes: modeInfo.modes,
       };
-    } finally {
-      context?.signal.removeEventListener("abort", handleAbort);
-      await probeSession?.close();
-      await closeProbe();
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
     }
+
+    context?.signal.removeEventListener("abort", handleAbort);
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    try {
+      await probeSession?.close();
+    } catch (error) {
+      cleanupFailed = true;
+      cleanupError = error;
+    }
+    try {
+      await closeProbe();
+    } catch (error) {
+      if (!cleanupFailed) {
+        cleanupFailed = true;
+        cleanupError = error;
+      }
+    }
+    if (operationFailed) {
+      throw operationError;
+    }
+    if (cleanupFailed) {
+      throw cleanupError;
+    }
+    if (!catalog) {
+      throw new Error(`${this.provider} ACP catalog probe did not return a catalog`);
+    }
+    return catalog;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -1072,6 +1106,9 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV);
     const mcpServers: McpServer[] = [];
     let response: SessionStateResponse | null = null;
+    let features: AgentFeature[] | null = null;
+    let operationFailed = false;
+    let operationError: unknown;
     try {
       response = await this.startProbeSession({
         connection: probe.connection,
@@ -1079,20 +1116,50 @@ export class ACPAgentClient implements AgentClient {
         mcpServers,
       });
       const transformed = this.transformSessionResponse(response);
-      return [
+      features = [
         autoAcceptFeature,
         ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
       ];
-    } finally {
-      if (response) {
-        await this.closeProbeSession({
-          response,
-          config: { ...config, provider: this.provider },
-          mcpServers,
-        });
-      }
-      await this.closeProbe(probe);
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
     }
+
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    try {
+      if (response) {
+        await this.closeProbeSession(
+          {
+            response,
+            config: { ...config, provider: this.provider },
+            mcpServers,
+          },
+          { throwOnFailure: true },
+        );
+      }
+    } catch (error) {
+      cleanupFailed = true;
+      cleanupError = error;
+    }
+    try {
+      await this.closeProbe(probe);
+    } catch (error) {
+      if (!cleanupFailed) {
+        cleanupFailed = true;
+        cleanupError = error;
+      }
+    }
+    if (operationFailed) {
+      throw operationError;
+    }
+    if (cleanupFailed) {
+      throw cleanupError;
+    }
+    if (!features) {
+      throw new Error(`${this.provider} ACP feature probe did not return features`);
+    }
+    return features;
   }
 
   async listImportableSessions(
@@ -1477,7 +1544,6 @@ export class ACPAgentClient implements AgentClient {
     mcpServers: McpServer[];
   }): TrackedACPProbeSession {
     let response: SessionStateResponse | null = null;
-    let closeRequested = false;
     let closePromise: Promise<void> | null = null;
     let resolveTrackedResponse: (sessionResponse: SessionStateResponse) => void = () => undefined;
     const trackedResponse = new Promise<SessionStateResponse>((resolve) => {
@@ -1485,11 +1551,14 @@ export class ACPAgentClient implements AgentClient {
     });
 
     const closeResponse = (sessionResponse: SessionStateResponse): Promise<void> => {
-      closePromise ??= this.closeProbeSession({
-        response: sessionResponse,
-        config: context.config,
-        mcpServers: context.mcpServers,
-      });
+      closePromise ??= this.closeProbeSession(
+        {
+          response: sessionResponse,
+          config: context.config,
+          mcpServers: context.mcpServers,
+        },
+        { throwOnFailure: true },
+      );
       return closePromise;
     };
 
@@ -1498,9 +1567,6 @@ export class ACPAgentClient implements AgentClient {
       response = sessionResponse;
       if (!hadResponse) {
         resolveTrackedResponse(sessionResponse);
-      }
-      if (closeRequested) {
-        void closeResponse(sessionResponse);
       }
     };
 
@@ -1515,7 +1581,6 @@ export class ACPAgentClient implements AgentClient {
     return {
       promise,
       close: async () => {
-        closeRequested = true;
         if (!this.probeSessionCloser) {
           return;
         }
@@ -1523,25 +1588,24 @@ export class ACPAgentClient implements AgentClient {
           await closeResponse(response);
           return;
         }
-        try {
-          const sessionResponse = await Promise.race([
-            trackedResponse,
-            promise.then(
-              () => response,
-              () => null,
-            ),
-          ]);
-          if (sessionResponse) {
-            await closeResponse(sessionResponse);
-          }
-        } catch {
-          // If session startup failed, there is no provider-owned probe session to close.
+        const sessionResponse = await Promise.race([
+          trackedResponse,
+          promise.then(
+            () => response,
+            () => null,
+          ),
+        ]).catch(() => null);
+        if (sessionResponse) {
+          await closeResponse(sessionResponse);
         }
       },
     };
   }
 
-  private async closeProbeSession(context: ACPProbeSessionCloserContext): Promise<void> {
+  private async closeProbeSession(
+    context: ACPProbeSessionCloserContext,
+    options: ACPProbeSessionCloseOptions = {},
+  ): Promise<void> {
     if (!this.probeSessionCloser) {
       return;
     }
@@ -1557,6 +1621,9 @@ export class ACPAgentClient implements AgentClient {
         },
         "Failed to close ACP probe session",
       );
+      if (options.throwOnFailure) {
+        throw error;
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, rm, stat } from "node:fs/promises";
 import { describe, expect, test, vi } from "vitest";
 
 import type {
@@ -544,6 +544,77 @@ describe("GjcACPAgentClient", () => {
       }),
     ).rejects.toThrow("load failed");
 
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile.mock.calls[1]![1]).toEqual([
+      "sdk",
+      "session",
+      "raw",
+      "control",
+      "gjc-session-1",
+      "--op",
+      "session.close",
+      "--json-input",
+      "{}",
+      "--confirm",
+      "--json",
+      "--repo",
+      "/repo",
+    ]);
+  });
+
+  test("closes a gjc lifecycle session when input cleanup fails after create", async () => {
+    const execFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            sessionId: "gjc-session-1",
+          },
+        }),
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            closed: true,
+          },
+        }),
+        stderr: "",
+      });
+    const removeInputDirectory = vi.fn(async (path: string) => {
+      await rm(path, { recursive: true, force: true });
+      throw new Error("cleanup failed");
+    });
+    const loadSession = vi.fn();
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const registerProbeSession = vi.fn();
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+      removeInputDirectory,
+    });
+
+    await expect(
+      starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+        registerProbeSession,
+      }),
+    ).rejects.toThrow("GJC lifecycle input cleanup failed after session.create: cleanup failed");
+
+    expect(removeInputDirectory).toHaveBeenCalledTimes(1);
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(registerProbeSession).not.toHaveBeenCalled();
+    expect(runRequest).not.toHaveBeenCalled();
     expect(execFile).toHaveBeenCalledTimes(2);
     expect(execFile.mock.calls[1]![1]).toEqual([
       "sdk",

@@ -59,6 +59,15 @@ type GjcExecFile = (
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
+type GjcInputDirectoryRemover = (path: string) => Promise<void>;
+
+type GjcJsonInputFileCleanup = { ok: true } | { ok: false; error: unknown };
+
+interface GjcJsonInputFileResult<T> {
+  value: T;
+  cleanup: GjcJsonInputFileCleanup;
+}
+
 const GJC_CLIENT_CAPABILITIES = {
   terminal: true,
 };
@@ -161,6 +170,7 @@ export function createGjcACPNewSessionStarter(options: {
   command: [string, ...string[]];
   env?: Record<string, string>;
   execFile?: GjcExecFile;
+  removeInputDirectory?: GjcInputDirectoryRemover;
 }): ACPNewSessionStarter {
   const runExecFile = options.execFile ?? execFile;
 
@@ -175,30 +185,70 @@ export function createGjcACPNewSessionStarter(options: {
     };
 
     let createResult: GjcSessionCreateResult;
+    let createCleanup: GjcJsonInputFileCleanup = { ok: true };
     try {
-      const { stdout } = await withGjcJsonInputFile(lifecycleInput, async (inputFilePath) => {
-        const lifecycleCommand = buildGjcLifecycleCreateCommand(
-          options.command,
-          config.cwd,
-          lifecycleInput,
-          { inputFilePath },
-        );
-        return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
-          cwd: config.cwd,
-          env: {
-            ...process.env,
-            ...options.env,
-          },
-          timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
-          maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
-          encoding: "utf8",
-        });
-      });
-      createResult = extractGjcSessionCreateResult(parseGjcJsonOutput(stdout));
+      const createCommandResult = await withGjcJsonInputFile(
+        lifecycleInput,
+        async (inputFilePath) => {
+          const lifecycleCommand = buildGjcLifecycleCreateCommand(
+            options.command,
+            config.cwd,
+            lifecycleInput,
+            { inputFilePath },
+          );
+          return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
+            cwd: config.cwd,
+            env: {
+              ...process.env,
+              ...options.env,
+            },
+            timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
+            maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
+            encoding: "utf8",
+          });
+        },
+        options.removeInputDirectory,
+      );
+      createCleanup = createCommandResult.cleanup;
+      createResult = extractGjcSessionCreateResult(
+        parseGjcJsonOutput(createCommandResult.value.stdout),
+      );
     } catch (error) {
       throw new Error(`GJC lifecycle session.create failed: ${formatGjcExecError(error)}`, {
         cause: error,
       });
+    }
+    if (!createCleanup.ok) {
+      let closeError: unknown;
+      try {
+        await closeGjcLifecycleSession({
+          command: options.command,
+          env: options.env,
+          execFile: runExecFile,
+          cwd: config.cwd,
+          sessionId: createResult.sessionId,
+        });
+      } catch (error) {
+        closeError = error;
+      }
+      if (closeError) {
+        throw new Error(
+          `GJC lifecycle input cleanup failed after session.create, and session.close failed: ${formatGjcExecError(
+            closeError,
+          )}`,
+          {
+            cause: createCleanup.error,
+          },
+        );
+      }
+      throw new Error(
+        `GJC lifecycle input cleanup failed after session.create: ${formatGjcExecError(
+          createCleanup.error,
+        )}`,
+        {
+          cause: createCleanup.error,
+        },
+      );
     }
     registerProbeSession?.({ sessionId: createResult.sessionId });
 
@@ -301,16 +351,32 @@ export function buildGjcLifecycleCloseCommand(
 async function withGjcJsonInputFile<T>(
   input: GjcLifecycleCreateInput,
   operation: (inputFilePath: string) => Promise<T>,
-): Promise<T> {
+  removeInputDirectory: GjcInputDirectoryRemover = (path) =>
+    rm(path, { recursive: true, force: true }),
+): Promise<GjcJsonInputFileResult<T>> {
   const directory = await mkdtemp(join(tmpdir(), "paseo-gjc-json-"));
   const inputFilePath = join(directory, "input.json");
+  let outcome: { ok: true; value: T } | { ok: false; error: unknown };
   try {
     await writeFile(inputFilePath, JSON.stringify(input), { mode: 0o600 });
     await chmod(inputFilePath, 0o600);
-    return await operation(inputFilePath);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+    outcome = { ok: true, value: await operation(inputFilePath) };
+  } catch (error) {
+    outcome = { ok: false, error };
   }
+
+  let cleanup: GjcJsonInputFileCleanup;
+  try {
+    await removeInputDirectory(directory);
+    cleanup = { ok: true };
+  } catch (error) {
+    cleanup = { ok: false, error };
+  }
+
+  if (!outcome.ok) {
+    throw outcome.error;
+  }
+  return { value: outcome.value, cleanup };
 }
 
 async function closeGjcLifecycleSession(options: {

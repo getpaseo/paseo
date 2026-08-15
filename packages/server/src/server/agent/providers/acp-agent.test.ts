@@ -2114,6 +2114,64 @@ describe("ACPAgentClient config features", () => {
       mcpServers: [],
     });
   });
+
+  test("rejects feature probes when custom closer fails after process cleanup", async () => {
+    const newSession = vi.fn().mockRejectedValue(new Error("newSession should not be called"));
+    const newSessionStarter = vi.fn(async () => ({
+      sessionId: "probe-session-1",
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+    }));
+    const probeSessionCloser = vi.fn(async () => {
+      throw new Error("probe close failed");
+    });
+    const closeProbe = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {
+        await closeProbe();
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
+    ).rejects.toThrow("probe close failed");
+
+    expect(newSession).not.toHaveBeenCalled();
+    expect(closeProbe).toHaveBeenCalledTimes(1);
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: {
+        sessionId: "probe-session-1",
+        configOptions: [copilotAgentConfigOption("Probe Agent")],
+      },
+      config: {
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      },
+      mcpServers: [],
+    });
+  });
 });
 
 describe("ACPAgentClient sessionResponseTransformer", () => {
@@ -2255,6 +2313,67 @@ describe("ACPAgentClient fetchCatalog", () => {
       runRequest: expect.any(Function),
       registerProbeSession: expect.any(Function),
     });
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: {
+        sessionId: "probe-session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      },
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
+      mcpServers: [],
+    });
+  });
+
+  test("rejects catalog probes when custom closer fails after process cleanup", async () => {
+    const newSession = vi.fn().mockRejectedValue(new Error("newSession should not be called"));
+    const loadSession = vi.fn();
+    const newSessionStarter = vi.fn(async () => ({
+      sessionId: "probe-session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    }));
+    const probeSessionCloser = vi.fn(async () => {
+      throw new Error("probe close failed");
+    });
+    const closeProbe = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession,
+            loadSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {
+        await closeProbe();
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-catalog-cwd", force: false }),
+    ).rejects.toThrow("probe close failed");
+
+    expect(newSession).not.toHaveBeenCalled();
+    expect(closeProbe).toHaveBeenCalledTimes(1);
     expect(probeSessionCloser).toHaveBeenCalledWith({
       response: {
         sessionId: "probe-session-1",
