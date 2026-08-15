@@ -14,6 +14,7 @@ import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -83,6 +84,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
+    autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
     serverId,
   });
@@ -91,6 +93,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
+    autoFocusSearch: isWeb && !usesBottomSheet,
     serverId,
   });
   const ProviderIcon =

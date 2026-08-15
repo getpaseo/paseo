@@ -145,6 +145,7 @@ interface ModelBrowserInput {
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
+  autoFocusSearch?: boolean;
   /** Pinned above the provider list on the root view. `null` hides the section. */
   profiles?: AgentProfilePicker | null;
   serverId?: string | null;
@@ -255,6 +256,7 @@ export function useModelBrowser({
   selectedProvider,
   selectedModel,
   isLoading,
+  autoFocusSearch = isWeb,
   profiles = null,
   serverId = null,
 }: ModelBrowserInput): ModelBrowserState {
@@ -314,7 +316,7 @@ export function useModelBrowser({
           onBlur: () => setIsSearchFocused(false),
           resetKey: `all:${searchResetKey}`,
           placeholder: t("modelSelector.searchAllPlaceholder"),
-          autoFocus: isWeb,
+          autoFocus: autoFocusSearch,
           testID: "model-search-all-input",
         },
       };
@@ -342,11 +344,20 @@ export function useModelBrowser({
         onBlur: () => setIsSearchFocused(false),
         resetKey: `${view.providerId}:${searchResetKey}`,
         placeholder: t("modelSelector.searchPlaceholder"),
-        autoFocus: isWeb,
+        autoFocus: autoFocusSearch,
         testID: "model-search-input",
       },
     };
-  }, [handleSearchQueryChange, searchResetKey, serverId, singleProviderView, showAll, t, view]);
+  }, [
+    autoFocusSearch,
+    handleSearchQueryChange,
+    searchResetKey,
+    serverId,
+    singleProviderView,
+    showAll,
+    t,
+    view,
+  ]);
 
   const selectedModelLabel = useMemo(
     () =>
