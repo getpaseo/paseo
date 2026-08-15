@@ -3928,7 +3928,11 @@ function mapElicitationRequest(
         label: option.label,
       })),
       multiSelect: rawProperty.type === "array",
-      allowOther: field.options.length === 0,
+      // The description can advertise a freeform choice even when the schema
+      // also carries enum options (MiniMax Code's ask_user uses "Others...").
+      // Keep the text input alongside the buttons so the custom response the
+      // agent asked for stays available.
+      allowOther: field.options.length === 0 || isElicitationFreeformHint(rawProperty.description),
       allowEmpty: !field.required,
       ...(placeholder !== undefined ? { placeholder } : {}),
     });
@@ -3981,6 +3985,14 @@ function isElicitationFieldRequired(schema: ElicitationPropertySchema): boolean 
 
 function readElicitationOptionLabel(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isElicitationFreeformHint(description: string | null | undefined): boolean {
+  if (typeof description !== "string") {
+    return false;
+  }
+  const hint = description.trim().toLocaleLowerCase();
+  return hint === "others" || hint === "others..." || hint === "other" || hint === "other...";
 }
 
 function mapElicitationEnumOptions(values: unknown): ElicitationQuestionOption[] {
@@ -4078,25 +4090,7 @@ function parseElicitationAnswer(
 ): ElicitationContentValue {
   const answer = rawAnswer.trim();
   if (field.schema.type === "array") {
-    const values = answer
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .map((value) => resolveElicitationOption(field.options, value));
-    if (values.length === 0) {
-      throw new Error(`ACP elicitation answer is required for '${field.key}'`);
-    }
-    if (field.schema.minItems != null && values.length < field.schema.minItems) {
-      throw new Error(
-        `ACP elicitation answer for '${field.key}' must include at least ${field.schema.minItems} items`,
-      );
-    }
-    if (field.schema.maxItems != null && values.length > field.schema.maxItems) {
-      throw new Error(
-        `ACP elicitation answer for '${field.key}' must include at most ${field.schema.maxItems} items`,
-      );
-    }
-    return values as string[];
+    return parseElicitationArrayAnswer(field, field.schema, answer);
   }
   if (field.schema.type === "boolean") {
     const option = resolveElicitationOption(field.options, answer);
@@ -4106,35 +4100,76 @@ function parseElicitationAnswer(
     return option;
   }
   if (field.schema.type === "number" || field.schema.type === "integer") {
-    const value = Number(answer);
-    if (!Number.isFinite(value) || (field.schema.type === "integer" && !Number.isInteger(value))) {
-      throw new Error(`ACP elicitation answer for '${field.key}' must be a number`);
-    }
-    if (field.schema.minimum != null && value < field.schema.minimum) {
-      throw new Error(
-        `ACP elicitation answer for '${field.key}' must be at least ${field.schema.minimum}`,
-      );
-    }
-    if (field.schema.maximum != null && value > field.schema.maximum) {
-      throw new Error(
-        `ACP elicitation answer for '${field.key}' must be at most ${field.schema.maximum}`,
-      );
-    }
-    return value;
+    return parseElicitationNumberAnswer(field, field.schema, answer);
   }
   if (field.options.length > 0) {
-    const value = tryResolveElicitationOption(field.options, answer);
-    if (value !== undefined) {
-      return value;
-    }
-    // The schema constrains the answer to the declared options. Returning raw
-    // text would deliver content that violates the agent's requested schema;
-    // keep the elicitation pending so the user can pick a valid option.
-    throw new Error(
-      `ACP elicitation answer for '${field.key}' must be one of the available options`,
-    );
+    return resolveElicitationOptionAnswer(field, answer);
   }
   return answer;
+}
+
+function parseElicitationArrayAnswer(
+  field: ElicitationField,
+  schema: Extract<ElicitationPropertySchema, { type: "array" }>,
+  answer: string,
+): string[] {
+  const values = answer
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => resolveElicitationOption(field.options, value));
+  if (values.length === 0) {
+    throw new Error(`ACP elicitation answer is required for '${field.key}'`);
+  }
+  if (schema.minItems != null && values.length < schema.minItems) {
+    throw new Error(
+      `ACP elicitation answer for '${field.key}' must include at least ${schema.minItems} items`,
+    );
+  }
+  if (schema.maxItems != null && values.length > schema.maxItems) {
+    throw new Error(
+      `ACP elicitation answer for '${field.key}' must include at most ${schema.maxItems} items`,
+    );
+  }
+  return values as string[];
+}
+
+function parseElicitationNumberAnswer(
+  field: ElicitationField,
+  schema: Extract<ElicitationPropertySchema, { type: "number" | "integer" }>,
+  answer: string,
+): number {
+  const value = Number(answer);
+  if (!Number.isFinite(value) || (schema.type === "integer" && !Number.isInteger(value))) {
+    throw new Error(`ACP elicitation answer for '${field.key}' must be a number`);
+  }
+  if (schema.minimum != null && value < schema.minimum) {
+    throw new Error(`ACP elicitation answer for '${field.key}' must be at least ${schema.minimum}`);
+  }
+  if (schema.maximum != null && value > schema.maximum) {
+    throw new Error(`ACP elicitation answer for '${field.key}' must be at most ${schema.maximum}`);
+  }
+  return value;
+}
+
+function resolveElicitationOptionAnswer(
+  field: ElicitationField,
+  answer: string,
+): ElicitationContentValue {
+  const value = tryResolveElicitationOption(field.options, answer);
+  if (value !== undefined) {
+    return value;
+  }
+  if (isElicitationFreeformHint(field.schema.description)) {
+    // The description invites a custom response ("Others..."), so the enum is
+    // a suggestion rather than a closed set. Forward the raw text the agent
+    // explicitly asked for.
+    return answer;
+  }
+  // The schema constrains the answer to the declared options. Returning raw
+  // text would deliver content that violates the agent's requested schema;
+  // keep the elicitation pending so the user can pick a valid option.
+  throw new Error(`ACP elicitation answer for '${field.key}' must be one of the available options`);
 }
 
 function tryResolveElicitationOption(

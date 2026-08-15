@@ -1737,7 +1737,7 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("shows MiniMax Code single-select options without a freeform input", async () => {
+  test("shows MiniMax Code single-select options and keeps the Others input", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];
 
@@ -1745,8 +1745,9 @@ describe("ACPAgentSession Zed parity", () => {
     session.subscribe((event) => events.push(event));
 
     // Once the questionnaire bridge serializes single-select options, the
-    // schema carries the labels as `enum`. The options render as buttons and
-    // the description stays as the input placeholder for optionless fields.
+    // schema carries the labels as `enum` while the description keeps the
+    // freeform "Others..." hint. Buttons and the text input must both render,
+    // and a custom answer must reach the agent even though options exist.
     const elicitation = session.extMethod("elicitation/create", {
       sessionId: "session-1",
       mode: "form",
@@ -1778,7 +1779,7 @@ describe("ACPAgentSession Zed parity", () => {
               header: "q1",
               options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
               multiSelect: false,
-              allowOther: false,
+              allowOther: true,
               allowEmpty: false,
               placeholder: "Others...",
             },
@@ -1802,6 +1803,48 @@ describe("ACPAgentSession Zed parity", () => {
       action: {
         action: "accept",
         content: { q1: "Protocol fix" },
+      },
+    });
+
+    // The "Others..." description invites a custom response; it must be
+    // forwarded even though the field declares enum options.
+    const events2: AgentStreamEvent[] = [];
+    const session2 = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session2).sessionId = "session-1";
+    session2.subscribe((event) => events2.push(event));
+    const elicitation2 = session2.extMethod("elicitation/create", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "MiniMax Code needs your input",
+      requestedSchema: {
+        type: "object",
+        required: ["q1"],
+        properties: {
+          q1: {
+            type: "string",
+            title: "Which path should Paseo take?",
+            description: "Others...",
+            enum: ["Narrow fix", "Protocol fix"],
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+    const requested2 = events2.find((event) => event.type === "permission_requested");
+    if (requested2?.type !== "permission_requested") {
+      throw new Error("Expected elicitation request");
+    }
+    await session2.respondToPermission(requested2.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested2.request.input,
+        answers: { q1: "Use a custom approach" },
+      },
+    });
+    await expect(elicitation2).resolves.toEqual({
+      action: {
+        action: "accept",
+        content: { q1: "Use a custom approach" },
       },
     });
   });
