@@ -662,6 +662,15 @@ export interface AgentSession {
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
+  /**
+   * Mid-turn steering. When the agent already has an active turn, providers
+   * that support native steering (e.g. Pi) queue the prompt instead of forcing
+   * an interrupt; the provider decides when to deliver it. Returns true when
+   * the prompt was queued (the manager records the submitted message and does
+   * not allocate a new run), false when the caller should fall back to
+   * interrupt + fresh turn.
+   */
+  trySteer?(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean>;
 }
 
 export type FetchCatalogOptions =

@@ -9316,3 +9316,128 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });
+
+test("trySteerAgent records the submitted prompt when the session steers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-try-steer-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class SteerSession extends TestAgentSession {
+    steeredPrompts: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
+
+    override async trySteer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
+      this.steeredPrompts.push({ prompt, options });
+      return true;
+    }
+  }
+
+  class SteerClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SteerSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SteerClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const steered = await manager.trySteerAgent(snapshot.id, "steer me", {
+      clientMessageId: "msg-steer-1",
+    });
+    expect(steered).toBe(true);
+
+    const session = manager.getAgent(snapshot.id)!.session as SteerSession;
+    expect(session.steeredPrompts).toEqual([
+      { prompt: "steer me", options: { clientMessageId: "msg-steer-1" } },
+    ]);
+
+    const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 5 }).rows;
+    expect(timeline[0]?.item).toMatchObject({
+      type: "user_message",
+      text: "steer me",
+      clientMessageId: "msg-steer-1",
+    });
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("trySteerAgent returns false when the provider has no native steering", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-no-steer-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const steered = await manager.trySteerAgent(snapshot.id, "steer me", {
+      clientMessageId: "msg-steer-1",
+    });
+    expect(steered).toBe(false);
+    expect(manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 5 }).rows).toHaveLength(
+      0,
+    );
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("trySteerAgent returns false when the session declines to steer", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-decline-steer-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class DecliningSteerSession extends TestAgentSession {
+    override async trySteer(): Promise<boolean> {
+      return false;
+    }
+  }
+
+  class DecliningSteerClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new DecliningSteerSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new DecliningSteerClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    const steered = await manager.trySteerAgent(snapshot.id, "steer me", {
+      clientMessageId: "msg-steer-1",
+    });
+    expect(steered).toBe(false);
+    expect(manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 5 }).rows).toHaveLength(
+      0,
+    );
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

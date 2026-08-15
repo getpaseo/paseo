@@ -1358,6 +1358,27 @@ export class PiRpcAgentSession implements AgentSession {
     return { turnId };
   }
 
+  async trySteer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
+    if (!this.activeTurnId) {
+      return false;
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    // Pi delivers the steered message after the current tool-call batch finishes,
+    // then keeps running the same turn. Point the submitted-user-entry echo at
+    // this prompt so the timeline shows it under the right clientMessageId.
+    this.activeClientMessageId = options?.clientMessageId ?? null;
+    try {
+      await this.runtimeSession.prompt(payload.text, payload.images, {
+        streamingBehavior: "steer",
+      });
+      return true;
+    } catch {
+      // Older Pi binaries may reject streamingBehavior; fall back to the
+      // interrupt + fresh turn path.
+      return false;
+    }
+  }
+
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {

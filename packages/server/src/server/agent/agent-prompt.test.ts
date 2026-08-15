@@ -9,6 +9,7 @@ import {
   isSystemInjectedEnvelope,
   sendPromptToAgent,
   setupFinishNotification,
+  startAgentRun,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
@@ -96,6 +97,7 @@ function createFinishNotificationScenario(
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
+  Reflect.set(agentManager, "trySteerAgent", async () => false);
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
@@ -258,6 +260,7 @@ test("sendPromptToAgent forwards the client message id as run options", async ()
     vi.fn(() => agent),
   );
   Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "trySteerAgent", vi.fn().mockResolvedValue(false));
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
 
@@ -512,6 +515,7 @@ it("does not notify archived callers", async () => {
     }),
   );
   Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "trySteerAgent", vi.fn().mockResolvedValue(false));
   Reflect.set(agentManager, "streamAgent", streamAgentSpy);
   Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
 
@@ -549,4 +553,71 @@ it("does not notify archived callers", async () => {
 
   expect(streamAgentSpy).not.toHaveBeenCalled();
   expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+});
+
+test("startAgentRun steers into a running agent instead of replacing the turn", async () => {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "pi");
+
+  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
+  const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
+  const trySteerAgentSpy = vi.fn().mockResolvedValue(true);
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(true));
+  Reflect.set(agentManager, "trySteerAgent", trySteerAgentSpy);
+  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
+  Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
+
+  const result = await startAgentRun(agentManager, "agent-1", "steer me", createTestLogger(), {
+    replaceRunning: true,
+    runOptions: { clientMessageId: "msg-1" },
+  });
+
+  expect(result).toEqual({ outOfBand: false, steered: true });
+  expect(trySteerAgentSpy).toHaveBeenCalledWith("agent-1", "steer me", {
+    clientMessageId: "msg-1",
+  });
+  expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+  expect(streamAgentSpy).not.toHaveBeenCalled();
+});
+
+test("startAgentRun falls back to replacing the turn when steering is unavailable", async () => {
+  const agent: ManagedAgent = Object.create(null);
+  Reflect.set(agent, "id", "agent-1");
+  Reflect.set(agent, "provider", "pi");
+
+  const replaceAgentRunSpy = vi.fn(() => (async function* noop() {})());
+  const trySteerAgentSpy = vi.fn().mockResolvedValue(false);
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "getAgent",
+    vi.fn(() => agent),
+  );
+  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
+  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(true));
+  Reflect.set(agentManager, "trySteerAgent", trySteerAgentSpy);
+  Reflect.set(
+    agentManager,
+    "streamAgent",
+    vi.fn(() => (async function* noop() {})()),
+  );
+  Reflect.set(agentManager, "replaceAgentRun", replaceAgentRunSpy);
+
+  const result = await startAgentRun(agentManager, "agent-1", "steer me", createTestLogger(), {
+    replaceRunning: true,
+    runOptions: { clientMessageId: "msg-1" },
+  });
+
+  expect(result).toEqual({ outOfBand: false, steered: false });
+  expect(replaceAgentRunSpy).toHaveBeenCalledWith("agent-1", "steer me", {
+    clientMessageId: "msg-1",
+  });
 });

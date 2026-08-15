@@ -6895,7 +6895,7 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { outOfBand: boolean };
+      let dispatchResult: { outOfBand: boolean; steered: boolean };
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,
@@ -6920,7 +6920,10 @@ export class Session {
         return;
       }
 
-      if (dispatchResult.outOfBand) {
+      // Steered prompts (provider-native mid-turn queue) are accepted
+      // immediately; the running turn keeps broadcasting events, so there is no
+      // new run start to wait for.
+      if (dispatchResult.outOfBand || dispatchResult.steered) {
         this.emit({
           type: "send_agent_message_response",
           payload: {

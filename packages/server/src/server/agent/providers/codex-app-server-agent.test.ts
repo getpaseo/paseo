@@ -3170,6 +3170,111 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("steers user input into the active Codex turn", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        return {};
+      },
+    } as never;
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn-1" },
+    });
+
+    const steered = await session.trySteer("focus on failing tests first", {
+      clientMessageId: "msg-steer-1",
+    });
+
+    expect(steered).toBe(true);
+    expect(requests).toContainEqual({
+      method: "turn/steer",
+      params: {
+        threadId: "test-thread",
+        input: [{ type: "text", text: "focus on failing tests first", text_elements: [] }],
+        expectedTurnId: "native-turn-1",
+        clientUserMessageId: "msg-steer-1",
+      },
+    });
+  });
+
+  test("echoes the steered user message under the steer clientMessageId", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    session.client = {
+      request: async () => ({}),
+    } as never;
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn-1" },
+    });
+    await session.trySteer("focus on failing tests first", {
+      clientMessageId: "msg-steer-1",
+    });
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "userMessage",
+        id: "item-steer-1",
+        content: [{ type: "text", text: "focus on failing tests first" }],
+      },
+    });
+
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "codex",
+      turnId: "test-turn",
+      item: {
+        type: "user_message",
+        text: "focus on failing tests first",
+        messageId: "item-steer-1",
+        clientMessageId: "msg-steer-1",
+      },
+    });
+  });
+
+  test("declines to steer without an active turn or identified native turn", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        return {};
+      },
+    } as never;
+
+    session.activeForegroundTurnId = null;
+    expect(await session.trySteer("hello", { clientMessageId: "msg-1" })).toBe(false);
+
+    session.activeForegroundTurnId = "test-turn";
+    session.currentTurnId = null;
+    expect(await session.trySteer("hello", { clientMessageId: "msg-2" })).toBe(false);
+
+    expect(requests).toEqual([]);
+  });
+
+  test("falls back when Codex rejects the steer request", async () => {
+    const session = createSession();
+    session.client = {
+      request: async () => {
+        throw new Error("turn/steer requires experimentalApi capability");
+      },
+    } as never;
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn-1" },
+    });
+
+    await expect(session.trySteer("hello", { clientMessageId: "msg-1" })).resolves.toBe(false);
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 

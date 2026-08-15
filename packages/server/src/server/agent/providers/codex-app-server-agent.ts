@@ -4096,6 +4096,29 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  async trySteer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<boolean> {
+    if (!this.activeForegroundTurnId || !this.currentTurnId || !this.client) {
+      return false;
+    }
+    const input = await this.buildUserInput(prompt);
+    // Codex appends the input to the in-flight turn without creating a new one.
+    // The next user-message item echo picks up activeClientMessageId, so the
+    // steered message lands under the right clientMessageId on the timeline.
+    this.activeClientMessageId = options?.clientMessageId ?? null;
+    try {
+      await this.client.request("turn/steer", {
+        threadId: this.currentThreadId,
+        input,
+        expectedTurnId: this.currentTurnId,
+        ...(options?.clientMessageId ? { clientUserMessageId: options.clientMessageId } : {}),
+      });
+      return true;
+    } catch {
+      // Older Codex binaries lack turn/steer; fall back to interrupt + fresh turn.
+      return false;
+    }
+  }
+
   private rememberCodexUserMessageTurn(messageId: string | null | undefined): boolean {
     if (typeof messageId !== "string" || messageId.length === 0) {
       return false;

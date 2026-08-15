@@ -14,7 +14,12 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "trySteerAgent"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
@@ -28,7 +33,7 @@ export async function startAgentRun(
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): Promise<{ outOfBand: boolean }> {
+): Promise<{ outOfBand: boolean; steered: boolean }> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -46,10 +51,18 @@ export async function startAgentRun(
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
-    return { outOfBand: true };
+    return { outOfBand: true, steered: false };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  const shouldReplace = shouldReplaceRunningAgent(agentManager, agentId, options?.replaceRunning);
   const runOptions = options?.runOptions;
+  // Steering is a provider-native capability: providers that implement it (e.g.
+  // Pi) queue the prompt into the running turn instead of aborting it. The
+  // submitted message is recorded immediately and the running turn keeps
+  // broadcasting events, so no new run is allocated. Providers without native
+  // steering fall through to the interrupt + fresh turn path below.
+  if (await trySteerRunningAgent(agentManager, agentId, prompt, runOptions, shouldReplace)) {
+    return { outOfBand: false, steered: true };
+  }
   const iterator = shouldReplace
     ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
@@ -88,7 +101,28 @@ export async function startAgentRun(
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();
-  return { outOfBand: false };
+  return { outOfBand: false, steered: false };
+}
+
+async function trySteerRunningAgent(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  runOptions: AgentRunOptions | undefined,
+  shouldReplace: boolean,
+): Promise<boolean> {
+  if (!shouldReplace) {
+    return false;
+  }
+  return await agentManager.trySteerAgent(agentId, prompt, runOptions);
+}
+
+function shouldReplaceRunningAgent(
+  agentManager: AgentRunController,
+  agentId: string,
+  replaceRunning: boolean | undefined,
+): boolean {
+  return Boolean(replaceRunning && agentManager.hasInFlightRun(agentId));
 }
 
 /**
@@ -180,13 +214,13 @@ export async function waitForAgentRunStartWithTimeout(
  */
 export async function sendPromptToAgent(
   params: SendPromptToAgentParams,
-): Promise<{ outOfBand: boolean }> {
+): Promise<{ outOfBand: boolean; steered: boolean }> {
   const unarchive = params.unarchive ?? true;
 
   const record = await params.agentStorage.get(params.agentId);
   if (record?.archivedAt) {
     if (!unarchive) {
-      return { outOfBand: false };
+      return { outOfBand: false, steered: false };
     }
     await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
   }

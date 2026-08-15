@@ -251,6 +251,67 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("steers a prompt into the running Pi turn without aborting", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first task");
+
+    const steered = await session.trySteer("second instruction", {
+      clientMessageId: "msg-steer-1",
+    });
+    expect(steered).toBe(true);
+
+    expect(fakeSession.abortRequested).toBe(false);
+    expect(fakeSession.prompts.at(-1)).toEqual({
+      message: "second instruction",
+      imageCount: 0,
+      streamingBehavior: "steer",
+    });
+
+    // Pi delivers the steered message after the current tool-call batch; the
+    // submitted-user-entry echo carries the steer clientMessageId and the turn
+    // stays open.
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: null,
+      text: "second instruction",
+    });
+    await flushTurnScheduling();
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: "second instruction",
+      messageId: "entry-steer-1",
+      clientMessageId: "msg-steer-1",
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+  });
+
+  test("does not steer when no turn is active", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const steered = await session.trySteer("hello", { clientMessageId: "msg-1" });
+    expect(steered).toBe(false);
+    expect(fakeSession.prompts).toHaveLength(0);
+  });
+
+  test("falls back when Pi rejects the steer prompt", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("first task");
+    fakeSession.holdNextPrompt();
+    const steerPromise = session.trySteer("steer message");
+    await flushTurnScheduling();
+    await fakeSession.failHeldPrompt(new Error("rejected"));
+
+    await expect(steerPromise).resolves.toBe(false);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

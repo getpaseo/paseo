@@ -2079,6 +2079,35 @@ export class AgentManager {
     return true;
   }
 
+  /**
+   * Try to steer a prompt into the running agent without interrupting the
+   * active turn. Providers that support native steering (e.g. Pi) queue the
+   * message and deliver it after the current tool-call batch. Returns true when
+   * the prompt was queued; the submitted message is recorded immediately and
+   * the running turn keeps broadcasting its events.
+   */
+  async trySteerAgent(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<boolean> {
+    const agent = this.requireSessionAgent(agentId);
+    const handler = agent.session.trySteer;
+    if (!handler) {
+      return false;
+    }
+    const steered = await handler.call(agent.session, prompt, options);
+    if (!steered) {
+      return false;
+    }
+    if (options?.clientMessageId) {
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+    }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    return true;
+  }
+
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
