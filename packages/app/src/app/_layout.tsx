@@ -80,6 +80,7 @@ import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
+import { useAdaptiveOrientation } from "@/hooks/use-adaptive-orientation";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
@@ -946,6 +947,7 @@ function WorkspaceRouteNavigationBridge() {
 }
 
 function AppShell() {
+  useAdaptiveOrientation();
   return (
     <MobilePanelsProvider>
       <HorizontalScrollProvider>

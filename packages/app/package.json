@@ -87,6 +87,7 @@
     "expo-localization": "~17.0.9",
     "expo-notifications": "^0.32.16",
     "expo-router": "~6.0.13",
+    "expo-screen-orientation": "~9.0.9",
     "expo-sharing": "^14.0.8",
     "expo-splash-screen": "~31.0.10",
     "expo-system-ui": "~6.0.7",
