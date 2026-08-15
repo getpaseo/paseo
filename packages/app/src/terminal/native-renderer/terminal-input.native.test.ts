@@ -283,4 +283,26 @@ describe("native terminal typed input", () => {
     expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
     expect(input.receiveTextChange("하")).toEqual({ data: "하", shouldClear: false });
   });
+
+  it("stops rubbing out once a swallowed replacement leaves the terminal ahead", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
+    // Swallowed: the terminal still holds 한글 while the buffer moved to 우리.
+    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
+    // A rubout here would delete 글 off the terminal and leave 한루 behind.
+    expect(input.receiveTextChange("우루")).toEqual({ data: "", shouldClear: false });
+  });
+
+  it("resumes composition once the line is cleared", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
+    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
+
+    input.reset();
+
+    expect(input.receiveTextChange("하")).toEqual({ data: "하", shouldClear: false });
+    expect(input.receiveTextChange("한")).toEqual({ data: "\x7f한", shouldClear: false });
+  });
 });

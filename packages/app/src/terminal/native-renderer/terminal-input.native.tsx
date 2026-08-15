@@ -99,6 +99,11 @@ export function resolveTerminalInputFocusRequest(input: {
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
   let submittedText: string | null = null;
+  // A swallowed replacement leaves the terminal holding text the buffer no
+  // longer describes. A composition rubout deletes from the terminal, so it
+  // would delete whatever is actually sitting there rather than the character
+  // the buffer thinks it is replacing. Stay off until the line is cleared.
+  let replacementDesynced = false;
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
@@ -126,22 +131,30 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         submittedText = null;
         if (text === lateSubmitText) {
           previousText = "";
+          replacementDesynced = false;
           return { data: "", shouldClear: false };
         }
       }
 
       if (text.length === 0) {
         previousText = "";
+        replacementDesynced = false;
         return { data: "", shouldClear: false };
       }
 
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
+        replacementDesynced = false;
         return { data: "", shouldClear: true };
       }
 
       if (!text.startsWith(previousText)) {
-        const compositionEdit = resolveCompositionEdit(previousText, text);
+        const compositionEdit = replacementDesynced
+          ? ""
+          : resolveCompositionEdit(previousText, text);
+        if (compositionEdit === "") {
+          replacementDesynced = true;
+        }
         previousText = text;
         return { data: compositionEdit, shouldClear: false };
       }
@@ -155,6 +168,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     },
     reset(): void {
       previousText = "";
+      replacementDesynced = false;
     },
   };
 }
