@@ -77,6 +77,17 @@ diffPerfDescribe("Diff rendering performance", () => {
       expect(initial.mountedCodeRows).toBeLessThanOrEqual(MAX_MOUNTED_CODE_ROWS);
       expect(initial.mountedGutterRows).toBe(initial.mountedCodeRows);
 
+      await page.getByTestId("diff-gutter-row-1").hover();
+      await page.getByTestId("diff-gutter-action-1").click();
+      await expect(page.getByTestId("inline-review-editor")).toBeVisible();
+      const withEditor = await readDiffMountReport(page);
+      expect(withEditor.mountedCodeRows).toBeLessThanOrEqual(MAX_MOUNTED_CODE_ROWS);
+      expect(withEditor.mountedGutterRows).toBe(withEditor.mountedCodeRows);
+      expect(await readDiffRowAlignment(page, 2)).toBeCloseTo(0, 0);
+      await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
+      await page.getByTestId("inline-review-editor-cancel").click();
+      await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
+
       await scroll.evaluate((element) => {
         element.scrollTop = element.scrollHeight - element.clientHeight;
         element.dispatchEvent(new Event("scroll", { bubbles: false }));
@@ -93,6 +104,7 @@ diffPerfDescribe("Diff rendering performance", () => {
         sourceLines: LINE_COUNT,
         expansionMs: Math.round(expansionMs),
         initial,
+        withEditor,
         afterScroll,
       };
       await testInfo.attach("diff-performance", {
@@ -132,6 +144,19 @@ diffPerfDescribe("Diff rendering performance", () => {
     }
   });
 });
+
+async function readDiffRowAlignment(
+  page: import("@playwright/test").Page,
+  rowIndex: number,
+): Promise<number> {
+  const gutterTop = await page
+    .getByTestId(`diff-gutter-row-${rowIndex}`)
+    .evaluate((row) => row.getBoundingClientRect().top);
+  const codeTop = await page
+    .getByTestId(`diff-code-row-${rowIndex}`)
+    .evaluate((row) => row.getBoundingClientRect().top);
+  return gutterTop - codeTop;
+}
 
 async function readDiffMountReport(page: import("@playwright/test").Page): Promise<{
   mountedCodeRows: number;

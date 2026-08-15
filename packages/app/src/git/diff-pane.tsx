@@ -188,7 +188,7 @@ function HighlightedToken({ token }: { token: HighlightToken }) {
   return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
-function HighlightedText({
+const HighlightedText = memo(function HighlightedText({
   tokens,
   textMetricsStyle,
   wrapLines = false,
@@ -220,7 +220,7 @@ function HighlightedText({
       ))}
     </Text>
   );
-}
+});
 
 interface DiffFileSectionProps {
   file: ParsedDiffFile;
@@ -1386,7 +1386,7 @@ export function DiffFileBody({
     viewport,
     bodyOffset,
     rowHeights,
-    enabled: Boolean(viewport) && canRenderRows && !wrapLines && !reviewActions?.editor,
+    enabled: Boolean(viewport) && canRenderRows && !wrapLines,
   });
   const visibleUnifiedLines = useMemo(
     () =>
