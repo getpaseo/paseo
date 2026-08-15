@@ -166,6 +166,8 @@ interface AgentStreamStressRequest {
   coalesced: boolean;
 }
 
+type SteeringReplayShape = "claude" | "codex";
+
 interface MockQuestionOption {
   label: string;
   description?: string;
@@ -192,6 +194,13 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
 
 function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
+}
+
+function parseSteeringReplayShape(prompt: AgentPromptInput): SteeringReplayShape | null {
+  const match = /replay a (claude|codex)-shaped foreground shell tool call/i.exec(
+    promptToText(prompt),
+  );
+  return match?.[1] === "claude" || match?.[1] === "codex" ? match[1] : null;
 }
 
 function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | null {
@@ -742,9 +751,12 @@ export class MockLoadTestAgentSession implements AgentSession {
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+    const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
+      } else if (steeringReplayShape) {
+        this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
         this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
       } else if (this.assistantResponse !== null) {
@@ -1045,6 +1057,52 @@ export class MockLoadTestAgentSession implements AgentSession {
         timeline: [],
         canceled: false,
       });
+    }, 0);
+    turn.timer.unref?.();
+  }
+
+  private scheduleSteeringReplayTurn(turn: ActiveTurn, shape: SteeringReplayShape): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.clearTurnTimer(turn);
+      this.emitTurnStarted(turn);
+      if (shape === "codex") {
+        this.emitTimeline(turn.turnId, {
+          type: "assistant_message",
+          text: "Running the foreground command.",
+          messageId: turn.assistantMessageId,
+        });
+      }
+      const callId = `${turn.turnId}:steering-replay-shell`;
+      const detail: ToolCallDetail = {
+        type: "shell",
+        command: "sleep 5",
+        cwd: "/tmp/paseo-mock-load",
+      };
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({ callId, name: "bash", status: "running", detail }),
+      );
+      turn.timer = setTimeout(() => {
+        if (this.activeTurn !== turn) return;
+        this.clearTurnTimer(turn);
+        this.emitTimeline(
+          turn.turnId,
+          createToolCall({
+            callId,
+            name: "bash",
+            status: "completed",
+            detail: { ...detail, output: "", exitCode: 0 },
+          }),
+        );
+        this.emitTimeline(turn.turnId, {
+          type: "assistant_message",
+          text: "Foreground command completed after steering.",
+          messageId: turn.assistantMessageId,
+        });
+        this.finishTurnWithText(turn, "Foreground command completed after steering.");
+      }, 5_000);
+      turn.timer.unref?.();
     }, 0);
     turn.timer.unref?.();
   }

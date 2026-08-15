@@ -29,7 +29,7 @@ import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
-import { selectModel } from "../support/helpers/app";
+import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import {
   expectResumeOverflowFallsBackToOneTail,
@@ -294,6 +294,10 @@ async function configureSteerInSettings(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+Comma`);
   await expect(page).toHaveURL(/\/settings\/general$/);
+  await selectSteerInSettings(page);
+}
+
+async function selectSteerInSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Steer", exact: true }).click();
   await expect
     .poll(async () => {
@@ -309,37 +313,32 @@ async function replaySteeredSleepTurnInBrowser(
   shape: "claude" | "codex",
 ): Promise<void> {
   const gate = await installDaemonWebSocketGate(page);
-  gate.setShellToolCommandOverride("sleep 5");
   gate.holdNextShellToolCall("completed");
-  if (shape === "claude") gate.setAgentStreamItemSuppressed("assistant_message", true);
+  await gotoAppShell(page);
+  await openSettings(page);
+  await selectSteerInSettings(page);
   const agent = await startRunningMockAgent(page, {
     prefix: `steer-replay-${shape}-${testInfo.workerIndex}-`,
     model: "ten-second-stream",
-    prompt: "Replay a foreground shell tool call while the user steers this turn.",
+    prompt: `Replay a ${shape}-shaped foreground shell tool call while the user steers this turn.`,
   });
   try {
     await expect(page.getByTestId("tool-call-badge").last()).toBeVisible({ timeout: 30_000 });
-    if (shape === "codex") gate.setAgentStreamItemSuppressed("assistant_message", true);
-    await configureSteerInSettings(page);
-    await page.goBack();
     await expectComposerVisible(page);
     await submitMessage(page, "hello");
 
     await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
-    await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(0);
     await expectInFlightForkAvailable(page);
 
     await gate.waitForHeldServerMessage();
-    if (shape === "claude") gate.setAgentStreamItemSuppressed("assistant_message", false);
     gate.releaseHeldServerMessage();
     await agent.client.waitForFinish(agent.agentId, 30_000);
 
     await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
-    await expect(page.getByText(/^Worked for/)).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Fork chat" }).last()).toBeVisible();
   } finally {
-    gate.setShellToolCommandOverride(null);
-    gate.setAgentStreamItemSuppressed("assistant_message", false);
     gate.restore();
     await agent.cleanup();
   }

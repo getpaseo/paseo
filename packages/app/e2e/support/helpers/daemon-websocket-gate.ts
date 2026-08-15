@@ -51,6 +51,11 @@ interface HeldServerMessage {
   blockedAgentId?: string;
 }
 
+interface PendingServerMessageHold {
+  matches: (message: ClientRequest | null) => boolean;
+  blockAgentStreamFollowers?: boolean;
+}
+
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
   try {
     const envelope = JSON.parse(typeof message === "string" ? message : message.toString()) as {
@@ -282,7 +287,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
-  const pendingServerMessageHolds = new Map<string, (message: ClientRequest | null) => boolean>();
+  const pendingServerMessageHolds = new Map<string, PendingServerMessageHold>();
   const heldServerMessages: HeldServerMessage[] = [];
   const heldServerMessageWaiters = new Set<() => void>();
   const suppressedServerMessageTypes = new Set<string>();
@@ -376,11 +381,11 @@ export async function installDaemonWebSocketGate(page: Page) {
       if (!suppressed) blocked.agentStreamFollowers.push(input.message);
       return true;
     }
-    const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
-      matches(input.parsed),
+    const matchedHold = Array.from(pendingServerMessageHolds).find(([, hold]) =>
+      hold.matches(input.parsed),
     );
     if (!matchedHold) return suppressed;
-    const [key] = matchedHold;
+    const [key, hold] = matchedHold;
     pendingServerMessageHolds.delete(key);
     heldServerMessages.push({
       browser: input.browser,
@@ -388,7 +393,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       key,
       agentStreamFollowers: [],
       blockedAgentId:
-        readAgentStreamEventType(input.parsed) === "turn_started"
+        hold.blockAgentStreamFollowers || readAgentStreamEventType(input.parsed) === "turn_started"
           ? (agentId ?? undefined)
           : undefined,
     });
@@ -576,35 +581,36 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldClientRequestType = null;
     },
     holdNextServerMessage(type: string): void {
-      pendingServerMessageHolds.set(serverMessageKey(type), (message) => message?.type === type);
+      pendingServerMessageHolds.set(serverMessageKey(type), {
+        matches: (message) => message?.type === type,
+      });
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
       const heldAgentUpdate = { agentId, status };
-      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), (message) =>
-        matchesAgentUpdate(message, heldAgentUpdate),
-      );
+      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), {
+        matches: (message) => matchesAgentUpdate(message, heldAgentUpdate),
+      });
     },
     holdNextAgentStreamEvent(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamEventKey(type),
-        (message) => readAgentStreamEventType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamEventKey(type), {
+        matches: (message) => readAgentStreamEventType(message) === type,
+      });
     },
     holdNextAgentStreamItem(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamItemKey(type),
-        (message) => readAgentStreamItemType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamItemKey(type), {
+        matches: (message) => readAgentStreamItemType(message) === type,
+      });
     },
     holdNextToolCall(input: { status: string; command?: string }): void {
-      pendingServerMessageHolds.set(`tool-call:${input.status}:${input.command ?? ""}`, (message) =>
-        matchesToolCall(message, input),
-      );
+      pendingServerMessageHolds.set(`tool-call:${input.status}:${input.command ?? ""}`, {
+        matches: (message) => matchesToolCall(message, input),
+      });
     },
     holdNextShellToolCall(status: string): void {
-      pendingServerMessageHolds.set(`shell-tool-call:${status}`, (message) =>
-        matchesShellToolCall(message, status),
-      );
+      pendingServerMessageHolds.set(`shell-tool-call:${status}`, {
+        matches: (message) => matchesShellToolCall(message, status),
+        blockAgentStreamFollowers: true,
+      });
     },
     async waitForHeldServerMessage(type?: string): Promise<void> {
       const key = type ? serverMessageKey(type) : null;

@@ -3573,7 +3573,8 @@ export class AgentManager {
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const event of agent.session.streamHistory()) {
+    for await (const rawEvent of agent.session.streamHistory()) {
+      const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
@@ -3637,7 +3638,8 @@ export class AgentManager {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     agent.historyPrimed = false;
     try {
-      for await (const event of agent.session.streamHistory()) {
+      for await (const rawEvent of agent.session.streamHistory()) {
+        const event = limitAgentStreamEventContent(rawEvent);
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
           const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
