@@ -633,6 +633,52 @@ describe("GjcACPAgentClient", () => {
     ]);
   });
 
+  test("preserves input cleanup failure details when lifecycle create fails", async () => {
+    const createError = new Error("create failed");
+    const cleanupError = new Error("cleanup failed");
+    const execFile = vi.fn(async () => {
+      throw createError;
+    });
+    const removeInputDirectory = vi.fn(async (path: string) => {
+      await rm(path, { recursive: true, force: true });
+      throw cleanupError;
+    });
+    const loadSession = vi.fn();
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+      removeInputDirectory,
+    });
+
+    let thrown: unknown;
+    try {
+      await starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(
+      "GJC lifecycle session.create failed: GJC lifecycle request failed and input cleanup failed: create failed; cleanup: cleanup failed",
+    );
+    expect((thrown as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((thrown as Error).cause as AggregateError).errors).toEqual([createError, cleanupError]);
+    expect(removeInputDirectory).toHaveBeenCalledTimes(1);
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(runRequest).not.toHaveBeenCalled();
+  });
+
   test("closes a gjc probe lifecycle session after catalog use", async () => {
     const execFile = vi.fn(async () => ({
       stdout: JSON.stringify({

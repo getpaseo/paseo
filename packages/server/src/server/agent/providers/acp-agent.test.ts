@@ -3931,6 +3931,68 @@ describe("ACPAgentSession initialization cleanup", () => {
     expect(terminator.terminated).toContain(child);
   });
 
+  test("closes custom lifecycle sessions when post-load initialization fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const configOptions = [selectConfigOption("thought_level", ["low"], "low")];
+    const response: SessionStateResponse = {
+      sessionId: "lifecycle-session-1",
+      configOptions,
+    };
+    const newSessionStarter = vi.fn(async () => response);
+    const newSessionFailureCloser = vi.fn(async () => undefined);
+    const thinkingOptionWriter = vi.fn(async () => {
+      throw new Error("thinking override failed");
+    });
+
+    class FailingConfiguredOverride extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockRejectedValue(new Error("newSession should not be called")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        };
+      }
+    }
+
+    const session = new FailingConfiguredOverride(
+      {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+        thinkingOptionId: "xhigh",
+      },
+      {
+        provider: "gjc",
+        logger: createTestLogger(),
+        defaultCommand: ["gjc", "acp"],
+        defaultModes: [],
+        newSessionStarter,
+        newSessionFailureCloser,
+        thinkingOptionWriter,
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    await expect(session.initializeNewSession()).rejects.toThrow("thinking override failed");
+
+    expect(newSessionFailureCloser).toHaveBeenCalledWith({
+      response,
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+        thinkingOptionId: "xhigh",
+      },
+      mcpServers: [],
+    });
+    expect(terminator.terminated).toContain(child);
+  });
+
   test("terminates the ACP process when session/load fails", async () => {
     const terminator = new FakeTerminator();
     const child = createProbeChildStub();

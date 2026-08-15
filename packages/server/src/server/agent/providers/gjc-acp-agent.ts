@@ -116,6 +116,11 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
         env: options.env,
         execFile: options.execFile,
       }),
+      newSessionFailureCloser: createGjcACPProbeSessionCloser({
+        command: options.command,
+        env: options.env,
+        execFile: options.execFile,
+      }),
       probeSessionCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,
@@ -374,6 +379,14 @@ async function withGjcJsonInputFile<T>(
   }
 
   if (!outcome.ok) {
+    if (!cleanup.ok) {
+      throw new AggregateError(
+        [outcome.error, cleanup.error],
+        `GJC lifecycle request failed and input cleanup failed: ${formatGjcExecError(
+          outcome.error,
+        )}; cleanup: ${formatGjcExecError(cleanup.error)}`,
+      );
+    }
     throw outcome.error;
   }
   return { value: outcome.value, cleanup };

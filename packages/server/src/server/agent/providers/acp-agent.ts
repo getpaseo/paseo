@@ -434,6 +434,7 @@ interface ACPAgentClientOptions {
   defaultModes?: AgentMode[];
   catalogModelResolver?: ACPCatalogModelResolver;
   newSessionStarter?: ACPNewSessionStarter;
+  newSessionFailureCloser?: ACPProbeSessionCloser;
   probeSessionCloser?: ACPProbeSessionCloser;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
@@ -467,6 +468,7 @@ interface ACPAgentSessionOptions {
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
   newSessionStarter?: ACPNewSessionStarter;
+  newSessionFailureCloser?: ACPProbeSessionCloser;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -830,6 +832,7 @@ export class ACPAgentClient implements AgentClient {
   protected readonly defaultModes: AgentMode[];
   private readonly catalogModelResolver?: ACPCatalogModelResolver;
   private readonly newSessionStarter?: ACPNewSessionStarter;
+  private readonly newSessionFailureCloser?: ACPProbeSessionCloser;
   private readonly probeSessionCloser?: ACPProbeSessionCloser;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
@@ -873,6 +876,7 @@ export class ACPAgentClient implements AgentClient {
     this.defaultModes = options.defaultModes ?? [];
     this.catalogModelResolver = options.catalogModelResolver;
     this.newSessionStarter = options.newSessionStarter;
+    this.newSessionFailureCloser = options.newSessionFailureCloser;
     this.probeSessionCloser = options.probeSessionCloser;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
@@ -905,6 +909,7 @@ export class ACPAgentClient implements AgentClient {
         defaultCommand: this.defaultCommand,
         defaultModes: this.defaultModes,
         newSessionStarter: this.newSessionStarter,
+        newSessionFailureCloser: this.newSessionFailureCloser,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
@@ -1655,6 +1660,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly defaultCommand: [string, ...string[]];
   private readonly defaultModes: AgentMode[];
   private readonly newSessionStarter?: ACPNewSessionStarter;
+  private readonly newSessionFailureCloser?: ACPProbeSessionCloser;
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -1726,6 +1732,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes;
     this.newSessionStarter = options.newSessionStarter;
+    this.newSessionFailureCloser = options.newSessionFailureCloser;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -1756,6 +1763,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async initializeNewSession(): Promise<void> {
+    let newSessionCleanupContext: ACPProbeSessionCloserContext | null = null;
     try {
       const spawned = await this.spawnProcess();
       this.child = spawned.child;
@@ -1776,12 +1784,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
               mcpServers,
             }),
           );
+      newSessionCleanupContext = {
+        response,
+        config: this.config,
+        mcpServers,
+      };
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
       await this.applyConfiguredOverrides();
     } catch (error) {
-      await this.closeAfterInitializationFailure(error);
+      await this.closeAfterInitializationFailure(error, newSessionCleanupContext);
     }
   }
 
@@ -1839,7 +1852,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private async closeAfterInitializationFailure(error: unknown): Promise<never> {
+  private async closeAfterInitializationFailure(
+    error: unknown,
+    newSessionCleanupContext?: ACPProbeSessionCloserContext | null,
+  ): Promise<never> {
+    if (newSessionCleanupContext && this.newSessionFailureCloser) {
+      try {
+        await this.newSessionFailureCloser(newSessionCleanupContext);
+      } catch (closeError) {
+        this.logger.warn(
+          { err: closeError, initializationError: error },
+          "Failed to close ACP lifecycle session after initialization failure",
+        );
+      }
+    }
     try {
       await this.close();
     } catch (closeError) {
