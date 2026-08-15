@@ -96,9 +96,11 @@ export const ar: TranslationResources = {
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",
+      steerAgent: "توجيه الوكيل",
       sendAndInterrupt: "إرسال ومقاطعة",
       sendMessage: "أرسل رسالة",
       queue: "طابور",
+      steer: "توجيه",
       send: "يرسل",
     },
     cancel: {
@@ -141,6 +143,7 @@ export const ar: TranslationResources = {
     },
     errors: {
       failedToSend: "فشل في إرسال الرسالة",
+      steeringUnavailable: "حدّث المضيف لتوجيه هذا الوكيل",
       failedToCreateAgent: "فشل في إنشاء الوكيل",
       noHostSelected: "لم يتم تحديد مضيف",
       initialPromptRequired: "مطلوب موجه الأولي",
@@ -1823,10 +1826,14 @@ export const ar: TranslationResources = {
         descriptions: {
           interrupt:
             "عند تشغيل الوكيل، يوقف Enter التشغيل. Command/Ctrl+Enter يضيف إلى قائمة الانتظار.",
-          queue: "عند تشغيل الوكيل، يضيف Enter إلى قائمة الانتظار. Command/Ctrl+Enter يرسل.",
+          steer:
+            "عند تشغيل الوكيل، يوجّه Enter العمل. Command/Ctrl+Enter يقاطع. Alt+Enter يضيف إلى قائمة الانتظار.",
+          queue:
+            "عند تشغيل الوكيل، يضيف Enter أو Alt+Enter إلى قائمة الانتظار. Command/Ctrl+Enter يقاطع.",
         },
         options: {
           interrupt: "مقاطعة",
+          steer: "توجيه",
           queue: "طابور",
         },
       },

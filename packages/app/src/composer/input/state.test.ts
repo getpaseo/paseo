@@ -3,6 +3,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
+  resolveDesktopEnterAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -192,11 +193,32 @@ describe("composer send behavior", () => {
     const calls: string[] = [];
     return {
       calls,
-      handleSendMessage: () => calls.push("send"),
+      handleSendMessage: (busyBehavior?: "replace" | "steer") =>
+        calls.push(busyBehavior ? `send:${busyBehavior}` : "send"),
       handleQueueMessage: () => calls.push("queue"),
       onQueue: () => undefined,
     };
   }
+
+  it("routes desktop Enter modifiers without changing the existing send actions", () => {
+    const base = {
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+      isAgentRunning: true,
+      canQueue: true,
+      canSubmit: true,
+    };
+
+    expect(resolveDesktopEnterAction({ ...base, altKey: true })).toBe("queue");
+    expect(resolveDesktopEnterAction({ ...base, altKey: true, isAgentRunning: false })).toBe(
+      "default",
+    );
+    expect(resolveDesktopEnterAction({ ...base, modKey: true })).toBe("alternate");
+    expect(resolveDesktopEnterAction(base)).toBe("default");
+    expect(resolveDesktopEnterAction({ ...base, shiftKey: true })).toBeNull();
+    expect(resolveDesktopEnterAction({ ...base, canSubmit: false })).toBeNull();
+  });
 
   it("uses Enter to interrupt and Mod+Enter to queue when interrupt is selected", () => {
     const defaultAction = actions();
@@ -217,7 +239,7 @@ describe("composer send behavior", () => {
       handleQueueMessage: alternateAction.handleQueueMessage,
     });
 
-    expect(defaultAction.calls).toEqual(["send"]);
+    expect(defaultAction.calls).toEqual(["send:replace"]);
     expect(alternateAction.calls).toEqual(["queue"]);
   });
 
@@ -241,7 +263,30 @@ describe("composer send behavior", () => {
     });
 
     expect(defaultAction.calls).toEqual(["queue"]);
-    expect(alternateAction.calls).toEqual(["send"]);
+    expect(alternateAction.calls).toEqual(["send:replace"]);
+  });
+
+  it("uses Enter to steer and Mod+Enter to interrupt when steer is selected", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send:steer"]);
+    expect(alternateAction.calls).toEqual(["send:replace"]);
   });
 });
 

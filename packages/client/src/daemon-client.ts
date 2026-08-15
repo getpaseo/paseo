@@ -335,6 +335,7 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
+  busyBehavior?: "replace" | "steer";
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
@@ -2945,6 +2946,7 @@ export class DaemonClient {
       requestId,
       agentId,
       text,
+      ...(options?.busyBehavior ? { busyBehavior: options.busyBehavior } : {}),
       ...(messageId ? { messageId } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),

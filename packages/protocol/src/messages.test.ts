@@ -41,6 +41,29 @@ function fetchWorkspacesResponse(workspace: Record<string, unknown>) {
   };
 }
 
+describe("agent message busy behavior", () => {
+  test("accepts optional steer behavior and legacy requests without it", () => {
+    const steer = SessionInboundMessageSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "request-steer",
+      agentId: "agent-1",
+      text: "change direction",
+      busyBehavior: "steer",
+      attachments: [],
+    });
+    const legacy = SessionInboundMessageSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "request-legacy",
+      agentId: "agent-1",
+      text: "replace this turn",
+      attachments: [],
+    });
+
+    expect(steer).toMatchObject({ busyBehavior: "steer" });
+    expect(legacy).not.toHaveProperty("busyBehavior");
+  });
+});
+
 describe("project icon message security", () => {
   test("rejects URL sources at the daemon boundary", () => {
     const parsed = SessionInboundMessageSchema.safeParse({

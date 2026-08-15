@@ -249,8 +249,19 @@ function selectedSidebarItemStyle({ hovered }: PressableStateCallbackType & { ho
 function getSendBehaviorOptions(t: TFunction) {
   return [
     { value: "interrupt" as const, label: t("settings.general.defaultSend.options.interrupt") },
+    { value: "steer" as const, label: t("settings.general.defaultSend.options.steer") },
     { value: "queue" as const, label: t("settings.general.defaultSend.options.queue") },
   ];
+}
+
+function getSendBehaviorDescriptionKey(sendBehavior: SendBehavior) {
+  if (sendBehavior === "interrupt") {
+    return "settings.general.defaultSend.descriptions.interrupt" as const;
+  }
+  if (sendBehavior === "steer") {
+    return "settings.general.defaultSend.descriptions.steer" as const;
+  }
+  return "settings.general.defaultSend.descriptions.queue" as const;
 }
 
 function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): string {
@@ -340,10 +351,7 @@ function GeneralSection({
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
-  const sendBehaviorDescriptionKey =
-    settings.sendBehavior === "interrupt"
-      ? "settings.general.defaultSend.descriptions.interrupt"
-      : "settings.general.defaultSend.descriptions.queue";
+  const sendBehaviorDescriptionKey = getSendBehaviorDescriptionKey(settings.sendBehavior);
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
   );

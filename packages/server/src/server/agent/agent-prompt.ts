@@ -14,12 +14,34 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "steerAgent"
+  | "replaceAgentRun"
+  | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
+  busyBehavior?: "replace" | "steer";
   runOptions?: AgentRunOptions;
+}
+
+async function tryDispatchWithoutStartingRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  options?: StartAgentRunOptions,
+): Promise<boolean> {
+  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+    return true;
+  }
+  if (options?.busyBehavior !== "steer" || !agentManager.hasInFlightRun(agentId)) {
+    return false;
+  }
+  await agentManager.steerAgent(agentId, prompt, options.runOptions);
+  return true;
 }
 
 export async function startAgentRun(
@@ -45,11 +67,11 @@ export async function startAgentRun(
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
-  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  if (await tryDispatchWithoutStartingRun(agentManager, agentId, prompt, options)) {
     return { outOfBand: true };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const runOptions = options?.runOptions;
+  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
   const iterator = shouldReplace
     ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
     : agentManager.streamAgent(agentId, prompt, runOptions);
@@ -130,6 +152,7 @@ export interface SendPromptToAgentParams {
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
   messageId?: string;
+  busyBehavior?: "replace" | "steer";
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
@@ -207,6 +230,7 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    busyBehavior: params.busyBehavior,
     runOptions,
   });
 }

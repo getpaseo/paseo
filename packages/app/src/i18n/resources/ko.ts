@@ -96,9 +96,11 @@ export const ko: TranslationResources = {
       addAttachment: "첨부 추가",
       interruptAgent: "에이전트 중단",
       queueMessage: "메시지 대기열에 추가",
+      steerAgent: "에이전트 지시",
       sendAndInterrupt: "보내고 중단",
       sendMessage: "메시지 보내기",
       queue: "대기열",
+      steer: "지시",
       send: "보내기",
     },
     cancel: {
@@ -141,6 +143,7 @@ export const ko: TranslationResources = {
     },
     errors: {
       failedToSend: "메시지를 보내지 못했습니다",
+      steeringUnavailable: "이 에이전트를 지시하려면 호스트를 업데이트하세요",
       failedToCreateAgent: "에이전트를 생성하지 못했습니다",
       noHostSelected: "선택된 호스트가 없습니다",
       initialPromptRequired: "초기 프롬프트가 필요합니다",
@@ -1833,11 +1836,14 @@ export const ko: TranslationResources = {
         descriptions: {
           interrupt:
             "에이전트가 실행 중일 때 Enter는 중단합니다. Command/Ctrl+Enter는 대기열에 추가합니다.",
+          steer:
+            "에이전트가 실행 중일 때 Enter는 지시합니다. Command/Ctrl+Enter는 중단합니다. Alt+Enter는 대기열에 추가합니다.",
           queue:
-            "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
+            "에이전트가 실행 중일 때 Enter 또는 Alt+Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 중단합니다.",
         },
         options: {
           interrupt: "중단",
+          steer: "지시",
           queue: "대기열",
         },
       },

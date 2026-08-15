@@ -69,6 +69,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveComposerSurfacePresentation,
+  resolveDesktopEnterAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -131,8 +132,8 @@ export interface MessageInputProps {
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
   /** Controls what the default send action (Enter, send button, dictation) does
-   *  when the agent is running. "interrupt" sends immediately, "queue" queues. */
-  defaultSendBehavior?: "interrupt" | "queue";
+   *  when the agent is running. */
+  defaultSendBehavior?: "interrupt" | "steer" | "queue";
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
   /** Optional handler used when submit button is in loading state. */
@@ -179,6 +180,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
     metaKey?: boolean;
     ctrlKey?: boolean;
+    altKey?: boolean;
     shiftKey?: boolean;
     // Web-only: present on DOM KeyboardEvent during IME composition (CJK input).
     isComposing?: boolean;
@@ -369,6 +371,7 @@ interface DesktopKeyPressContext {
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   disabled: boolean;
+  handleQueueMessage: () => void;
   handleAlternateSendAction: () => void;
   handleDefaultSendAction: () => void;
 }
@@ -387,22 +390,29 @@ function handleDesktopKeyPressImpl(
     if (handled) return;
   }
 
-  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+  const { shiftKey, metaKey, ctrlKey, altKey } = event.nativeEvent;
 
   if (event.nativeEvent.key !== "Enter") return;
   if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
 
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
-    ctx.handleAlternateSendAction();
-    return;
-  }
+  const action = resolveDesktopEnterAction({
+    shiftKey: Boolean(shiftKey),
+    altKey: Boolean(altKey),
+    modKey: Boolean(metaKey || ctrlKey),
+    isAgentRunning: ctx.isAgentRunning,
+    canQueue: Boolean(ctx.onQueue),
+    canSubmit: !ctx.isSubmitDisabled && !ctx.isSubmitLoading && !ctx.disabled,
+  });
+  if (!action) return;
 
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
   event.preventDefault();
-  ctx.handleDefaultSendAction();
+  if (action === "queue") {
+    ctx.handleQueueMessage();
+  } else if (action === "alternate") {
+    ctx.handleAlternateSendAction();
+  } else {
+    ctx.handleDefaultSendAction();
+  }
 }
 
 function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTMLElement | null {
@@ -880,6 +890,7 @@ interface SendMessageContext {
   onSubmit: (payload: MessagePayload) => void;
   onMinimizeHeight: () => void;
   preserveHeightOnSubmit: boolean;
+  busyBehavior?: "replace" | "steer";
 }
 
 function sendMessageImpl(ctx: SendMessageContext): void {
@@ -897,6 +908,7 @@ function sendMessageImpl(ctx: SendMessageContext): void {
     attachments: ctx.attachments,
     cwd: ctx.cwd,
     forceSend: ctx.isAgentRunning || undefined,
+    busyBehavior: ctx.isAgentRunning ? ctx.busyBehavior : undefined,
   });
   // When the host preserves and locks the composer (e.g. new-workspace creation),
   // the text stays put — collapsing the height would clip it. Keep it grown.
@@ -987,7 +999,7 @@ interface SendButtonStateInput {
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "steer" | "queue";
   isAgentRunning: boolean;
 }
 
@@ -995,6 +1007,7 @@ interface SendButtonStateOutput {
   canPressLoadingButton: boolean;
   isSendButtonDisabled: boolean;
   defaultActionQueues: boolean;
+  defaultActionSteers: boolean;
 }
 
 function computeSendButtonState(input: SendButtonStateInput): SendButtonStateOutput {
@@ -1003,7 +1016,8 @@ function computeSendButtonState(input: SendButtonStateInput): SendButtonStateOut
   const isSendButtonDisabled =
     input.disabled || (!canPressLoadingButton && (input.isSubmitDisabled || input.isSubmitLoading));
   const defaultActionQueues = input.defaultSendBehavior === "queue" && input.isAgentRunning;
-  return { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues };
+  const defaultActionSteers = input.defaultSendBehavior === "steer" && input.isAgentRunning;
+  return { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues, defaultActionSteers };
 }
 
 interface ResolvedMessageInputProps {
@@ -1038,7 +1052,7 @@ interface ResolvedMessageInputProps {
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
-  defaultSendBehavior: "interrupt" | "queue";
+  defaultSendBehavior: "interrupt" | "steer" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
@@ -1434,7 +1448,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [onHeightChange]);
 
     const handleSendMessage = useCallback(
-      () =>
+      (busyBehavior?: "replace" | "steer") =>
         sendMessageImpl({
           value: textInputRef.current?.getText() ?? valueRef.current,
           attachments,
@@ -1445,6 +1459,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           onSubmit,
           onMinimizeHeight: minimizeInputHeight,
           preserveHeightOnSubmit,
+          busyBehavior,
         }),
       [
         allowEmptySubmit,
@@ -1566,6 +1581,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isSubmitDisabled,
         isSubmitLoading,
         disabled,
+        handleQueueMessage,
         handleAlternateSendAction,
         handleDefaultSendAction,
       });
@@ -1581,15 +1597,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isAgentRunning,
       isSubmitLoading,
     });
-    const { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues } =
-      computeSendButtonState({
-        disabled,
-        isSubmitDisabled,
-        isSubmitLoading,
-        onSubmitLoadingPress,
-        defaultSendBehavior,
-        isAgentRunning,
-      });
+    const {
+      canPressLoadingButton,
+      isSendButtonDisabled,
+      defaultActionQueues,
+      defaultActionSteers,
+    } = computeSendButtonState({
+      disabled,
+      isSubmitDisabled,
+      isSubmitLoading,
+      onSubmitLoadingPress,
+      defaultSendBehavior,
+      isAgentRunning,
+    });
     useIosHardwareKeyboardSubmit({
       isEnabled: isInputFocused && !isSendButtonDisabled,
       onSubmit: handleDefaultSendAction,
@@ -1598,6 +1618,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       submitButtonAccessibilityLabel,
       canPressLoadingButton,
       defaultActionQueues,
+      defaultActionSteers,
       isAgentRunning,
       t,
     });
@@ -1618,6 +1639,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const sendTooltipLabel = resolveSendTooltipLabel({
       submitButtonAccessibilityLabel,
       defaultActionQueues,
+      defaultActionSteers,
       t,
     });
 

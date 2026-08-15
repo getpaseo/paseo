@@ -12,7 +12,7 @@ async function pressSettingsToggleShortcut(page: import("@playwright/test").Page
 
 async function expectSendBehavior(
   page: import("@playwright/test").Page,
-  expected: "interrupt" | "queue",
+  expected: "interrupt" | "steer" | "queue",
 ) {
   await expect
     .poll(async () => {
@@ -72,6 +72,8 @@ test.describe("Settings toggle tab regression", () => {
 
       await page.getByRole("button", { name: "Queue", exact: true }).click();
       await expectSendBehavior(page, "queue");
+      await page.getByRole("button", { name: "Steer", exact: true }).click();
+      await expectSendBehavior(page, "steer");
       await page.getByRole("button", { name: "Interrupt", exact: true }).click();
       await expectSendBehavior(page, "interrupt");
 

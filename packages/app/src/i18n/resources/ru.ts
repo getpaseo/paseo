@@ -96,9 +96,11 @@ export const ru: TranslationResources = {
       addAttachment: "Добавить вложение",
       interruptAgent: "Агент прерываний",
       queueMessage: "Сообщение в очереди",
+      steerAgent: "Направить агента",
       sendAndInterrupt: "Отправить и прервать",
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
+      steer: "Направить",
       send: "Отправлять",
     },
     cancel: {
@@ -141,6 +143,7 @@ export const ru: TranslationResources = {
     },
     errors: {
       failedToSend: "Не удалось отправить сообщение",
+      steeringUnavailable: "Обновите хост, чтобы направлять этого агента",
       failedToCreateAgent: "Не удалось создать агента.",
       noHostSelected: "Хост не выбран",
       initialPromptRequired: "Требуется начальное приглашение",
@@ -1857,10 +1860,14 @@ export const ru: TranslationResources = {
         label: "Отправка по умолчанию",
         descriptions: {
           interrupt: "Когда агент работает, Enter прерывает. Command/Ctrl+Enter ставит в очередь.",
-          queue: "Когда агент работает, Enter ставит в очередь. Command/Ctrl+Enter отправляет.",
+          steer:
+            "Когда агент работает, Enter направляет. Command/Ctrl+Enter прерывает. Alt+Enter ставит в очередь.",
+          queue:
+            "Когда агент работает, Enter или Alt+Enter ставит в очередь. Command/Ctrl+Enter прерывает.",
         },
         options: {
           interrupt: "Прерывать",
+          steer: "Направлять",
           queue: "Очередь",
         },
       },

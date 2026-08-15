@@ -150,6 +150,23 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("defaults prompts to steering when Pi is already streaming", async () => {
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const promptPromise = session.prompt("change direction");
+    const command = await pendingPrompt;
+    writePiResponse(child, command);
+
+    await expect(promptPromise).resolves.toEqual({ requestId: command.id });
+    expect(command).toMatchObject({
+      type: "prompt",
+      message: "change direction",
+      streamingBehavior: "steer",
+    });
+  });
+
   test("passes an MCP config path to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

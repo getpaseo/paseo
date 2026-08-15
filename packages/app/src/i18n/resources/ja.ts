@@ -96,9 +96,11 @@ export const ja: TranslationResources = {
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
+      steerAgent: "エージェントを誘導",
       sendAndInterrupt: "送信して中断",
       sendMessage: "メッセージを送信",
       queue: "キュー",
+      steer: "誘導",
       send: "送信",
     },
     cancel: {
@@ -141,6 +143,7 @@ export const ja: TranslationResources = {
     },
     errors: {
       failedToSend: "メッセージの送信に失敗しました",
+      steeringUnavailable: "このエージェントを誘導するにはホストを更新してください",
       failedToCreateAgent: "エージェントの作成に失敗しました",
       noHostSelected: "ホストが選択されていません",
       initialPromptRequired: "初期プロンプトが必要です",
@@ -1838,10 +1841,14 @@ export const ja: TranslationResources = {
         label: "デフォルトの送信",
         descriptions: {
           interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
-          queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
+          steer:
+            "エージェント実行中、Enterで誘導します。Command/Ctrl+Enterで中断。Alt+Enterでキューに追加。",
+          queue:
+            "エージェント実行中、EnterまたはAlt+Enterでキューに追加します。Command/Ctrl+Enterで中断。",
         },
         options: {
           interrupt: "中断",
+          steer: "誘導",
           queue: "キュー",
         },
       },

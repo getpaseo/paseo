@@ -111,10 +111,12 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    streamingBehavior: "steer" | "followUp" = "steer",
   ): Promise<PiPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
+      streamingBehavior,
       ...(images?.length ? { images } : {}),
     });
     const data = await promise;

@@ -2,7 +2,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { MessagePayload } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
-export type SendBehavior = "interrupt" | "queue";
+export type SendBehavior = "interrupt" | "steer" | "queue";
 
 interface ComposerSurfaceState {
   opacity: 0 | 1;
@@ -42,7 +42,7 @@ interface SendActionContext {
   defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
-  handleSendMessage: () => void;
+  handleSendMessage: (busyBehavior?: "replace" | "steer") => void;
   handleQueueMessage: () => void;
 }
 
@@ -56,6 +56,14 @@ interface DictationTranscriptContext {
   attachments: MessagePayload["attachments"];
   cwd: string;
   autoSend: boolean;
+}
+
+function resolveBusyBehavior(
+  defaultSendBehavior: SendBehavior,
+  isAgentRunning: boolean,
+): "replace" | "steer" | undefined {
+  if (!isAgentRunning || defaultSendBehavior === "queue") return undefined;
+  return defaultSendBehavior === "steer" ? "steer" : "replace";
 }
 
 export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
@@ -81,6 +89,7 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
     attachments: ctx.attachments,
     cwd: ctx.cwd,
     forceSend: ctx.isAgentRunning || undefined,
+    busyBehavior: resolveBusyBehavior(ctx.defaultSendBehavior, ctx.isAgentRunning),
   });
 }
 
@@ -109,22 +118,42 @@ export function computeCanStartDictation(input: {
   );
 }
 
-export function runDefaultSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
-    ctx.handleQueueMessage();
-    return;
-  }
-  ctx.handleSendMessage();
+export function resolveDesktopEnterAction(input: {
+  shiftKey: boolean;
+  altKey: boolean;
+  modKey: boolean;
+  isAgentRunning: boolean;
+  canQueue: boolean;
+  canSubmit: boolean;
+}): "queue" | "alternate" | "default" | null {
+  if (input.shiftKey || !input.canSubmit) return null;
+  if (input.altKey && input.isAgentRunning && input.canQueue) return "queue";
+  if (input.modKey && input.isAgentRunning && input.canQueue) return "alternate";
+  return "default";
 }
 
-export function runAlternateSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue") {
+export function runDefaultSendAction(ctx: SendActionContext): void {
+  if (!ctx.isAgentRunning) {
     ctx.handleSendMessage();
     return;
   }
-  if (ctx.isAgentRunning && ctx.onQueue) {
+  if (ctx.defaultSendBehavior === "queue" && ctx.onQueue) {
     ctx.handleQueueMessage();
+    return;
   }
+  ctx.handleSendMessage(ctx.defaultSendBehavior === "steer" ? "steer" : "replace");
+}
+
+export function runAlternateSendAction(ctx: SendActionContext): void {
+  if (!ctx.isAgentRunning) {
+    ctx.handleSendMessage();
+    return;
+  }
+  if (ctx.defaultSendBehavior === "interrupt" && ctx.onQueue) {
+    ctx.handleQueueMessage();
+    return;
+  }
+  ctx.handleSendMessage("replace");
 }
 
 export function runMessageInputKeyboardAction(

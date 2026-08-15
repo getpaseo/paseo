@@ -9,9 +9,11 @@ import {
 const translations: Record<string, string> = {
   "composer.input.interruptAgent": "Interrupt agent",
   "composer.input.queueMessage": "Queue message",
+  "composer.input.steerAgent": "Steer agent",
   "composer.input.sendAndInterrupt": "Send and interrupt",
   "composer.input.sendMessage": "Send message",
   "composer.input.queue": "Queue",
+  "composer.input.steer": "Steer",
   "composer.input.send": "Send",
   "composer.voice.unmuteVoiceMode": "Unmute Voice mode",
   "composer.voice.muteVoiceMode": "Mute Voice mode",
@@ -49,6 +51,17 @@ describe("composer input labels", () => {
         submitButtonAccessibilityLabel: undefined,
         canPressLoadingButton: false,
         defaultActionQueues: false,
+        defaultActionSteers: true,
+        isAgentRunning: true,
+        t,
+      }),
+    ).toBe("Steer agent");
+    expect(
+      resolveSubmitAccessibilityLabel({
+        submitButtonAccessibilityLabel: undefined,
+        canPressLoadingButton: false,
+        defaultActionQueues: false,
+        defaultActionSteers: false,
         isAgentRunning: true,
         t,
       }),
@@ -130,6 +143,15 @@ describe("composer input labels", () => {
       resolveSendTooltipLabel({
         submitButtonAccessibilityLabel: undefined,
         defaultActionQueues: false,
+        defaultActionSteers: true,
+        t,
+      }),
+    ).toBe("Steer");
+    expect(
+      resolveSendTooltipLabel({
+        submitButtonAccessibilityLabel: undefined,
+        defaultActionQueues: false,
+        defaultActionSteers: false,
         t,
       }),
     ).toBe("Send");

@@ -98,9 +98,11 @@ export const fr: TranslationResources = {
       addAttachment: "Ajouter une pièce jointe",
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
+      steerAgent: "Guider l'agent",
       sendAndInterrupt: "Envoyer et interrompre",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
+      steer: "Guider",
       send: "Envoyer",
     },
     cancel: {
@@ -143,6 +145,7 @@ export const fr: TranslationResources = {
     },
     errors: {
       failedToSend: "Échec de l'envoi du message",
+      steeringUnavailable: "Mettez à jour l'hôte pour guider cet agent",
       failedToCreateAgent: "Échec de la création de l'agent",
       noHostSelected: "Aucun hôte sélectionné",
       initialPromptRequired: "Une invite initiale est requise",
@@ -1871,11 +1874,14 @@ export const fr: TranslationResources = {
         descriptions: {
           interrupt:
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
+          steer:
+            "Lorsque l'agent est en cours d'exécution, Entrée le guide. Commande/Ctrl+Entrée interrompt. Alt+Entrée met en file d'attente.",
           queue:
-            "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
+            "Lorsque l'agent est en cours d'exécution, Entrée ou Alt+Entrée met en file d'attente. Commande/Ctrl+Entrée interrompt.",
         },
         options: {
           interrupt: "Interrompre",
+          steer: "Guider",
           queue: "File d'attente",
         },
       },

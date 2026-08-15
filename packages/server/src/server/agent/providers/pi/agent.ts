@@ -159,6 +159,7 @@ const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsSteering: true,
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
@@ -1030,6 +1031,7 @@ function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEv
     case "compaction_start":
     case "compaction_end":
     case "agent_end":
+    case "agent_settled":
       return true;
     default:
       return false;
@@ -1229,8 +1231,12 @@ export class PiRpcAgentSession implements AgentSession {
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  private readonly pendingClientMessageIdsByText = new Map<string, string[]>();
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
+  private pendingAgentEndMessages: PiAgentMessage[] = [];
+  private settlementCheckGeneration = 0;
+  private waitForAgentSettled = false;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
@@ -1301,8 +1307,13 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    this.settlementCheckGeneration += 1;
+    this.pendingAgentEndMessages = [];
+    this.pendingClientMessageIdsByText.clear();
+    this.waitForAgentSettled = false;
     this.lastInterruptedTurnId = null;
     this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.trackPendingClientMessageId(payload.text, options?.clientMessageId);
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.activePromptRequestId = null;
@@ -1356,6 +1367,26 @@ export class PiRpcAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steer(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<void> {
+    if (!this.activeTurnId) {
+      throw new Error("A Pi turn must be active before it can be steered");
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const previousClientMessageId = this.activeClientMessageId;
+    const previousWaitForAgentSettled = this.waitForAgentSettled;
+    this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.waitForAgentSettled = true;
+    this.trackPendingClientMessageId(payload.text, options?.clientMessageId);
+    try {
+      await this.runtimeSession.prompt(payload.text, payload.images, "steer");
+    } catch (error) {
+      this.removePendingClientMessageId(payload.text, options?.clientMessageId);
+      this.activeClientMessageId = previousClientMessageId;
+      this.waitForAgentSettled = previousWaitForAgentSettled;
+      throw error;
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1861,6 +1892,29 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
+  private trackPendingClientMessageId(text: string, clientMessageId?: string): void {
+    if (!clientMessageId) return;
+    const pending = this.pendingClientMessageIdsByText.get(text) ?? [];
+    pending.push(clientMessageId);
+    this.pendingClientMessageIdsByText.set(text, pending);
+  }
+
+  private removePendingClientMessageId(text: string, clientMessageId?: string): void {
+    if (!clientMessageId) return;
+    const pending = this.pendingClientMessageIdsByText.get(text);
+    const index = pending?.indexOf(clientMessageId) ?? -1;
+    if (!pending || index < 0) return;
+    pending.splice(index, 1);
+    if (pending.length === 0) this.pendingClientMessageIdsByText.delete(text);
+  }
+
+  private consumePendingClientMessageId(text: string): string | undefined {
+    const pending = this.pendingClientMessageIdsByText.get(text);
+    const clientMessageId = pending?.shift();
+    if (pending?.length === 0) this.pendingClientMessageIdsByText.delete(text);
+    return clientMessageId;
+  }
+
   private handleSubmittedUserEntryMarker(message: string): boolean {
     const payload = parseExtensionMarkerPayload(message, PASEO_PI_SUBMITTED_USER_ENTRY_MARKER);
     if (!payload) {
@@ -1870,6 +1924,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
+    const clientMessageId = this.consumePendingClientMessageId(entry.text);
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -1878,7 +1933,7 @@ export class PiRpcAgentSession implements AgentSession {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
       },
     });
     return true;
@@ -2132,7 +2187,17 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "agent_end":
-        this.completeTurn(turnId, event.messages ?? []);
+        if (this.waitForAgentSettled) {
+          this.pendingAgentEndMessages = event.messages ?? [];
+        } else {
+          this.scheduleTurnSettlementCheck(turnId, event.messages ?? []);
+        }
+        return;
+      case "agent_settled":
+        if (this.activeTurnId) {
+          this.settlementCheckGeneration += 1;
+          this.completeTurn(turnId, this.pendingAgentEndMessages);
+        }
         return;
       default:
         return;
@@ -2289,7 +2354,35 @@ export class PiRpcAgentSession implements AgentSession {
     return mapToolDetail(toolCall, result);
   }
 
+  private scheduleTurnSettlementCheck(
+    turnId: string | undefined,
+    messages: PiAgentMessage[],
+  ): void {
+    this.pendingAgentEndMessages = messages;
+    const generation = ++this.settlementCheckGeneration;
+    void (async () => {
+      const state = await this.runtimeSession.getState().catch(() => null);
+      if (
+        !state ||
+        generation !== this.settlementCheckGeneration ||
+        !this.activeTurnId ||
+        (turnId !== undefined && this.activeTurnId !== turnId)
+      ) {
+        return;
+      }
+      this.state = state;
+      if (state.isStreaming || state.pendingMessageCount > 0) {
+        return;
+      }
+      this.completeTurn(turnId, messages);
+    })();
+  }
+
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
+    this.settlementCheckGeneration += 1;
+    this.pendingAgentEndMessages = [];
+    this.pendingClientMessageIdsByText.clear();
+    this.waitForAgentSettled = false;
     if (turnId && this.interruptingTurnId === turnId && isPiAbortedTerminalResponse(messages)) {
       this.interruptedTerminalError = {
         turnId,

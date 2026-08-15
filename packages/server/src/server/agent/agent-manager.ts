@@ -2079,6 +2079,26 @@ export class AgentManager {
     return true;
   }
 
+  async steerAgent(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<void> {
+    const agent = this.requireSessionAgent(agentId);
+    if (!this.hasInFlightRun(agentId)) {
+      throw new Error(`Agent ${agentId} has no active run to steer`);
+    }
+    if (!agent.session.steer || !agent.capabilities.supportsSteering) {
+      throw new Error(`Agent provider ${agent.provider} does not support steering`);
+    }
+
+    await agent.session.steer(prompt, options);
+    if (options?.clientMessageId) {
+      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.emitState(agent);
+    }
+  }
+
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);

@@ -6903,6 +6903,7 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          busyBehavior: msg.busyBehavior,
           logger: this.sessionLogger,
         });
       } catch (error) {

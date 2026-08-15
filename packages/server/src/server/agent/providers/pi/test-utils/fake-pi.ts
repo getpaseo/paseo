@@ -94,6 +94,7 @@ export class FakePi implements PiRuntime {
 
 export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly promptStreamingBehaviors: Array<"steer" | "followUp"> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -160,8 +161,10 @@ export class FakePiSession implements PiRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    streamingBehavior: "steer" | "followUp" = "steer",
   ): Promise<PiPromptAck> {
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    this.promptStreamingBehaviors.push(streamingBehavior);
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
       this.nextHeldPrompt = null;
