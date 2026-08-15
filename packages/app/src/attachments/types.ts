@@ -103,10 +103,20 @@ export interface WorkspaceFileComposerAttachment {
   selection: WorkspaceFileSelection;
 }
 
+export interface SelectedTextComposerAttachment {
+  kind: "selected_text";
+  id: string;
+  text: string;
+  sourceMessageId?: string;
+  occurrence?: number;
+  comment?: string;
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | WorkspaceFileComposerAttachment
+  | SelectedTextComposerAttachment
   | PluginResourceComposerAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }

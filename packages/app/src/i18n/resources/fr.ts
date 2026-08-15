@@ -140,6 +140,10 @@ export const fr: TranslationResources = {
       removeBrowserElement: "Supprimer la pièce jointe d'un élément de navigateur",
       openReview: "Ouvrir la pièce jointe de l'avis",
       removeReview: "Supprimer la pièce jointe de l'avis",
+      selectedText: "Texte sélectionné",
+      removeSelectedText: "Supprimer le texte sélectionné",
+      selectedTextCount: "{{count}} commentaires",
+      selectedTextNoComment: "Aucun commentaire",
     },
     errors: {
       failedToSend: "Échec de l'envoi du message",
@@ -201,6 +205,12 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    commentOnSelection: "Ajouter un commentaire",
+    addToComment: "Ajouter au commentaire",
+    addToConversation: "Ajouter à la conversation",
+    commentPlaceholder: "Ajouter un commentaire facultatif...",
+    saveComment: "Enregistrer",
+    cancelComment: "Annuler",
     permission: {
       plan: "Plan",
       required: "Autorisation requise",

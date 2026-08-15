@@ -18,7 +18,7 @@ const testTheme = {
     borderAccent: "#a1a1aa",
     palette: {
       amber: { 500: "#f59e0b" },
-      blue: { 300: "#93c5fd" },
+      blue: { 300: "#93c5fd", 500: "#3b82f6" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
     },
@@ -39,6 +39,8 @@ const testTheme = {
     md: 6,
     lg: 8,
     xl: 12,
+    "2xl": 16,
+    "3xl": 24,
     full: 9999,
   },
   iconSize: { sm: 16 },

@@ -138,6 +138,10 @@ export const es: TranslationResources = {
       removeBrowserElement: "Eliminar el archivo adjunto del elemento del navegador",
       openReview: "Abrir archivo adjunto de reseña",
       removeReview: "Eliminar archivo adjunto de reseña",
+      selectedText: "Texto seleccionado",
+      removeSelectedText: "Eliminar texto seleccionado",
+      selectedTextCount: "{{count}} comentarios",
+      selectedTextNoComment: "Sin comentario",
     },
     errors: {
       failedToSend: "No se pudo enviar el mensaje",
@@ -199,6 +203,12 @@ export const es: TranslationResources = {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
+    commentOnSelection: "Añadir comentario",
+    addToComment: "Añadir al comentario",
+    addToConversation: "Añadir a la conversación",
+    commentPlaceholder: "Añade un comentario opcional...",
+    saveComment: "Guardar",
+    cancelComment: "Cancelar",
     permission: {
       plan: "Plan",
       required: "Permiso requerido",

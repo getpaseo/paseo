@@ -102,6 +102,11 @@ import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import type {
+  AssistantSelectionAnnotation,
+  SelectedTextAnnotationEdit,
+} from "@/assistant-selection-copy/types";
+import type { SelectedTextComposerAttachment } from "@/attachments/types";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -231,6 +236,7 @@ function renderLiveHeadStreamItem(input: {
 
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
+  scrollToMessage(itemId: string): void;
   prepareForViewportChange(): void;
 }
 
@@ -247,6 +253,13 @@ export interface AgentStreamViewProps {
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  isPaneFocused?: boolean;
+  onCommentSelection?: (annotation: AssistantSelectionAnnotation) => void;
+  selectedTextAnnotations?: readonly SelectedTextComposerAttachment[];
+  onOpenSelectedText?: (annotation: SelectedTextComposerAttachment) => void;
+  selectedTextAnnotationToEdit?: SelectedTextComposerAttachment | null;
+  onEditSelectedText?: (input: SelectedTextAnnotationEdit) => void;
+  onDismissSelectedTextEdit?: () => void;
   readOnly?: boolean;
   historyPagination?: {
     hasOlder: boolean;
@@ -295,6 +308,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isAuthoritativeHistoryReady = true,
       toast,
       onOpenWorkspaceFile,
+      isPaneFocused = true,
+      onCommentSelection,
+      selectedTextAnnotations,
+      onOpenSelectedText,
+      selectedTextAnnotationToEdit,
+      onEditSelectedText,
+      onDismissSelectedTextEdit,
       readOnly = false,
       historyPagination,
     },
@@ -558,6 +578,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom(reason = "jump-to-bottom") {
           viewportRef.current?.scrollToBottom(reason);
         },
+        scrollToMessage(itemId: string) {
+          viewportRef.current?.scrollToMessage?.(itemId);
+        },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
@@ -638,24 +661,26 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
         return (
-          <AssistantFileLinkResolverProvider
-            client={client}
-            serverId={resolvedServerId}
-            workspaceRoot={workspaceRoot}
-            onOpenWorkspaceFile={handleInlinePathPress}
-            toast={toast}
-          >
-            <AssistantMessage
-              occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
-              message={item.text}
-              timestamp={item.timestamp.getTime()}
-              workspaceRoot={workspaceRoot}
-              serverId={resolvedServerId}
+          <View testID={`assistant-message-item:${item.id}`}>
+            <AssistantFileLinkResolverProvider
               client={client}
-              spacing={layoutItem.assistantSpacing}
-              phase={layoutItem.phase}
-            />
-          </AssistantFileLinkResolverProvider>
+              serverId={resolvedServerId}
+              workspaceRoot={workspaceRoot}
+              onOpenWorkspaceFile={handleInlinePathPress}
+              toast={toast}
+            >
+              <AssistantMessage
+                occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
+                message={item.text}
+                timestamp={item.timestamp.getTime()}
+                workspaceRoot={workspaceRoot}
+                serverId={resolvedServerId}
+                client={client}
+                spacing={layoutItem.assistantSpacing}
+                phase={layoutItem.phase}
+              />
+            </AssistantFileLinkResolverProvider>
+          </View>
         );
       },
       [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
@@ -981,7 +1006,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     return (
       <ToolCallSheetProvider>
-        <AssistantSelectionCopySurface style={stylesheet.container}>
+        <AssistantSelectionCopySurface
+          style={stylesheet.container}
+          visible={isPaneFocused}
+          onCommentSelection={readOnly ? undefined : onCommentSelection}
+          addToCommentLabel={t("agentStream.addToComment")}
+          addToConversationLabel={t("agentStream.addToConversation")}
+          commentPlaceholder={t("agentStream.commentPlaceholder")}
+          saveCommentLabel={t("agentStream.saveComment")}
+          cancelCommentLabel={t("agentStream.cancelComment")}
+          selectedTextAnnotations={selectedTextAnnotations}
+          onOpenAnnotation={onOpenSelectedText}
+          selectedTextAnnotationToEdit={selectedTextAnnotationToEdit}
+          onEditComment={onEditSelectedText}
+          onDismissEditComment={onDismissSelectedTextEdit}
+        >
           <MessageOuterSpacingProvider disableOuterSpacing>
             {streamRenderStrategy.render({
               agentId,
@@ -1144,12 +1183,29 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  collectPropDiff(reasons, "isPaneFocused", left.isPaneFocused, right.isPaneFocused);
+  if (left.onCommentSelection !== right.onCommentSelection) reasons.push("onCommentSelection");
+  if (left.selectedTextAnnotations !== right.selectedTextAnnotations) {
+    reasons.push("selectedTextAnnotations");
+  }
+  if (left.onOpenSelectedText !== right.onOpenSelectedText) reasons.push("onOpenSelectedText");
+  if (left.selectedTextAnnotationToEdit !== right.selectedTextAnnotationToEdit) {
+    reasons.push("selectedTextAnnotationToEdit");
+  }
+  if (left.onEditSelectedText !== right.onEditSelectedText) reasons.push("onEditSelectedText");
+  if (left.onDismissSelectedTextEdit !== right.onDismissSelectedTextEdit) {
+    reasons.push("onDismissSelectedTextEdit");
+  }
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }
   recordRenderProfileReasons(`AgentStreamView:${right.agentId}`, reasons);
   return reasons.length === 0;
+}
+
+function collectPropDiff<T>(reasons: string[], label: string, left: T, right: T): void {
+  if (left !== right) reasons.push(label);
 }
 
 export const AgentStreamView = memo(AgentStreamViewComponent, agentStreamViewPropsEqual);

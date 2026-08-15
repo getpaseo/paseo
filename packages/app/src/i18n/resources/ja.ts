@@ -138,6 +138,10 @@ export const ja: TranslationResources = {
       removeBrowserElement: "ブラウザ要素の添付ファイルを削除",
       openReview: "レビュー添付ファイルを開く",
       removeReview: "レビュー添付ファイルを削除",
+      selectedText: "選択したテキスト",
+      removeSelectedText: "選択したテキストを削除",
+      selectedTextCount: "{{count}} 件のコメント",
+      selectedTextNoComment: "コメントなし",
     },
     errors: {
       failedToSend: "メッセージの送信に失敗しました",
@@ -199,6 +203,12 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    commentOnSelection: "コメントを追加",
+    addToComment: "コメントに追加",
+    addToConversation: "会話に追加",
+    commentPlaceholder: "任意のコメントを追加...",
+    saveComment: "保存",
+    cancelComment: "キャンセル",
     permission: {
       plan: "プラン",
       required: "権限が必要です",

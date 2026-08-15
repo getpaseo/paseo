@@ -41,6 +41,7 @@ tsconfig.tsbuildinfo
 
 # Testing
 coverage/
+**/.vitest-attachments/
 
 # Playwright
 test-results/

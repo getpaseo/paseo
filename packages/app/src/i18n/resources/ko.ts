@@ -138,6 +138,10 @@ export const ko: TranslationResources = {
       removeBrowserElement: "브라우저 요소 첨부 제거",
       openReview: "리뷰 첨부 열기",
       removeReview: "리뷰 첨부 제거",
+      selectedText: "선택한 텍스트",
+      removeSelectedText: "선택한 텍스트 제거",
+      selectedTextCount: "댓글 {{count}}개",
+      selectedTextNoComment: "댓글 없음",
     },
     errors: {
       failedToSend: "메시지를 보내지 못했습니다",
@@ -199,6 +203,12 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    commentOnSelection: "댓글 추가",
+    addToComment: "댓글에 추가",
+    addToConversation: "대화에 추가",
+    commentPlaceholder: "선택 댓글 추가...",
+    saveComment: "저장",
+    cancelComment: "취소",
     permission: {
       plan: "계획",
       required: "권한 필요",

@@ -138,6 +138,10 @@ export const ru: TranslationResources = {
       removeBrowserElement: "Удалить вложение элемента браузера",
       openReview: "Открыть прикрепленный файл с отзывом",
       removeReview: "Удалить прикрепленный отзыв",
+      selectedText: "Выбранный текст",
+      removeSelectedText: "Удалить выбранный текст",
+      selectedTextCount: "Комментариев: {{count}}",
+      selectedTextNoComment: "Без комментария",
     },
     errors: {
       failedToSend: "Не удалось отправить сообщение",
@@ -199,6 +203,12 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    commentOnSelection: "Добавить комментарий",
+    addToComment: "Добавить к комментарию",
+    addToConversation: "Добавить в разговор",
+    commentPlaceholder: "Добавьте необязательный комментарий...",
+    saveComment: "Сохранить",
+    cancelComment: "Отмена",
     permission: {
       plan: "План",
       required: "Требуется разрешение",

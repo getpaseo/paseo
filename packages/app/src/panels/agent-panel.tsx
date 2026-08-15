@@ -34,7 +34,16 @@ import {
   type ToastApi,
   type ToastState,
 } from "@/components/toast-host";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type {
+  SelectedTextComposerAttachment,
+  UserComposerAttachment,
+  WorkspaceComposerAttachment,
+} from "@/attachments/types";
+import type {
+  AssistantSelectionAnnotation,
+  SelectedTextAnnotationEdit,
+} from "@/assistant-selection-copy/types";
+import { scrollToSelectedText } from "@/assistant-selection-copy/scroll";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -95,7 +104,7 @@ import {
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
-import type { StreamItem } from "@/types/stream";
+import { generateMessageId, type StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -1172,6 +1181,26 @@ function ChatAgentContent({
   );
 }
 
+function updateSelectedTextComment(
+  attachment: UserComposerAttachment,
+  attachmentId: string,
+  comment: string,
+): UserComposerAttachment {
+  return attachment.kind === "selected_text" && attachment.id === attachmentId
+    ? { ...attachment, comment }
+    : attachment;
+}
+
+function updateSelectedTextComments(
+  attachments: UserComposerAttachment[],
+  attachmentId: string,
+  comment: string,
+): UserComposerAttachment[] {
+  return attachments.map((attachment) =>
+    updateSelectedTextComment(attachment, attachmentId, comment),
+  );
+}
+
 const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   serverId,
   agentId,
@@ -1236,6 +1265,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     clear,
     isHydrated,
     attachmentFocusRequestId,
+    focusRequestId,
+    requestFocus,
     composerState,
   } = rawAgentInputDraft;
   const agentInputDraft = useMemo(
@@ -1249,6 +1280,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       clear,
       isHydrated,
       attachmentFocusRequestId,
+      focusRequestId,
+      requestFocus,
       composerState,
     }),
     [
@@ -1261,9 +1294,65 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       clear,
       isHydrated,
       attachmentFocusRequestId,
+      focusRequestId,
+      requestFocus,
       composerState,
     ],
   );
+  const [selectedTextAnnotationToEdit, setSelectedTextAnnotationToEdit] =
+    useState<SelectedTextComposerAttachment | null>(null);
+  const selectedTextAnnotations = useMemo(
+    () =>
+      attachments.filter(
+        (attachment): attachment is SelectedTextComposerAttachment =>
+          attachment.kind === "selected_text",
+      ),
+    [attachments],
+  );
+  const handleCommentSelection = useCallback(
+    (annotation: AssistantSelectionAnnotation) => {
+      const selectedTextContext = annotation.text.trim();
+      if (!selectedTextContext) {
+        return;
+      }
+      setAttachments((current) => [
+        ...current,
+        {
+          kind: "selected_text",
+          id: `selected_text:${generateMessageId()}`,
+          text: selectedTextContext,
+          ...(annotation.sourceMessageId ? { sourceMessageId: annotation.sourceMessageId } : {}),
+          ...(annotation.occurrence != null ? { occurrence: annotation.occurrence } : {}),
+          ...(annotation.comment.trim() ? { comment: annotation.comment.trim() } : {}),
+        },
+      ]);
+      requestFocus();
+    },
+    [requestFocus, setAttachments],
+  );
+  const handleOpenSelectedText = useCallback(
+    (attachment: SelectedTextComposerAttachment) => {
+      // A fresh object makes repeated presses on the same annotation a new edit request.
+      setSelectedTextAnnotationToEdit({ ...attachment });
+      if (attachment.sourceMessageId) {
+        streamViewRef.current?.scrollToMessage(attachment.sourceMessageId);
+      }
+      scrollToSelectedText(attachment, (messageId) =>
+        streamViewRef.current?.scrollToMessage(messageId),
+      );
+    },
+    [streamViewRef],
+  );
+  const handleEditSelectedText = useCallback(
+    ({ attachmentId, comment }: SelectedTextAnnotationEdit) => {
+      setAttachments((current) => updateSelectedTextComments(current, attachmentId, comment));
+      setSelectedTextAnnotationToEdit(null);
+    },
+    [setAttachments],
+  );
+  const handleDismissSelectedTextEdit = useCallback(() => {
+    setSelectedTextAnnotationToEdit(null);
+  }, []);
   const streamSection = (
     <RenderProfile id={`AgentStreamSection:${agentId}`}>
       <AgentStreamSection
@@ -1274,6 +1363,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         routeBottomAnchorRequest={routeBottomAnchorRequest}
         hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
         toast={toastApi}
+        isPaneFocused={isPaneFocused}
+        onCommentSelection={handleCommentSelection}
+        selectedTextAnnotations={selectedTextAnnotations}
+        onOpenSelectedText={handleOpenSelectedText}
+        selectedTextAnnotationToEdit={selectedTextAnnotationToEdit}
+        onEditSelectedText={handleEditSelectedText}
+        onDismissSelectedTextEdit={handleDismissSelectedTextEdit}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     </RenderProfile>
@@ -1293,6 +1389,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
+        onOpenSelectedText={handleOpenSelectedText}
       />
     </RenderProfile>
   );
@@ -1349,7 +1446,14 @@ const AgentStreamSection = memo(function AgentStreamSection({
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
   toast,
+  isPaneFocused,
   onOpenWorkspaceFile,
+  onCommentSelection,
+  selectedTextAnnotations,
+  onOpenSelectedText,
+  selectedTextAnnotationToEdit,
+  onEditSelectedText,
+  onDismissSelectedTextEdit,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1358,7 +1462,14 @@ const AgentStreamSection = memo(function AgentStreamSection({
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
+  isPaneFocused: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onCommentSelection?: (annotation: AssistantSelectionAnnotation) => void;
+  selectedTextAnnotations?: readonly SelectedTextComposerAttachment[];
+  onOpenSelectedText?: (annotation: SelectedTextComposerAttachment) => void;
+  selectedTextAnnotationToEdit?: SelectedTextComposerAttachment | null;
+  onEditSelectedText?: (input: SelectedTextAnnotationEdit) => void;
+  onDismissSelectedTextEdit?: () => void;
 }) {
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
@@ -1416,9 +1527,16 @@ const AgentStreamSection = memo(function AgentStreamSection({
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
+      isPaneFocused={isPaneFocused}
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onCommentSelection={onCommentSelection}
+      selectedTextAnnotations={selectedTextAnnotations}
+      onOpenSelectedText={onOpenSelectedText}
+      selectedTextAnnotationToEdit={selectedTextAnnotationToEdit}
+      onEditSelectedText={onEditSelectedText}
+      onDismissSelectedTextEdit={onDismissSelectedTextEdit}
     />
   );
 });
@@ -1436,6 +1554,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onOpenSelectedText,
 }: {
   agentId?: string;
   serverId: string;
@@ -1449,6 +1568,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onOpenSelectedText: (attachment: SelectedTextComposerAttachment) => void;
 }) {
   if (!agentId) {
     return null;
@@ -1472,6 +1592,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
       onAttentionPromptSend={onAttentionPromptSend}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
+      onOpenSelectedText={onOpenSelectedText}
     />
   );
 });
@@ -1487,6 +1608,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onOpenSelectedText,
 }: {
   agentId: string;
   serverId: string;
@@ -1498,6 +1620,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onOpenSelectedText: (attachment: SelectedTextComposerAttachment) => void;
 }) {
   const insets = useSafeAreaInsets();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -1649,12 +1772,13 @@ function ActiveAgentComposer({
         cwd={cwd}
         clearDraft={agentInputDraft.clear}
         autoFocus={isPaneFocused}
-        autoFocusKey={String(agentInputDraft.attachmentFocusRequestId)}
+        autoFocusKey={`${agentInputDraft.attachmentFocusRequestId}:${agentInputDraft.focusRequestId}`}
         isSubmitLoading={isSubmitLoading}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onOpenSelectedText={onOpenSelectedText}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
       />

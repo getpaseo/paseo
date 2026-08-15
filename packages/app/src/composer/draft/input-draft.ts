@@ -60,6 +60,8 @@ export interface AgentInputDraft {
   clear: (lifecycle: "sent" | "abandoned") => void;
   isHydrated: boolean;
   attachmentFocusRequestId: number;
+  focusRequestId: number;
+  requestFocus: () => void;
   composerState: DraftComposerState | null;
 }
 
@@ -87,6 +89,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   );
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [textReplacementRevision, setTextReplacementRevision] = useState(0);
+  const [focusRequestId, setFocusRequestId] = useState(0);
   const text = draft?.text ?? "";
   const attachments = draft?.attachments ?? [];
   const isHydrated = hydratedDraftKey === draftKey;
@@ -141,6 +144,10 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     },
     [draftKey],
   );
+
+  const requestFocus = useCallback(() => {
+    setFocusRequestId((requestId) => requestId + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -284,6 +291,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     clear,
     isHydrated,
     attachmentFocusRequestId,
+    focusRequestId,
+    requestFocus,
     composerState,
   };
 }
