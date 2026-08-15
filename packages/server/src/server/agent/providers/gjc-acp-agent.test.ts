@@ -22,7 +22,7 @@ import {
 } from "./gjc-acp-agent.js";
 
 describe("GjcACPAgentClient", () => {
-  test("uses terminal delegation and prompt permission handling during catalog discovery", async () => {
+  test("keeps GJC probe clients non-terminal while preserving prompt permission metadata", async () => {
     const initialize = vi.fn(async () => ({ agentCapabilities: {} }));
     const loadSession = vi.fn(
       async (): Promise<LoadSessionResponse> => ({
@@ -138,7 +138,7 @@ describe("GjcACPAgentClient", () => {
             readTextFile: false,
             writeTextFile: false,
           },
-          terminal: true,
+          terminal: false,
           _meta: {
             gjc: {
               permissionHandling: "prompt",
@@ -428,6 +428,7 @@ describe("GjcACPAgentClient", () => {
     const loadResponse = {} as LoadSessionResponse;
     const loadSession = vi.fn(async () => loadResponse);
     const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const registerProbeSession = vi.fn();
     const mcpServers: McpServer[] = [
       {
         type: "http",
@@ -454,6 +455,7 @@ describe("GjcACPAgentClient", () => {
       },
       mcpServers,
       runRequest,
+      registerProbeSession,
     });
 
     expect(response).toEqual({
@@ -493,6 +495,9 @@ describe("GjcACPAgentClient", () => {
       sessionId: "gjc-session-1",
       cwd: "/repo",
       mcpServers,
+    });
+    expect(registerProbeSession).toHaveBeenCalledWith({
+      sessionId: "gjc-session-1",
     });
     expect(runRequest).toHaveBeenCalledTimes(1);
   });

@@ -94,6 +94,9 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
       label: options.label,
       providerParams: options.providerParams,
       clientCapabilities: GJC_CLIENT_CAPABILITIES,
+      probeClientCapabilities: {
+        terminal: false,
+      },
       clientCapabilityMeta: GJC_CLIENT_CAPABILITY_META,
       diagnosticPhaseTimeoutMs: GJC_ACP_READINESS_TIMEOUT_MS,
       sessionResponseTransformer: transformGjcSessionResponse,
@@ -161,7 +164,7 @@ export function createGjcACPNewSessionStarter(options: {
 }): ACPNewSessionStarter {
   const runExecFile = options.execFile ?? execFile;
 
-  return async ({ connection, config, mcpServers, runRequest }) => {
+  return async ({ connection, config, mcpServers, runRequest, registerProbeSession }) => {
     const lifecycleInput: GjcLifecycleCreateInput = {
       cwd: config.cwd,
       target: {
@@ -197,6 +200,7 @@ export function createGjcACPNewSessionStarter(options: {
         cause: error,
       });
     }
+    registerProbeSession?.({ sessionId: createResult.sessionId });
 
     let sessionState: SessionStateResponse;
     try {

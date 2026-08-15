@@ -2253,6 +2253,7 @@ describe("ACPAgentClient fetchCatalog", () => {
       },
       mcpServers: [],
       runRequest: expect.any(Function),
+      registerProbeSession: expect.any(Function),
     });
     expect(probeSessionCloser).toHaveBeenCalledWith({
       response: {
@@ -2261,6 +2262,68 @@ describe("ACPAgentClient fetchCatalog", () => {
         models: null,
         configOptions: [],
       },
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
+      mcpServers: [],
+    });
+  });
+
+  test("closes registered catalog probe sessions without waiting for load completion", async () => {
+    const started = createDeferred<void>();
+    const loadSession = createDeferred<SessionStateResponse>();
+    const registeredResponse: SessionStateResponse = {
+      sessionId: "registered-probe-session",
+    };
+    const newSessionStarter = vi.fn(
+      (context: { registerProbeSession?: (response: SessionStateResponse) => void }) => {
+        context.registerProbeSession?.(registeredResponse);
+        started.resolve(undefined);
+        return loadSession.promise;
+      },
+    );
+    const probeSessionCloser = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockRejectedValue(new Error("newSession should not be called")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+    const controller = new AbortController();
+    const refreshContext: ProviderRefreshContext = {
+      signal: controller.signal,
+      runActivity: async (_name, operation) => await operation(),
+    };
+
+    const refresh = client.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/acp-catalog-cwd", force: false },
+      refreshContext,
+    );
+    await started.promise;
+
+    controller.abort(new Error("refresh aborted"));
+    await expect(refresh).rejects.toThrow("refresh aborted");
+
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: registeredResponse,
       config: {
         provider: "gjc",
         cwd: "/tmp/acp-catalog-cwd",
@@ -2406,10 +2469,13 @@ describe("ACPAgentClient probe diagnostics", () => {
         models: null,
         configOptions: [],
       };
-      const newSessionStarter = vi.fn(() => {
-        started.resolve(undefined);
-        return session.promise;
-      });
+      const newSessionStarter = vi.fn(
+        (context: { registerProbeSession?: (response: SessionStateResponse) => void }) => {
+          context.registerProbeSession?.(lateResponse);
+          started.resolve(undefined);
+          return session.promise;
+        },
+      );
       const probeSessionCloser = vi.fn(async () => undefined);
       const terminator = new FakeTerminator();
 
@@ -2448,9 +2514,6 @@ describe("ACPAgentClient probe diagnostics", () => {
       await started.promise;
       await vi.advanceTimersByTimeAsync(1);
 
-      expect(probeSessionCloser).not.toHaveBeenCalled();
-
-      session.resolve(lateResponse);
       const rows = await rowsPromise;
 
       expect(rows).toContainEqual({

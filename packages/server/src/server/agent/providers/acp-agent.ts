@@ -411,6 +411,7 @@ export interface ACPNewSessionStarterContext {
   config: AgentSessionConfig;
   mcpServers: McpServer[];
   runRequest: <T>(request: () => Promise<T>) => Promise<T>;
+  registerProbeSession?: (response: SessionStateResponse) => void;
 }
 
 export type ACPNewSessionStarter = (
@@ -439,6 +440,7 @@ interface ACPAgentClientOptions {
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
+  probeClientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -834,6 +836,7 @@ export class ACPAgentClient implements AgentClient {
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
+  private readonly probeClientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
@@ -872,6 +875,7 @@ export class ACPAgentClient implements AgentClient {
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
+    this.probeClientCapabilities = options.probeClientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
@@ -1244,7 +1248,7 @@ export class ACPAgentClient implements AgentClient {
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: buildACPClientCapabilities(
               this.clientCapabilityMeta,
-              this.clientCapabilities,
+              this.probeClientCapabilities ?? this.clientCapabilities,
             ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
@@ -1450,6 +1454,7 @@ export class ACPAgentClient implements AgentClient {
     connection: ClientSideConnection;
     config: AgentSessionConfig;
     mcpServers: McpServer[];
+    registerProbeSession?: (response: SessionStateResponse) => void;
   }): Promise<SessionStateResponse> {
     if (this.newSessionStarter) {
       return await this.newSessionStarter({
@@ -1474,6 +1479,10 @@ export class ACPAgentClient implements AgentClient {
     let response: SessionStateResponse | null = null;
     let closeRequested = false;
     let closePromise: Promise<void> | null = null;
+    let resolveTrackedResponse: (sessionResponse: SessionStateResponse) => void = () => undefined;
+    const trackedResponse = new Promise<SessionStateResponse>((resolve) => {
+      resolveTrackedResponse = resolve;
+    });
 
     const closeResponse = (sessionResponse: SessionStateResponse): Promise<void> => {
       closePromise ??= this.closeProbeSession({
@@ -1484,11 +1493,22 @@ export class ACPAgentClient implements AgentClient {
       return closePromise;
     };
 
-    const promise = this.startProbeSession(context).then((sessionResponse) => {
+    const rememberResponse = (sessionResponse: SessionStateResponse): void => {
+      const hadResponse = response !== null;
       response = sessionResponse;
+      if (!hadResponse) {
+        resolveTrackedResponse(sessionResponse);
+      }
       if (closeRequested) {
         void closeResponse(sessionResponse);
       }
+    };
+
+    const promise = this.startProbeSession({
+      ...context,
+      registerProbeSession: rememberResponse,
+    }).then((sessionResponse) => {
+      rememberResponse(sessionResponse);
       return sessionResponse;
     });
 
@@ -1504,7 +1524,16 @@ export class ACPAgentClient implements AgentClient {
           return;
         }
         try {
-          await closeResponse(await promise);
+          const sessionResponse = await Promise.race([
+            trackedResponse,
+            promise.then(
+              () => response,
+              () => null,
+            ),
+          ]);
+          if (sessionResponse) {
+            await closeResponse(sessionResponse);
+          }
         } catch {
           // If session startup failed, there is no provider-owned probe session to close.
         }

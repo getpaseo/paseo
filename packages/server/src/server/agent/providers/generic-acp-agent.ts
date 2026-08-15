@@ -52,6 +52,7 @@ interface GenericACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilities?: GenericACPProviderParams["clientCapabilities"];
+  probeClientCapabilities?: GenericACPProviderParams["clientCapabilities"];
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
@@ -90,6 +91,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
         ? { initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs }
         : {}),
       ...(clientCapabilities ? { clientCapabilities } : {}),
+      ...(options.probeClientCapabilities
+        ? { probeClientCapabilities: options.probeClientCapabilities }
+        : {}),
       ...(options.clientCapabilityMeta
         ? { clientCapabilityMeta: options.clientCapabilityMeta }
         : {}),
