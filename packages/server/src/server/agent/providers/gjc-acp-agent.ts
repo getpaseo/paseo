@@ -61,6 +61,8 @@ type GjcExecFile = (
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
+type GjcExecFileResult = Awaited<ReturnType<GjcExecFile>>;
+
 type GjcInputDirectoryRemover = (path: string) => Promise<void>;
 
 type GjcJsonInputFileCleanup = { ok: true } | { ok: false; error: unknown };
@@ -204,17 +206,16 @@ export function createGjcACPNewSessionStarter(options: {
       ...(mcpServers.length > 0 ? { mcpServers } : {}),
     };
 
-    let createResult: GjcSessionCreateResult;
-    let createCleanup: GjcJsonInputFileCleanup = { ok: true };
-    try {
-      const createCommandResult = await withGjcJsonInputFile(
+    const createIdempotencyKey = randomUUID();
+    const runCreateCommand = async (commandSignal?: AbortSignal) =>
+      await withGjcJsonInputFile(
         lifecycleInput,
         async (inputFilePath) => {
           const lifecycleCommand = buildGjcLifecycleCreateCommand(
             options.command,
             config.cwd,
             lifecycleInput,
-            { inputFilePath },
+            { inputFilePath, idempotencyKey: createIdempotencyKey },
           );
           return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
             cwd: config.cwd,
@@ -222,16 +223,74 @@ export function createGjcACPNewSessionStarter(options: {
             timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
             maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
             encoding: "utf8",
-            signal,
+            signal: commandSignal,
           });
         },
         options.removeInputDirectory,
       );
+
+    const closeCreatedSessionAfterAbort = async (
+      sessionId: string,
+      abortError: Error,
+    ): Promise<never> => {
+      if (registerProbeSession) {
+        registerProbeSession({ sessionId });
+        throw abortError;
+      }
+
+      let closeError: unknown;
+      try {
+        await closeGjcLifecycleSession({
+          command: options.command,
+          env: options.env,
+          launchEnv,
+          execFile: runExecFile,
+          cwd: config.cwd,
+          sessionId,
+        });
+      } catch (error) {
+        closeError = error;
+      }
+      if (closeError) {
+        throw new AggregateError(
+          [abortError, closeError],
+          `GJC lifecycle session startup cancelled and session.close failed: ${formatGjcExecError(
+            abortError,
+          )}; cleanup: ${formatGjcExecError(closeError)}`,
+        );
+      }
+      throw abortError;
+    };
+
+    let createResult: GjcSessionCreateResult;
+    let createCleanup: GjcJsonInputFileCleanup = { ok: true };
+    try {
+      const createCommandResult = await runCreateCommand(signal);
       createCleanup = createCommandResult.cleanup;
       createResult = extractGjcSessionCreateResult(
         parseGjcJsonOutput(createCommandResult.value.stdout),
       );
     } catch (error) {
+      const abortError = getGjcLifecycleAbortError(signal);
+      if (abortError) {
+        let recoveredResult: GjcSessionCreateResult;
+        try {
+          recoveredResult = await recoverGjcLifecycleCreateResultAfterAbort({
+            error,
+            runCreateCommand,
+          });
+        } catch (recoveryError) {
+          const createAndRecoveryError = new AggregateError(
+            [error, recoveryError],
+            `GJC lifecycle session.create failed after startup cancellation, and session recovery failed: ${formatGjcExecError(
+              error,
+            )}; recovery: ${formatGjcExecError(recoveryError)}`,
+            { cause: recoveryError },
+          );
+          throw createAndRecoveryError;
+        }
+        await closeCreatedSessionAfterAbort(recoveredResult.sessionId, abortError);
+      }
       throw new Error(`GJC lifecycle session.create failed: ${formatGjcExecError(error)}`, {
         cause: error,
       });
@@ -271,28 +330,7 @@ export function createGjcACPNewSessionStarter(options: {
     }
     const abortError = getGjcLifecycleAbortError(signal);
     if (abortError) {
-      let closeError: unknown;
-      try {
-        await closeGjcLifecycleSession({
-          command: options.command,
-          env: options.env,
-          launchEnv,
-          execFile: runExecFile,
-          cwd: config.cwd,
-          sessionId: createResult.sessionId,
-        });
-      } catch (error) {
-        closeError = error;
-      }
-      if (closeError) {
-        throw new AggregateError(
-          [abortError, closeError],
-          `GJC lifecycle session startup cancelled and session.close failed: ${formatGjcExecError(
-            abortError,
-          )}; cleanup: ${formatGjcExecError(closeError)}`,
-        );
-      }
-      throw abortError;
+      await closeCreatedSessionAfterAbort(createResult.sessionId, abortError);
     }
     const closeViaProbeTracker = Boolean(registerProbeSession);
     registerProbeSession?.({ sessionId: createResult.sessionId });
@@ -369,7 +407,7 @@ export function buildGjcLifecycleCreateCommand(
   acpCommand: [string, ...string[]],
   cwd: string,
   input: GjcLifecycleCreateInput,
-  options: { inputFilePath?: string } = {},
+  options: { inputFilePath?: string; idempotencyKey?: string } = {},
 ): GjcLifecycleCommand {
   const jsonInputArgs = options.inputFilePath
     ? ["--json-input-file", options.inputFilePath]
@@ -384,7 +422,7 @@ export function buildGjcLifecycleCreateCommand(
     "session.create",
     ...jsonInputArgs,
     "--idempotency-key",
-    randomUUID(),
+    options.idempotencyKey ?? randomUUID(),
     "--json",
     "--repo",
     cwd,
@@ -450,6 +488,19 @@ async function withGjcJsonInputFile<T>(
     throw outcome.error;
   }
   return { value: outcome.value, cleanup };
+}
+
+async function recoverGjcLifecycleCreateResultAfterAbort(options: {
+  error: unknown;
+  runCreateCommand: () => Promise<GjcJsonInputFileResult<GjcExecFileResult>>;
+}): Promise<GjcSessionCreateResult> {
+  const stdoutResult = extractGjcSessionCreateResultFromError(options.error);
+  if (stdoutResult) {
+    return stdoutResult;
+  }
+
+  const retryResult = await options.runCreateCommand();
+  return extractGjcSessionCreateResult(parseGjcJsonOutput(retryResult.value.stdout));
 }
 
 async function closeGjcLifecycleSession(options: {
@@ -606,6 +657,33 @@ function getSessionStateResponseId(response: SessionStateResponse): string | nul
   return "sessionId" in response && typeof response.sessionId === "string"
     ? response.sessionId
     : null;
+}
+
+function extractGjcSessionCreateResultFromError(error: unknown): GjcSessionCreateResult | null {
+  const stdout = extractGjcExecStdout(error);
+  if (!stdout) {
+    return null;
+  }
+  try {
+    return extractGjcSessionCreateResult(parseGjcJsonOutput(stdout));
+  } catch {
+    return null;
+  }
+}
+
+function extractGjcExecStdout(error: unknown): string | null {
+  if (isRecord(error) && typeof error.stdout === "string" && error.stdout.trim()) {
+    return error.stdout;
+  }
+  if (error instanceof AggregateError) {
+    for (const nestedError of error.errors) {
+      const stdout = extractGjcExecStdout(nestedError);
+      if (stdout) {
+        return stdout;
+      }
+    }
+  }
+  return null;
 }
 
 function formatGjcBrokerError(value: Record<string, unknown>): string {
