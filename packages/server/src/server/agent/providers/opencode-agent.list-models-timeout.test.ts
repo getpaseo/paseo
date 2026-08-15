@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
+import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
 import {
   TestOpenCodeClient,
   TestOpenCodeHarness,
@@ -11,32 +12,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test("allows a slow provider.list call to succeed instead of failing after 10 seconds", async () => {
+test("the catalog deadline aborts provider.list and releases the server", async () => {
   vi.useFakeTimers();
 
   const runtime = new TestOpenCodeHarness();
   const openCodeClient = new TestOpenCodeClient();
-  openCodeClient.providerListImplementation = () =>
-    new Promise((resolve) => {
-      setTimeout(() => {
-        resolve({
-          data: {
-            connected: ["zai"],
-            all: [
-              {
-                id: "zai",
-                name: "Z.AI",
-                models: {
-                  "glm-5.1": {
-                    name: "GLM 5.1",
-                    limit: { context: 128_000 },
-                  },
-                },
-              },
-            ],
-          },
-        });
-      }, 15_000);
+  openCodeClient.providerListImplementation = (_parameters, options) =>
+    new Promise((_resolve, reject) => {
+      const signal = (options as { signal: AbortSignal }).signal;
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
     });
   runtime.enqueueClient(openCodeClient);
 
@@ -44,24 +28,72 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
     serverManager: runtime,
     createClient: runtime.createClient,
   });
-  const modelsPromise = client.fetchCatalog({
-    scope: "workspace",
-    cwd: "/tmp/opencode-models",
-    force: false,
+  const modelsPromise = runProviderRefreshWithDeadline({
+    label: "OpenCode",
+    timeoutMs: 100,
+    operation: (context) =>
+      client.fetchCatalog(
+        { scope: "workspace", cwd: "/tmp/opencode-models", force: false },
+        context,
+      ),
   });
+  const rejection = expect(modelsPromise).rejects.toThrow(
+    "Timed out refreshing OpenCode after 100ms; pending: provider.list",
+  );
 
-  await vi.advanceTimersByTimeAsync(15_000);
+  await vi.advanceTimersByTimeAsync(100);
 
-  await expect(modelsPromise).resolves.toMatchObject({
-    models: [
-      {
-        provider: "opencode",
-        id: "zai/glm-5.1",
-        label: "GLM 5.1",
-      },
-    ],
-  });
+  await rejection;
   expect(openCodeClient.calls.providerList).toHaveLength(1);
+  expect(openCodeClient.calls.providerListOptions[0]).toMatchObject({
+    signal: expect.objectContaining({ aborted: true }),
+  });
+  expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+});
+
+test("the catalog deadline aborts app.agents and releases the server", async () => {
+  vi.useFakeTimers();
+
+  const runtime = new TestOpenCodeHarness();
+  const openCodeClient = new TestOpenCodeClient();
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: ["openai"],
+      all: [{ id: "openai", name: "OpenAI", models: {} }],
+    },
+  };
+  openCodeClient.appAgentsImplementation = (_parameters, options) =>
+    new Promise((_resolve, reject) => {
+      const signal = (options as { signal: AbortSignal }).signal;
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  runtime.enqueueClient(openCodeClient);
+
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: runtime,
+    createClient: runtime.createClient,
+  });
+  const catalogPromise = runProviderRefreshWithDeadline({
+    label: "OpenCode",
+    timeoutMs: 100,
+    operation: (context) =>
+      client.fetchCatalog(
+        { scope: "workspace", cwd: "/tmp/opencode-agents", force: false },
+        context,
+      ),
+  });
+  const rejection = expect(catalogPromise).rejects.toThrow(
+    "Timed out refreshing OpenCode after 100ms; pending: app.agents",
+  );
+
+  await vi.advanceTimersByTimeAsync(100);
+
+  await rejection;
+  expect(openCodeClient.calls.appAgents).toHaveLength(1);
+  expect(openCodeClient.calls.appAgentsOptions[0]).toMatchObject({
+    signal: expect.objectContaining({ aborted: true }),
+  });
+  expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
 });
 
 test("uses a new server for explicit catalog refresh", async () => {

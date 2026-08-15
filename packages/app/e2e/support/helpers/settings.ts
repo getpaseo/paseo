@@ -41,6 +41,7 @@ type HostSection =
   | "providers"
   | "usage"
   | "terminals"
+  | "plugins"
   | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
@@ -132,7 +133,7 @@ export async function seedSavedSettingsHosts(
   if (!firstHost) {
     throw new Error("Expected at least one settings host fixture.");
   }
-  const preferences = buildCreateAgentPreferences(firstHost.serverId);
+  const preferences = buildCreateAgentPreferences();
 
   await page.evaluate(
     ({ keys, storedRegistry, storedPreferences }) => {

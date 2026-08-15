@@ -13,6 +13,7 @@ import type {
   AgentSession,
   AgentStreamEvent,
   FetchCatalogOptions,
+  ProviderRefreshContext,
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
@@ -24,6 +25,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "./create-agent-mode.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
+import { runProviderRefreshActivity } from "./provider-refresh-deadline.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type {
@@ -93,7 +95,11 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    * Single catalog discovery call used by ProviderSnapshotManager. Should spawn
    * at most one provider runtime process and return both models and modes.
    */
-  fetchCatalog: (options: FetchCatalogOptions, client?: AgentClient) => Promise<ProviderCatalog>;
+  fetchCatalog: (
+    options: FetchCatalogOptions,
+    client?: AgentClient,
+    context?: ProviderRefreshContext,
+  ) => Promise<ProviderCatalog>;
 }
 
 export interface BuildProviderRegistryOptions {
@@ -508,8 +514,8 @@ function wrapClientProvider(
           options,
         ),
       ),
-    fetchCatalog: async (options) => {
-      const catalog = await inner.fetchCatalog(options);
+    fetchCatalog: async (options, context) => {
+      const catalog = await inner.fetchCatalog(options, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -519,10 +525,11 @@ function wrapClientProvider(
       };
     },
     resolveDefaultModeId: inner.resolveDefaultModeId
-      ? async ({ config, env }: ResolveAgentDefaultModeInput) =>
+      ? async ({ config, env, signal }: ResolveAgentDefaultModeInput) =>
           await inner.resolveDefaultModeId?.({
             config: { ...config, provider: inner.provider },
             env,
+            signal,
           })
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
@@ -562,7 +569,7 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: () => inner.isAvailable(),
+    isAvailable: (signal) => inner.isAvailable(signal),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }
@@ -622,7 +629,11 @@ function createRegistryEntry(
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
     isCreateConfigUnattended:
       modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
-    fetchCatalog: async (options: FetchCatalogOptions, client?: AgentClient) => {
+    fetchCatalog: async (
+      options: FetchCatalogOptions,
+      client?: AgentClient,
+      context?: ProviderRefreshContext,
+    ) => {
       const catalogClient = client ?? modelClient;
       if (hasReplacementModels) {
         // Replacement models skip runtime model discovery, but additionalModels
@@ -630,23 +641,29 @@ function createRegistryEntry(
         // the single catalog API; otherwise use static/empty modes with no runtime.
         const models = mergeModelAdditions(provider, replacementModels, additionalModels);
         if (hasStaticModes) {
-          const defaultModeId = await catalogClient.resolveDefaultModeId?.({
-            config: {
-              provider,
-              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
-            },
-          });
+          const defaultModeId = await runProviderRefreshActivity(
+            context,
+            "default-mode",
+            async () =>
+              await catalogClient.resolveDefaultModeId?.({
+                config: {
+                  provider,
+                  cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+                },
+                signal: context?.signal,
+              }),
+          );
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
             defaultModeId,
           };
         }
-        const catalog = await catalogClient.fetchCatalog(options);
+        const catalog = await catalogClient.fetchCatalog(options, context);
         return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
-      const catalog = await catalogClient.fetchCatalog(options);
+      const catalog = await catalogClient.fetchCatalog(options, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {

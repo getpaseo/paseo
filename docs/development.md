@@ -266,8 +266,8 @@ the daemon-global Git process limits in `$PASEO_HOME/config.json`:
 }
 ```
 
-Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
-reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
 
@@ -297,9 +297,7 @@ another remote fails closed until the worktree records an explicit local target.
 the optional field and retain the previous local-first behavior; older worktree metadata without the
 exact ref also resolves through its stored branch name.
 
-Worktrees inherit committed Git state. Before lifecycle setup, Paseo copies the source checkout's
-`paseo.json` over the worktree copy so saved Project Settings apply without a commit. Other
-uncommitted source-checkout changes are not copied.
+Worktrees inherit committed Git state only; uncommitted source-checkout changes are not copied.
 
 ## paseo.json service scripts
 

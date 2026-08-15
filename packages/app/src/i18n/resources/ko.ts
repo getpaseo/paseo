@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
   common: {
@@ -524,6 +525,8 @@ export const ko: TranslationResources = {
         screenshotCopied: "스크린샷을 클립보드에 복사했습니다.",
         elementCopied: "요소를 클립보드에 복사했습니다.",
         screenshotFailed: "스크린샷을 복사할 수 없습니다.",
+        selectorLoading: "페이지 로딩이 끝날 때까지 기다려 주세요.",
+        selectorFailed: "요소 선택기를 시작할 수 없습니다.",
       },
       annotate: {
         title: "요소에 주석 달기",
@@ -1625,6 +1628,7 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1793,8 +1797,10 @@ export const ko: TranslationResources = {
       providers: "프로바이더",
       usage: "사용량",
       terminals: "터미널",
+      plugins: "플러그인",
       host: "개요",
     },
+    plugins: pluginSettings.ko,
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
@@ -2422,6 +2428,8 @@ export const ko: TranslationResources = {
         docsTooltip: "자세한 내용과 이 명령에 사용할 수 있는 환경 변수는 문서를 참조하세요",
         setup: "설정",
         setupAccessibility: "워크트리 설정 명령",
+        uncommittedTitle: "paseo.json 변경 사항을 커밋하세요",
+        uncommittedDescription: "새 워크트리는 선택한 기본 브랜치의 설정 스크립트를 사용합니다.",
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
       },

@@ -14,6 +14,7 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import type { SubagentRow } from "./select";
+import type { ArchiveFinishedStatus } from "./use-archive-finished";
 import {
   buildSubagentRowPresentationData,
   countFinishedSubagents,
@@ -34,6 +35,7 @@ export interface SubagentsTrackProps {
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onArchiveFinished?: () => void;
+  archiveFinishedStatus?: ArchiveFinishedStatus;
   onDetachSubagent?: (id: string) => void;
 }
 
@@ -55,6 +57,7 @@ export function SubagentsTrack({
   onOpenProviderSubagent,
   onArchiveSubagent,
   onArchiveFinished,
+  archiveFinishedStatus = { kind: "idle" },
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
@@ -75,12 +78,15 @@ export function SubagentsTrack({
   );
   const headerAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
 
-  if (rows.length === 0) {
+  const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
+  const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
+  if (rows.length === 0 && !isArchivingFinished && !isArchiveFinishedFailed) {
     return null;
   }
 
   const headerLabel = formatHeaderLabel(rows);
   const finishedCount = countFinishedSubagents(rows);
+  const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
 
   return (
     <View style={styles.outer} testID="subagents-track">
@@ -100,7 +106,7 @@ export function SubagentsTrack({
             >
               {headerLabel}
             </Button>
-            {finishedCount > 0 && onArchiveFinished ? (
+            {showArchiveFinished && onArchiveFinished ? (
               <View style={styles.headerAction}>
                 <SubagentActionButton
                   accessibilityLabel={t("subagents.archiveFinishedAction")}
@@ -108,8 +114,28 @@ export function SubagentsTrack({
                   tooltipLabel={t("subagents.archiveFinishedTooltip")}
                   icon="archive"
                   visible
+                  disabled={isArchivingFinished}
                   onPress={onArchiveFinished}
                 />
+                {archiveFinishedStatus.kind === "archiving" ? (
+                  <Text
+                    style={styles.archiveFinishedStatus}
+                    testID="subagents-track-archive-progress"
+                  >
+                    {archiveFinishedStatus.completedCount}/{archiveFinishedStatus.totalCount}
+                  </Text>
+                ) : null}
+                {archiveFinishedStatus.kind === "failed" ? (
+                  <Text
+                    style={styles.archiveFinishedStatus}
+                    testID="subagents-track-archive-failed"
+                  >
+                    {t("subagents.archiveFinishedRetry", {
+                      failed: archiveFinishedStatus.failedCount,
+                      total: archiveFinishedStatus.totalCount,
+                    })}
+                  </Text>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -275,6 +301,7 @@ function SubagentActionButton({
   tooltipLabel,
   icon,
   visible,
+  disabled = false,
   onPress,
 }: {
   accessibilityLabel: string;
@@ -282,15 +309,17 @@ function SubagentActionButton({
   tooltipLabel: string;
   icon: SubagentActionIcon;
   visible: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }): ReactElement {
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild disabled={!visible}>
+      <TooltipTrigger asChild disabled={!visible || disabled}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
+          disabled={disabled}
           onPress={onPress}
           style={styles.actionButton}
           hitSlop={8}
@@ -344,6 +373,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerAction: {
     paddingRight: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  archiveFinishedStatus: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   headerCollapsed: {
     paddingBottom: theme.spacing[4],

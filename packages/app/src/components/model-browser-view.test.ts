@@ -70,7 +70,7 @@ describe("model browser initial view", () => {
     ).toEqual({ kind: "all" });
   });
 
-  it("keeps the root even when a single provider would otherwise be skipped", () => {
+  it("opens a sole provider directly regardless of root content", () => {
     expect(
       resolveInitialModelBrowserView({
         providers: [pi],
@@ -78,7 +78,7 @@ describe("model browser initial view", () => {
         selectedModel: "pi-pro",
         hasProfiles: true,
       }),
-    ).toEqual({ kind: "all" });
+    ).toEqual({ kind: "provider", providerId: "pi", providerLabel: "Pi" });
   });
 
   it("falls back to the root when the selected provider is gone", () => {

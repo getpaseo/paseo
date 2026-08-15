@@ -9,6 +9,7 @@ import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 
@@ -41,6 +42,7 @@ export function SidebarModelProvider({
     (state) => state.collapsedStatusGroupKeys,
   );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
+  const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
@@ -58,6 +60,7 @@ export function SidebarModelProvider({
       buildSidebarProjection({
         projects: list.projects,
         pinnedKeys,
+        pinnedWorkspaceOrder,
         workspaceEntriesByKey: projectionWorkspaceEntriesByKey,
         projectNamesByViewKey: list.projectNamesByViewKey,
         groupMode,
@@ -73,6 +76,7 @@ export function SidebarModelProvider({
       list.projects,
       pinnedCollapsed,
       pinnedKeys,
+      pinnedWorkspaceOrder,
       projectionWorkspaceEntriesByKey,
     ],
   );

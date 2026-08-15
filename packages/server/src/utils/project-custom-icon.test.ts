@@ -10,7 +10,9 @@ import {
   type ProjectRegistry,
 } from "../server/workspace-registry.js";
 import {
+  ProjectIconReader,
   readProjectIcon,
+  readProjectIconSnapshot,
   removeProjectCustomIcon,
   setProjectCustomIcon,
 } from "./project-custom-icon.js";
@@ -52,6 +54,7 @@ async function project() {
       return record;
     },
   } as unknown as ProjectRegistry;
+  const reader = new ProjectIconReader(paseoHome);
 
   return {
     paseoHome,
@@ -59,6 +62,9 @@ async function project() {
     set: (source: ProjectIconSource) =>
       setProjectCustomIcon({ paseoHome, projectId: "project-a", source, projects }),
     read: () => readProjectIcon({ paseoHome, project: record }),
+    snapshot: () => readProjectIconSnapshot({ paseoHome, project: record }),
+    advertisedSnapshot: () => reader.snapshot(record),
+    readAdvertised: () => reader.read(record),
     revision: () => record.customIconRevision,
     remove: () => removeProjectCustomIcon({ paseoHome, projectId: "project-a" }),
   };
@@ -86,6 +92,40 @@ describe("project custom icon", () => {
     await writeFile(join(target.rootPath, "public", "favicon.png"), PNG_1X1);
 
     await expect(target.read()).resolves.toEqual(PNG_1X1_ICON);
+  });
+
+  it("fingerprints automatic icons and explicit no-icon results", async () => {
+    const target = await project();
+
+    const missing = await target.snapshot();
+    expect(missing).toEqual({ icon: null, revision: "automatic:none:v1" });
+
+    await mkdir(join(target.rootPath, "public"));
+    await writeFile(join(target.rootPath, "public", "favicon.png"), PNG_1X1);
+    const first = await target.snapshot();
+    await writeFile(
+      join(target.rootPath, "public", "favicon.png"),
+      Buffer.concat([PNG_1X1, Buffer.from([1])]),
+    );
+    const changed = await target.snapshot();
+
+    expect(first.icon).toEqual(PNG_1X1_ICON);
+    expect(first.revision).toMatch(/^automatic:[a-f0-9]{64}$/);
+    expect(changed.revision).not.toBe(first.revision);
+  });
+
+  it("serves the bytes that match the advertised revision", async () => {
+    const target = await project();
+    await mkdir(join(target.rootPath, "public"));
+    await writeFile(join(target.rootPath, "public", "favicon.png"), PNG_1X1);
+    const advertised = await target.advertisedSnapshot();
+
+    await writeFile(
+      join(target.rootPath, "public", "favicon.png"),
+      Buffer.concat([PNG_1X1, Buffer.from([1])]),
+    );
+
+    await expect(target.readAdvertised()).resolves.toEqual(advertised.icon);
   });
 
   it("drops the stored image when the project goes back to automatic", async () => {

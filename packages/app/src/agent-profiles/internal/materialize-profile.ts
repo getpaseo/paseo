@@ -29,6 +29,19 @@ export function materializeAgentProfile(profile: AgentProfile): MaterializedAgen
   };
 }
 
+export function reconcileMaterializedProfileMode(
+  profile: MaterializedAgentProfile,
+  availableModeIds: readonly string[] | null,
+): MaterializedAgentProfile | null {
+  if (availableModeIds === null) {
+    return null;
+  }
+  if (!profile.modeId || availableModeIds.includes(profile.modeId)) {
+    return profile;
+  }
+  return { ...profile, modeId: "" };
+}
+
 /**
  * The payload for a running agent. Omitted fields are left alone by the daemon,
  * so a profile that names no mode does not reset the agent's mode. Provider is

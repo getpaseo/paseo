@@ -5,8 +5,9 @@ import { runStopCommand } from "./stop.js";
 import { runRestartCommand } from "./restart.js";
 import { runSetPasswordCommand } from "./set-password.js";
 import { pairCommand } from "./pair.js";
+import { runDaemonReloadCommand } from "./reload.js";
 import { withOutput } from "../../output/index.js";
-import { addJsonOption } from "../../utils/command-options.js";
+import { addJsonAndDaemonHostOptions, addJsonOption } from "../../utils/command-options.js";
 
 function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
   if (typeof hostnames === "string") return hostnames;
@@ -19,6 +20,10 @@ export function createDaemonCommand(): Command {
 
   daemon.addCommand(startCommand());
   daemon.addCommand(pairCommand());
+
+  addJsonAndDaemonHostOptions(
+    daemon.command("reload").description("Reload config.json without restarting the daemon"),
+  ).action(withOutput(runDaemonReloadCommand));
 
   addJsonOption(daemon.command("status").description("Show local daemon status"))
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")

@@ -1,17 +1,14 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import {
   applyProfileFromPicker,
   closeModelPicker,
-  drillIntoProvider,
   expectComposerDoesNotName,
   expectAgentProfilesEmptyPrompt,
   expectProfileEditTooltip,
   expectComposerMode,
   expectComposerModel,
   expectModelRowSelected,
-  expectNothingSelectedInPickerRoot,
   expectProfileEditIsPencilOnly,
-  expectProfilePinnedAboveProviders,
   expectProfileVisibleForProvider,
   openModelPicker,
   openAgentProfilesFromEmptyPrompt,
@@ -74,9 +71,12 @@ test.describe("Agent profiles in the model picker", () => {
         await expectComposerMode(page, "Load test");
       });
 
-      await test.step("the profile is pinned above the provider list", async () => {
+      await test.step("the sole provider opens directly", async () => {
         await openModelPicker(page);
-        await expectProfilePinnedAboveProviders(page, {
+        await expect(page.getByTestId("model-search-input").first()).toBeVisible();
+        await expect(page.getByTestId("sheet-header-back")).toHaveCount(0);
+        await expect(page.locator('[data-testid^="model-provider-"]')).toHaveCount(0);
+        await expectProfileVisibleForProvider(page, {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,
         });
@@ -100,17 +100,9 @@ test.describe("Agent profiles in the model picker", () => {
         await expectComposerDoesNotName(page, PROFILE.name);
       });
 
-      await test.step("reopening the picker shows no profile marked as selected", async () => {
+      await test.step("reopening returns directly to the provider models", async () => {
         await openModelPicker(page);
-        await expectProfilePinnedAboveProviders(page, {
-          name: PROFILE.name,
-          summary: PROFILE_SUMMARY,
-        });
-        await expectNothingSelectedInPickerRoot(page);
-      });
-
-      await test.step("the model it materialized is the one marked selected", async () => {
-        await drillIntoProvider(page, "mock");
+        await expect(page.getByTestId("model-search-input").first()).toBeVisible();
         await expectProfileVisibleForProvider(page, {
           name: PROFILE.name,
           summary: PROFILE_SUMMARY,

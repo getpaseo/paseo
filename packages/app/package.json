@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.4.0-beta.2",
+  "version": "0.4.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -48,6 +48,8 @@
     "@getpaseo/protocol": "*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@gorhom/portal": "^1.0.14",
+    "@mattermost/react-native-paste-input": "2.0.1",
+    "@paseo/plugin": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "^0.3.2",
     "@react-native/normalize-colors": "^0.81.5",
