@@ -1977,6 +1977,8 @@ export const ko: TranslationResources = {
         codeFontAccessibility: "코드 글꼴 패밀리",
         codeSize: "코드 크기",
         codeSizeAccessibility: "코드 글꼴 크기",
+        wordShaping: "터미널 단어 셰이핑",
+        wordShapingHint: "Fast-Font 같은 컨텍스트 글꼴을 위해 터미널에서 단어 전체를 셰이핑합니다",
       },
       syntax: {
         title: "구문",

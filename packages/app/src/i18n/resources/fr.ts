@@ -2017,6 +2017,9 @@ export const fr: TranslationResources = {
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
         codeSizeAccessibility: "Taille de la police du code",
+        wordShaping: "Composition des mots du terminal",
+        wordShapingHint:
+          "Compose les mots entiers dans le terminal pour les polices contextuelles comme Fast-Font",
       },
       syntax: {
         title: "Syntaxe",

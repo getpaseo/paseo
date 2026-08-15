@@ -2014,6 +2014,9 @@ export const es: TranslationResources = {
         codeFontAccessibility: "Familia de fuentes de código",
         codeSize: "Tamaño del código",
         codeSizeAccessibility: "Tamaño de fuente del código",
+        wordShaping: "Modelado de palabras en la terminal",
+        wordShapingHint:
+          "Da forma a palabras completas en la terminal para fuentes contextuales como Fast-Font",
       },
       syntax: {
         title: "Sintaxis",

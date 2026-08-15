@@ -1966,6 +1966,8 @@ export const ar: TranslationResources = {
         codeFontAccessibility: "عائلة خطوط الكود",
         codeSize: "حجم الكود",
         codeSizeAccessibility: "حجم خط الكود",
+        wordShaping: "تشكيل الكلمات في الطرفية",
+        wordShapingHint: "يشكّل الكلمات كاملة في الطرفية للخطوط السياقية مثل Fast-Font",
       },
       syntax: {
         title: "بناء الجملة",

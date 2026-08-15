@@ -1053,6 +1053,7 @@ export function TerminalPane({
             scrollbackLines={settings.terminalScrollbackLines}
             fontFamily={terminalFontFamily}
             fontSize={settings.codeFontSize}
+            wordShapingEnabled={settings.terminalWordShaping}
             keyboardInset={keyboardInset}
             isKeyboardVisible={isKeyboardVisible}
             swipeGesturesEnabled={swipeGesturesEnabled}

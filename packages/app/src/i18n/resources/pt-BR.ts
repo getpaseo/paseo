@@ -1997,6 +1997,9 @@ export const ptBR: TranslationResources = {
         codeFontAccessibility: "Família da fonte de código",
         codeSize: "Tamanho do código",
         codeSizeAccessibility: "Tamanho da fonte de código",
+        wordShaping: "Modelagem de palavras no terminal",
+        wordShapingHint:
+          "Modela palavras inteiras no terminal para fontes contextuais como Fast-Font",
       },
       syntax: {
         title: "Sintaxe",

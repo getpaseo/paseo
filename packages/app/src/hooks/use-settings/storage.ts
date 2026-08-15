@@ -57,6 +57,7 @@ export interface AppSettings {
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
   useLegacyTerminalRenderer: boolean;
+  terminalWordShaping: boolean;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
@@ -94,6 +95,7 @@ const StoredAppSettingsSchema = z.strictObject({
   serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).optional(),
   terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
   useLegacyTerminalRenderer: z.boolean().optional(),
+  terminalWordShaping: z.boolean().optional(),
   uiFontFamily: z.string().optional(),
   monoFontFamily: z.string().optional(),
   uiFontSize: z.union([z.number(), z.string()]).optional(),
@@ -124,6 +126,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
+  terminalWordShaping: false,
   uiFontFamily: "",
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
@@ -274,6 +277,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   const result: Partial<AppSettings> = {};
   if (typeof stored.useLegacyTerminalRenderer === "boolean") {
     result.useLegacyTerminalRenderer = stored.useLegacyTerminalRenderer;
+  }
+  if (typeof stored.terminalWordShaping === "boolean") {
+    result.terminalWordShaping = stored.terminalWordShaping;
   }
   if (typeof stored.vimKeybindings === "boolean") {
     result.vimKeybindings = stored.vimKeybindings;

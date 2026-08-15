@@ -1943,6 +1943,8 @@ export const zhCN: TranslationResources = {
         codeFontAccessibility: "代码字体族",
         codeSize: "代码字号",
         codeSizeAccessibility: "代码字号",
+        wordShaping: "终端整词成形",
+        wordShapingHint: "为 Fast-Font 等上下文字体在终端中按整词成形",
       },
       syntax: {
         title: "语法",

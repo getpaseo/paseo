@@ -2021,6 +2021,8 @@ export const en = {
         codeFontAccessibility: "Code font family",
         codeSize: "Code size",
         codeSizeAccessibility: "Code font size",
+        wordShaping: "Terminal word shaping",
+        wordShapingHint: "Shape whole words in the terminal for contextual fonts like Fast-Font",
       },
       syntax: {
         title: "Syntax",
