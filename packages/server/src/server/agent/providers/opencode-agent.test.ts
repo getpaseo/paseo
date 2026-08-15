@@ -2869,6 +2869,47 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("does not apply a failed snapshot retry to the next turn", async () => {
+    vi.useFakeTimers();
+    const { parent: session, openCode } = await createParentSession("ses_stale_retry");
+    const events: AgentStreamEvent[] = [];
+    const firstCompletion = createTestDeferred<void>();
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "turn_completed") firstCompletion.resolve();
+    });
+    openCode.sessionPromptAsyncEvents = [];
+    let statusAttempts = 0;
+    const firstStatus = createTestDeferred<void>();
+    openCode.sessionStatusImplementation = async () => {
+      statusAttempts += 1;
+      if (statusAttempts === 1) {
+        firstStatus.resolve();
+        throw new Error("snapshot unavailable");
+      }
+      return { data: {} };
+    };
+    openCode.sessionMessagesResponse = { data: [] };
+
+    try {
+      await session.startTurn("first turn");
+      openCode.emitEvent({ type: "reconnected" });
+      await firstStatus.promise;
+      openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
+      await firstCompletion.promise;
+
+      await session.startTurn("second turn");
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(statusAttempts).toBe(1);
+      expect(countEvents(events, "turn_started")).toBe(2);
+      expect(countEvents(events, "turn_failed")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("preserves failed blocking-request snapshots and resolves successful empty ones", async () => {
     const { parent: session, openCode } = await createParentSession("ses_request_recovery");
     const events: AgentStreamEvent[] = [];

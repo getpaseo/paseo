@@ -162,7 +162,7 @@ function waitForOpenCodeStopProbe(delayMs: number, signal: AbortSignal): Promise
     setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
-    }, delayMs);
+    }, delayMs).unref();
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
@@ -3459,7 +3459,6 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  /** Provider status keeps Stop bounded even while event delivery is unavailable. */
   private async reconcileStopWithProviderStatus(stop: OpenCodeStop): Promise<void> {
     try {
       if ((await this.readProviderRunnerStatus()) === "idle") {
@@ -4505,6 +4504,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private createTurnId(): string {
+    this.gapRepairRevision += 1;
     return `opencode-turn-${this.nextTurnOrdinal++}`;
   }
 
