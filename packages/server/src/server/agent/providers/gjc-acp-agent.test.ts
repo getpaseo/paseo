@@ -21,14 +21,6 @@ import {
   transformGjcSessionResponse,
 } from "./gjc-acp-agent.js";
 
-function idempotencyKeyArgIndex(args: string[]): number {
-  const index = args.indexOf("--idempotency-key");
-  if (index === -1) {
-    throw new Error("Expected GJC lifecycle command to include an idempotency key");
-  }
-  return index + 1;
-}
-
 describe("GjcACPAgentClient", () => {
   test("keeps GJC probe clients non-terminal while preserving prompt permission metadata", async () => {
     const initialize = vi.fn(async () => ({ agentCapabilities: {} }));
@@ -482,7 +474,6 @@ describe("GjcACPAgentClient", () => {
         timeout: 130_000,
         maxBuffer: 1024 * 1024,
         encoding: "utf8",
-        signal: undefined,
       }),
     );
     const args = execFile.mock.calls[0]![1];
@@ -734,11 +725,7 @@ describe("GjcACPAgentClient", () => {
     expect(loadSession).not.toHaveBeenCalled();
     expect(runRequest).not.toHaveBeenCalled();
     expect(execFile).toHaveBeenCalledTimes(2);
-    expect(execFile.mock.calls[0]![2]).toEqual(
-      expect.objectContaining({
-        signal: controller.signal,
-      }),
-    );
+    expect(execFile.mock.calls[0]![2].signal).toBeUndefined();
     expect(execFile.mock.calls[1]![1]).toEqual([
       "sdk",
       "session",
@@ -756,20 +743,12 @@ describe("GjcACPAgentClient", () => {
     ]);
   });
 
-  test("recovers and registers a lifecycle session when create is aborted before JSON returns", async () => {
+  test("registers a created lifecycle session when probe startup is aborted after create", async () => {
     const controller = new AbortController();
     const abortError = new Error("startup cancelled");
-    const createAbortError = Object.assign(new Error("The operation was aborted"), {
-      stdout: "",
-      stderr: "",
-    });
-    const execFile = vi
-      .fn()
-      .mockImplementationOnce(async () => {
-        controller.abort(abortError);
-        throw createAbortError;
-      })
-      .mockResolvedValueOnce({
+    const execFile = vi.fn().mockImplementationOnce(async () => {
+      controller.abort(abortError);
+      return {
         stdout: JSON.stringify({
           ok: true,
           result: {
@@ -777,7 +756,8 @@ describe("GjcACPAgentClient", () => {
           },
         }),
         stderr: "",
-      });
+      };
+    });
     const loadSession = vi.fn();
     const registerProbeSession = vi.fn();
     const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
@@ -807,15 +787,9 @@ describe("GjcACPAgentClient", () => {
     expect(registerProbeSession).toHaveBeenCalledWith({
       sessionId: "gjc-session-1",
     });
-    expect(execFile).toHaveBeenCalledTimes(2);
-    const firstArgs = execFile.mock.calls[0]![1];
-    const secondArgs = execFile.mock.calls[1]![1];
-    expect(firstArgs).toContain("session.create");
-    expect(secondArgs).toContain("session.create");
-    expect(secondArgs[idempotencyKeyArgIndex(secondArgs)]).toBe(
-      firstArgs[idempotencyKeyArgIndex(firstArgs)],
-    );
-    expect(execFile.mock.calls[1]![2].signal).toBeUndefined();
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile.mock.calls[0]![1]).toContain("session.create");
+    expect(execFile.mock.calls[0]![2].signal).toBeUndefined();
   });
 
   test("closes a gjc lifecycle session when input cleanup fails after create", async () => {
