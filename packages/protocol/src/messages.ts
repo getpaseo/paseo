@@ -194,9 +194,26 @@ export const MutableDaemonConfigSchema = z
     relay: MutableRelayConfigSchema.optional(),
     mcp: z
       .object({
+        enabled: z.boolean().optional(),
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
+    cors: z
+      .object({
+        allowedOrigins: z.array(z.string()),
+      })
+      .passthrough()
+      .optional(),
+    trustedProxies: z.union([z.literal(true), z.array(z.string())]).optional(),
+    git: z
+      .object({
+        maxProcessesPerSecond: z.number().int().positive(),
+        maxProcessConcurrency: z.number().int().positive(),
+      })
+      .optional(),
+    app: z.object({ baseUrl: z.string() }).optional(),
+    catalogRefreshTimeoutMs: z.number().int().positive().optional(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
@@ -213,7 +230,7 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
-    mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
@@ -1297,6 +1314,11 @@ export const DaemonGetStatusRequestSchema = z.object({
 
 export const DaemonGetPairingOfferRequestSchema = z.object({
   type: z.literal("daemon.get_pairing_offer.request"),
+  requestId: z.string(),
+});
+
+export const DaemonConfigReloadRequestSchema = z.object({
+  type: z.literal("daemon.config.reload.request"),
   requestId: z.string(),
 });
 
@@ -2826,6 +2848,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
+  DaemonConfigReloadRequestSchema,
   HubManagementDaemonConnectRequestSchema,
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
@@ -3157,6 +3180,8 @@ export const ServerInfoStatusPayloadSchema = z
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
+        // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
+        daemonConfigReload: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
@@ -4332,6 +4357,18 @@ export const DaemonGetPairingOfferResponseSchema = z.object({
       url: z.string(),
       qr: z.string().nullable().optional(),
       relayEnabled: z.boolean(),
+    })
+    .passthrough(),
+});
+
+export const DaemonConfigReloadResponseSchema = z.object({
+  type: z.literal("daemon.config.reload.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      appliedPaths: z.array(z.string()),
+      restartRequiredPaths: z.array(z.string()),
+      overrideControlledPaths: z.array(z.string()),
     })
     .passthrough(),
 });
@@ -5932,6 +5969,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
+  DaemonConfigReloadResponseSchema,
   HubManagementDaemonConnectResponseSchema,
   HubManagementDaemonGetStatusResponseSchema,
   HubManagementDaemonDisconnectResponseSchema,
@@ -6179,6 +6217,7 @@ export type ListProviderFeaturesResponseMessage = z.infer<
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>;
 export type DaemonGetStatusResponse = z.infer<typeof DaemonGetStatusResponseSchema>;
 export type DaemonGetPairingOfferResponse = z.infer<typeof DaemonGetPairingOfferResponseSchema>;
+export type DaemonConfigReloadResponse = z.infer<typeof DaemonConfigReloadResponseSchema>;
 export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema

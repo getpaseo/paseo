@@ -16,6 +16,7 @@ import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
 import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
+import { runDaemonReloadCommand } from "./commands/daemon/reload.js";
 import { addLsOptions, runLsCommand } from "./commands/agent/ls.js";
 import { addRunOptions, runRunCommand } from "./commands/agent/run.js";
 import { addLogsOptions, runLogsCommand } from "./commands/agent/logs.js";
@@ -124,6 +125,10 @@ export function createCli(): Command {
   )
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(withOutput(runDaemonStatusCommand));
+
+  addJsonAndDaemonHostOptions(
+    program.command("reload").description('Reload daemon config (alias for "paseo daemon reload")'),
+  ).action(withOutput(runDaemonReloadCommand));
 
   addJsonOption(
     program

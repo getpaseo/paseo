@@ -924,6 +924,7 @@ export class Session {
       listWorkspaces: () => this.workspaceRegistry.list(),
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
+      reloadConfig: () => daemonConfigStore.reload(),
     });
     this.hubExecutionController = options.hubExecutionAgents
       ? new HubExecutionController({
@@ -2177,6 +2178,9 @@ export class Session {
         return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
         return this.daemonSession.handleGetPairingOfferRequest(msg);
+      case "daemon.config.reload.request":
+        this.daemonSession.handleConfigReloadRequest(msg);
+        return undefined;
       case "hub.management.daemon.connect.request":
       case "hub.management.daemon.get_status.request":
       case "hub.management.daemon.disconnect.request":

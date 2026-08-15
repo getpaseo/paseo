@@ -202,8 +202,12 @@ Detaching is an explicit lifecycle action, not a creation flag. The agent keeps 
 paseo daemon start             # Start the daemon
 paseo daemon start --web-ui    # Start and serve the bundled web UI
 paseo daemon status            # Check status
+paseo reload                    # Reload config.json (top-level alias)
+paseo daemon reload             # Reload config.json
 paseo daemon stop              # Stop the daemon
 ```
+
+Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result, and `--host` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 

@@ -41,6 +41,7 @@ import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { attachMutableProviderConfigOwner } from "./agent/mutable-provider-config-owner.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitService,
@@ -137,8 +138,10 @@ interface WebSocketConnectionIdentity {
 }
 
 interface WebSocketServerConfig {
-  allowedOrigins: Set<string>;
+  allowedOrigins?: Set<string>;
   hostnames?: HostnamesConfig;
+  getAllowedOrigins?: () => Set<string>;
+  getHostnames?: () => HostnamesConfig | undefined;
   daemonStatusRpc?: boolean;
   relayConfig?: boolean;
 }
@@ -686,14 +689,18 @@ export class VoiceAssistantWebSocketServer {
       this.speech?.onReadinessChange((snapshot) => {
         this.publishSpeechReadiness(snapshot);
       }) ?? null;
-    this.unsubscribeDaemonConfigChange = this.daemonConfigStore.onChange((config, details) => {
-      const nextAgentManagerState = this.providerSnapshotManager.applyMutableProviderConfig(
-        config.providers,
-        { removeProviders: details.removedProviders },
-      );
-      this.agentManager.updateProviderRegistry(nextAgentManagerState);
+    const unsubscribeProviderConfig = attachMutableProviderConfigOwner({
+      store: this.daemonConfigStore,
+      providerSnapshotManager: this.providerSnapshotManager,
+      updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
+    });
+    const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
     });
+    this.unsubscribeDaemonConfigChange = () => {
+      unsubscribeProviderConfig();
+      unsubscribeChange();
+    };
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushNotifications = createPushNotifications({
@@ -776,14 +783,18 @@ export class VoiceAssistantWebSocketServer {
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
-    const { allowedOrigins, hostnames } = wsConfig;
     const password = auth?.password;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
-        this.verifyWsUpgrade(req, allowedOrigins, hostnames, callback);
+        this.verifyWsUpgrade(
+          req,
+          wsConfig.getAllowedOrigins?.() ?? wsConfig.allowedOrigins ?? new Set(),
+          wsConfig.getHostnames?.() ?? wsConfig.hostnames,
+          callback,
+        );
       },
     });
     wss.on("connection", (ws, request) => {
@@ -1563,6 +1574,8 @@ export class VoiceAssistantWebSocketServer {
         forgeSearch: true,
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
+        // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
+        daemonConfigReload: true,
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
