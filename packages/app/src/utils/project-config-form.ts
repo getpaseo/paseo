@@ -4,7 +4,13 @@ import type {
   PaseoMetadataGenerationEntry,
   PaseoScriptEntryRaw,
 } from "@getpaseo/protocol/messages";
-import { PASEO_PLATFORMS, type PaseoPlatform } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  PASEO_PLATFORMS,
+  isPaseoPlatformCommand,
+  type PaseoPlatform,
+  type PaseoPlatformLifecycleCommandRaw,
+  type PaseoPlatformScriptCommandRaw,
+} from "@getpaseo/protocol/paseo-config-schema";
 
 export type LifecycleOriginalKind = "string" | "array" | "missing";
 export type CommandFormat = "single" | "platform";
@@ -116,12 +122,8 @@ function projectScriptPort(value: unknown): string {
   return "";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function projectCommand(value: unknown): CommandDraft {
-  if (isRecord(value)) {
+  if (isPaseoPlatformCommand(value)) {
     return {
       ...emptyCommandDraft(),
       format: "platform",
@@ -141,14 +143,14 @@ function projectCommand(value: unknown): CommandDraft {
   };
 }
 
-function commandFromDraft(
+function lifecycleCommandFromDraft(
   command: CommandDraft,
-): string | string[] | PlatformCommandValues | undefined {
+): string | string[] | PaseoPlatformLifecycleCommandRaw | undefined {
   if (command.format === "single") {
     return lifecycleFromText(command.text, command.originalKind);
   }
 
-  const platformCommands: PlatformCommandValues = {};
+  const platformCommands: PaseoPlatformLifecycleCommandRaw = {};
   for (const platform of PASEO_PLATFORMS) {
     const value = lifecycleFromText(
       command.platforms[platform].text,
@@ -161,8 +163,22 @@ function commandFromDraft(
   return Object.keys(platformCommands).length > 0 ? platformCommands : undefined;
 }
 
-type PlatformCommandValue = string | string[];
-type PlatformCommandValues = Partial<Record<PaseoPlatform, PlatformCommandValue>>;
+function scriptCommandFromDraft(command: CommandDraft, originalValue: unknown): unknown {
+  if (command.format === "single") {
+    const next = lifecycleFromText(command.text, command.originalKind);
+    return next ?? (command.originalKind === "missing" ? originalValue : undefined);
+  }
+
+  const platformCommands: PaseoPlatformScriptCommandRaw = {};
+  for (const platform of PASEO_PLATFORMS) {
+    const text = command.platforms[platform].text;
+    const lines = text.split("\n").filter((line) => line.trim().length > 0);
+    if (lines.length > 0) {
+      platformCommands[platform] = lines.join("\n");
+    }
+  }
+  return Object.keys(platformCommands).length > 0 ? platformCommands : undefined;
+}
 
 export function changeCommandFormat(command: CommandDraft, format: CommandFormat): CommandDraft {
   if (command.format === format) {
@@ -288,13 +304,13 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   const baseWorktree = baseConfig.worktree ?? {};
 
   const nextWorktree: Record<string, unknown> = { ...baseWorktree };
-  const nextSetup = commandFromDraft(input.draft.setup);
+  const nextSetup = lifecycleCommandFromDraft(input.draft.setup);
   if (nextSetup === undefined) {
     delete nextWorktree.setup;
   } else {
     nextWorktree.setup = nextSetup;
   }
-  const nextTeardown = commandFromDraft(input.draft.teardown);
+  const nextTeardown = lifecycleCommandFromDraft(input.draft.teardown);
   if (nextTeardown === undefined) {
     delete nextWorktree.teardown;
   } else {
@@ -309,7 +325,7 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     }
     const baseEntry = row.rawEntry;
     const nextEntry: Record<string, unknown> = { ...baseEntry };
-    const nextCommand = commandFromDraft(row.command);
+    const nextCommand = scriptCommandFromDraft(row.command, row.rawEntry.command);
     if (nextCommand === undefined) {
       delete nextEntry.command;
     } else {

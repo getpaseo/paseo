@@ -151,6 +151,39 @@ describe("applyDraftToConfig", () => {
     expect(next.scripts).toEqual(base.scripts);
   });
 
+  it("keeps multiline platform script commands as strings", () => {
+    const draft = configToDraft({
+      scripts: {
+        dev: { command: { linux: "npm run dev" } },
+      },
+    });
+    const script = draft.scripts[0];
+    if (!script) throw new Error("expected dev script");
+    script.command.platforms.linux.text = "npm run dev\n--watch";
+
+    const next = applyDraftToConfig({ draft, base: {} });
+
+    expect(next.scripts?.dev?.command).toEqual({ linux: "npm run dev\n--watch" });
+    expect(PaseoConfigRawSchema.parse(next)).toEqual(next);
+  });
+
+  it("preserves legacy script command objects when editing unrelated fields", () => {
+    const base = PaseoConfigRawSchema.parse({
+      scripts: {
+        legacy: { command: { executable: "npm", args: ["run", "dev"] } },
+      },
+    });
+    const draft = configToDraft(base);
+    draft.metadataPrompts.branchName = "feat/<slug>";
+
+    const next = applyDraftToConfig({ draft, base });
+
+    expect(next.scripts?.legacy?.command).toEqual({
+      executable: "npm",
+      args: ["run", "dev"],
+    });
+  });
+
   it("writes a string for a newly added lifecycle field with one non-empty line", () => {
     const base: PaseoConfigRaw = {};
     const draft = configToDraft(base);

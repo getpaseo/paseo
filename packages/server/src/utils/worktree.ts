@@ -31,6 +31,7 @@ export {
 import {
   isPaseoPlatformCommand,
   normalizeLifecycleCommands,
+  PaseoPlatformScriptCommandRawSchema,
   PaseoConfigSchema,
   selectPaseoPlatformCommand,
   type PaseoConfig,
@@ -44,6 +45,7 @@ import {
   writePaseoWorktreeMetadata,
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
+import { getCurrentPaseoPlatform } from "./paseo-platform.js";
 import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
@@ -294,11 +296,10 @@ export function getWorktreeTeardownCommands(repoRoot: string): string[] {
 
 function resolveLifecycleCommands(value: unknown, name: "setup" | "teardown"): string[] {
   if (isPaseoPlatformCommand(value)) {
-    const selected = selectPaseoPlatformCommand(value, process.platform);
+    const platform = getCurrentPaseoPlatform();
+    const selected = selectPaseoPlatformCommand(value, platform);
     if (selected === undefined) {
-      throw new Error(
-        `Worktree ${name} has no command for platform '${process.platform}' in paseo.json`,
-      );
+      throw new Error(`Worktree ${name} has no command for platform '${platform}' in paseo.json`);
     }
     return normalizeLifecycleCommands(selected);
   }
@@ -389,10 +390,12 @@ function resolveScriptCommand(command: unknown, scriptName: string): string | nu
     return null;
   }
 
-  const selected = selectPaseoPlatformCommand(command, process.platform);
+  const platform = getCurrentPaseoPlatform();
+  const parsed = PaseoPlatformScriptCommandRawSchema.safeParse(command);
+  const selected = parsed.success ? parsed.data[platform] : undefined;
   if (typeof selected !== "string" || selected.trim().length === 0) {
     throw new Error(
-      `Script '${scriptName}' has no command for platform '${process.platform}' in paseo.json`,
+      `Script '${scriptName}' has no command for platform '${platform}' in paseo.json`,
     );
   }
   return selected.trim();

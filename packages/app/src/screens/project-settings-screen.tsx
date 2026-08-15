@@ -8,6 +8,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { formatPlatformLabel, ProjectCommandEditor } from "@/components/project-command-editor";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -40,18 +41,16 @@ import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
-  changeCommandFormat,
   configToDraft,
   createEmptyCommandDraft,
   hasCommandText,
   METADATA_PROMPT_KEYS,
   type MetadataPromptKey,
   type CommandDraft,
-  type CommandFormat,
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
-import { PASEO_PLATFORMS, type PaseoPlatform } from "@getpaseo/protocol/paseo-config-schema";
+import { isPaseoPlatformCommand, PASEO_PLATFORMS } from "@getpaseo/protocol/paseo-config-schema";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import {
   getProjectHostEntry,
@@ -530,29 +529,10 @@ function ProjectConfigForm({
   }, []);
 
   const handleSetupChange = useCallback(
-    (text: string) => updateDraft((d) => ({ ...d, setup: { ...d.setup, text } })),
-    [updateDraft],
-  );
-  const handleTeardownChange = useCallback(
-    (text: string) => updateDraft((d) => ({ ...d, teardown: { ...d.teardown, text } })),
-    [updateDraft],
-  );
-
-  const handleSetupFormatChange = useCallback(
-    (format: CommandFormat) =>
-      updateDraft((d) => ({ ...d, setup: changeCommandFormat(d.setup, format) })),
-    [updateDraft],
-  );
-  const handleTeardownFormatChange = useCallback(
-    (format: CommandFormat) =>
-      updateDraft((d) => ({ ...d, teardown: changeCommandFormat(d.teardown, format) })),
-    [updateDraft],
-  );
-  const handleSetupCommandChange = useCallback(
     (command: CommandDraft) => updateDraft((d) => ({ ...d, setup: command })),
     [updateDraft],
   );
-  const handleTeardownCommandChange = useCallback(
+  const handleTeardownChange = useCallback(
     (command: CommandDraft) => updateDraft((d) => ({ ...d, teardown: command })),
     [updateDraft],
   );
@@ -710,27 +690,15 @@ function ProjectConfigForm({
               description={t("settings.project.worktree.uncommittedDescription")}
             />
           ) : null}
-          {draft.setup.format === "single" ? (
-            <SettingsTextAreaCard
-              testID="worktree-setup-input"
-              accessibilityLabel={t("settings.project.worktree.setupAccessibility")}
-              value={draft.setup.text}
-              onChangeText={handleSetupChange}
-              placeholder="npm install"
-            />
-          ) : (
-            <PlatformCommandFields
-              command={draft.setup}
-              onChange={handleSetupCommandChange}
-              variant="settings"
-              testIDPrefix="worktree-setup"
-            />
-          )}
-          <CommandFormatToggle
-            format={draft.setup.format}
-            onChange={handleSetupFormatChange}
+          <ProjectCommandEditor
+            command={draft.setup}
+            onChange={handleSetupChange}
+            variant="settings"
+            inputTestID="worktree-setup-input"
+            platformTestIDPrefix="worktree-setup"
+            formatTestID="worktree-setup-format-toggle"
             accessibilityLabel={t("settings.project.worktree.setupAccessibility")}
-            testID="worktree-setup-format-toggle"
+            placeholder="npm install"
           />
         </SettingsSection>
 
@@ -740,27 +708,15 @@ function ProjectConfigForm({
           trailing={teardownDocsLink}
           flush
         >
-          {draft.teardown.format === "single" ? (
-            <SettingsTextAreaCard
-              testID="worktree-teardown-input"
-              accessibilityLabel={t("settings.project.worktree.teardownAccessibility")}
-              value={draft.teardown.text}
-              onChangeText={handleTeardownChange}
-              placeholder="docker compose down"
-            />
-          ) : (
-            <PlatformCommandFields
-              command={draft.teardown}
-              onChange={handleTeardownCommandChange}
-              variant="settings"
-              testIDPrefix="worktree-teardown"
-            />
-          )}
-          <CommandFormatToggle
-            format={draft.teardown.format}
-            onChange={handleTeardownFormatChange}
+          <ProjectCommandEditor
+            command={draft.teardown}
+            onChange={handleTeardownChange}
+            variant="settings"
+            inputTestID="worktree-teardown-input"
+            platformTestIDPrefix="worktree-teardown"
+            formatTestID="worktree-teardown-format-toggle"
             accessibilityLabel={t("settings.project.worktree.teardownAccessibility")}
-            testID="worktree-teardown-format-toggle"
+            placeholder="docker compose down"
           />
         </SettingsSection>
       </SettingsGroup>
@@ -907,132 +863,6 @@ function ProjectTitleIcon({
   );
 }
 
-interface CommandFormatToggleProps {
-  format: CommandFormat;
-  onChange: (format: CommandFormat) => void;
-  accessibilityLabel: string;
-  testID: string;
-}
-
-function CommandFormatToggle({
-  format,
-  onChange,
-  accessibilityLabel,
-  testID,
-}: CommandFormatToggleProps) {
-  const { t } = useTranslation();
-  const isPlatform = format === "platform";
-  const handleChange = useCallback(
-    (next: boolean) => onChange(next ? "platform" : "single"),
-    [onChange],
-  );
-
-  return (
-    <View style={styles.formatToggleRow}>
-      <Text style={styles.modalHint}>
-        {isPlatform
-          ? t("settings.project.commandFormat.platform")
-          : t("settings.project.commandFormat.single")}
-      </Text>
-      <Switch
-        value={isPlatform}
-        onValueChange={handleChange}
-        accessibilityLabel={accessibilityLabel}
-        testID={testID}
-      />
-    </View>
-  );
-}
-
-interface PlatformCommandFieldsProps {
-  command: CommandDraft;
-  onChange: (command: CommandDraft) => void;
-  variant: "settings" | "modal";
-  testIDPrefix: string;
-}
-
-function PlatformCommandFields({
-  command,
-  onChange,
-  variant,
-  testIDPrefix,
-}: PlatformCommandFieldsProps) {
-  return (
-    <View style={styles.platformFields}>
-      {PASEO_PLATFORMS.map((platform) => (
-        <PlatformCommandField
-          key={platform}
-          command={command}
-          onChange={onChange}
-          platform={platform}
-          variant={variant}
-          testIDPrefix={testIDPrefix}
-        />
-      ))}
-    </View>
-  );
-}
-
-interface PlatformCommandFieldProps extends PlatformCommandFieldsProps {
-  platform: PaseoPlatform;
-}
-
-function PlatformCommandField({
-  command,
-  onChange,
-  platform,
-  variant,
-  testIDPrefix,
-}: PlatformCommandFieldProps) {
-  const platformLabel = formatPlatformLabel(platform);
-  const value = command.platforms[platform];
-  const handleChange = useCallback(
-    (text: string) =>
-      onChange({
-        ...command,
-        platforms: {
-          ...command.platforms,
-          [platform]: { ...value, text },
-        },
-      }),
-    [command, onChange, platform, value],
-  );
-  const testID = `${testIDPrefix}-${platform}`;
-  const accessibilityLabel = `${platformLabel} command`;
-
-  return (
-    <View style={styles.platformField}>
-      <Text style={styles.modalLabel}>{platformLabel}</Text>
-      {variant === "settings" ? (
-        <SettingsTextAreaCard
-          testID={testID}
-          accessibilityLabel={accessibilityLabel}
-          value={value.text}
-          onChangeText={handleChange}
-          placeholder="npm run dev"
-        />
-      ) : (
-        <TextInput
-          testID={testID}
-          accessibilityLabel={accessibilityLabel}
-          multiline
-          value={value.text}
-          onChangeText={handleChange}
-          placeholder="npm run dev"
-          placeholderTextColor={styles.placeholderColor.color}
-          style={styles.modalMultilineInput}
-        />
-      )}
-    </View>
-  );
-}
-
-function formatPlatformLabel(platform: PaseoPlatform): string {
-  if (platform === "darwin") return "macOS";
-  if (platform === "win32") return "Windows";
-  return "Linux";
-}
-
 interface MetadataPromptSectionProps {
   promptKey: MetadataPromptKey;
   value: string;
@@ -1136,14 +966,25 @@ interface ScriptValidation {
 function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidation {
   const nameError =
     script.name.trim().length === 0 ? t("settings.project.scripts.nameRequired") : null;
-  const commandError = !hasCommandText(script.command)
-    ? t("settings.project.scripts.commandRequired")
-    : null;
+  const hasExistingOpaqueCommand = isOpaqueCommand(script.rawEntry.command);
+  const commandError =
+    !hasCommandText(script.command) && !hasExistingOpaqueCommand
+      ? t("settings.project.scripts.commandRequired")
+      : null;
   return {
     hasErrors: Boolean(nameError || commandError),
     nameError,
     commandError,
   };
+}
+
+function isOpaqueCommand(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !isPaseoPlatformCommand(value)
+  );
 }
 
 interface ScriptEditModalProps {
@@ -1178,15 +1019,6 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
     [onChange, script],
   );
   const handleCommandChange = useCallback(
-    (text: string) => onChange({ ...script, command: { ...script.command, text } }),
-    [onChange, script],
-  );
-  const handleCommandFormatChange = useCallback(
-    (format: CommandFormat) =>
-      onChange({ ...script, command: changeCommandFormat(script.command, format) }),
-    [onChange, script],
-  );
-  const handlePlatformCommandChange = useCallback(
     (command: CommandDraft) => onChange({ ...script, command }),
     [onChange, script],
   );
@@ -1248,36 +1080,18 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
       </View>
       <View style={styles.modalSection}>
         <Text style={styles.modalLabel}>{t("settings.project.scripts.command")}</Text>
-        {script.command.format === "single" ? (
-          <TextInput
-            testID="script-edit-command"
-            accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
-            multiline
-            value={script.command.text}
-            onChangeText={handleCommandChange}
-            onBlur={handleCommandBlur}
-            placeholder="npm run dev"
-            placeholderTextColor={styles.placeholderColor.color}
-            style={styles.modalMultilineInput}
-          />
-        ) : (
-          <PlatformCommandFields
-            command={script.command}
-            onChange={handlePlatformCommandChange}
-            variant="modal"
-            testIDPrefix="script-edit-command"
-          />
-        )}
-        {showCommandError ? (
-          <Text testID="script-edit-command-error" style={styles.fieldError}>
-            {validation.commandError}
-          </Text>
-        ) : null}
-        <CommandFormatToggle
-          format={script.command.format}
-          onChange={handleCommandFormatChange}
+        <ProjectCommandEditor
+          command={script.command}
+          onChange={handleCommandChange}
+          variant="modal"
+          inputTestID="script-edit-command"
+          platformTestIDPrefix="script-edit-command"
+          formatTestID="script-edit-command-format-toggle"
           accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
-          testID="script-edit-command-format-toggle"
+          placeholder="npm run dev"
+          onBlur={handleCommandBlur}
+          errorMessage={showCommandError ? validation.commandError : null}
+          errorTestID="script-edit-command-error"
         />
       </View>
       <View style={styles.modalSection}>
@@ -1400,18 +1214,6 @@ const styles = StyleSheet.create((theme) => ({
   modalSection: {
     gap: theme.spacing[2],
   },
-  formatToggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
-  },
-  platformFields: {
-    gap: theme.spacing[3],
-  },
-  platformField: {
-    gap: theme.spacing[2],
-  },
   modalLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
@@ -1425,18 +1227,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
-  },
-  modalMultilineInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    minHeight: 100,
-    textAlignVertical: "top",
   },
   modalFooter: {
     flexDirection: "row",
