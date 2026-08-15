@@ -54,6 +54,7 @@ import * as spawnUtils from "../../../utils/spawn.js";
 describe("buildACPClientCapabilities", () => {
   test("keeps filesystem and terminal execution with the agent by default", () => {
     expect(buildACPClientCapabilities()).toEqual({
+      elicitation: { form: {} },
       fs: {
         readTextFile: false,
         writeTextFile: false,
@@ -74,6 +75,7 @@ describe("buildACPClientCapabilities", () => {
         },
       ),
     ).toEqual({
+      elicitation: { form: {} },
       fs: {
         readTextFile: true,
         writeTextFile: false,
@@ -1153,6 +1155,7 @@ describe("ACPAgentSession Zed parity", () => {
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: {
+        kind: "tool",
         actions: [
           { id: "allow-once", label: "Allow", behavior: "allow" },
           { id: "reject-once", label: "Reject", behavior: "deny" },
@@ -1208,10 +1211,23 @@ describe("ACPAgentSession Zed parity", () => {
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: {
+        kind: "question",
         detail: {
           type: "plain_text",
           label: "AskUserQuestion",
           text: "Which path should Paseo take?",
+        },
+        input: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "Response",
+              options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
+              multiSelect: false,
+              allowOther: false,
+              allowEmpty: false,
+            },
+          ],
         },
         actions: [
           { id: "q0_opt_0", label: "Narrow fix", behavior: "allow" },
@@ -1224,13 +1240,500 @@ describe("ACPAgentSession Zed parity", () => {
       throw new Error("Expected permission request");
     }
 
+    // Freeform text that does not match any predefined option must not
+    // stall the turn. The chooser falls back to the first allow option so
+    // the agent gets a response and can keep the conversation going.
     await session.respondToPermission(requested.request.id, {
       behavior: "allow",
-      selectedActionId: "q0_opt_1",
+      updatedInput: {
+        ...requested.request.input,
+        answers: { Response: "Unknown option" },
+      },
     });
 
     await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_0" },
+    });
+
+    // Round out the test with the matching label path to keep coverage of
+    // the exact-match branch.
+    const events2: AgentStreamEvent[] = [];
+    const session2 = createSessionWithConfig({ provider: "kimi-acp" });
+    asInternals<ACPSessionInternals>(session2).sessionId = "session-1";
+    session2.subscribe((event) => events2.push(event));
+    const permission2 = session2.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "call-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        content: [
+          {
+            type: "content",
+            content: { type: "text", text: "Which path should Paseo take?" },
+          },
+        ],
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+    await Promise.resolve();
+    const requested2 = events2.find((event) => event.type === "permission_requested");
+    if (requested2?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session2.respondToPermission(requested2.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested2.request.input,
+        answers: { Response: "Protocol fix" },
+      },
+    });
+
+    await expect(permission2).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("warns and resolves to the first allow option when chooser answer does not match", async () => {
+    const session = createSessionWithConfig({ provider: "kimi-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const warn = vi.spyOn(session.logger, "warn");
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        content: [
+          {
+            type: "content",
+            content: { type: "text", text: "Pick a path" },
+          },
+        ],
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending permission");
+    }
+
+    await session.respondToPermission(pending.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...pending.input,
+        answers: { Response: "Type something custom" },
+      },
+    });
+
+    // The turn does not stall — the agent gets the first allow option as
+    // a fallback so it can keep going.
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_0" },
+    });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test("cancels a chooser with no allow options instead of stranding the turn", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const warn = vi.spyOn(session.logger, "warn");
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        content: [
+          {
+            type: "content",
+            content: { type: "text", text: "Type whatever you want" },
+          },
+        ],
+      },
+      options: [{ optionId: "q0_skip", name: "Cancel", kind: "reject_once" }],
+    } satisfies RequestPermissionRequest);
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending permission");
+    }
+
+    // `request_permission` cannot carry a freeform answer, so there is no
+    // allow option to select. The daemon must resolve (cancel) and drop the
+    // pending request rather than throwing and leaving the turn blocked.
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { Response: "Use the protocol fix" },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test("renders ACP form elicitation requests and returns typed answers", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const elicitation = session.extMethod("session/elicitation", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Configure the next run",
+      requestedSchema: {
+        type: "object",
+        required: ["model", "count", "enabled", "tags"],
+        properties: {
+          model: {
+            type: "string",
+            title: "Model",
+            oneOf: [{ const: "fast" }, { const: "accurate" }],
+          },
+          count: { type: "integer", minimum: 1 },
+          enabled: { type: "boolean" },
+          tags: {
+            type: "array",
+            items: { type: "string", enum: ["one", "two"] },
+          },
+        },
+      },
+    });
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        title: "Configure the next run",
+        input: {
+          questions: [
+            {
+              question: "Model",
+              header: "model",
+              options: [{ label: "fast" }, { label: "accurate" }],
+              multiSelect: false,
+              allowOther: false,
+              allowEmpty: false,
+            },
+            {
+              question: "count",
+              header: "count",
+              options: [],
+              multiSelect: false,
+              allowOther: true,
+              allowEmpty: false,
+            },
+            {
+              question: "enabled",
+              header: "enabled",
+              options: [{ label: "Yes" }, { label: "No" }],
+              multiSelect: false,
+              allowOther: false,
+              allowEmpty: false,
+            },
+            {
+              question: "tags",
+              header: "tags",
+              options: [{ label: "one" }, { label: "two" }],
+              multiSelect: true,
+              allowOther: false,
+              allowEmpty: false,
+            },
+          ],
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected elicitation request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested.request.input,
+        answers: {
+          model: "accurate",
+          count: "3",
+          enabled: "Yes",
+          tags: "one, two",
+        },
+      },
+    });
+
+    await expect(elicitation).resolves.toEqual({
+      action: {
+        action: "accept",
+        content: {
+          model: "accurate",
+          count: 3,
+          enabled: true,
+          tags: ["one", "two"],
+        },
+      },
+    });
+  });
+
+  test("keeps ACP elicitation pending after an invalid form answer", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const elicitation = session.extMethod("session/elicitation", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Choose a model",
+      requestedSchema: {
+        type: "object",
+        required: ["model"],
+        properties: {
+          model: { type: "string", enum: ["fast", "accurate"] },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending elicitation");
+    }
+
+    // The chooser UI may have had to fall back to a freeform text input
+    // (e.g. the provider dropped the options, or the user typed a custom
+    // value). Out-of-set answers are forwarded to the agent as raw text
+    // instead of leaving the elicitation pending.
+    await session.respondToPermission(pending.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...pending.input,
+        answers: { model: "unsupported" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: { action: "accept", content: { model: "unsupported" } },
+    });
+  });
+
+  test("accepts MiniMax Code's freeform elicitation and forwards the custom answer", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // MiniMax Code's ask_user questionnaire arrives over `elicitation/create`
+    // with a schema that always allows a freeform reply: even when the model
+    // supplied options, the adapter sends a plain string property whose
+    // description is the "Others..." placeholder.
+    const elicitation = session.extMethod("elicitation/create", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Which path should Paseo take?",
+      requestedSchema: {
+        type: "object",
+        required: ["step-1"],
+        properties: {
+          "step-1": {
+            type: "string",
+            title: "Which path should Paseo take?",
+            description: "Others...",
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "step-1",
+              options: [],
+              multiSelect: false,
+              allowOther: true,
+              allowEmpty: false,
+              placeholder: "Others...",
+            },
+          ],
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected elicitation request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested.request.input,
+        answers: { "step-1": "Use the protocol fix" },
+      },
+    });
+
+    await expect(elicitation).resolves.toEqual({
+      action: {
+        action: "accept",
+        content: { "step-1": "Use the protocol fix" },
+      },
+    });
+  });
+
+  test("shows MiniMax Code single-select options and keeps the Others input", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // Once the questionnaire bridge serializes single-select options, the
+    // schema carries the labels as `enum` while the description keeps the
+    // freeform "Others..." hint. Both must survive into the question card.
+    const elicitation = session.extMethod("elicitation/create", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "MiniMax Code needs your input",
+      requestedSchema: {
+        type: "object",
+        required: ["q1"],
+        properties: {
+          q1: {
+            type: "string",
+            title: "Which path should Paseo take?",
+            description: "Others...",
+            enum: ["Narrow fix", "Protocol fix"],
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "q1",
+              options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
+              multiSelect: false,
+              allowOther: true,
+              allowEmpty: false,
+              placeholder: "Others...",
+            },
+          ],
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected elicitation request");
+    }
+
+    // Picking a predefined option maps to the enum value.
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested.request.input,
+        answers: { q1: "Protocol fix" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: {
+        action: "accept",
+        content: { q1: "Protocol fix" },
+      },
+    });
+  });
+
+  test("uses enumNames as display labels for ACP elicitation options", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const elicitation = session.extMethod("elicitation/create", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Pick a model",
+      requestedSchema: {
+        type: "object",
+        required: ["model"],
+        properties: {
+          model: {
+            type: "string",
+            title: "Pick a model",
+            enum: ["fast", "accurate"],
+            enumNames: ["Fast", "Accurate"],
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "Pick a model",
+              header: "model",
+              options: [{ label: "Fast" }, { label: "Accurate" }],
+              multiSelect: false,
+              allowOther: false,
+            },
+          ],
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected elicitation request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested.request.input,
+        answers: { model: "accurate" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: {
+        action: "accept",
+        content: { model: "accurate" },
+      },
     });
   });
 
@@ -1363,6 +1866,59 @@ describe("ACPAgentSession Zed parity", () => {
     await session.respondToPermission(requested.request.id, {
       behavior: "allow",
       selectedActionId: "q0_opt_0",
+    });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_0" },
+    });
+  });
+
+  test("recognizes a single-option AskUserQuestion permission as a chooser", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Continue", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "AskUserQuestion",
+              options: [{ label: "Continue" }],
+            },
+          ],
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...requested.request.input,
+        answers: { Response: "Continue" },
+      },
     });
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "q0_opt_0" },
