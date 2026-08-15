@@ -402,6 +402,25 @@ export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
 
+export interface ACPNewSessionStarterContext {
+  connection: ClientSideConnection;
+  config: AgentSessionConfig;
+  mcpServers: McpServer[];
+  runRequest: <T>(request: () => Promise<T>) => Promise<T>;
+}
+
+export type ACPNewSessionStarter = (
+  context: ACPNewSessionStarterContext,
+) => Promise<SessionStateResponse>;
+
+export interface ACPProbeSessionCloserContext {
+  response: SessionStateResponse;
+  config: AgentSessionConfig;
+  mcpServers: McpServer[];
+}
+
+export type ACPProbeSessionCloser = (context: ACPProbeSessionCloserContext) => Promise<void>;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
@@ -409,6 +428,8 @@ interface ACPAgentClientOptions {
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
   catalogModelResolver?: ACPCatalogModelResolver;
+  newSessionStarter?: ACPNewSessionStarter;
+  probeSessionCloser?: ACPProbeSessionCloser;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -439,6 +460,7 @@ interface ACPAgentSessionOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
+  newSessionStarter?: ACPNewSessionStarter;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -792,6 +814,8 @@ export class ACPAgentClient implements AgentClient {
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
   private readonly catalogModelResolver?: ACPCatalogModelResolver;
+  private readonly newSessionStarter?: ACPNewSessionStarter;
+  private readonly probeSessionCloser?: ACPProbeSessionCloser;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -832,6 +856,8 @@ export class ACPAgentClient implements AgentClient {
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
     this.catalogModelResolver = options.catalogModelResolver;
+    this.newSessionStarter = options.newSessionStarter;
+    this.probeSessionCloser = options.probeSessionCloser;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -861,6 +887,7 @@ export class ACPAgentClient implements AgentClient {
         runtimeSettings: this.runtimeSettings,
         defaultCommand: this.defaultCommand,
         defaultModes: this.defaultModes,
+        newSessionStarter: this.newSessionStarter,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
@@ -947,42 +974,50 @@ export class ACPAgentClient implements AgentClient {
           },
         });
         probe = initializedProbe;
-        const response = await this.runACPRequest(() =>
-          initializedProbe.connection.newSession({
-            cwd,
-            mcpServers: [],
-          }),
-        );
-        const transformed = this.transformSessionResponse(response);
-        const derivedModels = deriveModelDefinitionsFromACP(
-          this.provider,
-          transformed.models,
-          transformed.configOptions,
-        );
-        const models = this.catalogModelResolver
-          ? await this.catalogModelResolver({
-              connection: initializedProbe.connection,
-              sessionId: response.sessionId,
-              models: derivedModels,
-              configOptions: transformed.configOptions,
-              runRequest: (request) => this.runACPRequest(request),
-              transformConfigOptions: (configOptions) =>
-                this.configOptionsTransformer
-                  ? this.configOptionsTransformer(configOptions)
-                  : configOptions,
-              logger: this.logger,
-              provider: this.provider,
-            })
-          : derivedModels;
-        const modeInfo = deriveModesFromACP(
-          this.defaultModes,
-          transformed.modes,
-          transformed.configOptions,
-        );
-        return {
-          models: this.modelTransformer ? this.modelTransformer(models) : models,
-          modes: modeInfo.modes,
-        };
+        const config: AgentSessionConfig = { provider: this.provider, cwd };
+        const mcpServers: McpServer[] = [];
+        let response: SessionStateResponse | null = null;
+        try {
+          response = await this.startProbeSession({
+            connection: initializedProbe.connection,
+            config,
+            mcpServers,
+          });
+          const transformed = this.transformSessionResponse(response);
+          const derivedModels = deriveModelDefinitionsFromACP(
+            this.provider,
+            transformed.models,
+            transformed.configOptions,
+          );
+          const models = this.catalogModelResolver
+            ? await this.catalogModelResolver({
+                connection: initializedProbe.connection,
+                sessionId: requireACPResponseSessionId(response, this.provider, "catalog probe"),
+                models: derivedModels,
+                configOptions: transformed.configOptions,
+                runRequest: (request) => this.runACPRequest(request),
+                transformConfigOptions: (configOptions) =>
+                  this.configOptionsTransformer
+                    ? this.configOptionsTransformer(configOptions)
+                    : configOptions,
+                logger: this.logger,
+                provider: this.provider,
+              })
+            : derivedModels;
+          const modeInfo = deriveModesFromACP(
+            this.defaultModes,
+            transformed.modes,
+            transformed.configOptions,
+          );
+          return {
+            models: this.modelTransformer ? this.modelTransformer(models) : models,
+            modes: modeInfo.modes,
+          };
+        } finally {
+          if (response) {
+            await this.closeProbeSession({ response, config, mcpServers });
+          }
+        }
       })();
 
       return await withTimeout(
@@ -1005,19 +1040,27 @@ export class ACPAgentClient implements AgentClient {
 
     this.assertProvider(config);
     const probe = await this.spawnProcess(PROBE_ENV);
+    const mcpServers: McpServer[] = [];
+    let response: SessionStateResponse | null = null;
     try {
-      const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
-          cwd: config.cwd,
-          mcpServers: [],
-        }),
-      );
+      response = await this.startProbeSession({
+        connection: probe.connection,
+        config: { ...config, provider: this.provider },
+        mcpServers,
+      });
       const transformed = this.transformSessionResponse(response);
       return [
         autoAcceptFeature,
         ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
       ];
     } finally {
+      if (response) {
+        await this.closeProbeSession({
+          response,
+          config: { ...config, provider: this.provider },
+          mcpServers,
+        });
+      }
       await this.closeProbe(probe);
     }
   }
@@ -1279,14 +1322,16 @@ export class ACPAgentClient implements AgentClient {
       }
 
       const sessionStartedAt = Date.now();
+      const config: AgentSessionConfig = { provider: this.provider, cwd };
+      const mcpServers: McpServer[] = [];
+      let response: SessionStateResponse | null = null;
       try {
-        const response = await withTimeout(
-          this.runACPRequest(() =>
-            activeTransport.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
-          ),
+        response = await withTimeout(
+          this.startProbeSession({
+            connection: activeTransport.connection,
+            config,
+            mcpServers,
+          }),
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
         );
@@ -1314,6 +1359,10 @@ export class ACPAgentClient implements AgentClient {
         });
         pushACPStderrRow(rows, activeTransport.stderrChunks);
         return rows;
+      } finally {
+        if (response) {
+          await this.closeProbeSession({ response, config, mcpServers });
+        }
       }
 
       pushACPStderrRow(rows, activeTransport.stderrChunks);
@@ -1370,6 +1419,63 @@ export class ACPAgentClient implements AgentClient {
       configOptions: this.configOptionsTransformer(transformed.configOptions),
     };
   }
+
+  private async startProbeSession(context: {
+    connection: ClientSideConnection;
+    config: AgentSessionConfig;
+    mcpServers: McpServer[];
+  }): Promise<SessionStateResponse> {
+    if (this.newSessionStarter) {
+      return await this.newSessionStarter({
+        ...context,
+        runRequest: (request) => this.runACPRequest(request),
+      });
+    }
+
+    return await this.runACPRequest(() =>
+      context.connection.newSession({
+        cwd: context.config.cwd,
+        mcpServers: context.mcpServers,
+      }),
+    );
+  }
+
+  private async closeProbeSession(context: ACPProbeSessionCloserContext): Promise<void> {
+    if (!this.probeSessionCloser) {
+      return;
+    }
+
+    try {
+      await this.probeSessionCloser(context);
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          sessionId: getACPResponseSessionId(context.response) ?? undefined,
+          cwd: context.config.cwd,
+        },
+        "Failed to close ACP probe session",
+      );
+    }
+  }
+}
+
+function getACPResponseSessionId(response: SessionStateResponse): string | null {
+  return "sessionId" in response && typeof response.sessionId === "string"
+    ? response.sessionId
+    : null;
+}
+
+function requireACPResponseSessionId(
+  response: SessionStateResponse,
+  provider: string,
+  context: string,
+): string {
+  const sessionId = getACPResponseSessionId(response);
+  if (!sessionId) {
+    throw new Error(`${provider} ACP ${context} did not expose a session id`);
+  }
+  return sessionId;
 }
 
 export class ACPAgentSession implements AgentSession, ACPClient {
@@ -1380,6 +1486,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly defaultCommand: [string, ...string[]];
   private readonly defaultModes: AgentMode[];
+  private readonly newSessionStarter?: ACPNewSessionStarter;
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -1450,6 +1557,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes;
+    this.newSessionStarter = options.newSessionStarter;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -1486,12 +1594,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-      const response = await this.runACPRequest(() =>
-        this.connection!.newSession({
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
-      );
+      const mcpServers = this.acpMcpServers();
+      const response = this.newSessionStarter
+        ? await this.newSessionStarter({
+            connection: spawned.connection,
+            config: this.config,
+            mcpServers,
+            runRequest: (request) => this.runACPRequest(request),
+          })
+        : await this.runACPRequest(() =>
+            this.connection!.newSession({
+              cwd: this.config.cwd,
+              mcpServers,
+            }),
+          );
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);

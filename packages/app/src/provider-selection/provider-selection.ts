@@ -23,6 +23,7 @@ export interface ProviderSelectionModelRow {
   modelLabel: string;
   description?: string;
   isDefault?: boolean;
+  thinkingOptions?: AgentModelDefinition["thinkingOptions"];
 }
 
 function buildModelRowKey(provider: string, modelId: string): string {
@@ -67,6 +68,7 @@ function buildModelRows(
     modelLabel: model.label,
     description: model.description ?? model.id,
     isDefault: model.isDefault,
+    ...(model.thinkingOptions?.length ? { thinkingOptions: model.thinkingOptions } : {}),
   }));
 }
 
@@ -230,7 +232,14 @@ export function matchesModelSearch(
 }
 
 function getModelRowSearchFields(row: ProviderSelectionModelRow): string[] {
-  return [row.modelLabel, row.modelId, row.providerLabel, row.description ?? ""];
+  const fields = [row.modelLabel, row.modelId, row.providerLabel, row.description ?? ""];
+  for (const option of row.thinkingOptions ?? []) {
+    fields.push(`${row.modelId}:${option.id}`);
+    fields.push(`${row.modelLabel}:${option.id}`);
+    fields.push(`${row.modelId}:${option.label}`);
+    fields.push(`${row.modelLabel}:${option.label}`);
+  }
+  return fields;
 }
 
 export function scoreModelRow(row: ProviderSelectionModelRow, normalizedQuery: string) {

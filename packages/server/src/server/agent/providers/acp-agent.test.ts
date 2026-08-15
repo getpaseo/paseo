@@ -2032,6 +2032,68 @@ describe("ACPAgentClient config features", () => {
       }),
     ]);
   });
+
+  test("uses the custom starter and closer for feature probe sessions", async () => {
+    const newSession = vi.fn().mockRejectedValue(new Error("newSession should not be called"));
+    const newSessionStarter = vi.fn(async () => ({
+      sessionId: "probe-session-1",
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+    }));
+    const probeSessionCloser = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        type: "toggle",
+        id: "auto_accept",
+      }),
+      expect.objectContaining({
+        type: "select",
+        id: "agent",
+        value: "Probe Agent",
+      }),
+    ]);
+
+    expect(newSession).not.toHaveBeenCalled();
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: {
+        sessionId: "probe-session-1",
+        configOptions: [copilotAgentConfigOption("Probe Agent")],
+      },
+      config: {
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      },
+      mcpServers: [],
+    });
+  });
 });
 
 describe("ACPAgentClient sessionResponseTransformer", () => {
@@ -2116,6 +2178,73 @@ describe("ACPAgentClient fetchCatalog", () => {
 
     expect(newSession).toHaveBeenCalledWith({
       cwd: "/tmp/acp-catalog-cwd",
+      mcpServers: [],
+    });
+  });
+
+  test("uses the custom starter and closer for catalog probe sessions", async () => {
+    const newSession = vi.fn().mockRejectedValue(new Error("newSession should not be called"));
+    const loadSession = vi.fn();
+    const newSessionStarter = vi.fn(async () => ({
+      sessionId: "probe-session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    }));
+    const probeSessionCloser = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession,
+            loadSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-catalog-cwd", force: false }),
+    ).resolves.toEqual({ models: [], modes: [] });
+
+    expect(newSession).not.toHaveBeenCalled();
+    expect(newSessionStarter).toHaveBeenCalledWith({
+      connection: expect.objectContaining({
+        newSession,
+        loadSession,
+      }),
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
+      mcpServers: [],
+      runRequest: expect.any(Function),
+    });
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: {
+        sessionId: "probe-session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      },
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
       mcpServers: [],
     });
   });

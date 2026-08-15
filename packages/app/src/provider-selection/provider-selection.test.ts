@@ -215,6 +215,24 @@ describe("combined model selector data", () => {
     expect(matchesModelSearch(row, "kimi gemini")).toBe(false);
   });
 
+  it("matches model ids qualified by a thinking option suffix", () => {
+    const row = {
+      favoriteKey: "gjc:openai-codex/gpt-5.5",
+      provider: "gjc",
+      providerLabel: "Gajae Code",
+      modelId: "openai-codex/gpt-5.5",
+      modelLabel: "GPT-5.5",
+      description: "openai-codex/gpt-5.5",
+      thinkingOptions: [
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra high" },
+      ],
+    };
+
+    expect(matchesModelSearch(row, "openai-codex/gpt-5.5:xhigh")).toBe(true);
+    expect(matchesModelSearch(row, "openai-codex/gpt-5.5:max")).toBe(false);
+  });
+
   it("ranks model search results by fuzzy match quality", () => {
     const rows = [
       {

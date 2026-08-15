@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import { z } from "zod";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
@@ -10,6 +11,9 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPNewSessionStarter,
+  type ACPProbeSessionCloser,
+  type SessionStateResponse,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -52,6 +56,11 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  newSessionStarter?: ACPNewSessionStarter;
+  probeSessionCloser?: ACPProbeSessionCloser;
+  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  modeIdTransformer?: (modeId: string) => string | null;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -93,6 +102,15 @@ export class GenericACPAgentClient extends ACPAgentClient {
       ...(options.catalogModelResolver
         ? { catalogModelResolver: options.catalogModelResolver }
         : {}),
+      ...(options.sessionResponseTransformer
+        ? { sessionResponseTransformer: options.sessionResponseTransformer }
+        : {}),
+      ...(options.configOptionsTransformer
+        ? { configOptionsTransformer: options.configOptionsTransformer }
+        : {}),
+      ...(options.modeIdTransformer ? { modeIdTransformer: options.modeIdTransformer } : {}),
+      ...(options.newSessionStarter ? { newSessionStarter: options.newSessionStarter } : {}),
+      ...(options.probeSessionCloser ? { probeSessionCloser: options.probeSessionCloser } : {}),
     });
 
     this.command = options.command;
