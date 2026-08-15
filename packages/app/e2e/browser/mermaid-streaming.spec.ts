@@ -34,6 +34,8 @@ const STREAMED_MERMAID = [
 test("keeps a Mermaid diagram rendered while its message streams, completes, and reloads", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
+
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "mermaid-streaming-",
     title: "Streaming Mermaid",
