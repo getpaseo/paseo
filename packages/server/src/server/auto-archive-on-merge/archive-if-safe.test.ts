@@ -138,13 +138,10 @@ function createHarness(overrides?: {
     killTerminalsForWorkspace: vi.fn(),
   };
   const log = createLogger();
-  const inFlight = new Set<string>();
-
   return {
     deps,
     getConfig,
     getSnapshot,
-    inFlight,
     log,
     options,
   };
@@ -165,7 +162,6 @@ async function runArchiveIfSafe(
       overrides && "pullRequest" in overrides
         ? (overrides.pullRequest ?? null)
         : createPullRequest(),
-    inFlight: harness.inFlight,
     options: harness.options,
     log: harness.log,
     deps: harness.deps,
@@ -335,7 +331,6 @@ function createRealOutcomeHarness(input: {
   return {
     options,
     log: logger,
-    inFlight: new Set<string>(),
   };
 }
 
@@ -382,17 +377,6 @@ describe("archiveIfSafe", () => {
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
-  test("does nothing when the workspace already has an archive in flight", async () => {
-    const harness = createHarness();
-    harness.inFlight.add("ws-auto-archive");
-
-    await runArchiveIfSafe(harness);
-
-    expect(harness.getSnapshot).not.toHaveBeenCalled();
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-    expect(harness.inFlight.has("ws-auto-archive")).toBe(true);
-  });
-
   test("logs and skips when reading the snapshot fails", async () => {
     const harness = createHarness({
       getSnapshot: async () => {
@@ -407,7 +391,6 @@ describe("archiveIfSafe", () => {
       "Failed to read snapshot for auto-archive; skipping",
     );
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-    expect(harness.inFlight.has("ws-auto-archive")).toBe(false);
   });
 
   test("does nothing when there is no snapshot", async () => {
@@ -478,7 +461,6 @@ describe("archiveIfSafe", () => {
       { err: expect.any(Error), cwd: CWD },
       "Auto-archive after merge failed",
     );
-    expect(harness.inFlight.has("ws-auto-archive")).toBe(false);
   });
 
   test("archives a clean Paseo-owned worktree after merge", async () => {
@@ -506,7 +488,6 @@ describe("archiveIfSafe", () => {
       },
       "Auto-archived worktree after PR merge",
     );
-    expect(harness.inFlight.has("ws-auto-archive")).toBe(false);
   });
 
   test("does not archive a merge event already consumed by this workspace", async () => {
@@ -589,7 +570,6 @@ describe("archiveIfSafe", () => {
       workspaceId: workspaceA,
       cwd: worktree.worktreePath,
       pullRequest: createPullRequest({ isMerged: true }),
-      inFlight: harness.inFlight,
       options: harness.options,
       log: harness.log,
     });
@@ -618,7 +598,6 @@ describe("archiveIfSafe", () => {
       workspaceId: workspaceA,
       cwd: worktree.worktreePath,
       pullRequest: createPullRequest({ isMerged: true }),
-      inFlight: harness.inFlight,
       options: harness.options,
       log: harness.log,
     });

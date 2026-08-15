@@ -83,3 +83,53 @@ test("fans one PR snapshot out to every workspace attached to its exact cwd", as
     { workspaceId: "workspace-b", pullRequest: snapshot.forge.pullRequest },
   ]);
 });
+
+test("serializes the complete fan-out for duplicate merge events on one cwd", async () => {
+  let onSnapshotUpdated: ((snapshot: WorkspaceGitRuntimeSnapshot) => void) | null = null;
+  const snapshot = createSnapshot("/repo/worktree/.");
+  const options = {
+    logger: { child: () => ({ warn: vi.fn() }) } as unknown as Logger,
+    workspaceGitService: {
+      onSnapshotUpdated: (listener: (next: WorkspaceGitRuntimeSnapshot) => void) => {
+        onSnapshotUpdated = listener;
+        return { unsubscribe: vi.fn() };
+      },
+    },
+    listActiveWorkspaces: async () => [
+      { workspaceId: "workspace-a", cwd: "/repo/worktree" },
+      { workspaceId: "workspace-b", cwd: "/repo/worktree/child/.." },
+    ],
+  } as unknown as AutoArchiveOnMergeOptions;
+  const archivedWorkspaceIds: string[] = [];
+  let releaseFirstArchive: (() => void) | null = null;
+  const firstArchivePaused = new Promise<void>((resolvePromise) => {
+    releaseFirstArchive = resolvePromise;
+  });
+  let resolveFinished: (() => void) | null = null;
+  const finished = new Promise<void>((resolvePromise) => {
+    resolveFinished = resolvePromise;
+  });
+  const deps: AutoArchiveOnMergeDependencies = {
+    archiveIfSafe: async (input) => {
+      archivedWorkspaceIds.push(input.workspaceId);
+      if (input.workspaceId === "workspace-a") {
+        await firstArchivePaused;
+      }
+      if (archivedWorkspaceIds.length === 2) resolveFinished?.();
+    },
+    resolvePath: resolve,
+  };
+
+  setupAutoArchiveOnMerge(options, deps);
+  if (!onSnapshotUpdated) throw new Error("Snapshot listener was not registered");
+  onSnapshotUpdated(snapshot);
+  await vi.waitFor(() => expect(archivedWorkspaceIds).toEqual(["workspace-a"]));
+
+  onSnapshotUpdated(createSnapshot("/repo/worktree/child/.."));
+  await Promise.resolve();
+  expect(archivedWorkspaceIds).toEqual(["workspace-a"]);
+
+  releaseFirstArchive?.();
+  await finished;
+  expect(archivedWorkspaceIds).toEqual(["workspace-a", "workspace-b"]);
+});

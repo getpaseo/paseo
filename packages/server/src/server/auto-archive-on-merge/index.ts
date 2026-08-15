@@ -23,11 +23,20 @@ export function setupAutoArchiveOnMerge(
   deps: AutoArchiveOnMergeDependencies = defaultDependencies,
 ): WorkspaceGitSubscription {
   const log = options.logger.child({ module: "auto-archive-on-merge" });
-  const inFlight = new Set<string>();
+  const inFlightCwds = new Set<string>();
 
   return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
+    if (!snapshot.forge.pullRequest?.isMerged) {
+      return;
+    }
+
+    const snapshotCwd = deps.resolvePath(snapshot.cwd);
+    if (inFlightCwds.has(snapshotCwd)) {
+      return;
+    }
+    inFlightCwds.add(snapshotCwd);
+
     void (async () => {
-      const snapshotCwd = deps.resolvePath(snapshot.cwd);
       const attachedWorkspaces = (await options.listActiveWorkspaces()).filter(
         (workspace) => deps.resolvePath(workspace.cwd) === snapshotCwd,
       );
@@ -36,13 +45,16 @@ export function setupAutoArchiveOnMerge(
           workspaceId: workspace.workspaceId,
           cwd: snapshot.cwd,
           pullRequest: snapshot.forge.pullRequest,
-          inFlight,
           options,
           log,
         });
       }
-    })().catch((error) => {
-      log.warn({ err: error, cwd: snapshot.cwd }, "Failed to auto-archive attached workspaces");
-    });
+    })()
+      .catch((error) => {
+        log.warn({ err: error, cwd: snapshot.cwd }, "Failed to auto-archive attached workspaces");
+      })
+      .finally(() => {
+        inFlightCwds.delete(snapshotCwd);
+      });
   });
 }
