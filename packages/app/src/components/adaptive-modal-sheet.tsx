@@ -32,8 +32,8 @@ import {
 } from "@/components/adaptive-modal-sheet-layout";
 import { createControlGeometry } from "@/components/ui/control-geometry";
 import { isNative, isWeb } from "@/constants/platform";
+import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardState } from "react-native-keyboard-controller";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
 // leading icon, search input icon) and any row primitive rendered inside the
@@ -530,7 +530,7 @@ export function AdaptiveModalSheet({
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
-  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const isKeyboardVisible = useKeyboardVisibility();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
