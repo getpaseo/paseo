@@ -1668,6 +1668,63 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("rejects ACP elicitation strings outside the declared length bounds", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const elicitation = session.extMethod("session/elicitation", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Pick a name",
+      requestedSchema: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: { type: "string", minLength: 3, maxLength: 5 },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending elicitation");
+    }
+
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { name: "a" },
+        },
+      }),
+    ).rejects.toThrow("must be at least 3 characters");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { name: "toolong" },
+        },
+      }),
+    ).rejects.toThrow("must be at most 5 characters");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission(pending.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...pending.input,
+        answers: { name: "okay" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: { action: "accept", content: { name: "okay" } },
+    });
+  });
+
   test("accepts MiniMax Code's freeform elicitation and forwards the custom answer", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];

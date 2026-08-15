@@ -4105,7 +4105,7 @@ function parseElicitationAnswer(
   if (field.options.length > 0) {
     return resolveElicitationOptionAnswer(field, answer);
   }
-  return answer;
+  return validateElicitationStringLength(field, answer);
 }
 
 function parseElicitationArrayAnswer(
@@ -4158,18 +4158,35 @@ function resolveElicitationOptionAnswer(
 ): ElicitationContentValue {
   const value = tryResolveElicitationOption(field.options, answer);
   if (value !== undefined) {
-    return value;
+    return typeof value === "string" ? validateElicitationStringLength(field, value) : value;
   }
   if (isElicitationFreeformHint(field.schema.description)) {
     // The description invites a custom response ("Others..."), so the enum is
     // a suggestion rather than a closed set. Forward the raw text the agent
     // explicitly asked for.
-    return answer;
+    return validateElicitationStringLength(field, answer);
   }
   // The schema constrains the answer to the declared options. Returning raw
   // text would deliver content that violates the agent's requested schema;
   // keep the elicitation pending so the user can pick a valid option.
   throw new Error(`ACP elicitation answer for '${field.key}' must be one of the available options`);
+}
+
+function validateElicitationStringLength(field: ElicitationField, answer: string): string {
+  if (field.schema.type !== "string") {
+    return answer;
+  }
+  if (field.schema.minLength != null && answer.length < field.schema.minLength) {
+    throw new Error(
+      `ACP elicitation answer for '${field.key}' must be at least ${field.schema.minLength} characters`,
+    );
+  }
+  if (field.schema.maxLength != null && answer.length > field.schema.maxLength) {
+    throw new Error(
+      `ACP elicitation answer for '${field.key}' must be at most ${field.schema.maxLength} characters`,
+    );
+  }
+  return answer;
 }
 
 function tryResolveElicitationOption(
