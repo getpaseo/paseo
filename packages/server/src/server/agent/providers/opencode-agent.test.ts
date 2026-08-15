@@ -3183,6 +3183,65 @@ describe("OpenCode adapter startTurn error handling", () => {
     await parent.close();
   });
 
+  test("preserves the last child status when both recovery snapshots fail", async () => {
+    const parentId = "ses_parent_unknown_child_recovery";
+    const childId = "ses_child_unknown_recovery";
+    const { parent, openCode } = await createParentSession(parentId);
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+    await vi.waitFor(() => expect(openCode.calls.sessionChildren).toHaveLength(1));
+
+    openCode.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: childId,
+          parentID: parentId,
+          title: "completed child",
+          directory: "/workspace/child",
+        },
+      },
+    });
+    openCode.emitEvent({
+      type: "session.idle",
+      properties: { sessionID: childId },
+    });
+    await vi.waitFor(() => expect(countChildStatuses(events, "completed", childId)).toBe(1));
+
+    openCode.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: childId,
+            parentID: parentId,
+            title: "completed child",
+            directory: "/workspace/child",
+          },
+        ],
+      },
+      { data: [] },
+    ];
+    openCode.sessionStatusImplementation = async () => {
+      throw new Error("child status unavailable");
+    };
+    openCode.sessionMessagesImplementation = async () => {
+      throw new Error("child messages unavailable");
+    };
+
+    openCode.emitEvent({ type: "reconnected" });
+    await vi.waitFor(() => expect(openCode.calls.sessionMessages).toHaveLength(1));
+    const recoveredStatuses = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === childId &&
+      event.event.status
+        ? [event.event.status]
+        : [],
+    );
+    expect(recoveredStatuses).toEqual(["running", "completed"]);
+    await parent.close();
+  });
+
   test("settles stopping state when the OpenCode process exits", async () => {
     vi.useFakeTimers();
     const { parent: session, openCode } = await createParentSession("ses_exit_while_stopping");

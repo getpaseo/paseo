@@ -170,7 +170,6 @@ function recoverChildStatus(snapshot: boolean, type: unknown, assistant?: OpenCo
   if (assistant && "error" in assistant.info && assistant.info.error) return "failed";
   const time = assistant?.info.time;
   if (snapshot || (time && "completed" in time && time.completed !== undefined)) return "completed";
-  return "running";
 }
 
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
@@ -2299,7 +2298,7 @@ function appendOpenCodeChildSessionDetected(
   child: OpenCodeChildSessionInfo,
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
-  status: "running" | "completed" = "running",
+  status: "running" | "completed" | null = "running",
 ): boolean {
   if (
     child.id === state.sessionId ||
@@ -2334,7 +2333,7 @@ function appendOpenCodeChildSessionDetected(
       id: child.id,
       ...(title ? { title } : {}),
       ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
-      status,
+      ...(status ? { status } : {}),
       ...(child.directory ? { cwd: child.directory } : {}),
       ...(subtitle ? { subtitle } : {}),
     },
@@ -3842,18 +3841,19 @@ class OpenCodeAgentSession implements AgentSession {
     const snapshot = statusesByDirectory.get(directory) ?? null;
     const status = readOpenCodeRecord(snapshot?.[child.id]);
     const active = snapshot === null || status?.type === "busy" || status?.type === "retry";
+    const detectedStatus = active ? "running" : "completed";
     const detectionEvents: AgentStreamEvent[] = [];
     appendOpenCodeChildSessionDetected(
       child,
       this.createTranslationState(),
       detectionEvents,
-      recovered || active ? "running" : "completed",
+      recovered ? null : detectedStatus,
     );
     for (const event of detectionEvents) {
       this.recordProviderInternalEvent(event);
       this.notifySubscribers(event, null);
     }
-    let messages: OpenCodeSessionMessage[] = [];
+    let messages: OpenCodeSessionMessage[] | null = null;
     try {
       messages = await this.hydrateChildSessionTimeline(child, recovered);
     } catch (error) {
@@ -3863,8 +3863,9 @@ class OpenCodeAgentSession implements AgentSession {
       );
     }
     if (!recovered) return;
-    const latestAssistant = messages.findLast((message) => message.info.role === "assistant");
+    const latestAssistant = messages?.findLast((message) => message.info.role === "assistant");
     const recoveredStatus = recoverChildStatus(snapshot !== null, status?.type, latestAssistant);
+    if (!recoveredStatus) return;
     const statusEvent: AgentStreamEvent = {
       type: "provider_subagent",
       provider: "opencode",
