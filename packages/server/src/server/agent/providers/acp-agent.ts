@@ -413,6 +413,7 @@ export interface ACPNewSessionStarterContext {
   runRequest: <T>(request: () => Promise<T>) => Promise<T>;
   registerProbeSession?: (response: SessionStateResponse) => void;
   signal?: AbortSignal;
+  launchEnv?: Record<string, string>;
 }
 
 export type ACPNewSessionStarter = (
@@ -423,6 +424,7 @@ export interface ACPProbeSessionCloserContext {
   response: SessionStateResponse;
   config: AgentSessionConfig;
   mcpServers: McpServer[];
+  launchEnv?: Record<string, string>;
 }
 
 export type ACPProbeSessionCloser = (context: ACPProbeSessionCloserContext) => Promise<void>;
@@ -1782,6 +1784,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             config: this.config,
             mcpServers,
             runRequest: (request) => this.runACPRequest(request),
+            launchEnv: this.launchEnv,
           })
         : await this.runACPRequest(() =>
             this.connection!.newSession({
@@ -1793,6 +1796,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         response,
         config: this.config,
         mcpServers,
+        launchEnv: this.launchEnv,
       };
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;

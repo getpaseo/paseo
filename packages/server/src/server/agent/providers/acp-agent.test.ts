@@ -3964,6 +3964,9 @@ describe("ACPAgentSession initialization cleanup", () => {
         newSessionStarter,
         newSessionFailureCloser,
         thinkingOptionWriter,
+        launchEnv: {
+          PASEO_AGENT_ID: "agent-1",
+        },
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
@@ -3980,6 +3983,9 @@ describe("ACPAgentSession initialization cleanup", () => {
         provider: "gjc",
         cwd: "/tmp/paseo-acp-test",
         thinkingOptionId: "xhigh",
+      },
+      launchEnv: {
+        PASEO_AGENT_ID: "agent-1",
       },
       mcpServers: [],
     });

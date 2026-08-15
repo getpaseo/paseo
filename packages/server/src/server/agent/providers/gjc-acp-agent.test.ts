@@ -474,6 +474,7 @@ describe("GjcACPAgentClient", () => {
         timeout: 130_000,
         maxBuffer: 1024 * 1024,
         encoding: "utf8",
+        signal: undefined,
       }),
     );
     const args = execFile.mock.calls[0]![1];
@@ -529,6 +530,9 @@ describe("GjcACPAgentClient", () => {
     const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
     const starter = createGjcACPNewSessionStarter({
       command: ["gjc", "acp"],
+      env: {
+        GJC_LOG: "debug",
+      },
       execFile,
     });
 
@@ -543,10 +547,20 @@ describe("GjcACPAgentClient", () => {
         },
         mcpServers: [],
         runRequest,
+        launchEnv: {
+          GJC_LOG: "trace",
+          PASEO_AGENT_ID: "agent-1",
+        },
       }),
     ).rejects.toThrow("load failed");
 
     expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile.mock.calls[0]![2].env).toEqual(
+      expect.objectContaining({
+        GJC_LOG: "trace",
+        PASEO_AGENT_ID: "agent-1",
+      }),
+    );
     expect(execFile.mock.calls[1]![1]).toEqual([
       "sdk",
       "session",
@@ -562,6 +576,65 @@ describe("GjcACPAgentClient", () => {
       "--repo",
       "/repo",
     ]);
+    expect(execFile.mock.calls[1]![2].env).toEqual(
+      expect.objectContaining({
+        GJC_LOG: "trace",
+        PASEO_AGENT_ID: "agent-1",
+      }),
+    );
+  });
+
+  test("surfaces session.close failures when ACP load fails", async () => {
+    const loadError = new Error("load failed");
+    const closeError = new Error("close failed");
+    const execFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            sessionId: "gjc-session-1",
+          },
+        }),
+        stderr: "",
+      })
+      .mockRejectedValueOnce(closeError);
+    const loadSession = vi.fn().mockRejectedValue(loadError);
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+    });
+
+    let thrown: unknown;
+    try {
+      await starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe(
+      "GJC lifecycle session.load failed and session.close failed: load failed; cleanup: GJC lifecycle session.close failed: close failed",
+    );
+    expect((thrown as AggregateError).errors).toEqual([
+      loadError,
+      expect.objectContaining({
+        cause: closeError,
+        message: "GJC lifecycle session.close failed: close failed",
+      }),
+    ]);
+    expect(execFile).toHaveBeenCalledTimes(2);
   });
 
   test("closes a gjc lifecycle session when startup is aborted after create", async () => {
@@ -778,6 +851,10 @@ describe("GjcACPAgentClient", () => {
         provider: "gjc",
         cwd: "/repo",
       },
+      launchEnv: {
+        GJC_LOG: "trace",
+        PASEO_AGENT_ID: "agent-1",
+      },
       mcpServers: [],
     });
 
@@ -801,7 +878,8 @@ describe("GjcACPAgentClient", () => {
       expect.objectContaining({
         cwd: "/repo",
         env: expect.objectContaining({
-          GJC_LOG: "debug",
+          GJC_LOG: "trace",
+          PASEO_AGENT_ID: "agent-1",
         }),
         timeout: 30_000,
         maxBuffer: 1024 * 1024,

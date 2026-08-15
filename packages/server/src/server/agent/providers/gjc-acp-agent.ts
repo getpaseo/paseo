@@ -20,6 +20,7 @@ import type {
   SessionStateResponse,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { createProviderEnv } from "../provider-launch-config.js";
 
 interface GjcACPAgentClientOptions {
   logger: Logger;
@@ -180,7 +181,15 @@ export function createGjcACPNewSessionStarter(options: {
 }): ACPNewSessionStarter {
   const runExecFile = options.execFile ?? execFile;
 
-  return async ({ connection, config, mcpServers, runRequest, registerProbeSession, signal }) => {
+  return async ({
+    connection,
+    config,
+    mcpServers,
+    runRequest,
+    registerProbeSession,
+    signal,
+    launchEnv,
+  }) => {
     const lifecycleInput: GjcLifecycleCreateInput = {
       cwd: config.cwd,
       target: {
@@ -204,10 +213,7 @@ export function createGjcACPNewSessionStarter(options: {
           );
           return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
             cwd: config.cwd,
-            env: {
-              ...process.env,
-              ...options.env,
-            },
+            env: buildGjcLifecycleEnv(options.env, launchEnv),
             timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
             maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
             encoding: "utf8",
@@ -231,6 +237,7 @@ export function createGjcACPNewSessionStarter(options: {
         await closeGjcLifecycleSession({
           command: options.command,
           env: options.env,
+          launchEnv,
           execFile: runExecFile,
           cwd: config.cwd,
           sessionId: createResult.sessionId,
@@ -259,13 +266,27 @@ export function createGjcACPNewSessionStarter(options: {
     }
     const abortError = getGjcLifecycleAbortError(signal);
     if (abortError) {
-      await closeGjcLifecycleSession({
-        command: options.command,
-        env: options.env,
-        execFile: runExecFile,
-        cwd: config.cwd,
-        sessionId: createResult.sessionId,
-      }).catch(() => undefined);
+      let closeError: unknown;
+      try {
+        await closeGjcLifecycleSession({
+          command: options.command,
+          env: options.env,
+          launchEnv,
+          execFile: runExecFile,
+          cwd: config.cwd,
+          sessionId: createResult.sessionId,
+        });
+      } catch (error) {
+        closeError = error;
+      }
+      if (closeError) {
+        throw new AggregateError(
+          [abortError, closeError],
+          `GJC lifecycle session startup cancelled and session.close failed: ${formatGjcExecError(
+            abortError,
+          )}; cleanup: ${formatGjcExecError(closeError)}`,
+        );
+      }
       throw abortError;
     }
     registerProbeSession?.({ sessionId: createResult.sessionId });
@@ -280,13 +301,29 @@ export function createGjcACPNewSessionStarter(options: {
         }),
       );
     } catch (error) {
-      await closeGjcLifecycleSession({
-        command: options.command,
-        env: options.env,
-        execFile: runExecFile,
-        cwd: config.cwd,
-        sessionId: createResult.sessionId,
-      }).catch(() => undefined);
+      let closeError: unknown;
+      try {
+        await closeGjcLifecycleSession({
+          command: options.command,
+          env: options.env,
+          launchEnv,
+          execFile: runExecFile,
+          cwd: config.cwd,
+          sessionId: createResult.sessionId,
+        });
+      } catch (cleanupError) {
+        closeError = cleanupError;
+      }
+      if (closeError) {
+        const loadAndCloseError = new AggregateError(
+          [error, closeError],
+          `GJC lifecycle session.load failed and session.close failed: ${formatGjcExecError(
+            error,
+          )}; cleanup: ${formatGjcExecError(closeError)}`,
+          { cause: error },
+        );
+        throw loadAndCloseError;
+      }
       throw error;
     }
     return {
@@ -303,7 +340,7 @@ export function createGjcACPProbeSessionCloser(options: {
 }): ACPProbeSessionCloser {
   const runExecFile = options.execFile ?? execFile;
 
-  return async ({ response, config }) => {
+  return async ({ response, config, launchEnv }) => {
     const sessionId = getSessionStateResponseId(response);
     if (!sessionId) {
       throw new Error("GJC probe session did not expose a session id");
@@ -311,6 +348,7 @@ export function createGjcACPProbeSessionCloser(options: {
     await closeGjcLifecycleSession({
       command: options.command,
       env: options.env,
+      launchEnv,
       execFile: runExecFile,
       cwd: config.cwd,
       sessionId,
@@ -408,6 +446,7 @@ async function withGjcJsonInputFile<T>(
 async function closeGjcLifecycleSession(options: {
   command: [string, ...string[]];
   env?: Record<string, string>;
+  launchEnv?: Record<string, string>;
   execFile: GjcExecFile;
   cwd: string;
   sessionId: string;
@@ -420,10 +459,7 @@ async function closeGjcLifecycleSession(options: {
   try {
     const { stdout } = await options.execFile(lifecycleCommand.command, lifecycleCommand.args, {
       cwd: options.cwd,
-      env: {
-        ...process.env,
-        ...options.env,
-      },
+      env: buildGjcLifecycleEnv(options.env, options.launchEnv),
       timeout: GJC_ACP_RAW_CLOSE_TIMEOUT_MS,
       maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
       encoding: "utf8",
@@ -434,6 +470,15 @@ async function closeGjcLifecycleSession(options: {
       cause: error,
     });
   }
+}
+
+function buildGjcLifecycleEnv(
+  providerEnv: Record<string, string> | undefined,
+  launchEnv: Record<string, string> | undefined,
+): NodeJS.ProcessEnv {
+  return createProviderEnv({
+    overlays: [providerEnv, launchEnv],
+  });
 }
 
 function isGjcUnsupportedHostLifecycleMode(modeId: string): boolean {
