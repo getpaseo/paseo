@@ -474,19 +474,60 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("ignores Pi RPC fire-and-forget extension UI requests", async () => {
-    const { pi } = await createSession();
+  test("surfaces Pi fire-and-forget notify requests as timeline notifications", async () => {
+    const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
     fakeSession.emit({
       type: "extension_ui_request",
       id: "notify-1",
       method: "notify",
-      message: "hello",
+      message: "Search finished",
+      notifyType: "info",
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-2",
+      method: "notify",
+      message: "Command blocked by user",
+      notifyType: "warning",
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-3",
+      method: "notify",
+      message: "no type",
     });
 
     expect(fakeSession.extensionUiResponses).toEqual([]);
     expect(fakeSession.canceledExtensionUiRequests).toEqual([]);
+    expect(events.timelineItems()).toEqual([
+      { type: "notification", text: "Search finished", level: "info" },
+      { type: "notification", text: "Command blocked by user", level: "warning" },
+      { type: "notification", text: "no type" },
+    ]);
+
+    await session.close();
+  });
+
+  test("surfaces Pi notify requests emitted during an active turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "notify-live",
+      method: "notify",
+      message: "Turn running notice",
+      notifyType: "error",
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "notification", text: "Turn running notice", level: "error" },
+    ]);
+
+    await session.close();
   });
 
   test("streams assistant text, reasoning, and tool calls from Pi events", async () => {
@@ -1230,7 +1271,7 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnCompletedEvents()).toHaveLength(1);
   });
 
-  test("probes slash prompts without agentInvoked and surfaces buffered notify output", async () => {
+  test("probes slash prompts without agentInvoked and surfaces notify output immediately", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -1246,13 +1287,13 @@ describe("PiRpcAgentSession", () => {
     const completion = await events.nextTurnCompletion();
     expect(completion).toMatchObject({ type: "turn_completed", turnId });
     expect(events.timelineAndCompletionEvents()).toEqual([
+      { type: "timeline", item: { type: "notification", text: "Plan mode enabled" } },
       { type: "timeline", item: { type: "user_message", text: "/plan on" } },
-      { type: "timeline", item: { type: "assistant_message", text: "Plan mode enabled" } },
       { type: "turn_completed" },
     ]);
   });
 
-  test("does not synthesize completion when lifecycle starts before the no-turn probe", async () => {
+  test("surfaces notify requests immediately even when the turn has started", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
 
@@ -1261,13 +1302,15 @@ describe("PiRpcAgentSession", () => {
       type: "extension_ui_request",
       id: "notify-buffered",
       method: "notify",
-      message: "Should not appear after turn starts",
+      message: "Shown despite turn start",
     });
     fakeSession.emit({ type: "agent_start" });
 
     await flushTurnScheduling();
     expect(events.turnCompletedEvents()).toHaveLength(0);
-    expect(events.timelineItems()).toEqual([]);
+    expect(events.timelineItems()).toEqual([
+      { type: "notification", text: "Shown despite turn start" },
+    ]);
 
     fakeSession.finishTurn();
     await flushTurnScheduling();

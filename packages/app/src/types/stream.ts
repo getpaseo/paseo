@@ -741,7 +741,7 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
-type ActivityLogType = "system" | "info" | "success" | "error";
+type ActivityLogType = "system" | "info" | "success" | "warning" | "error";
 
 export interface ActivityLogItem {
   kind: "activity_log";
@@ -1394,6 +1394,16 @@ function reduceTimelineCompaction(
   return [...state, compaction];
 }
 
+function toActivityLogType(level: "info" | "warning" | "error" | undefined): ActivityLogType {
+  if (level === "warning") {
+    return "warning";
+  }
+  if (level === "error") {
+    return "error";
+  }
+  return "info";
+}
+
 function reduceTimelineEvent(
   state: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
@@ -1454,6 +1464,17 @@ function reduceTimelineEvent(
         timestamp,
         activityType: "error",
         message: item.message ?? "Unknown error",
+      };
+      return finalizeActiveThoughts(appendActivityLog(state, activity));
+    }
+    case "notification": {
+      const activity: ActivityLogItem = {
+        kind: "activity_log",
+        id: createTimelineId("notification", item.text ?? "", timestamp),
+        ...(timelineCursor ? { timelineCursor } : {}),
+        timestamp,
+        activityType: toActivityLogType(item.level),
+        message: item.text ?? "",
       };
       return finalizeActiveThoughts(appendActivityLog(state, activity));
     }

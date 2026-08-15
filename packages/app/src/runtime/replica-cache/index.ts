@@ -82,7 +82,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("activity_log"),
-    activityType: z.enum(["system", "info", "success", "error"]),
+    activityType: z.enum(["system", "info", "success", "warning", "error"]),
     message: z.string(),
   }),
   z.strictObject({

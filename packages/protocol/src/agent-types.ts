@@ -354,6 +354,12 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
+  | {
+      type: "notification";
+      text: string;
+      // Provider-side notification level; falls back to "info" when absent.
+      level?: "info" | "warning" | "error";
+    }
   | CompactionTimelineItem;
 
 export type AgentStreamEvent =

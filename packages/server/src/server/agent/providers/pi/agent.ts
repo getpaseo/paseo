@@ -863,6 +863,13 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function toNotificationLevel(value: unknown): "info" | "warning" | "error" | null {
+  if (value === "info" || value === "warning" || value === "error") {
+    return value;
+  }
+  return null;
+}
+
 function parseExtensionMarkerPayload(
   message: string,
   marker: string,
@@ -1926,7 +1933,18 @@ export class PiRpcAgentSession implements AgentSession {
       ) {
         return;
       }
-      this.bufferNoTurnOutput(message);
+      const level = toNotificationLevel(event.notifyType);
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: this.currentTurnIdForEvent(),
+        item: {
+          type: "notification",
+          text: message,
+          ...(level ? { level } : {}),
+        },
+      });
+      return;
     }
 
     if (this.respondToCombinedAskUserFollowUp(event)) {

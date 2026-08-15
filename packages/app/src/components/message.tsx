@@ -1989,7 +1989,7 @@ export const SpeakMessage = memo(function SpeakMessage({
 });
 
 interface ActivityLogProps {
-  type: "system" | "info" | "success" | "error" | "artifact";
+  type: "system" | "info" | "success" | "warning" | "error" | "artifact";
   message: string;
   timestamp: number;
   metadata?: Record<string, unknown>;
@@ -2019,6 +2019,9 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
   },
   successBg: {
     backgroundColor: "rgba(20, 83, 45, 0.3)",
+  },
+  warningBg: {
+    backgroundColor: "rgba(113, 63, 18, 0.3)",
   },
   errorBg: {},
   artifactBg: {
@@ -2097,6 +2100,11 @@ export const ActivityLog = memo(function ActivityLog({
       bg: activityLogStylesheet.successBg,
       color: "#4ade80",
       Icon: CheckCircle,
+    },
+    warning: {
+      bg: activityLogStylesheet.warningBg,
+      color: "#fbbf24",
+      Icon: TriangleAlertIcon,
     },
     error: {
       bg: activityLogStylesheet.errorBg,
