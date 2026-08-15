@@ -2716,7 +2716,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
     const commandEnvOverlays =
-      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
+      terminalCommand.shell === false
+        ? [this.launchEnv, env, createStringCommandShellEnvOverlay()]
+        : [this.launchEnv, env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({

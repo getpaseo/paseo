@@ -699,6 +699,51 @@ describe("ACPAgentSession terminal tools", () => {
     );
   });
 
+  test("includes launch env in delegated terminal commands", async () => {
+    const child = createTerminalChildStub();
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const session = new ACPAgentSession(
+      {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "gjc",
+        logger: createTestLogger(),
+        defaultCommand: ["gjc", "acp"],
+        defaultModes: [],
+        launchEnv: {
+          GJC_SESSION_TOKEN: "launch-token",
+          PASEO_AGENT_ID: "agent-1",
+        },
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+      },
+    );
+
+    await session.createTerminal({
+      sessionId: "session-1",
+      command: "node",
+      args: ["script.js"],
+      cwd: "/repo",
+      env: [{ name: "GJC_SESSION_TOKEN", value: "request-token" }],
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "node",
+      ["script.js"],
+      expect.objectContaining({
+        cwd: "/repo",
+        envOverlay: expect.objectContaining({
+          GJC_SESSION_TOKEN: "request-token",
+          PASEO_AGENT_ID: "agent-1",
+        }),
+      }),
+    );
+  });
+
   test("surfaces spawn errors through terminal output and waitForTerminalExit", async () => {
     const child = createTerminalChildStub();
     vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
