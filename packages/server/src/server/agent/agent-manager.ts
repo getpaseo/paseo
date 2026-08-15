@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { Dir, Stats } from "node:fs";
+import { opendir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { stat } from "node:fs/promises";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
@@ -131,6 +132,11 @@ interface PreparedSessionConfig {
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
   env?: Record<string, string>;
+}
+
+interface AgentManagerFileSystem {
+  stat(path: string): Promise<Stats>;
+  opendir(path: string): Promise<Dir>;
 }
 
 interface TimeoutOptions {
@@ -278,6 +284,7 @@ export interface AgentManagerOptions {
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
+  fileSystem?: AgentManagerFileSystem;
   logger: Logger;
 }
 
@@ -665,6 +672,7 @@ export class AgentManager {
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
+  private readonly fileSystem: AgentManagerFileSystem;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private acceptingAgentRegistrations = true;
 
@@ -679,6 +687,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.fileSystem = options.fileSystem ?? { stat, opendir };
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -4452,17 +4461,29 @@ export class AgentManager {
     if (normalized.cwd) {
       normalized.cwd = resolve(normalized.cwd);
       try {
-        const cwdStats = await stat(normalized.cwd);
+        const cwdStats = await this.fileSystem.stat(normalized.cwd);
         if (!cwdStats.isDirectory()) {
           throw new Error(`Working directory is not a directory: ${normalized.cwd}`);
         }
+        const cwdHandle = await this.fileSystem.opendir(normalized.cwd);
+        try {
+          await cwdHandle.read();
+        } finally {
+          await cwdHandle.close();
+        }
       } catch (error) {
-        if (
-          error instanceof Error &&
-          "code" in error &&
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-        ) {
+        const errorCode =
+          error instanceof Error && "code" in error
+            ? (error as NodeJS.ErrnoException).code
+            : undefined;
+        if (errorCode === "ENOENT") {
           throw new Error(`Working directory does not exist: ${normalized.cwd}`, { cause: error });
+        }
+        if (["EACCES", "EPERM"].includes(errorCode ?? "")) {
+          throw new Error(
+            `The Paseo daemon needs access to the folder "${normalized.cwd}". Grant access and try again.`,
+            { cause: error },
+          );
         }
         if (error instanceof Error) {
           throw error;

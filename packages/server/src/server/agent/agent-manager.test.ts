@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -2374,24 +2375,93 @@ test("createAgent fails when cwd does not exist", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
   const manager = new AgentManager({
     clients: {
-      codex: new TestAgentClient(),
+      codex: client,
     },
     registry: storage,
     logger,
   });
+  const missingPath = join(workdir, "does-not-exist");
 
-  await expect(
-    manager.createAgent(
-      {
-        provider: "codex",
-        cwd: join(workdir, "does-not-exist"),
+  try {
+    await expect(
+      manager.createAgent(
+        {
+          provider: "codex",
+          cwd: missingPath,
+        },
+        undefined,
+        { workspaceId: undefined },
+      ),
+    ).rejects.toThrow(`Working directory does not exist: ${missingPath}`);
+    expect(client.createdConfigs).toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent fails when cwd is not a directory", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const filePath = join(workdir, "file.txt");
+  writeFileSync(filePath, "not a directory");
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: filePath }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow(`Working directory is not a directory: ${filePath}`);
+    expect(client.createdConfigs).toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent reports denied cwd access before provider work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const openedPaths: string[] = [];
+  class AccessDeniedClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+  }
+  const client = new AccessDeniedClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    fileSystem: {
+      stat,
+      async opendir(path) {
+        openedPaths.push(path);
+        throw Object.assign(new Error("Operation not permitted"), { code: "EPERM" });
       },
-      undefined,
-      { workspaceId: undefined },
-    ),
-  ).rejects.toThrow("Working directory does not exist");
+    },
+    logger,
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow(
+      `The Paseo daemon needs access to the folder "${workdir}". Grant access and try again.`,
+    );
+    expect(openedPaths).toEqual([workdir]);
+    expect(client.fetchCatalogCalls).toBe(0);
+    expect(client.createdConfigs).toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent reports configured providers when provider is unknown", async () => {
