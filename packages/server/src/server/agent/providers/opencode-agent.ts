@@ -155,14 +155,11 @@ const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
 const OPENCODE_STOP_STATUS_MAX_DELAY_MS = 1_000;
 
-function waitForOpenCodeRetryDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+function waitForOpenCodeStopProbe(delayMs: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(handle);
-      reject(signal.reason);
-    };
-    const handle = setTimeout(() => {
+    const onAbort = () => reject(signal.reason);
+    setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, delayMs);
@@ -3266,6 +3263,7 @@ class OpenCodeAgentSession implements AgentSession {
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => Promise<void>) | null;
   private ingress = Promise.resolve();
+  private gapRepairRevision = 0;
   private recoveryAbortController = new AbortController();
   private unsubscribeEvents: (() => void) | null = null;
   private closed = false;
@@ -3438,9 +3436,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async waitUntilProviderIdle(): Promise<void> {
-    if (this.turnState.status !== "stopping") {
-      return;
-    }
+    if (this.turnState.status !== "stopping") return;
     await withTimeout(
       this.observeProviderStopBoundary(this.turnState.stop),
       OPENCODE_PENDING_ABORT_START_TIMEOUT_MS,
@@ -3453,13 +3449,11 @@ class OpenCodeAgentSession implements AgentSession {
     while (this.isStopping(stop)) {
       const boundary = await Promise.race([
         stop.terminal.promise.then(() => "terminal" as const),
-        waitForOpenCodeRetryDelay(delayMs, this.recoveryAbortController.signal).then(
+        waitForOpenCodeStopProbe(delayMs, this.recoveryAbortController.signal).then(
           () => "probe" as const,
         ),
       ]);
-      if (boundary === "terminal") {
-        return;
-      }
+      if (boundary === "terminal") return;
       await this.reconcileStopWithProviderStatus(stop);
       delayMs = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
     }
@@ -4024,7 +4018,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async consumeEventSourceInput(input: OpenCodeEventSourceInput): Promise<void> {
     if ("type" in input && input.type === "reconnected") {
-      await this.reconcileAfterGap();
+      await this.reconcileAfterGap(++this.gapRepairRevision);
       return;
     }
     if ("type" in input && input.type === "server-exited") {
@@ -4041,91 +4035,99 @@ class OpenCodeAgentSession implements AgentSession {
     await this.consumeOpenCodeStreamEvent({ rawEvent: input, eventCount: 0 });
   }
 
-  private async reconcileAfterGap(): Promise<void> {
-    await this.hydrateChildSessions(true).catch(() => undefined);
-    await this.reconcileBlockingRequests();
-    let delayMs = 100;
-    while (!this.closed && !this.recoveryAbortController.signal.aborted) {
-      const turnId = this.activeForegroundTurnId;
-      if (!turnId) return;
-      const runnerStatus = await this.readProviderRunnerStatus().catch(() => null);
-      if (runnerStatus !== null) {
-        if (this.activeDispatchMessageId === null) {
-          if (runnerStatus === "idle") {
-            this.suppressAssistantMessagesUntilIdle.active = false;
-            this.finishForegroundTurn({ type: "turn_completed", provider: "opencode" }, turnId);
-          }
-          return;
-        }
-        const messages = await readOpenCodeSessionMessagesFromSdk(
-          this.client,
-          { id: this.sessionId, directory: this.config.cwd } as OpenCodePersistedSession,
-          this.recoveryAbortController.signal,
-        ).catch(() => null);
-        if (messages === null) {
-          await waitForOpenCodeRetryDelay(delayMs, this.recoveryAbortController.signal);
-          delayMs = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
-          continue;
-        }
-        const boundary = messages.findIndex(
-          (message) => message.info.id === this.activeDispatchMessageId,
-        );
-        if (boundary < 0) {
-          if (runnerStatus === "idle") {
-            this.finishForegroundTurn(
-              { type: "turn_failed", provider: "opencode", error: "Active dispatch not found" },
-              turnId,
-            );
-          }
-          return;
-        }
-        for (const message of messages.slice(boundary)) {
-          await this.consumeOpenCodeStreamEvent({
-            rawEvent: {
-              directory: this.config.cwd,
-              payload: { type: "message.updated", properties: { info: message.info } },
-            },
-            eventCount: 0,
-          });
-          for (const part of message.parts) {
-            await this.consumeOpenCodeStreamEvent({
-              rawEvent: {
-                directory: this.config.cwd,
-                payload: { type: "message.part.updated", properties: { part } },
-              },
-              eventCount: 0,
-            });
-          }
-        }
-        if (runnerStatus === "idle" && this.activeForegroundTurnId === turnId) {
-          const latestAssistant = messages
-            .slice(boundary)
-            .findLast((message) => message.info.role === "assistant");
-          const persistedError =
-            latestAssistant && "error" in latestAssistant.info
-              ? latestAssistant.info.error
-              : undefined;
-          await this.consumeOpenCodeStreamEvent({
-            rawEvent: {
-              directory: this.config.cwd,
-              payload: persistedError
-                ? {
-                    type: "session.error",
-                    properties: { sessionID: this.sessionId, error: persistedError },
-                  }
-                : {
-                    type: "session.status",
-                    properties: { sessionID: this.sessionId, status: { type: "idle" } },
-                  },
-            },
-            eventCount: 0,
-          });
+  private async reconcileAfterGap(revision: number, refresh = true, delay = 100): Promise<void> {
+    if (refresh) {
+      await this.hydrateChildSessions(true).catch(() => undefined);
+      await this.reconcileBlockingRequests();
+    }
+    const turnId = this.activeForegroundTurnId;
+    if (!turnId) return;
+    const runnerStatus = await this.readProviderRunnerStatus().catch(() => null);
+    if (runnerStatus !== null) {
+      if (this.activeDispatchMessageId === null) {
+        if (runnerStatus === "idle") {
+          this.suppressAssistantMessagesUntilIdle.active = false;
+          this.finishForegroundTurn({ type: "turn_completed", provider: "opencode" }, turnId);
         }
         return;
       }
-      await waitForOpenCodeRetryDelay(delayMs, this.recoveryAbortController.signal);
-      delayMs = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
+      const messages = await readOpenCodeSessionMessagesFromSdk(
+        this.client,
+        { id: this.sessionId, directory: this.config.cwd } as OpenCodePersistedSession,
+        this.recoveryAbortController.signal,
+      ).catch(() => null);
+      if (messages === null) {
+        this.scheduleGapRepair(revision, delay);
+        return;
+      }
+      const boundary = messages.findIndex(
+        (message) => message.info.id === this.activeDispatchMessageId,
+      );
+      if (boundary < 0) {
+        if (runnerStatus === "idle") {
+          this.finishForegroundTurn(
+            { type: "turn_failed", provider: "opencode", error: "Active dispatch not found" },
+            turnId,
+          );
+        }
+        return;
+      }
+      for (const message of messages.slice(boundary)) {
+        await this.consumeOpenCodeStreamEvent({
+          rawEvent: {
+            directory: this.config.cwd,
+            payload: { type: "message.updated", properties: { info: message.info } },
+          },
+          eventCount: 0,
+        });
+        for (const part of message.parts) {
+          await this.consumeOpenCodeStreamEvent({
+            rawEvent: {
+              directory: this.config.cwd,
+              payload: { type: "message.part.updated", properties: { part } },
+            },
+            eventCount: 0,
+          });
+        }
+      }
+      if (runnerStatus === "idle" && this.activeForegroundTurnId === turnId) {
+        const latestAssistant = messages
+          .slice(boundary)
+          .findLast((message) => message.info.role === "assistant");
+        const persistedError =
+          latestAssistant && "error" in latestAssistant.info
+            ? latestAssistant.info.error
+            : undefined;
+        await this.consumeOpenCodeStreamEvent({
+          rawEvent: {
+            directory: this.config.cwd,
+            payload: persistedError
+              ? {
+                  type: "session.error",
+                  properties: { sessionID: this.sessionId, error: persistedError },
+                }
+              : {
+                  type: "session.status",
+                  properties: { sessionID: this.sessionId, status: { type: "idle" } },
+                },
+          },
+          eventCount: 0,
+        });
+      }
+      return;
     }
+    this.scheduleGapRepair(revision, delay);
+  }
+
+  private scheduleGapRepair(revision: number, delayMs: number): void {
+    setTimeout(() => {
+      if (revision !== this.gapRepairRevision || this.recoveryAbortController.signal.aborted)
+        return;
+      const nextDelay = Math.min(delayMs * 2, OPENCODE_STOP_STATUS_MAX_DELAY_MS);
+      this.ingress = this.ingress
+        .then(() => this.reconcileAfterGap(revision, false, nextDelay))
+        .catch(() => undefined);
+    }, delayMs).unref();
   }
 
   private async reconcileBlockingRequests(): Promise<void> {

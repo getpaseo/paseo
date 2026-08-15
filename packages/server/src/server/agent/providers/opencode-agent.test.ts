@@ -2843,6 +2843,32 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("lets live terminal events overtake a failed snapshot retry", async () => {
+    vi.useFakeTimers();
+    const { parent: session, openCode } = await createParentSession("ses_live_overtakes_retry");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    openCode.sessionPromptAsyncEvents = [];
+    openCode.sessionStatusImplementation = async () => {
+      throw new Error("snapshot unavailable");
+    };
+
+    try {
+      await session.startTurn("keep live ingress moving");
+      openCode.emitEvent({ type: "reconnected" });
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
+      openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
+      await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(openCode.calls.sessionStatus).toHaveLength(1);
+      expect(countEvents(events, "turn_failed")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("preserves failed blocking-request snapshots and resolves successful empty ones", async () => {
     const { parent: session, openCode } = await createParentSession("ses_request_recovery");
     const events: AgentStreamEvent[] = [];
