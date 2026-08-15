@@ -1,16 +1,13 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type RefObject,
   type ReactNode,
   createElement,
 } from "react";
-import { createPortal } from "react-dom";
 import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   ArrowLeft,
@@ -24,13 +21,11 @@ import {
   Smartphone,
   Tablet,
   Wrench,
-  X,
   type LucideIcon,
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
-import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
@@ -53,7 +48,6 @@ import {
   isElectronRuntime,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
-import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
   type BrowserViewport,
   createFixedBrowserViewport,
@@ -71,6 +65,11 @@ import {
   removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "../resident-webviews";
+import {
+  BrowserElementAnnotationCard,
+  type BrowserElementAnnotation,
+  type BrowserElementSelection,
+} from "./element-annotation-card.electron";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -90,14 +89,6 @@ type ElectronWebview = HTMLElement & {
 type WebTextInput = TextInput & {
   getNativeRef?: () => unknown;
 };
-
-type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted" | "comment"> & {
-  attributes?: Record<string, string>;
-};
-
-interface BrowserElementAnnotation {
-  comment: string;
-}
 
 type DeviceSizeId =
   | "responsive"
@@ -336,24 +327,6 @@ function clearWebviewSelector(webview: ElectronWebview): void {
 interface BrowserAnnotationMarker {
   index: number;
   selector: string;
-}
-
-interface BrowserPaneOverlayFrame {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-function readBrowserPaneOverlayFrame(element: HTMLElement | null): BrowserPaneOverlayFrame | null {
-  if (!element) {
-    return null;
-  }
-  const { left, top, width, height } = element.getBoundingClientRect();
-  if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
-    return null;
-  }
-  return { left, top, width, height };
 }
 
 // Draws numbered badges over annotated elements inside the guest page. The
@@ -1827,130 +1800,6 @@ export function BrowserPane({
   );
 }
 
-function BrowserElementAnnotationCard({
-  clipRef,
-  selection,
-  onSubmit,
-  onCancel,
-}: {
-  clipRef: RefObject<HTMLElement | null>;
-  selection: BrowserElementSelection;
-  onSubmit: (annotation: BrowserElementAnnotation) => void;
-  onCancel: () => void;
-}) {
-  const { t } = useTranslation();
-  const [comment, setComment] = useState("");
-  const [overlayFrame, setOverlayFrame] = useState<BrowserPaneOverlayFrame | null>(null);
-  const commentRef = useRef(comment);
-  commentRef.current = comment;
-
-  useLayoutEffect(() => {
-    const updateFrame = () => {
-      setOverlayFrame(readBrowserPaneOverlayFrame(clipRef.current));
-    };
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateFrame);
-
-    updateFrame();
-    const retryFrame = window.requestAnimationFrame(updateFrame);
-    const clip = clipRef.current;
-    if (clip) {
-      resizeObserver?.observe(clip);
-    }
-    window.addEventListener("resize", updateFrame);
-    window.addEventListener("scroll", updateFrame, true);
-
-    return () => {
-      window.cancelAnimationFrame(retryFrame);
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", updateFrame);
-      window.removeEventListener("scroll", updateFrame, true);
-    };
-  }, [clipRef]);
-
-  const handleSubmit = useCallback(() => {
-    onSubmit({ comment: commentRef.current });
-  }, [onSubmit]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-        return;
-      }
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        event.stopPropagation();
-        handleSubmit();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [handleSubmit, onCancel]);
-
-  const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
-  const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
-
-  if (!overlayFrame) {
-    return null;
-  }
-
-  return createPortal(
-    <View style={[styles.annotationOverlay, overlayFrame]}>
-      <View style={styles.annotationCard}>
-        <View style={styles.annotationHeader}>
-          <Text numberOfLines={1} style={styles.annotationTitle}>
-            {t("workspace.browser.annotate.title")}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.browser.annotate.cancel")}
-            onPress={onCancel}
-            style={styles.annotationCloseButton}
-          >
-            <ThemedCloseIcon size={16} uniProps={iconForegroundMutedMapping} />
-          </Pressable>
-        </View>
-        <Text numberOfLines={1} style={styles.annotationElement}>
-          {elementLabel}
-        </Text>
-        <ThemedAnnotationInput
-          accessibilityLabel={t("workspace.browser.annotate.placeholder")}
-          autoFocus
-          multiline
-          onChangeText={setComment}
-          placeholder={t("workspace.browser.annotate.placeholder")}
-          style={styles.annotationInput}
-          uniProps={annotationInputMapping}
-          value={comment}
-        />
-        <View style={styles.annotationActions}>
-          <Button variant="ghost" size="sm" onPress={onCancel}>
-            {t("workspace.browser.annotate.cancel")}
-          </Button>
-          <Button variant="default" size="sm" onPress={handleSubmit}>
-            {t("workspace.browser.annotate.submit")}
-          </Button>
-        </View>
-      </View>
-    </View>,
-    getOverlayRoot(),
-  );
-}
-
-const ThemedCloseIcon = withUnistyles(X);
-const ThemedAnnotationInput = withUnistyles(TextInput);
-const iconForegroundMutedMapping = (theme: { colors: { foregroundMuted: string } }) => ({
-  color: theme.colors.foregroundMuted,
-});
-const annotationInputMapping = (theme: { colors: { foregroundMuted: string } }) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-});
-
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -2045,72 +1894,6 @@ const styles = StyleSheet.create((theme) => ({
   toolbarTooltipText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.popoverForeground,
-  },
-  annotationOverlay: {
-    position: "absolute",
-    zIndex: OVERLAY_Z.modal,
-    left: 0,
-    top: 0,
-    padding: theme.spacing[3],
-    alignItems: "center",
-    justifyContent: "flex-end",
-    pointerEvents: "none",
-  },
-  annotationCard: {
-    width: "100%",
-    maxWidth: 420,
-    gap: theme.spacing[2],
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    pointerEvents: "auto",
-  },
-  annotationHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  annotationTitle: {
-    flex: 1,
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-    color: theme.colors.foreground,
-  },
-  annotationCloseButton: {
-    width: 24,
-    height: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-  },
-  annotationElement: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    marginBottom: theme.spacing[2],
-  },
-  annotationInput: {
-    minHeight: 64,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    textAlignVertical: "top",
-  },
-  annotationActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
   },
   unavailableState: {
     flex: 1,

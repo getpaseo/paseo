@@ -30,6 +30,15 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function isRectInside(container, content) {
+  return (
+    content.x >= container.x &&
+    content.y >= container.y &&
+    content.x + content.width <= container.x + container.width &&
+    content.y + content.height <= container.y + container.height
+  );
+}
+
 async function reservePort() {
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -683,23 +692,26 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId 
     failures.push("reused loaded browser remains ready for element annotation after remount");
   }
 
+  await page.evaluate(() => window.resizeTo(800, 500));
+  await page.waitForFunction(() => window.innerWidth <= 800 && window.innerHeight <= 500, {
+    timeout: timeoutMs,
+  });
   await clickGuestElement(page, client, browserId, "#bridge-target");
+  const annotationCard = originalDeck.getByTestId("browser-element-annotation-card");
   const annotationInput = originalDeck.getByPlaceholder("Message to the agent about this element…");
+  await annotationCard.waitFor({ state: "visible", timeout: timeoutMs });
   await annotationInput.waitFor({ state: "visible", timeout: timeoutMs });
+  const annotationCardBounds = await annotationCard.boundingBox();
   const annotationInputBounds = await annotationInput.boundingBox();
   const browserClipBounds = await originalDeck
     .getByTestId(`browser-webview-clip-${browserId}`)
     .boundingBox();
+  assert(annotationCardBounds, "Element annotation card had no bounds");
   assert(annotationInputBounds, "Element annotation input had no bounds");
   assert(browserClipBounds, "Browser pane had no bounds while annotating an element");
   assert(
-    annotationInputBounds.x >= browserClipBounds.x &&
-      annotationInputBounds.y >= browserClipBounds.y &&
-      annotationInputBounds.x + annotationInputBounds.width <=
-        browserClipBounds.x + browserClipBounds.width &&
-      annotationInputBounds.y + annotationInputBounds.height <=
-        browserClipBounds.y + browserClipBounds.height,
-    "Element annotation input is outside the browser pane",
+    isRectInside(browserClipBounds, annotationCardBounds),
+    "Element annotation card is outside the browser pane",
   );
   await originalDeck.getByRole("button", { name: "Cancel" }).click();
 
