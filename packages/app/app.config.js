@@ -3,6 +3,7 @@ const path = require("node:path");
 const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withAndroidRotationUnlocked = require("./plugins/with-android-rotation");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
 const { getNativeReleaseVersion } = require("./native-release-version");
@@ -177,6 +178,7 @@ export default {
       ],
       ...buildProfile.fdroidPlugins,
       ...(isProfileBuild ? [withAndroidProfileable] : []),
+      withAndroidRotationUnlocked,
     ],
     experiments: {
       typedRoutes: true,
