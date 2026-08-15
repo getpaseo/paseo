@@ -32,6 +32,21 @@ console.log("=== Daemon Commands ===\n");
 const port = 10000 + Math.floor(Math.random() * 50000);
 const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
 const require = createRequire(import.meta.url);
+await writeFile(
+  join(paseoHome, "config.json"),
+  `${JSON.stringify(
+    {
+      version: 1,
+      daemon: {
+        listen: `127.0.0.1:${port}`,
+        relay: { enabled: false },
+      },
+    },
+    null,
+    2,
+  )}\n`,
+  "utf-8",
+);
 
 function daemonCommand(args: string[]) {
   return runLocalPaseo(["daemon", ...args], { PASEO_HOME: paseoHome });
@@ -158,9 +173,23 @@ try {
     console.log("✓ daemon pair --json reports relay disabled\n");
   }
 
-  // Test 5: daemon status --json outputs valid JSON
+  // Test 5: explicit relay pairing starts a stopped daemon and returns an offer
   {
-    console.log("Test 5: daemon status --json outputs JSON");
+    console.log("Test 5: daemon pair --relay starts the daemon");
+    const result = await daemonCommand(["pair", "--relay", "--json"]);
+    assert.strictEqual(result.exitCode, 0, "daemon pair --relay should start the daemon");
+    const pairing = JSON.parse(result.stdout);
+    assert.strictEqual(pairing.relayEnabled, true, "pairing should enable relay");
+    assert(pairing.url?.includes("#offer="), "pairing should include a relay offer URL");
+
+    const cleanup = await daemonCommand(["stop", "--force"]);
+    assert.strictEqual(cleanup.exitCode, 0, "cleanup stop should succeed after pairing");
+    console.log("✓ daemon pair --relay starts the daemon\n");
+  }
+
+  // Test 6: daemon status --json outputs valid JSON
+  {
+    console.log("Test 6: daemon status --json outputs JSON");
     const result = await daemonCommand(["status", "--json"]);
     assert.strictEqual(result.exitCode, 0, "--json status should succeed");
     const status = JSON.parse(result.stdout);
