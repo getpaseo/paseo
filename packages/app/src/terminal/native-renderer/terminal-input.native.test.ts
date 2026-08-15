@@ -228,4 +228,59 @@ describe("native terminal typed input", () => {
       shouldClear: false,
     });
   });
+
+  it("types Hangul by rubbing out the syllable the IME rewrites in place", () => {
+    const input = createTerminalTextInputState();
+
+    // 한글: the composing syllable is rewritten on every jamo, never appended.
+    expect(input.receiveTextChange("ㅎ")).toEqual({ data: "ㅎ", shouldClear: false });
+    expect(input.receiveTextChange("하")).toEqual({ data: "\x7f하", shouldClear: false });
+    expect(input.receiveTextChange("한")).toEqual({ data: "\x7f한", shouldClear: false });
+    expect(input.receiveTextChange("한ㄱ")).toEqual({ data: "ㄱ", shouldClear: false });
+    expect(input.receiveTextChange("한그")).toEqual({ data: "\x7f그", shouldClear: false });
+    expect(input.receiveTextChange("한글")).toEqual({ data: "\x7f글", shouldClear: false });
+  });
+
+  it("types Hangul when a final consonant migrates into the next syllable", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("안")).toEqual({ data: "안", shouldClear: false });
+    // Typing ㅣ moves ㄴ off 안 and onto the new syllable: 안 → 아니.
+    expect(input.receiveTextChange("아니")).toEqual({ data: "\x7f아니", shouldClear: false });
+  });
+
+  it("does not dispatch Hangul through the keypress path", () => {
+    const input = createTerminalTextInputState();
+
+    // The IME reports the jamo it is composing; the text change reports the
+    // syllable. Dispatching both would put two conflicting characters on the wire.
+    expect(input.receiveKeyPress("ㅎ")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("ㅎ")).toEqual({ data: "ㅎ", shouldClear: false });
+    expect(input.receiveKeyPress("ㅏ")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("하")).toEqual({ data: "\x7f하", shouldClear: false });
+  });
+
+  it("still swallows replacement edits wider than one composing syllable", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
+    // Two syllables at once is a suggestion replacement, not composition.
+    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
+  });
+
+  it("does not treat a non-Hangul trailing edit as composition", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("ls -a")).toEqual({ data: "ls -a", shouldClear: false });
+    expect(input.receiveTextChange("ls -l")).toEqual({ data: "", shouldClear: false });
+  });
+
+  it("keeps anticipated text aligned when Backspace decomposes a syllable", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("한")).toEqual({ data: "한", shouldClear: false });
+    // The rubout already removed the whole syllable, so the redraw is a plain append.
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
+    expect(input.receiveTextChange("하")).toEqual({ data: "하", shouldClear: false });
+  });
 });
