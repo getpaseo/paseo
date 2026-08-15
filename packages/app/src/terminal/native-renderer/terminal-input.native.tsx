@@ -40,10 +40,11 @@ interface TerminalInputProps {
   style?: StyleProp<TextStyle>;
 }
 
-// Hangul jamo, compatibility jamo, and precomposed syllables. A Korean IME
-// commits every syllable except the one it is still composing, so a composition
-// edit only ever rewrites the final character of the buffer.
-const HANGUL_PATTERN = /^[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7a3\ud7b0-\ud7ff]/;
+// Scripts produced by CJK IMEs when they commit or update a candidate. The
+// native input does not expose marked-text ranges, so the committed script is
+// the only reliable distinction between composition and ordinary autocorrect.
+const CJK_COMPOSITION_PATTERN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
 
 // Only ASCII travels the keypress path. An IME script reports the jamo it is
 // composing, which the text-change diff below immediately contradicts, so
@@ -52,7 +53,7 @@ function isPrintableKey(key: string): boolean {
   return key.length === 1 && key >= " " && key <= "~";
 }
 
-function getCommonPrefixLength(left: string, right: string): number {
+function getCommonPrefixLength(left: string[], right: string[]): number {
   const limit = Math.min(left.length, right.length);
   let index = 0;
   while (index < limit && left[index] === right[index]) {
@@ -64,26 +65,28 @@ function getCommonPrefixLength(left: string, right: string): number {
 /**
  * What the terminal receives for an edit that is not a plain append.
  *
- * A Korean IME rewrites the syllable it is composing in place — `ㅎ` becomes
- * `하` becomes `한`. None of those are appends, so forwarding appends alone
- * drops every keystroke after the first jamo and Korean cannot be typed at all.
- * Rub out the rewritten character and send the replacement.
+ * CJK IMEs rewrite their composing suffix in place. Korean updates one
+ * syllable at a time (`ㅎ` -> `하` -> `한`), while Chinese and Japanese replace
+ * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
+ * those are appends, so rub out the rewritten suffix and send the replacement.
  *
- * Only a single trailing character qualifies. A wider rewrite is an autocorrect
- * or suggestion replacement, which stays swallowed: the hidden input can edit
- * text the terminal has already committed, and the terminal cannot take it back.
+ * The inserted suffix must contain a CJK script. Ordinary autocorrect and
+ * suggestion replacements stay swallowed: the hidden input can edit text the
+ * terminal has already committed, and the terminal cannot take it back.
  */
 function resolveCompositionEdit(previousText: string, text: string): string {
-  const commonPrefixLength = getCommonPrefixLength(previousText, text);
-  const removed = previousText.slice(commonPrefixLength);
-  const inserted = text.slice(commonPrefixLength);
-  if (removed.length !== 1 || inserted.length === 0) {
+  const previousCharacters = Array.from(previousText);
+  const nextCharacters = Array.from(text);
+  const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
+  const removed = previousCharacters.slice(commonPrefixLength);
+  const inserted = nextCharacters.slice(commonPrefixLength).join("");
+  if (removed.length === 0 || inserted.length === 0) {
     return "";
   }
-  if (!HANGUL_PATTERN.test(removed) || !HANGUL_PATTERN.test(inserted)) {
+  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
     return "";
   }
-  return `\x7f${inserted}`;
+  return `${"\x7f".repeat(removed.length)}${inserted}`;
 }
 
 export function resolveTerminalInputFocusRequest(input: {

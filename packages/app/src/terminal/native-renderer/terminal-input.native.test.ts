@@ -249,6 +249,48 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("아니")).toEqual({ data: "\x7f아니", shouldClear: false });
   });
 
+  it("commits a Chinese pinyin reading as Han characters", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("n")).toEqual({ data: "n", shouldClear: false });
+    expect(input.receiveTextChange("ni")).toEqual({ data: "i", shouldClear: false });
+    expect(input.receiveTextChange("nih")).toEqual({ data: "h", shouldClear: false });
+    expect(input.receiveTextChange("niha")).toEqual({ data: "a", shouldClear: false });
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "o", shouldClear: false });
+    expect(input.receiveTextChange("你好")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f你好",
+      shouldClear: false,
+    });
+  });
+
+  it("updates a multi-character Chinese candidate", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
+    expect(input.receiveTextChange("你好")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f你好",
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("拟好")).toEqual({
+      data: "\x7f\x7f拟好",
+      shouldClear: false,
+    });
+  });
+
+  it("commits and converts a Japanese reading", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("nihongo")).toEqual({ data: "nihongo", shouldClear: false });
+    expect(input.receiveTextChange("にほんご")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f\x7f\x7fにほんご",
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("日本語")).toEqual({
+      data: "\x7f\x7f\x7f\x7f日本語",
+      shouldClear: false,
+    });
+  });
+
   it("does not dispatch Hangul through the keypress path", () => {
     const input = createTerminalTextInputState();
 
@@ -260,12 +302,11 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("하")).toEqual({ data: "\x7f하", shouldClear: false });
   });
 
-  it("still swallows replacement edits wider than one composing syllable", () => {
+  it("still swallows non-CJK replacement edits", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
-    // Two syllables at once is a suggestion replacement, not composition.
-    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
+    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
   });
 
   it("does not treat a non-Hangul trailing edit as composition", () => {
@@ -287,22 +328,25 @@ describe("native terminal typed input", () => {
   it("stops rubbing out once a swallowed replacement leaves the terminal ahead", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
-    // Swallowed: the terminal still holds 한글 while the buffer moved to 우리.
-    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
-    // A rubout here would delete 글 off the terminal and leave 한루 behind.
-    expect(input.receiveTextChange("우루")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
+    // Swallowed: the terminal still holds teh while the buffer moved to the.
+    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
+    // A composition rewrite here would delete text from an already-desynced terminal.
+    expect(input.receiveTextChange("他们")).toEqual({ data: "", shouldClear: false });
   });
 
   it("resumes composition once the line is cleared", () => {
     const input = createTerminalTextInputState();
 
-    expect(input.receiveTextChange("한글")).toEqual({ data: "한글", shouldClear: false });
-    expect(input.receiveTextChange("우리")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
+    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
 
     input.reset();
 
-    expect(input.receiveTextChange("하")).toEqual({ data: "하", shouldClear: false });
-    expect(input.receiveTextChange("한")).toEqual({ data: "\x7f한", shouldClear: false });
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
+    expect(input.receiveTextChange("你好")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f你好",
+      shouldClear: false,
+    });
   });
 });
