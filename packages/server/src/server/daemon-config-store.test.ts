@@ -694,6 +694,7 @@ describe("DaemonConfigStore", () => {
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
         appendSystemPrompt: "",
       },
       undefined,
@@ -725,7 +726,7 @@ describe("DaemonConfigStore", () => {
 
     store.patch({ providerUsage: { hiddenProviders: ["copilot", "minimax"] } });
 
-    expect(store.get().providerUsage.hiddenProviders).toEqual(["copilot", "minimax"]);
+    expect(store.get().providerUsage?.hiddenProviders).toEqual(["copilot", "minimax"]);
     expect(loadPersistedConfig(paseoHome).daemon?.providerUsage?.hiddenProviders).toEqual([
       "copilot",
       "minimax",
@@ -792,7 +793,7 @@ describe("DaemonConfigStore", () => {
 
     const next = store.patch({ providerUsage: { showProviders: ["copilot"] } });
 
-    expect(next.providerUsage.hiddenProviders).toEqual([]);
+    expect(next.providerUsage?.hiddenProviders).toEqual([]);
     // The persisted daemon held nothing but the stripped block, so the patch-based store drops
     // the now-empty `daemon` object entirely instead of writing `{}`.
     const rawDaemon = JSON.parse(readFileSync(configPath, "utf-8")).daemon;
@@ -825,11 +826,11 @@ describe("DaemonConfigStore", () => {
     store.patch({ providerUsage: { hideProviders: ["copilot"] } });
     const afterSecond = store.patch({ providerUsage: { hideProviders: ["minimax"] } });
 
-    expect(afterSecond.providerUsage.hiddenProviders).toEqual(["copilot", "minimax"]);
+    expect(afterSecond.providerUsage?.hiddenProviders).toEqual(["copilot", "minimax"]);
 
     // Unhiding one provider removes only that id; the other toggle persists.
     const afterShow = store.patch({ providerUsage: { showProviders: ["copilot"] } });
-    expect(afterShow.providerUsage.hiddenProviders).toEqual(["minimax"]);
+    expect(afterShow.providerUsage?.hiddenProviders).toEqual(["minimax"]);
   });
 
   test("patch persists provider additional models into config.json", () => {
@@ -908,6 +909,7 @@ describe("DaemonConfigStore", () => {
       paseoHome,
       {
         mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
