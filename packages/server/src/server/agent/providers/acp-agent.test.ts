@@ -1536,6 +1536,128 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("rejects ACP elicitation numbers outside the declared bounds", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const elicitation = session.extMethod("session/elicitation", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "How many retries?",
+      requestedSchema: {
+        type: "object",
+        required: ["count"],
+        properties: {
+          count: { type: "integer", minimum: 1, maximum: 3 },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending elicitation");
+    }
+
+    // The answer must satisfy the schema the agent declared. An out-of-bounds
+    // value stays pending instead of delivering content the agent rejected.
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { count: "0" },
+        },
+      }),
+    ).rejects.toThrow("must be at least 1");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { count: "4" },
+        },
+      }),
+    ).rejects.toThrow("must be at most 3");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    // A value inside the bounds resolves normally.
+    await session.respondToPermission(pending.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...pending.input,
+        answers: { count: "2" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: { action: "accept", content: { count: 2 } },
+    });
+  });
+
+  test("rejects ACP elicitation arrays outside the declared item count", async () => {
+    const session = createSessionWithConfig({ provider: "generic-acp" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const elicitation = session.extMethod("session/elicitation", {
+      sessionId: "session-1",
+      mode: "form",
+      message: "Pick tags",
+      requestedSchema: {
+        type: "object",
+        required: ["tags"],
+        properties: {
+          tags: {
+            type: "array",
+            minItems: 2,
+            maxItems: 3,
+            items: { type: "string", enum: ["one", "two", "three"] },
+          },
+        },
+      },
+    });
+    await Promise.resolve();
+
+    const pending = session.getPendingPermissions()[0];
+    if (!pending) {
+      throw new Error("Expected pending elicitation");
+    }
+
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { tags: "one" },
+        },
+      }),
+    ).rejects.toThrow("must include at least 2 items");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { tags: "one, two, three, one" },
+        },
+      }),
+    ).rejects.toThrow("must include at most 3 items");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission(pending.id, {
+      behavior: "allow",
+      updatedInput: {
+        ...pending.input,
+        answers: { tags: "one, two" },
+      },
+    });
+    await expect(elicitation).resolves.toEqual({
+      action: { action: "accept", content: { tags: ["one", "two"] } },
+    });
+  });
+
   test("accepts MiniMax Code's freeform elicitation and forwards the custom answer", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];

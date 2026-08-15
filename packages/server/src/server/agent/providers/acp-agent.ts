@@ -4098,6 +4098,16 @@ function parseElicitationAnswer(
     if (values.length === 0) {
       throw new Error(`ACP elicitation answer is required for '${field.key}'`);
     }
+    if (field.schema.minItems != null && values.length < field.schema.minItems) {
+      throw new Error(
+        `ACP elicitation answer for '${field.key}' must include at least ${field.schema.minItems} items`,
+      );
+    }
+    if (field.schema.maxItems != null && values.length > field.schema.maxItems) {
+      throw new Error(
+        `ACP elicitation answer for '${field.key}' must include at most ${field.schema.maxItems} items`,
+      );
+    }
     return values as string[];
   }
   if (field.schema.type === "boolean") {
@@ -4111,6 +4121,16 @@ function parseElicitationAnswer(
     const value = Number(answer);
     if (!Number.isFinite(value) || (field.schema.type === "integer" && !Number.isInteger(value))) {
       throw new Error(`ACP elicitation answer for '${field.key}' must be a number`);
+    }
+    if (field.schema.minimum != null && value < field.schema.minimum) {
+      throw new Error(
+        `ACP elicitation answer for '${field.key}' must be at least ${field.schema.minimum}`,
+      );
+    }
+    if (field.schema.maximum != null && value > field.schema.maximum) {
+      throw new Error(
+        `ACP elicitation answer for '${field.key}' must be at most ${field.schema.maximum}`,
+      );
     }
     return value;
   }
