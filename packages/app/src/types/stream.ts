@@ -1384,7 +1384,7 @@ function reduceTimelineCompaction(
   }
   const compaction: CompactionItem = {
     kind: "compaction",
-    id: createTimelineId("compaction", item.status, timestamp),
+    id: createUniqueTimelineId(state, "compaction", item.status, timestamp),
     ...(timelineCursor ? { timelineCursor } : {}),
     timestamp,
     status: item.status,
@@ -1459,7 +1459,7 @@ function reduceTimelineEvent(
     case "error": {
       const activity: ActivityLogItem = {
         kind: "activity_log",
-        id: createTimelineId("error", item.message ?? "", timestamp),
+        id: createUniqueTimelineId(state, "error", item.message ?? "", timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
         activityType: "error",
@@ -1470,7 +1470,7 @@ function reduceTimelineEvent(
     case "notification": {
       const activity: ActivityLogItem = {
         kind: "activity_log",
-        id: createTimelineId("notification", item.text ?? "", timestamp),
+        id: createUniqueTimelineId(state, "notification", item.text ?? "", timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
         activityType: toActivityLogType(item.level),
