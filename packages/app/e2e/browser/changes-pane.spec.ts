@@ -669,11 +669,13 @@ async function expectFlatFileList(page: Page): Promise<void> {
 }
 
 async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<void> {
+  const visibleCodeText = page
+    .getByTestId(/^diff-code-text-/)
+    .filter({ visible: true })
+    .first();
   await expect
     .poll(async () => {
-      return page
-        .getByTestId("diff-code-text-1")
-        .evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
+      return visibleCodeText.evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
     })
     .toBe(fontSize);
 }
