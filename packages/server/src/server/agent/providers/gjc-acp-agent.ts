@@ -1,5 +1,8 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -25,11 +28,19 @@ interface GjcACPAgentClientOptions {
   providerId?: string;
   label?: string;
   providerParams?: unknown;
+  execFile?: GjcExecFile;
 }
 
 interface GjcLifecycleCommand {
   command: string;
   args: string[];
+}
+
+interface GjcLifecycleCreateInput {
+  cwd: string;
+  target: { path: string };
+  readinessTimeoutMs: number;
+  mcpServers?: McpServer[];
 }
 
 interface GjcSessionCreateResult {
@@ -84,16 +95,19 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
       providerParams: options.providerParams,
       clientCapabilities: GJC_CLIENT_CAPABILITIES,
       clientCapabilityMeta: GJC_CLIENT_CAPABILITY_META,
+      diagnosticPhaseTimeoutMs: GJC_ACP_READINESS_TIMEOUT_MS,
       sessionResponseTransformer: transformGjcSessionResponse,
       configOptionsTransformer: transformGjcConfigOptions,
       modeIdTransformer: transformGjcModeId,
       newSessionStarter: createGjcACPNewSessionStarter({
         command: options.command,
         env: options.env,
+        execFile: options.execFile,
       }),
       probeSessionCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,
+        execFile: options.execFile,
       }),
     });
   }
@@ -148,26 +162,34 @@ export function createGjcACPNewSessionStarter(options: {
   const runExecFile = options.execFile ?? execFile;
 
   return async ({ connection, config, mcpServers, runRequest }) => {
-    const lifecycleCommand = buildGjcLifecycleCreateCommand(options.command, config.cwd, {
+    const lifecycleInput: GjcLifecycleCreateInput = {
       cwd: config.cwd,
       target: {
         path: config.cwd,
       },
       readinessTimeoutMs: GJC_ACP_READINESS_TIMEOUT_MS,
       ...(mcpServers.length > 0 ? { mcpServers } : {}),
-    });
+    };
 
     let createResult: GjcSessionCreateResult;
     try {
-      const { stdout } = await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
-        cwd: config.cwd,
-        env: {
-          ...process.env,
-          ...options.env,
-        },
-        timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
-        maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
-        encoding: "utf8",
+      const { stdout } = await withGjcJsonInputFile(lifecycleInput, async (inputFilePath) => {
+        const lifecycleCommand = buildGjcLifecycleCreateCommand(
+          options.command,
+          config.cwd,
+          lifecycleInput,
+          { inputFilePath },
+        );
+        return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
+          cwd: config.cwd,
+          env: {
+            ...process.env,
+            ...options.env,
+          },
+          timeout: GJC_ACP_RAW_CREATE_TIMEOUT_MS,
+          maxBuffer: GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES,
+          encoding: "utf8",
+        });
       });
       createResult = extractGjcSessionCreateResult(parseGjcJsonOutput(stdout));
     } catch (error) {
@@ -227,13 +249,13 @@ export function createGjcACPProbeSessionCloser(options: {
 export function buildGjcLifecycleCreateCommand(
   acpCommand: [string, ...string[]],
   cwd: string,
-  input: {
-    cwd: string;
-    target: { path: string };
-    readinessTimeoutMs: number;
-    mcpServers?: McpServer[];
-  },
+  input: GjcLifecycleCreateInput,
+  options: { inputFilePath?: string } = {},
 ): GjcLifecycleCommand {
+  const jsonInputArgs = options.inputFilePath
+    ? ["--json-input-file", options.inputFilePath]
+    : ["--json-input", JSON.stringify(input)];
+
   return buildGjcLifecycleCommand(acpCommand, [
     "sdk",
     "session",
@@ -241,8 +263,7 @@ export function buildGjcLifecycleCreateCommand(
     "global",
     "--op",
     "session.create",
-    "--json-input",
-    JSON.stringify(input),
+    ...jsonInputArgs,
     "--idempotency-key",
     randomUUID(),
     "--json",
@@ -271,6 +292,21 @@ export function buildGjcLifecycleCloseCommand(
     "--repo",
     cwd,
   ]);
+}
+
+async function withGjcJsonInputFile<T>(
+  input: GjcLifecycleCreateInput,
+  operation: (inputFilePath: string) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-gjc-json-"));
+  const inputFilePath = join(directory, "input.json");
+  try {
+    await writeFile(inputFilePath, JSON.stringify(input), { mode: 0o600 });
+    await chmod(inputFilePath, 0o600);
+    return await operation(inputFilePath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function closeGjcLifecycleSession(options: {

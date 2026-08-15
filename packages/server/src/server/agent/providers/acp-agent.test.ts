@@ -30,6 +30,7 @@ import {
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
+import type { ProviderRefreshContext } from "../agent-sdk-types.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
   COPILOT_ALLOW_ALL_MODE_ID,
@@ -193,6 +194,25 @@ class FakeTerminator {
       resolve();
     }
   }
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: Deferred<T>["resolve"] | null = null;
+  let reject: Deferred<T>["reject"] | null = null;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  if (!resolve || !reject) {
+    throw new Error("Deferred promise executor did not initialize");
+  }
+  return { promise, resolve, reject };
 }
 
 function createSessionWithConfig(
@@ -2249,6 +2269,84 @@ describe("ACPAgentClient fetchCatalog", () => {
     });
   });
 
+  test("closes custom catalog probe sessions that finish after refresh abort", async () => {
+    const started = createDeferred<void>();
+    const session = createDeferred<SessionStateResponse>();
+    const lateResponse: SessionStateResponse = {
+      sessionId: "late-probe-session",
+      modes: null,
+      models: null,
+      configOptions: [],
+    };
+    const newSessionStarter = vi.fn(() => {
+      started.resolve(undefined);
+      return session.promise;
+    });
+    const probeSessionCloser = vi.fn(async () => undefined);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockRejectedValue(new Error("newSession should not be called")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+    const controller = new AbortController();
+    const refreshContext: ProviderRefreshContext = {
+      signal: controller.signal,
+      runActivity: async (_name, operation) => await operation(),
+    };
+
+    const refresh = client.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/acp-catalog-cwd", force: false },
+      refreshContext,
+    );
+    await started.promise;
+
+    let refreshSettled = false;
+    void refresh.then(
+      () => {
+        refreshSettled = true;
+        return undefined;
+      },
+      () => {
+        refreshSettled = true;
+        return undefined;
+      },
+    );
+    controller.abort(new Error("refresh aborted"));
+    await Promise.resolve();
+    expect(refreshSettled).toBe(false);
+    expect(probeSessionCloser).not.toHaveBeenCalled();
+
+    session.resolve(lateResponse);
+    await expect(refresh).rejects.toThrow("refresh aborted");
+
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: lateResponse,
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
+      mcpServers: [],
+    });
+  });
+
   test("returns an empty modes array when no ACP modes are reported and fallback modes are empty", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
@@ -2293,6 +2391,84 @@ describe("ACPAgentClient fetchCatalog", () => {
       models: [],
       modes: [],
     });
+  });
+});
+
+describe("ACPAgentClient probe diagnostics", () => {
+  test("closes custom probe sessions that finish after diagnostic session timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const started = createDeferred<void>();
+      const session = createDeferred<SessionStateResponse>();
+      const lateResponse: SessionStateResponse = {
+        sessionId: "late-diagnostic-session",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+      const newSessionStarter = vi.fn(() => {
+        started.resolve(undefined);
+        return session.promise;
+      });
+      const probeSessionCloser = vi.fn(async () => undefined);
+      const terminator = new FakeTerminator();
+
+      class TestACPAgentClient extends ACPAgentClient {
+        async buildDiagnosticRows() {
+          return await this.buildACPProbeDiagnosticRows({
+            cwd: "/tmp/acp-diagnostic-cwd",
+            phaseTimeoutMs: 1,
+          });
+        }
+
+        protected override async spawnTransport() {
+          return {
+            child: createProbeChildStub(),
+            connection: {
+              initialize: vi.fn(async () => ({ agentCapabilities: {} })),
+            } as unknown as ClientSideConnection,
+            stderrChunks: [],
+            spawnReady: Promise.resolve(),
+            spawnError: new Promise<never>(() => undefined),
+          };
+        }
+      }
+
+      const client = new TestACPAgentClient({
+        provider: "gjc",
+        logger: createTestLogger(),
+        defaultCommand: ["gjc", "acp"],
+        defaultModes: [],
+        newSessionStarter,
+        probeSessionCloser,
+        terminateProcess: terminator.terminate,
+      });
+
+      const rowsPromise = client.buildDiagnosticRows();
+      await started.promise;
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(probeSessionCloser).not.toHaveBeenCalled();
+
+      session.resolve(lateResponse);
+      const rows = await rowsPromise;
+
+      expect(rows).toContainEqual({
+        label: "ACP session/new",
+        value: "error: ACP session/new timed out after 1ms",
+      });
+      expect(probeSessionCloser).toHaveBeenCalledWith({
+        response: lateResponse,
+        config: {
+          provider: "gjc",
+          cwd: "/tmp/acp-diagnostic-cwd",
+        },
+        mcpServers: [],
+      });
+      expect(terminator.terminated).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

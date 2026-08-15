@@ -511,6 +511,11 @@ interface ACPProcessTransport {
   spawnError: Promise<never>;
 }
 
+interface TrackedACPProbeSession {
+  promise: Promise<SessionStateResponse>;
+  close: () => Promise<void>;
+}
+
 export interface ACPToolSnapshot {
   toolCallId: string;
   title: string;
@@ -982,6 +987,7 @@ export class ACPAgentClient implements AgentClient {
     const config: AgentSessionConfig = { provider: this.provider, cwd };
     const mcpServers: McpServer[] = [];
     let response: SessionStateResponse | null = null;
+    let probeSession: TrackedACPProbeSession | null = null;
 
     try {
       const initializedProbe = await runProviderRefreshActivity(context, "initialize", () =>
@@ -996,15 +1002,14 @@ export class ACPAgentClient implements AgentClient {
         ),
       );
       probe = initializedProbe;
+      const activeProbeSession = this.startTrackedProbeSession({
+        connection: initializedProbe.connection,
+        config,
+        mcpServers,
+      });
+      probeSession = activeProbeSession;
       response = await runProviderRefreshActivity(context, "session/new", () =>
-        raceProviderRefreshAbort(
-          context?.signal,
-          this.startProbeSession({
-            connection: initializedProbe.connection,
-            config,
-            mcpServers,
-          }),
-        ),
+        raceProviderRefreshAbort(context?.signal, activeProbeSession.promise),
       );
       const transformed = this.transformSessionResponse(response);
       const derivedModels = deriveModelDefinitionsFromACP(
@@ -1048,9 +1053,7 @@ export class ACPAgentClient implements AgentClient {
       };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
-      if (response) {
-        await this.closeProbeSession({ response, config, mcpServers });
-      }
+      await probeSession?.close();
       await closeProbe();
     }
   }
@@ -1348,13 +1351,15 @@ export class ACPAgentClient implements AgentClient {
       const config: AgentSessionConfig = { provider: this.provider, cwd };
       const mcpServers: McpServer[] = [];
       let response: SessionStateResponse | null = null;
+      let probeSession: TrackedACPProbeSession | null = null;
       try {
+        probeSession = this.startTrackedProbeSession({
+          connection: activeTransport.connection,
+          config,
+          mcpServers,
+        });
         response = await withTimeout(
-          this.startProbeSession({
-            connection: activeTransport.connection,
-            config,
-            mcpServers,
-          }),
+          probeSession.promise,
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
         );
@@ -1383,9 +1388,7 @@ export class ACPAgentClient implements AgentClient {
         pushACPStderrRow(rows, activeTransport.stderrChunks);
         return rows;
       } finally {
-        if (response) {
-          await this.closeProbeSession({ response, config, mcpServers });
-        }
+        await probeSession?.close();
       }
 
       pushACPStderrRow(rows, activeTransport.stderrChunks);
@@ -1461,6 +1464,52 @@ export class ACPAgentClient implements AgentClient {
         mcpServers: context.mcpServers,
       }),
     );
+  }
+
+  private startTrackedProbeSession(context: {
+    connection: ClientSideConnection;
+    config: AgentSessionConfig;
+    mcpServers: McpServer[];
+  }): TrackedACPProbeSession {
+    let response: SessionStateResponse | null = null;
+    let closeRequested = false;
+    let closePromise: Promise<void> | null = null;
+
+    const closeResponse = (sessionResponse: SessionStateResponse): Promise<void> => {
+      closePromise ??= this.closeProbeSession({
+        response: sessionResponse,
+        config: context.config,
+        mcpServers: context.mcpServers,
+      });
+      return closePromise;
+    };
+
+    const promise = this.startProbeSession(context).then((sessionResponse) => {
+      response = sessionResponse;
+      if (closeRequested) {
+        void closeResponse(sessionResponse);
+      }
+      return sessionResponse;
+    });
+
+    return {
+      promise,
+      close: async () => {
+        closeRequested = true;
+        if (!this.probeSessionCloser) {
+          return;
+        }
+        if (response) {
+          await closeResponse(response);
+          return;
+        }
+        try {
+          await closeResponse(await promise);
+        } catch {
+          // If session startup failed, there is no provider-owned probe session to close.
+        }
+      },
+    };
   }
 
   private async closeProbeSession(context: ACPProbeSessionCloserContext): Promise<void> {
