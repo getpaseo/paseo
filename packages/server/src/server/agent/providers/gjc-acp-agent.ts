@@ -294,6 +294,7 @@ export function createGjcACPNewSessionStarter(options: {
       }
       throw abortError;
     }
+    const closeViaProbeTracker = Boolean(registerProbeSession);
     registerProbeSession?.({ sessionId: createResult.sessionId });
 
     let sessionState: SessionStateResponse;
@@ -306,6 +307,9 @@ export function createGjcACPNewSessionStarter(options: {
         }),
       );
     } catch (error) {
+      if (closeViaProbeTracker) {
+        throw error;
+      }
       let closeError: unknown;
       try {
         await closeGjcLifecycleSession({

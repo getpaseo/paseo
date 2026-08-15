@@ -584,6 +584,46 @@ describe("GjcACPAgentClient", () => {
     );
   });
 
+  test("lets the probe tracker close registered lifecycle sessions when ACP load fails", async () => {
+    const execFile = vi.fn().mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        ok: true,
+        result: {
+          sessionId: "gjc-session-1",
+        },
+      }),
+      stderr: "",
+    });
+    const loadError = new Error("load failed");
+    const loadSession = vi.fn().mockRejectedValue(loadError);
+    const registerProbeSession = vi.fn();
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+    });
+
+    await expect(
+      starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+        registerProbeSession,
+      }),
+    ).rejects.toThrow("load failed");
+
+    expect(registerProbeSession).toHaveBeenCalledWith({
+      sessionId: "gjc-session-1",
+    });
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
   test("surfaces session.close failures when ACP load fails", async () => {
     const loadError = new Error("load failed");
     const closeError = new Error("close failed");
