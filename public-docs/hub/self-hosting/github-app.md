@@ -36,6 +36,14 @@ Repository permissions:
 | Pull requests | Read & write | Read review comments, let agents open PRs |
 | Metadata      | Read         | Required by GitHub                        |
 
+Organization permissions:
+
+| Permission | Access | Why                                     |
+| ---------- | ------ | --------------------------------------- |
+| Members    | Read   | Resolve GitHub `from_teams` allowlists. |
+
+**Members** is required only when a workflow uses GitHub `from_teams`. If you add it to an existing App, ensure each existing organization installation accepts the permission update before using team filters. Until then, Hub fails closed and does not start team-filtered runs.
+
 Subscribe to events:
 
 - Issue comment

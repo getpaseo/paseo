@@ -39,7 +39,7 @@ The configuration lives in `.paseo/hub.yml` plus convention-discovered `.paseo/w
 
 1. A provider sends an event to Hub. GitHub and Slack use webhooks; Discord uses its gateway connection; manual runs use the Hub API.
 2. Hub verifies the provider event and identifies its project resource, such as a repository, workspace, or guild.
-3. Hub evaluates triggers and their filters, including the required `from_users` allowlist.
+3. Hub evaluates triggers and their filters, including the required identity allowlist: `from_users`, or GitHub `from_teams`.
 4. A matching trigger creates a workflow run from the active configuration revision.
 5. The workflow evaluates its next step. A false `if` condition skips that step; a true condition starts it on the configured daemon.
 6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
@@ -61,7 +61,7 @@ If activation fails, Hub keeps the previous active revision. The Configuration t
 
 ## Security boundaries
 
-Triggers require a non-empty `from_users` allowlist for externally sourced events. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
+Externally sourced triggers require a non-empty identity allowlist. `from_users` works for every provider; GitHub triggers can use `from_teams` instead or with it. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
 
 These controls do not sandbox the agent or make input safe. See [Hub security](/docs/hub/security) for the host boundary, provider-native policy, and defense-in-depth guidance.
 

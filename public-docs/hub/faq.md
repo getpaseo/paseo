@@ -40,7 +40,7 @@ Yes, with a manual source. A project using a GitHub source is read-only in the d
 
 ## Who can trigger an agent?
 
-Only the users listed in a trigger's `from_users`. It is required and cannot be empty.
+Only identities in a trigger's allowlist. `from_users` works for every provider. GitHub triggers can instead use `from_teams` with `organization/team-slug`; only active team members match. If Hub cannot check that membership, it does not start a run.
 
 ## What happens if the daemon is offline?
 

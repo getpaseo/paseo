@@ -26,7 +26,7 @@ max_runtime: 2h
 filters:
   repo: example/project
   contains: "@paseo"
-  from_users: [maintainer]
+  from_teams: [example/maintainers]
 steps:
   - id: implement
     environment: dev
@@ -46,7 +46,7 @@ steps:
           ${{ paseo.prompt }}
 ```
 
-`from_users` matches the GitHub login. `contains` checks event text and `pattern` checks its start. Comment events use the comment body; issue events use title plus body.
+`from_users` matches the GitHub login. `from_teams` accepts `organization/team-slug` and matches only active GitHub team members. Use either filter or both: the GitHub identity allowlist passes when the sender is listed directly or is active in a listed team. Team filters require the GitHub App's organization **Members** permission with read access; if Hub cannot check membership, it does not start a run. `contains` checks event text and `pattern` checks its start. Comment events use the comment body; issue events use title plus body.
 
 A GitHub trigger grants no token. Authority is the `github` block on the step that needs it. GitHub has no `hub.reply` capability; the agent acts through `gh` within the declared connection, repositories, and permissions.
 
