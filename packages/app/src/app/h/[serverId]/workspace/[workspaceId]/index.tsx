@@ -33,6 +33,7 @@ import {
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { isWeb } from "@/constants/platform";
+import { RenderProfile } from "@/utils/render-profiler";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -235,20 +236,22 @@ function WorkspaceDeck({
   }, [mountedSelections, nextMountedSelections]);
 
   return (
-    <View style={styles.deck}>
-      {renderedEntries.map(({ selection, active }) => {
-        return (
-          <WorkspaceDeckEntry
-            key={getWorkspaceSelectionKey(selection)}
-            selection={selection}
-            active={active}
-            recoveryRequested={recoveryRequested}
-            recoveryAgentId={recoveryAgentId}
-            onUnmountInactive={unmountWorkspaceSelection}
-          />
-        );
-      })}
-    </View>
+    <RenderProfile id="WorkspaceDeck">
+      <View style={styles.deck}>
+        {renderedEntries.map(({ selection, active }) => {
+          return (
+            <WorkspaceDeckEntry
+              key={getWorkspaceSelectionKey(selection)}
+              selection={selection}
+              active={active}
+              recoveryRequested={recoveryRequested}
+              recoveryAgentId={recoveryAgentId}
+              onUnmountInactive={unmountWorkspaceSelection}
+            />
+          );
+        })}
+      </View>
+    </RenderProfile>
   );
 }
 

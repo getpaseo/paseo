@@ -217,6 +217,21 @@ PASEO_PROFILE_IDLE_WAIT_MS=3000             # idle baseline before switching
 PASEO_PROFILE_DUMP_COMMITS=1                # include per-commit profiler samples
 ```
 
+For warm workspace switching, point the benchmark at an app backed by seeded
+daemon state:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:workspace-switching --workspace=@getpaseo/app
+```
+
+The benchmark first warms `Cmd+1` through `Cmd+7`, then records a rapid seven-workspace
+burst. It separately warms the three-entry workspace deck LRU and records `Cmd+1` through
+`Cmd+3` without waits between keys. Both scenarios report keydown-to-activation latency and
+React commits on the same browser clock. Set `PASEO_PROFILE_WORKSPACE_DIGITS`,
+`PASEO_PROFILE_WORKSPACE_LRU_SIZE`, or `PASEO_PROFILE_WARM_QUIET_MS` to change the shape. Set
+`PASEO_PROFILE_DUMP_COMMITS=1` to include the nested component breakdown for every commit.
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync
