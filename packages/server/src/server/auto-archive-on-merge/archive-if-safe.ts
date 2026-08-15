@@ -7,7 +7,6 @@ import {
   archiveByScope,
   type ActiveWorkspaceRef,
   killTerminalsForWorkspace,
-  resolveWorkspaceIdAtPath,
 } from "../workspace-archive-service.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -38,19 +37,18 @@ export interface AutoArchiveArchiveOptions {
 
 export interface ArchiveIfSafeDependencies {
   archiveByScope: typeof archiveByScope;
-  resolveWorkspaceIdAtPath: typeof resolveWorkspaceIdAtPath;
   isPaseoOwnedWorktreeCwd: typeof isPaseoOwnedWorktreeCwd;
   killTerminalsForWorkspace: typeof killTerminalsForWorkspace;
 }
 
 const defaultDependencies: ArchiveIfSafeDependencies = {
   archiveByScope,
-  resolveWorkspaceIdAtPath,
   isPaseoOwnedWorktreeCwd,
   killTerminalsForWorkspace,
 };
 
 export async function archiveIfSafe(input: {
+  workspaceId: string;
   cwd: string;
   pullRequest: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   inFlight: Set<string>;
@@ -58,20 +56,20 @@ export async function archiveIfSafe(input: {
   log: Logger;
   deps?: ArchiveIfSafeDependencies;
 }): Promise<void> {
-  const { cwd, pullRequest, inFlight, options, log } = input;
+  const { workspaceId, cwd, pullRequest: observedPullRequest, inFlight, options, log } = input;
   const deps = input.deps ?? defaultDependencies;
 
-  if (!pullRequest?.isMerged) {
+  if (!observedPullRequest?.isMerged) {
     return;
   }
   if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
     return;
   }
-  if (inFlight.has(cwd)) {
+  if (inFlight.has(workspaceId)) {
     return;
   }
 
-  inFlight.add(cwd);
+  inFlight.add(workspaceId);
   try {
     let snapshot: Awaited<ReturnType<typeof options.workspaceGitService.getSnapshot>> | null;
     try {
@@ -83,6 +81,10 @@ export async function archiveIfSafe(input: {
       return;
     }
     if (!snapshot) {
+      return;
+    }
+    const pullRequest = snapshot.forge.pullRequest;
+    if (!pullRequest?.isMerged) {
       return;
     }
 
@@ -102,17 +104,6 @@ export async function archiveIfSafe(input: {
     }
 
     try {
-      const workspaceId = await deps.resolveWorkspaceIdAtPath(
-        {
-          findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
-          listActiveWorkspaces: options.listActiveWorkspaces,
-        },
-        cwd,
-      );
-      if (!workspaceId) {
-        log.warn({ cwd }, "Auto-archive could not resolve a workspace for cwd; skipping");
-        return;
-      }
       const autoArchivedChangeRequestUrl =
         await options.getAutoArchivedChangeRequestUrl(workspaceId);
       if (autoArchivedChangeRequestUrl === pullRequest.url) {
@@ -151,11 +142,14 @@ export async function archiveIfSafe(input: {
           requestId: "auto-archive-on-merge",
         },
       );
-      log.info({ cwd }, "Auto-archived worktree after PR merge");
+      log.info(
+        { workspaceId, cwd, branch: pullRequest.headRefName, pullRequestUrl: pullRequest.url },
+        "Auto-archived worktree after PR merge",
+      );
     } catch (error) {
       log.warn({ err: error, cwd }, "Auto-archive after merge failed");
     }
   } finally {
-    inFlight.delete(cwd);
+    inFlight.delete(workspaceId);
   }
 }

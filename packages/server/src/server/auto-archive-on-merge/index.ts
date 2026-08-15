@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { Logger } from "pino";
 
 import { archiveIfSafe, type AutoArchiveArchiveOptions } from "./archive-if-safe.js";
@@ -7,19 +8,41 @@ export interface AutoArchiveOnMergeOptions extends AutoArchiveArchiveOptions {
   logger: Logger;
 }
 
+export interface AutoArchiveOnMergeDependencies {
+  archiveIfSafe: typeof archiveIfSafe;
+  resolvePath: typeof resolve;
+}
+
+const defaultDependencies: AutoArchiveOnMergeDependencies = {
+  archiveIfSafe,
+  resolvePath: resolve,
+};
+
 export function setupAutoArchiveOnMerge(
   options: AutoArchiveOnMergeOptions,
+  deps: AutoArchiveOnMergeDependencies = defaultDependencies,
 ): WorkspaceGitSubscription {
   const log = options.logger.child({ module: "auto-archive-on-merge" });
   const inFlight = new Set<string>();
 
   return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
-    void archiveIfSafe({
-      cwd: snapshot.cwd,
-      pullRequest: snapshot.forge.pullRequest,
-      inFlight,
-      options,
-      log,
+    void (async () => {
+      const snapshotCwd = deps.resolvePath(snapshot.cwd);
+      const attachedWorkspaces = (await options.listActiveWorkspaces()).filter(
+        (workspace) => deps.resolvePath(workspace.cwd) === snapshotCwd,
+      );
+      for (const workspace of attachedWorkspaces) {
+        await deps.archiveIfSafe({
+          workspaceId: workspace.workspaceId,
+          cwd: snapshot.cwd,
+          pullRequest: snapshot.forge.pullRequest,
+          inFlight,
+          options,
+          log,
+        });
+      }
+    })().catch((error) => {
+      log.warn({ err: error, cwd: snapshot.cwd }, "Failed to auto-archive attached workspaces");
     });
   });
 }
