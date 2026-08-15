@@ -48,6 +48,7 @@ import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
+import { useMessageHistory } from "./input/use-message-history";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -1252,6 +1253,20 @@ export function Composer({
   const autocompleteOnKeyPressRef = useRef(autocomplete.onKeyPress);
   autocompleteOnKeyPressRef.current = autocomplete.onKeyPress;
 
+  const {
+    handleHistoryKey,
+    closePopover: closeMessageHistory,
+    popover: messageHistoryPopover,
+  } = useMessageHistory({
+    agentId,
+    serverId,
+    value: userInput,
+    setValue: setUserInput,
+    cursorIndex,
+  });
+  const historyOnKeyPressRef = useRef(handleHistoryKey);
+  historyOnKeyPressRef.current = handleHistoryKey;
+
   // Clear send error when user edits the input
   useEffect(() => {
     if (sendError && userInput) {
@@ -1790,10 +1805,13 @@ export function Composer({
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
 
-  // Handle keyboard navigation for command autocomplete.
+  // Handle keyboard navigation for command autocomplete, then message history recall.
   const handleCommandKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) =>
-      autocompleteOnKeyPressRef.current(event),
+    (event: { key: string; preventDefault: () => void }) => {
+      if (autocompleteOnKeyPressRef.current(event)) return true;
+      if (historyOnKeyPressRef.current(event)) return true;
+      return false;
+    },
     [],
   );
 
@@ -2059,9 +2077,11 @@ export function Composer({
       setIsMessageInputFocused(focused);
       if (focused) {
         onAttentionInputFocus?.();
+      } else {
+        closeMessageHistory();
       }
     },
-    [onAttentionInputFocus],
+    [closeMessageHistory, onAttentionInputFocus],
   );
 
   const handleLightboxClose = useCallback(() => {
@@ -2192,6 +2212,13 @@ export function Composer({
                 errorMessage={autocomplete.errorMessage}
                 loadingText={autocomplete.loadingText}
                 emptyText={autocomplete.emptyText}
+              />
+              <AutocompletePopover
+                visible={messageHistoryPopover.visible}
+                anchorRef={messageInputContainerRef}
+                options={messageHistoryPopover.options}
+                selectedIndex={messageHistoryPopover.selectedIndex}
+                onSelect={messageHistoryPopover.onSelect}
               />
 
               {/* MessageInput handles everything: text, dictation, attachments, all buttons */}

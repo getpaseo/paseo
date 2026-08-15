@@ -20,7 +20,7 @@ export interface AutocompleteOption {
   label: string;
   detail?: string;
   description?: string;
-  kind?: "command" | "file" | "directory";
+  kind?: "command" | "file" | "directory" | "history";
 }
 
 interface AutocompleteProps {
@@ -105,7 +105,12 @@ function AutocompleteRow({
         </>
       ) : (
         <View style={styles.itemMainRow}>
-          <Text style={styles.itemLabel}>{optionLabel}</Text>
+          <Text
+            style={!optionDescription ? styles.itemLabelFill : styles.itemLabel}
+            numberOfLines={1}
+          >
+            {optionLabel}
+          </Text>
           {optionDescription ? (
             <Text style={styles.itemDescriptionInline} numberOfLines={1}>
               {optionDescription}
@@ -245,19 +250,11 @@ export function Autocomplete({
 
   return (
     <View style={styles.outerWrapper}>
-      {selectedOption?.kind === "command" && selectedOption.description ? (
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>
-            {removeBoltGlyphs(selectedOption.label) ?? selectedOption.label}
-          </Text>
-          <Text style={styles.detailDescription}>
-            {removeBoltGlyphs(selectedOption.description)}
-          </Text>
-          {selectedOption.detail ? (
-            <Text style={styles.detailHint}>{removeBoltGlyphs(selectedOption.detail)}</Text>
-          ) : null}
-        </View>
-      ) : null}
+      <AutocompleteDetail
+        option={selectedOption}
+        selectedIndex={selectedIndex}
+        total={options.length}
+      />
       <View style={containerStyle}>
         <ScrollView
           ref={scrollRef}
@@ -366,6 +363,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  // When a row has no description (e.g. message history), let the label fill the
+  // row so numberOfLines={1} truncates with an ellipsis instead of overflowing.
+  itemLabelFill: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    flex: 1,
+  },
   itemDetail: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
@@ -389,3 +394,47 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
   },
 })) as unknown as Record<string, object>;
+
+/**
+ * Preview panel above the list for the selected option. Commands (skills) show
+ * their name and description; history messages show the selected position
+ * (e.g. "2 / 5") as the header and the full message text below, so a row that
+ * was truncated to one line can still be read in full.
+ */
+function AutocompleteDetail({
+  option,
+  selectedIndex,
+  total,
+}: {
+  option: AutocompleteOption | undefined;
+  selectedIndex: number;
+  total: number;
+}) {
+  if (!option) {
+    return null;
+  }
+  if (option.kind === "command" && option.description) {
+    return (
+      <View style={styles.detailCard}>
+        <Text style={styles.detailLabel}>{removeBoltGlyphs(option.label) ?? option.label}</Text>
+        <Text style={styles.detailDescription}>{removeBoltGlyphs(option.description)}</Text>
+        {option.detail ? (
+          <Text style={styles.detailHint}>{removeBoltGlyphs(option.detail)}</Text>
+        ) : null}
+      </View>
+    );
+  }
+  if (option.kind === "history") {
+    return (
+      <View style={styles.detailCard}>
+        <Text style={styles.detailLabel}>
+          {selectedIndex + 1} / {total}
+        </Text>
+        <Text style={styles.detailDescription}>
+          {removeBoltGlyphs(option.label) ?? option.label}
+        </Text>
+      </View>
+    );
+  }
+  return null;
+}
