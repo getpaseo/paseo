@@ -279,8 +279,7 @@ function renderContextWindowMeter(
   glyphSize: number,
 ): ReactElement | null {
   const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  const canRenderProviderSummary = showPercentage && provider !== null;
-  if (!hasData && !pending && !canRenderProviderSummary) {
+  if (!hasData && !pending) {
     return null;
   }
   return (
