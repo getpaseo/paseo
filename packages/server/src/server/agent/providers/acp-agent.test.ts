@@ -18,6 +18,7 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPProbeSessionCloser,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -3855,6 +3856,93 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     terminator.releaseAll();
     await close;
+  });
+
+  test("close() closes custom lifecycle sessions when ACP close is not advertised", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const sessionCloser = vi.fn(async () => undefined) satisfies ACPProbeSessionCloser;
+    const unstableCloseSession = vi.fn(async () => undefined);
+    const session = new ACPAgentSession(
+      {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "gjc",
+        logger: createTestLogger(),
+        defaultCommand: ["gjc", "acp"],
+        defaultModes: [],
+        sessionCloser,
+        launchEnv: {
+          PASEO_AGENT_ID: "agent-1",
+        },
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+    const internals = asInternals<ACPCloseInternals>(session);
+    internals.child = child;
+    internals.connection = {
+      unstable_closeSession: unstableCloseSession,
+    } as unknown as ClientSideConnection;
+    internals.sessionId = "lifecycle-session-1";
+
+    await session.close();
+
+    expect(sessionCloser).toHaveBeenCalledWith({
+      response: { sessionId: "lifecycle-session-1" },
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      launchEnv: {
+        PASEO_AGENT_ID: "agent-1",
+      },
+      mcpServers: [],
+    });
+    expect(unstableCloseSession).not.toHaveBeenCalled();
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("close() terminates the ACP process when custom lifecycle close fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const closeError = new Error("lifecycle close failed");
+    const sessionCloser = vi.fn(async () => {
+      throw closeError;
+    }) satisfies ACPProbeSessionCloser;
+    const session = new ACPAgentSession(
+      {
+        provider: "gjc",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "gjc",
+        logger: createTestLogger(),
+        defaultCommand: ["gjc", "acp"],
+        defaultModes: [],
+        sessionCloser,
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+    const internals = asInternals<ACPCloseInternals>(session);
+    internals.child = child;
+    internals.connection = {} as ClientSideConnection;
+    internals.sessionId = "lifecycle-session-1";
+
+    await expect(session.close()).rejects.toThrow("lifecycle close failed");
+
+    expect(terminator.terminated).toContain(child);
+    expect(internals.connection).toBeNull();
+    expect(internals.child).toBeNull();
   });
 
   test("killTerminal terminates the terminal process tree without a direct SIGTERM", async () => {

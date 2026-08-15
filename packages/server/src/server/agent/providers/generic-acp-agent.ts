@@ -59,6 +59,7 @@ interface GenericACPAgentClientOptions {
   catalogModelResolver?: ACPCatalogModelResolver;
   newSessionStarter?: ACPNewSessionStarter;
   newSessionFailureCloser?: ACPProbeSessionCloser;
+  sessionCloser?: ACPProbeSessionCloser;
   probeSessionCloser?: ACPProbeSessionCloser;
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -118,6 +119,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       ...(options.newSessionFailureCloser
         ? { newSessionFailureCloser: options.newSessionFailureCloser }
         : {}),
+      ...(options.sessionCloser ? { sessionCloser: options.sessionCloser } : {}),
       ...(options.probeSessionCloser ? { probeSessionCloser: options.probeSessionCloser } : {}),
     });
 

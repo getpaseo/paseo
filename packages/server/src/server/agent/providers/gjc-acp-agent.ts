@@ -123,6 +123,11 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
         env: options.env,
         execFile: options.execFile,
       }),
+      sessionCloser: createGjcACPProbeSessionCloser({
+        command: options.command,
+        env: options.env,
+        execFile: options.execFile,
+      }),
       probeSessionCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,

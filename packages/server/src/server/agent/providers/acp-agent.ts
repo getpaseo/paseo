@@ -438,6 +438,7 @@ interface ACPAgentClientOptions {
   catalogModelResolver?: ACPCatalogModelResolver;
   newSessionStarter?: ACPNewSessionStarter;
   newSessionFailureCloser?: ACPProbeSessionCloser;
+  sessionCloser?: ACPProbeSessionCloser;
   probeSessionCloser?: ACPProbeSessionCloser;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
@@ -472,6 +473,7 @@ interface ACPAgentSessionOptions {
   defaultModes: AgentMode[];
   newSessionStarter?: ACPNewSessionStarter;
   newSessionFailureCloser?: ACPProbeSessionCloser;
+  sessionCloser?: ACPProbeSessionCloser;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -836,6 +838,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly catalogModelResolver?: ACPCatalogModelResolver;
   private readonly newSessionStarter?: ACPNewSessionStarter;
   private readonly newSessionFailureCloser?: ACPProbeSessionCloser;
+  private readonly sessionCloser?: ACPProbeSessionCloser;
   private readonly probeSessionCloser?: ACPProbeSessionCloser;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
@@ -880,6 +883,7 @@ export class ACPAgentClient implements AgentClient {
     this.catalogModelResolver = options.catalogModelResolver;
     this.newSessionStarter = options.newSessionStarter;
     this.newSessionFailureCloser = options.newSessionFailureCloser;
+    this.sessionCloser = options.sessionCloser;
     this.probeSessionCloser = options.probeSessionCloser;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
@@ -913,6 +917,7 @@ export class ACPAgentClient implements AgentClient {
         defaultModes: this.defaultModes,
         newSessionStarter: this.newSessionStarter,
         newSessionFailureCloser: this.newSessionFailureCloser,
+        sessionCloser: this.sessionCloser,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
@@ -963,6 +968,7 @@ export class ACPAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       defaultCommand: this.defaultCommand,
       defaultModes: this.defaultModes,
+      sessionCloser: this.sessionCloser,
       modelTransformer: this.modelTransformer,
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
@@ -1668,6 +1674,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly defaultModes: AgentMode[];
   private readonly newSessionStarter?: ACPNewSessionStarter;
   private readonly newSessionFailureCloser?: ACPProbeSessionCloser;
+  private readonly sessionCloser?: ACPProbeSessionCloser;
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -1740,6 +1747,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.defaultModes = options.defaultModes;
     this.newSessionStarter = options.newSessionStarter;
     this.newSessionFailureCloser = options.newSessionFailureCloser;
+    this.sessionCloser = options.sessionCloser;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -2484,6 +2492,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.closed = true;
+    let sessionCloseError: unknown;
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
@@ -2501,11 +2510,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       } catch {}
 
       try {
-        if (this.agentCapabilities?.sessionCapabilities?.close) {
+        if (this.sessionCloser) {
+          await this.sessionCloser({
+            response: { sessionId: this.sessionId },
+            config: this.config,
+            mcpServers: this.acpMcpServers(),
+            launchEnv: this.launchEnv,
+          });
+        } else if (this.agentCapabilities?.sessionCapabilities?.close) {
           await this.connection.unstable_closeSession({ sessionId: this.sessionId });
         }
       } catch (error) {
-        this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
+        if (this.sessionCloser) {
+          sessionCloseError = error;
+          this.logger.warn({ err: error }, "ACP lifecycle session close failed during shutdown");
+        } else {
+          this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
+        }
       }
     }
 
@@ -2526,6 +2547,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
+
+    if (sessionCloseError) {
+      throw sessionCloseError;
+    }
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
