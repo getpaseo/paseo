@@ -2732,6 +2732,92 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test.each(["status", "messages"] as const)(
+    "retries a failed foreground %s snapshot after one reconnect",
+    async (failedRequest) => {
+      vi.useFakeTimers();
+      const { parent: session, openCode } = await createParentSession(
+        `ses_retry_${failedRequest}_snapshot`,
+      );
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      openCode.sessionPromptAsyncEvents = [];
+      let statusAttempts = 0;
+      let messageAttempts = 0;
+
+      try {
+        await session.startTurn("recover me");
+        const dispatch = openCode.calls.sessionPromptAsync[0] as { messageID: string };
+        const recoveredMessages = {
+          data: [
+            {
+              info: {
+                id: dispatch.messageID,
+                sessionID: session.id,
+                role: "user",
+              },
+              parts: [],
+            },
+            {
+              info: {
+                id: "msg_recovered_assistant",
+                sessionID: session.id,
+                role: "assistant",
+                time: { created: 1, completed: 2 },
+              },
+              parts: [
+                {
+                  id: "part_recovered_text",
+                  sessionID: session.id,
+                  messageID: "msg_recovered_assistant",
+                  type: "text",
+                  text: "recovered after retry",
+                  time: { start: 1, end: 2 },
+                },
+              ],
+            },
+          ],
+        };
+        openCode.sessionStatusImplementation = async () => {
+          statusAttempts += 1;
+          if (failedRequest === "status" && statusAttempts === 1) {
+            throw new Error("transient status failure");
+          }
+          return { data: {} };
+        };
+        openCode.sessionMessagesImplementation = async () => {
+          messageAttempts += 1;
+          if (failedRequest === "messages" && messageAttempts === 1) {
+            throw new Error("transient messages failure");
+          }
+          return recoveredMessages;
+        };
+
+        openCode.emitEvent({ type: "reconnected" });
+        await vi.waitFor(() =>
+          expect(failedRequest === "status" ? statusAttempts : messageAttempts).toBe(1),
+        );
+        await vi.advanceTimersByTimeAsync(100);
+        await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
+
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({
+              type: "assistant_message",
+              text: "recovered after retry",
+            }),
+          }),
+        );
+        expect(countEvents(events, "turn_failed")).toBe(0);
+        expect(failedRequest === "status" ? statusAttempts : messageAttempts).toBe(2);
+      } finally {
+        vi.useRealTimers();
+        await session.close();
+      }
+    },
+  );
+
   test("preserves failed blocking-request snapshots and resolves successful empty ones", async () => {
     const { parent: session, openCode } = await createParentSession("ses_request_recovery");
     const events: AgentStreamEvent[] = [];
@@ -2903,6 +2989,84 @@ describe("OpenCode adapter startTurn error handling", () => {
       openCode.emitEvent({ type: "reconnected" });
       await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(0));
       await parent.close();
+    }
+  });
+
+  test("preserves a failed child terminal when its status snapshot fails", async () => {
+    const parentId = "ses_parent_failed_child_status";
+    const childId = "ses_child_failed_status";
+    const { parent, openCode } = await createParentSession(parentId);
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+    await vi.waitFor(() => expect(openCode.calls.sessionChildren).toHaveLength(1));
+    openCode.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: childId,
+            parentID: parentId,
+            title: "failed child",
+            directory: "/workspace/child",
+          },
+        ],
+      },
+      { data: [] },
+    ];
+    openCode.sessionStatusImplementation = async () => {
+      throw new Error("child status unavailable");
+    };
+    openCode.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_failed_child",
+            sessionID: childId,
+            role: "assistant",
+            time: { created: 1, completed: 2 },
+            error: { name: "ProviderError", data: { message: "child failed" } },
+          },
+          parts: [],
+        },
+      ],
+    };
+
+    openCode.emitEvent({ type: "reconnected" });
+    await vi.waitFor(() => expect(countChildStatuses(events, "failed", childId)).toBe(1));
+    const recoveredStatuses = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === childId &&
+      event.event.status
+        ? [event.event.status]
+        : [],
+    );
+    expect(recoveredStatuses.at(-1)).toBe("failed");
+    await parent.close();
+  });
+
+  test("settles stopping state when the OpenCode process exits", async () => {
+    vi.useFakeTimers();
+    const { parent: session, openCode } = await createParentSession("ses_exit_while_stopping");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    openCode.sessionPromptAsyncEvents = [];
+
+    try {
+      await session.startTurn("first");
+      await session.interrupt();
+      openCode.emitEvent({ type: "server-exited", error: new Error("OpenCode exited") });
+      await vi.advanceTimersByTimeAsync(0);
+
+      openCode.sessionPromptAsyncEvents = [
+        { type: "session.idle", properties: { sessionID: session.id } },
+      ];
+      const replacement = session.startTurn("second");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
+      expect(countEvents(events, "turn_canceled")).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
     }
   });
 
