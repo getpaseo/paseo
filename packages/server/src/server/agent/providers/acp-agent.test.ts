@@ -1520,19 +1520,29 @@ describe("ACPAgentSession Zed parity", () => {
       throw new Error("Expected pending elicitation");
     }
 
-    // The chooser UI may have had to fall back to a freeform text input
-    // (e.g. the provider dropped the options, or the user typed a custom
-    // value). Out-of-set answers are forwarded to the agent as raw text
-    // instead of leaving the elicitation pending.
+    // The schema constrains the answer to the declared enum options. An
+    // out-of-set value must not be delivered as accepted content; keep the
+    // elicitation pending so the user can pick a valid option.
+    await expect(
+      session.respondToPermission(pending.id, {
+        behavior: "allow",
+        updatedInput: {
+          ...pending.input,
+          answers: { model: "unsupported" },
+        },
+      }),
+    ).rejects.toThrow("must be one of the available options");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
     await session.respondToPermission(pending.id, {
       behavior: "allow",
       updatedInput: {
         ...pending.input,
-        answers: { model: "unsupported" },
+        answers: { model: "fast" },
       },
     });
     await expect(elicitation).resolves.toEqual({
-      action: { action: "accept", content: { model: "unsupported" } },
+      action: { action: "accept", content: { model: "fast" } },
     });
   });
 
@@ -1727,7 +1737,7 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
-  test("shows MiniMax Code single-select options and keeps the Others input", async () => {
+  test("shows MiniMax Code single-select options without a freeform input", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];
 
@@ -1735,8 +1745,8 @@ describe("ACPAgentSession Zed parity", () => {
     session.subscribe((event) => events.push(event));
 
     // Once the questionnaire bridge serializes single-select options, the
-    // schema carries the labels as `enum` while the description keeps the
-    // freeform "Others..." hint. Both must survive into the question card.
+    // schema carries the labels as `enum`. The options render as buttons and
+    // the description stays as the input placeholder for optionless fields.
     const elicitation = session.extMethod("elicitation/create", {
       sessionId: "session-1",
       mode: "form",
@@ -1768,7 +1778,7 @@ describe("ACPAgentSession Zed parity", () => {
               header: "q1",
               options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
               multiSelect: false,
-              allowOther: true,
+              allowOther: false,
               allowEmpty: false,
               placeholder: "Others...",
             },

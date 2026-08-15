@@ -3928,11 +3928,7 @@ function mapElicitationRequest(
         label: option.label,
       })),
       multiSelect: rawProperty.type === "array",
-      // MiniMax Code's ask_user always appends a freeform "Others..." choice
-      // and marks it via the description placeholder even when the schema also
-      // carries enum options. Keep the text input alongside the buttons so a
-      // custom answer stays available, not just for optionless fields.
-      allowOther: field.options.length === 0 || isElicitationFreeformHint(rawProperty.description),
+      allowOther: field.options.length === 0,
       allowEmpty: !field.required,
       ...(placeholder !== undefined ? { placeholder } : {}),
     });
@@ -3985,14 +3981,6 @@ function isElicitationFieldRequired(schema: ElicitationPropertySchema): boolean 
 
 function readElicitationOptionLabel(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function isElicitationFreeformHint(description: string | null | undefined): boolean {
-  if (typeof description !== "string") {
-    return false;
-  }
-  const hint = description.trim().toLocaleLowerCase();
-  return hint === "others" || hint === "others..." || hint === "other" || hint === "other...";
 }
 
 function mapElicitationEnumOptions(values: unknown): ElicitationQuestionOption[] {
@@ -4139,12 +4127,12 @@ function parseElicitationAnswer(
     if (value !== undefined) {
       return value;
     }
-    // The user typed freeform text that did not match any of the predefined
-    // options (e.g. the chooser UI had to fall back to a text input). Forward
-    // the raw text instead of throwing — the agent can decide what to do with
-    // an out-of-set answer, but a hard error here would leave the elicitation
-    // pending and stall the turn.
-    return answer;
+    // The schema constrains the answer to the declared options. Returning raw
+    // text would deliver content that violates the agent's requested schema;
+    // keep the elicitation pending so the user can pick a valid option.
+    throw new Error(
+      `ACP elicitation answer for '${field.key}' must be one of the available options`,
+    );
   }
   return answer;
 }
