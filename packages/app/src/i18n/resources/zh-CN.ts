@@ -2347,6 +2347,7 @@ export const zhCN: TranslationResources = {
       },
     },
     project: {
+      commandFormat: { single: "单个命令", platform: "按平台设置命令" },
       noEditableTarget: "此项目无法在这个 Host 上编辑。",
       backToProjects: "返回 Projects",
       edit: {

@@ -108,7 +108,7 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 }
 ```
 
-Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
+Both fields accept a multiline shell script or an array of commands; commands run sequentially either way. They can also be objects keyed by `linux`, `darwin`, and `win32`. Each platform value can be either a string or an array, and Paseo selects the value for the daemon's platform.
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
@@ -129,6 +129,24 @@ Run them from the app, or manage them from automation with [`paseo script`](/doc
   }
 }
 ```
+
+Use a platform object when a script needs a different command on each operating system. The platform values are selected by the daemon running the worktree.
+
+```json
+{
+  "scripts": {
+    "dev": {
+      "type": "service",
+      "command": {
+        "linux": "bash ./scripts/dev.sh",
+        "win32": "powershell -NoProfile -File .\\scripts\\dev.ps1"
+      }
+    }
+  }
+}
+```
+
+If a platform object has no command for the daemon's platform, Paseo reports the script name and platform instead of launching it.
 
 ### Services
 

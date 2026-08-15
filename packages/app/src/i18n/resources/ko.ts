@@ -2392,6 +2392,7 @@ export const ko: TranslationResources = {
       },
     },
     project: {
+      commandFormat: { single: "단일 명령", platform: "플랫폼별 명령" },
       noEditableTarget: "이 호스트에서는 이 프로젝트를 편집할 수 없습니다.",
       backToProjects: "프로젝트로 돌아가기",
       edit: {

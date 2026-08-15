@@ -301,8 +301,12 @@ Worktrees inherit committed Git state only; uncommitted source-checkout changes 
 
 ## paseo.json service scripts
 
-`worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
-of commands. Both run sequentially.
+`worktree.setup` and `worktree.teardown` accept either a multiline shell script, an array
+of commands, or an object keyed by daemon platform. Platform-specific lifecycle values can
+be either a string or an array; both run sequentially. Script `command` values accept the
+existing string form or an object with `linux`, `darwin`, and `win32` string values. Paseo
+selects the value for the daemon's platform before execution and reports the script name and
+platform when the object has no matching value.
 
 Lifecycle commands run in the worktree through a stable script shell: `bash`
 resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
@@ -326,6 +330,15 @@ that reads what it needs from `process.env` and invoke it as
   "worktree": {
     "setup": "npm ci\ncp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
     "teardown": "npm run db:drop || true"
+  },
+  "scripts": {
+    "dev": {
+      "type": "service",
+      "command": {
+        "linux": "bash ./scripts/dev.sh",
+        "win32": "powershell -NoProfile -File .\\scripts\\dev.ps1"
+      }
+    }
   }
 }
 ```

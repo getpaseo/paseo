@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { PaseoConfigRawSchema } from "@getpaseo/protocol/paseo-config-schema";
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
-import { applyDraftToConfig, configToDraft, type ProjectConfigDraft } from "./project-config-form";
+import {
+  applyDraftToConfig,
+  configToDraft,
+  createEmptyCommandDraft,
+  type ProjectConfigDraft,
+} from "./project-config-form";
 
 function emptyDraft(): ProjectConfigDraft {
   return {
-    setupText: "",
-    setupOriginalKind: "missing",
-    teardownText: "",
-    teardownOriginalKind: "missing",
+    setup: createEmptyCommandDraft(),
+    teardown: createEmptyCommandDraft(),
     scripts: [],
     metadataPrompts: {
       branchName: "",
@@ -28,18 +31,56 @@ describe("configToDraft", () => {
     const draft = configToDraft({
       worktree: { setup: "npm install" },
     });
-    expect(draft.setupText).toBe("npm install");
-    expect(draft.setupOriginalKind).toBe("string");
-    expect(draft.teardownText).toBe("");
-    expect(draft.teardownOriginalKind).toBe("missing");
+    expect(draft.setup.text).toBe("npm install");
+    expect(draft.setup.originalKind).toBe("string");
+    expect(draft.teardown.text).toBe("");
+    expect(draft.teardown.originalKind).toBe("missing");
   });
 
   it("renders an array lifecycle command as newline-separated text", () => {
     const draft = configToDraft({
       worktree: { teardown: ["docker compose down", "rm -rf .cache"] },
     });
-    expect(draft.teardownText).toBe("docker compose down\nrm -rf .cache");
-    expect(draft.teardownOriginalKind).toBe("array");
+    expect(draft.teardown.text).toBe("docker compose down\nrm -rf .cache");
+    expect(draft.teardown.originalKind).toBe("array");
+  });
+
+  it("projects platform-specific lifecycle and script commands into separate fields", () => {
+    const draft = configToDraft({
+      worktree: {
+        setup: {
+          linux: ["npm ci", "npm run prepare"],
+          win32: "npm.cmd ci",
+        },
+      },
+      scripts: {
+        dev: {
+          command: {
+            linux: "npm run dev",
+            darwin: "npm run dev:mac",
+            win32: "npm.cmd run dev:win",
+          },
+        },
+      },
+    });
+
+    expect(draft.setup.format).toBe("platform");
+    expect(draft.setup.platforms.linux).toEqual({
+      text: "npm ci\nnpm run prepare",
+      originalKind: "array",
+    });
+    expect(draft.setup.platforms.win32).toEqual({
+      text: "npm.cmd ci",
+      originalKind: "string",
+    });
+    expect(draft.scripts[0]?.command).toMatchObject({
+      format: "platform",
+      platforms: {
+        linux: { text: "npm run dev", originalKind: "string" },
+        darwin: { text: "npm run dev:mac", originalKind: "string" },
+        win32: { text: "npm.cmd run dev:win", originalKind: "string" },
+      },
+    });
   });
 
   it("converts a scripts record into draft rows with stable local ids", () => {
@@ -52,14 +93,14 @@ describe("configToDraft", () => {
     expect(draft.scripts).toHaveLength(2);
     const [devRow, buildRow] = draft.scripts;
     expect(devRow.name).toBe("dev");
-    expect(devRow.commandText).toBe("npm run dev");
-    expect(devRow.commandOriginalKind).toBe("string");
+    expect(devRow.command.text).toBe("npm run dev");
+    expect(devRow.command.originalKind).toBe("string");
     expect(devRow.type).toBe("long-running");
     expect(devRow.portText).toBe("3000");
     expect(devRow.id).toMatch(/^script-draft-\d+$/);
     expect(buildRow.name).toBe("build");
-    expect(buildRow.commandText).toBe("npm\nrun\nbuild");
-    expect(buildRow.commandOriginalKind).toBe("array");
+    expect(buildRow.command.text).toBe("npm\nrun\nbuild");
+    expect(buildRow.command.originalKind).toBe("array");
     expect(buildRow.portText).toBe("");
     expect(buildRow.id).not.toBe(devRow.id);
   });
@@ -69,7 +110,7 @@ describe("applyDraftToConfig", () => {
   it("preserves the original string kind when editing an existing setup field", () => {
     const base: PaseoConfigRaw = { worktree: { setup: "npm install" } };
     const draft = configToDraft(base);
-    draft.setupText = "npm install\nnpm run prepare";
+    draft.setup.text = "npm install\nnpm run prepare";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toBe("npm install\nnpm run prepare");
   });
@@ -79,15 +120,41 @@ describe("applyDraftToConfig", () => {
       worktree: { teardown: ["docker compose down"] },
     };
     const draft = configToDraft(base);
-    draft.teardownText = "docker compose down\nrm -rf .cache";
+    draft.teardown.text = "docker compose down\nrm -rf .cache";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.teardown).toEqual(["docker compose down", "rm -rf .cache"]);
+  });
+
+  it("round-trips platform-specific setup and script commands", () => {
+    const base = PaseoConfigRawSchema.parse({
+      worktree: {
+        setup: {
+          linux: ["npm ci", "npm run prepare"],
+          win32: "npm.cmd ci",
+        },
+        teardown: { darwin: ["npm run clean"] },
+      },
+      scripts: {
+        dev: {
+          command: {
+            linux: "npm run dev",
+            win32: "npm.cmd run dev:win",
+          },
+        },
+      },
+    });
+
+    const draft = configToDraft(base);
+    const next = applyDraftToConfig({ draft, base });
+
+    expect(next.worktree).toEqual(base.worktree);
+    expect(next.scripts).toEqual(base.scripts);
   });
 
   it("writes a string for a newly added lifecycle field with one non-empty line", () => {
     const base: PaseoConfigRaw = {};
     const draft = configToDraft(base);
-    draft.setupText = "npm install";
+    draft.setup.text = "npm install";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toBe("npm install");
   });
@@ -95,7 +162,7 @@ describe("applyDraftToConfig", () => {
   it("writes an array for a newly added lifecycle field with multiple non-empty lines", () => {
     const base: PaseoConfigRaw = {};
     const draft = configToDraft(base);
-    draft.setupText = "npm install\nnpm run prepare";
+    draft.setup.text = "npm install\nnpm run prepare";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toEqual(["npm install", "npm run prepare"]);
   });
@@ -103,7 +170,7 @@ describe("applyDraftToConfig", () => {
   it("omits a lifecycle field whose draft text is empty", () => {
     const base: PaseoConfigRaw = { worktree: { setup: "npm install" } };
     const draft = configToDraft(base);
-    draft.setupText = "";
+    draft.setup.text = "";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toBeUndefined();
   });
@@ -151,7 +218,7 @@ describe("applyDraftToConfig", () => {
     // Edit only "dev". Leave "build" and "lint" untouched.
     const devRow = draft.scripts.find((row) => row.name === "dev");
     if (!devRow) throw new Error("expected dev row in draft");
-    devRow.commandText = "npm run dev -- --watch";
+    devRow.command.text = "npm run dev -- --watch";
 
     const next = applyDraftToConfig({ draft, base });
     const scripts = next.scripts ?? {};
@@ -180,7 +247,7 @@ describe("applyDraftToConfig", () => {
     });
     const draft = configToDraft(base);
     const buildRow = draft.scripts[0];
-    buildRow.commandText = "npm run build";
+    buildRow.command.text = "npm run build";
     const next = applyDraftToConfig({ draft, base });
     const buildEntry = (next.scripts ?? {}).build as Record<string, unknown>;
     expect(buildEntry.command).toEqual(["npm run build"]);
@@ -193,8 +260,7 @@ describe("applyDraftToConfig", () => {
       {
         id: "row-1",
         name: "dev",
-        commandText: "npm run dev",
-        commandOriginalKind: "missing",
+        command: { ...createEmptyCommandDraft(), text: "npm run dev" },
         type: "long-running",
         portText: "3000",
         rawEntry: {},
@@ -202,8 +268,7 @@ describe("applyDraftToConfig", () => {
       {
         id: "row-2",
         name: "tunnel",
-        commandText: "ngrok",
-        commandOriginalKind: "missing",
+        command: { ...createEmptyCommandDraft(), text: "ngrok" },
         type: "long-running",
         portText: "auto",
         rawEntry: {},
@@ -339,8 +404,7 @@ describe("applyDraftToConfig", () => {
       .concat({
         id: "row-empty",
         name: "   ",
-        commandText: "echo hi",
-        commandOriginalKind: "missing",
+        command: { ...createEmptyCommandDraft(), text: "echo hi" },
         type: "",
         portText: "",
         rawEntry: {},

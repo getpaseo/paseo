@@ -2,6 +2,9 @@ import { z } from "zod";
 
 const TCP_PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/;
 
+export const PASEO_PLATFORMS = ["linux", "darwin", "win32"] as const;
+export type PaseoPlatform = (typeof PASEO_PLATFORMS)[number];
+
 export const PaseoServicePortAllocationSchema = z
   .object({
     range: z.string().trim().regex(TCP_PORT_RANGE_PATTERN).optional(),
@@ -33,12 +36,47 @@ export function normalizeLifecycleCommands(commands: unknown): string[] {
   });
 }
 
-export const PaseoLifecycleCommandRawSchema = z.union([z.string(), z.array(z.string())]);
+export function isPaseoPlatformCommand(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function selectPaseoPlatformCommand(value: unknown, platform: string): unknown {
+  return isPaseoPlatformCommand(value) ? value[platform] : value;
+}
+
+const PaseoLifecycleCommandValueRawSchema = z.union([z.string(), z.array(z.string())]);
+
+export const PaseoPlatformScriptCommandRawSchema = z
+  .object({
+    linux: z.string().optional(),
+    darwin: z.string().optional(),
+    win32: z.string().optional(),
+  })
+  .passthrough();
+
+export const PaseoPlatformLifecycleCommandRawSchema = z
+  .object({
+    linux: PaseoLifecycleCommandValueRawSchema.optional(),
+    darwin: PaseoLifecycleCommandValueRawSchema.optional(),
+    win32: PaseoLifecycleCommandValueRawSchema.optional(),
+  })
+  .passthrough();
+
+export const PaseoScriptCommandRawSchema = z.union([
+  z.string(),
+  z.array(z.string()),
+  PaseoPlatformScriptCommandRawSchema,
+]);
+
+export const PaseoLifecycleCommandRawSchema = z.union([
+  PaseoLifecycleCommandValueRawSchema,
+  PaseoPlatformLifecycleCommandRawSchema,
+]);
 
 export const PaseoScriptEntryRawSchema = z
   .object({
     type: z.unknown().optional(),
-    command: z.unknown().optional(),
+    command: PaseoScriptCommandRawSchema.optional(),
     port: z.unknown().optional(),
   })
   .passthrough();
@@ -79,9 +117,19 @@ export const PaseoConfigRawSchema = z
   })
   .passthrough();
 
+function normalizeLifecycleConfigCommands(
+  commands: unknown,
+): string[] | PaseoPlatformLifecycleCommandRaw {
+  const platformCommands = PaseoPlatformLifecycleCommandRawSchema.safeParse(commands);
+  if (platformCommands.success) {
+    return platformCommands.data;
+  }
+  return normalizeLifecycleCommands(commands);
+}
+
 export const WorktreeConfigSchema = PaseoWorktreeConfigRawSchema.extend({
-  setup: z.unknown().optional().transform(normalizeLifecycleCommands),
-  teardown: z.unknown().optional().transform(normalizeLifecycleCommands),
+  setup: z.unknown().optional().transform(normalizeLifecycleConfigCommands),
+  teardown: z.unknown().optional().transform(normalizeLifecycleConfigCommands),
 })
   .passthrough()
   .catch({ setup: [], teardown: [] });
@@ -112,6 +160,12 @@ export const ProjectConfigRpcErrorSchema = z.discriminatedUnion("code", [
 ]);
 
 export type PaseoScriptEntryRaw = z.infer<typeof PaseoScriptEntryRawSchema>;
+export type PaseoPlatformScriptCommandRaw = z.infer<typeof PaseoPlatformScriptCommandRawSchema>;
+export type PaseoPlatformLifecycleCommandRaw = z.infer<
+  typeof PaseoPlatformLifecycleCommandRawSchema
+>;
+export type PaseoScriptCommandRaw = z.infer<typeof PaseoScriptCommandRawSchema>;
+export type PaseoLifecycleCommandRaw = z.infer<typeof PaseoLifecycleCommandRawSchema>;
 export type PaseoMetadataGenerationEntry = z.infer<typeof PaseoMetadataGenerationEntrySchema>;
 export type PaseoMetadataGeneration = z.infer<typeof PaseoMetadataGenerationSchema>;
 export type PaseoServicePortAllocation = z.infer<typeof PaseoServicePortAllocationSchema>;

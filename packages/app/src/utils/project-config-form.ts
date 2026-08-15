@@ -4,8 +4,24 @@ import type {
   PaseoMetadataGenerationEntry,
   PaseoScriptEntryRaw,
 } from "@getpaseo/protocol/messages";
+import { PASEO_PLATFORMS, type PaseoPlatform } from "@getpaseo/protocol/paseo-config-schema";
 
 export type LifecycleOriginalKind = "string" | "array" | "missing";
+export type CommandFormat = "single" | "platform";
+
+export interface PlatformCommandDraft {
+  text: string;
+  originalKind: LifecycleOriginalKind;
+}
+
+export type PlatformCommandDrafts = Record<PaseoPlatform, PlatformCommandDraft>;
+
+export interface CommandDraft {
+  format: CommandFormat;
+  text: string;
+  originalKind: LifecycleOriginalKind;
+  platforms: PlatformCommandDrafts;
+}
 
 export const METADATA_PROMPT_KEYS = ["branchName", "commitMessage", "pullRequest"] as const;
 export type MetadataPromptKey = (typeof METADATA_PROMPT_KEYS)[number];
@@ -13,18 +29,15 @@ export type MetadataPromptKey = (typeof METADATA_PROMPT_KEYS)[number];
 export interface ProjectScriptDraft {
   id: string;
   name: string;
-  commandText: string;
-  commandOriginalKind: LifecycleOriginalKind;
+  command: CommandDraft;
   type: string;
   portText: string;
   rawEntry: PaseoScriptEntryRaw;
 }
 
 export interface ProjectConfigDraft {
-  setupText: string;
-  setupOriginalKind: LifecycleOriginalKind;
-  teardownText: string;
-  teardownOriginalKind: LifecycleOriginalKind;
+  setup: CommandDraft;
+  teardown: CommandDraft;
   scripts: ProjectScriptDraft[];
   metadataPrompts: Record<MetadataPromptKey, string>;
   metadataGenerationBase: PaseoMetadataGeneration | undefined;
@@ -33,6 +46,27 @@ export interface ProjectConfigDraft {
 interface LifecycleProjection {
   text: string;
   kind: LifecycleOriginalKind;
+}
+
+function emptyPlatformCommands(): PlatformCommandDrafts {
+  return {
+    linux: { text: "", originalKind: "missing" },
+    darwin: { text: "", originalKind: "missing" },
+    win32: { text: "", originalKind: "missing" },
+  };
+}
+
+function emptyCommandDraft(): CommandDraft {
+  return {
+    format: "single",
+    text: "",
+    originalKind: "missing",
+    platforms: emptyPlatformCommands(),
+  };
+}
+
+export function createEmptyCommandDraft(): CommandDraft {
+  return emptyCommandDraft();
 }
 
 function projectLifecycle(value: unknown): LifecycleProjection {
@@ -44,6 +78,11 @@ function projectLifecycle(value: unknown): LifecycleProjection {
     return { text: lines.join("\n"), kind: "array" };
   }
   return { text: "", kind: "missing" };
+}
+
+function projectPlatformCommand(value: unknown): PlatformCommandDraft {
+  const projection = projectLifecycle(value);
+  return { text: projection.text, originalKind: projection.kind };
 }
 
 function lifecycleFromText(
@@ -77,6 +116,102 @@ function projectScriptPort(value: unknown): string {
   return "";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function projectCommand(value: unknown): CommandDraft {
+  if (isRecord(value)) {
+    return {
+      ...emptyCommandDraft(),
+      format: "platform",
+      platforms: {
+        linux: projectPlatformCommand(value.linux),
+        darwin: projectPlatformCommand(value.darwin),
+        win32: projectPlatformCommand(value.win32),
+      },
+    };
+  }
+
+  const single = projectLifecycle(value);
+  return {
+    ...emptyCommandDraft(),
+    text: single.text,
+    originalKind: single.kind,
+  };
+}
+
+function commandFromDraft(
+  command: CommandDraft,
+): string | string[] | PlatformCommandValues | undefined {
+  if (command.format === "single") {
+    return lifecycleFromText(command.text, command.originalKind);
+  }
+
+  const platformCommands: PlatformCommandValues = {};
+  for (const platform of PASEO_PLATFORMS) {
+    const value = lifecycleFromText(
+      command.platforms[platform].text,
+      command.platforms[platform].originalKind,
+    );
+    if (value !== undefined) {
+      platformCommands[platform] = value;
+    }
+  }
+  return Object.keys(platformCommands).length > 0 ? platformCommands : undefined;
+}
+
+type PlatformCommandValue = string | string[];
+type PlatformCommandValues = Partial<Record<PaseoPlatform, PlatformCommandValue>>;
+
+export function changeCommandFormat(command: CommandDraft, format: CommandFormat): CommandDraft {
+  if (command.format === format) {
+    return command;
+  }
+
+  if (format === "platform") {
+    const platformCommand = {
+      text: command.text,
+      originalKind: command.originalKind,
+    };
+    return {
+      ...command,
+      format,
+      platforms: {
+        linux: { ...platformCommand },
+        darwin: { ...platformCommand },
+        win32: { ...platformCommand },
+      },
+    };
+  }
+
+  for (const platform of PASEO_PLATFORMS) {
+    const platformCommand = command.platforms[platform];
+    if (platformCommand.text.trim().length > 0) {
+      return {
+        ...command,
+        format,
+        text: platformCommand.text,
+        originalKind: platformCommand.originalKind,
+      };
+    }
+  }
+
+  return {
+    ...command,
+    format,
+    text: "",
+    originalKind: "missing",
+  };
+}
+
+export function hasCommandText(command: CommandDraft): boolean {
+  if (command.format === "single") {
+    return command.text.trim().length > 0;
+  }
+  return PASEO_PLATFORMS.some((platform) => command.platforms[platform].text.trim().length > 0);
+}
+
 function parseScriptPort(value: string): number | string | undefined {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
@@ -108,18 +243,17 @@ function emptyMetadataPrompts(): Record<MetadataPromptKey, string> {
 
 export function configToDraft(config: PaseoConfigRaw | null | undefined): ProjectConfigDraft {
   const worktree = config?.worktree ?? {};
-  const setup = projectLifecycle(worktree.setup);
-  const teardown = projectLifecycle(worktree.teardown);
+  const setup = projectCommand(worktree.setup);
+  const teardown = projectCommand(worktree.teardown);
   const scripts: ProjectScriptDraft[] = [];
 
   const scriptsRecord = config?.scripts ?? {};
   for (const [name, entry] of Object.entries(scriptsRecord)) {
-    const command = projectLifecycle(entry.command);
+    const command = projectCommand(entry.command);
     scripts.push({
       id: nextScriptDraftId(),
       name,
-      commandText: command.text,
-      commandOriginalKind: command.kind,
+      command,
       type: projectScriptType(entry.type),
       portText: projectScriptPort(entry.port),
       rawEntry: entry,
@@ -136,10 +270,8 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
   }
 
   return {
-    setupText: setup.text,
-    setupOriginalKind: setup.kind,
-    teardownText: teardown.text,
-    teardownOriginalKind: teardown.kind,
+    setup,
+    teardown,
     scripts,
     metadataPrompts,
     metadataGenerationBase: metadataGeneration,
@@ -156,16 +288,13 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   const baseWorktree = baseConfig.worktree ?? {};
 
   const nextWorktree: Record<string, unknown> = { ...baseWorktree };
-  const nextSetup = lifecycleFromText(input.draft.setupText, input.draft.setupOriginalKind);
+  const nextSetup = commandFromDraft(input.draft.setup);
   if (nextSetup === undefined) {
     delete nextWorktree.setup;
   } else {
     nextWorktree.setup = nextSetup;
   }
-  const nextTeardown = lifecycleFromText(
-    input.draft.teardownText,
-    input.draft.teardownOriginalKind,
-  );
+  const nextTeardown = commandFromDraft(input.draft.teardown);
   if (nextTeardown === undefined) {
     delete nextWorktree.teardown;
   } else {
@@ -180,7 +309,7 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     }
     const baseEntry = row.rawEntry;
     const nextEntry: Record<string, unknown> = { ...baseEntry };
-    const nextCommand = lifecycleFromText(row.commandText, row.commandOriginalKind);
+    const nextCommand = commandFromDraft(row.command);
     if (nextCommand === undefined) {
       delete nextEntry.command;
     } else {

@@ -2414,6 +2414,7 @@ export const ptBR: TranslationResources = {
       },
     },
     project: {
+      commandFormat: { single: "Comando único", platform: "Comandos por plataforma" },
       noEditableTarget: "Este projeto não pode ser editado neste host.",
       backToProjects: "Voltar para projetos",
       edit: {

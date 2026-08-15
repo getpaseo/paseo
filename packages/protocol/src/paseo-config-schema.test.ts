@@ -33,6 +33,30 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("parses platform-specific script and lifecycle commands", () => {
+    const config = {
+      worktree: {
+        setup: {
+          linux: ["npm ci", "npm run prepare"],
+          win32: "npm.cmd ci",
+        },
+        teardown: { darwin: "npm run clean" },
+      },
+      scripts: {
+        dev: {
+          type: "service",
+          command: {
+            linux: "npm run dev",
+            win32: "npm.cmd run dev:win",
+          },
+        },
+      },
+    };
+
+    expect(PaseoConfigRawSchema.parse(config)).toEqual(config);
+    expect(PaseoConfigSchema.parse(config)).toEqual(config);
+  });
+
   it("parses service port allocation", () => {
     expect(
       PaseoConfigSchema.parse({

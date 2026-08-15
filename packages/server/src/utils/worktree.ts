@@ -24,10 +24,17 @@ export {
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   PaseoConfigSchema,
+  normalizeLifecycleCommands,
   type PaseoConfig,
   type PaseoConfigRaw,
 } from "@getpaseo/protocol/paseo-config-schema";
-import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  isPaseoPlatformCommand,
+  normalizeLifecycleCommands,
+  PaseoConfigSchema,
+  selectPaseoPlatformCommand,
+  type PaseoConfig,
+} from "@getpaseo/protocol/paseo-config-schema";
 import {
   createPaseoWorktreeChangeRequestHint,
   normalizeBaseRefName,
@@ -278,11 +285,25 @@ function readPaseoConfigOrThrow(repoRoot: string): PaseoConfig | null {
 }
 
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  return readPaseoConfigOrThrow(repoRoot)?.worktree?.setup ?? [];
+  return resolveLifecycleCommands(readPaseoConfigOrThrow(repoRoot)?.worktree?.setup, "setup");
 }
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
-  return readPaseoConfigOrThrow(repoRoot)?.worktree?.teardown ?? [];
+  return resolveLifecycleCommands(readPaseoConfigOrThrow(repoRoot)?.worktree?.teardown, "teardown");
+}
+
+function resolveLifecycleCommands(value: unknown, name: "setup" | "teardown"): string[] {
+  if (isPaseoPlatformCommand(value)) {
+    const selected = selectPaseoPlatformCommand(value, process.platform);
+    if (selected === undefined) {
+      throw new Error(
+        `Worktree ${name} has no command for platform '${process.platform}' in paseo.json`,
+      );
+    }
+    return normalizeLifecycleCommands(selected);
+  }
+
+  return normalizeLifecycleCommands(value);
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
@@ -331,11 +352,7 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
       continue;
     }
 
-    const rawCommand = entry.command;
-    if (typeof rawCommand !== "string") {
-      continue;
-    }
-    const command = rawCommand.trim();
+    const command = resolveScriptCommand(entry.command, name);
     if (!command) {
       continue;
     }
@@ -360,6 +377,25 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
   }
 
   return result;
+}
+
+function resolveScriptCommand(command: unknown, scriptName: string): string | null {
+  if (typeof command === "string") {
+    const trimmed = command.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (!isPaseoPlatformCommand(command)) {
+    return null;
+  }
+
+  const selected = selectPaseoPlatformCommand(command, process.platform);
+  if (typeof selected !== "string" || selected.trim().length === 0) {
+    throw new Error(
+      `Script '${scriptName}' has no command for platform '${process.platform}' in paseo.json`,
+    );
+  }
+  return selected.trim();
 }
 
 export function processCarriageReturns(text: string): string {

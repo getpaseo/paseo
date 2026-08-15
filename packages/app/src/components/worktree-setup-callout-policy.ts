@@ -1,4 +1,5 @@
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
+import { isPaseoPlatformCommand } from "@getpaseo/protocol/paseo-config-schema";
 import { i18n } from "@/i18n/i18next";
 import { buildProjectSettingsRoute } from "@/utils/host-routes";
 
@@ -75,6 +76,13 @@ function hasSetupCommands(config: PaseoConfigRaw): boolean {
   }
   if (Array.isArray(setup)) {
     return setup.some((command) => typeof command === "string" && command.trim().length > 0);
+  }
+  if (isPaseoPlatformCommand(setup)) {
+    return Object.values(setup).some((command) => {
+      if (typeof command === "string") return command.trim().length > 0;
+      if (!Array.isArray(command)) return false;
+      return command.some((entry) => typeof entry === "string" && entry.trim().length > 0);
+    });
   }
   return false;
 }

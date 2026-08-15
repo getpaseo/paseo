@@ -1,6 +1,8 @@
 import {
   PaseoConfigRawSchema,
+  isPaseoPlatformCommand,
   normalizeLifecycleCommands,
+  selectPaseoPlatformCommand,
   type PaseoConfigRaw,
 } from "@getpaseo/protocol/paseo-config-schema";
 import { READ_ONLY_GIT_ENV } from "../../checkout-git-utils.js";
@@ -12,9 +14,16 @@ export async function hasUncommittedWorktreeSetupChanges(input: {
 }): Promise<boolean> {
   const gitPath = await resolveConfigGitPath(input.repoRoot);
   const committedConfig = await readCommittedConfig(input.repoRoot, gitPath);
-  const currentSetup = normalizeLifecycleCommands(input.currentConfig?.worktree?.setup);
-  const committedSetup = normalizeLifecycleCommands(committedConfig?.worktree?.setup);
+  const currentSetup = normalizeCurrentPlatformSetup(input.currentConfig?.worktree?.setup);
+  const committedSetup = normalizeCurrentPlatformSetup(committedConfig?.worktree?.setup);
   return !stringArraysEqual(currentSetup, committedSetup);
+}
+
+function normalizeCurrentPlatformSetup(value: unknown): string[] {
+  const selected = isPaseoPlatformCommand(value)
+    ? selectPaseoPlatformCommand(value, process.platform)
+    : value;
+  return normalizeLifecycleCommands(selected);
 }
 
 async function resolveConfigGitPath(repoRoot: string): Promise<string> {

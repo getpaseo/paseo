@@ -3,8 +3,12 @@ import {
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
+  getScriptConfigs,
+  getWorktreeSetupCommands,
+  getWorktreeTeardownCommands,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
+  readPaseoConfig,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
@@ -52,6 +56,12 @@ function createLegacyWorktreeForTest(
   });
 }
 
+function currentPlatformValue<T>(values: { linux: T; darwin: T; win32: T }): T {
+  if (process.platform === "win32") return values.win32;
+  if (process.platform === "darwin") return values.darwin;
+  return values.linux;
+}
+
 describe("paseo worktree manager", () => {
   let tempDir: string;
   let repoDir: string;
@@ -75,6 +85,65 @@ describe("paseo worktree manager", () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("selects platform-specific script and lifecycle commands for the daemon platform", () => {
+    const expectedScript = currentPlatformValue({
+      linux: "npm run dev:linux",
+      darwin: "npm run dev:mac",
+      win32: "npm.cmd run dev:win",
+    });
+    const expectedSetup = currentPlatformValue({
+      linux: ["npm ci", "npm run prepare:linux"],
+      darwin: ["npm ci", "npm run prepare:mac"],
+      win32: ["npm.cmd ci"],
+    });
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: {
+            linux: ["npm ci", "npm run prepare:linux"],
+            darwin: ["npm ci", "npm run prepare:mac"],
+            win32: "npm.cmd ci",
+          },
+          teardown: {
+            linux: "npm run clean:linux",
+            darwin: ["npm run clean:mac"],
+            win32: ["npm.cmd run clean"],
+          },
+        },
+        scripts: {
+          dev: {
+            command: {
+              linux: "npm run dev:linux",
+              darwin: "npm run dev:mac",
+              win32: "npm.cmd run dev:win",
+            },
+          },
+        },
+      }),
+    );
+
+    const configResult = readPaseoConfig(repoDir);
+    if (!configResult.ok) throw new Error("expected paseo.json to parse");
+    expect(getScriptConfigs(configResult.config).get("dev")).toEqual({ command: expectedScript });
+    expect(getWorktreeSetupCommands(repoDir)).toEqual(expectedSetup);
+    expect(getWorktreeTeardownCommands(repoDir)).toHaveLength(1);
+  });
+
+  it("reports the script and platform when no platform command is configured", () => {
+    const configuredPlatform = process.platform === "win32" ? "linux" : "win32";
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { command: { [configuredPlatform]: "npm run dev" } } } }),
+    );
+
+    const configResult = readPaseoConfig(repoDir);
+    if (!configResult.ok) throw new Error("expected paseo.json to parse");
+    expect(() => getScriptConfigs(configResult.config)).toThrow(
+      `Script 'dev' has no command for platform '${process.platform}' in paseo.json`,
+    );
   });
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
