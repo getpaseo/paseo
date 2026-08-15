@@ -138,10 +138,8 @@ function createOpenCodeMessageId(
   random = (length: number) =>
     Array.from(randomBytes(length), (value) => OPENCODE_ID_ALPHABET[value % 62]).join(""),
 ): string {
-  if (now !== lastOpenCodeMessageTimestamp) {
-    lastOpenCodeMessageTimestamp = now;
-    openCodeMessageCounter = 0;
-  }
+  if (now !== lastOpenCodeMessageTimestamp) openCodeMessageCounter = 0;
+  lastOpenCodeMessageTimestamp = now;
   openCodeMessageCounter += 1;
   const ascending = (BigInt(now) * 0x1000n + BigInt(openCodeMessageCounter))
     .toString(16)
@@ -171,8 +169,8 @@ function recoverChildStatus(snapshot: boolean, type: unknown, assistant?: OpenCo
   if (type === "busy" || type === "retry") return "running";
   if (assistant && "error" in assistant.info && assistant.info.error) return "failed";
   const time = assistant?.info.time;
-  if (!snapshot && !(time && "completed" in time && time.completed !== undefined)) return "running";
-  return "completed";
+  if (snapshot || (time && "completed" in time && time.completed !== undefined)) return "completed";
+  return "running";
 }
 
 const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
@@ -1834,7 +1832,6 @@ export interface OpenCodeEventTranslationState {
   hydratedMessageFingerprints?: Map<string, string>;
   hydratedPartFingerprints?: Map<string, string>;
   suppressAssistantMessagesUntilIdle?: { active: boolean };
-  /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
   subAgentCallIdByChildSessionId?: Map<string, string>;
@@ -3021,7 +3018,6 @@ function appendOpenCodeSessionStatus(
     });
     return;
   }
-  // "busy" is transient — no terminal event, no surfaced activity.
 }
 
 interface Deferred<T> {
@@ -3213,7 +3209,6 @@ class OpenCodeAgentSession implements AgentSession {
   private sessionTotalCostUsd: number | undefined;
   private mcpConfigured = false;
   private mcpSetupPromise: Promise<void> | null = null;
-  /** Tracks the role of each message by ID to distinguish user from assistant messages */
   private messageRoles = new Map<string, OpenCodeMessageRole>();
   private pendingUserMessageText: string | null = null;
   private pendingClientMessageId: string | null = null;
@@ -3223,12 +3218,10 @@ class OpenCodeAgentSession implements AgentSession {
     { messageId: string; emittedText: string; closed: boolean }
   >();
   private activeDispatchMessageId: string | null = null;
-  /** Tracks assistant messages already emitted from structured payloads. */
   private emittedStructuredMessageIds = new Set<string>();
   private compactionSummaryMessageIds = new Set<string>();
   private emittedCompactionPartIds = new Set<string>();
   private suppressAssistantMessagesUntilIdle = { active: false };
-  /** Tracks the type of each part by ID, learned from message.part.updated events. */
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -4035,87 +4028,97 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async reconcileAfterGap(revision: number, refresh = true, delay = 100): Promise<void> {
-    if (refresh) {
-      await this.hydrateChildSessions(true).catch(() => undefined);
-      await this.reconcileBlockingRequests();
-    }
+    if (revision !== this.gapRepairRevision) return;
     const turnId = this.activeForegroundTurnId;
-    if (!turnId) return;
+    const dispatchMessageId = this.activeDispatchMessageId;
+    await this.refreshGapScope(refresh);
+    if (revision !== this.gapRepairRevision || !turnId) return;
     const runnerStatus = await this.readProviderRunnerStatus().catch(() => null);
-    if (runnerStatus !== null) {
-      if (this.activeDispatchMessageId === null) {
-        if (runnerStatus === "idle") {
-          this.suppressAssistantMessagesUntilIdle.active = false;
-          this.finishForegroundTurn({ type: "turn_completed", provider: "opencode" }, turnId);
-        }
-        return;
-      }
-      const messages = await readOpenCodeSessionMessagesFromSdk(
-        this.client,
-        { id: this.sessionId, directory: this.config.cwd } as OpenCodePersistedSession,
-        this.recoveryAbortController.signal,
-      ).catch(() => null);
-      if (messages === null) {
-        this.scheduleGapRepair(revision, delay);
-        return;
-      }
-      const boundary = messages.findIndex(
-        (message) => message.info.id === this.activeDispatchMessageId,
-      );
-      if (boundary < 0) {
-        if (runnerStatus === "idle") {
-          this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: "Active dispatch not found" },
-            turnId,
-          );
-        }
-        return;
-      }
-      for (const message of messages.slice(boundary)) {
-        await this.consumeOpenCodeStreamEvent({
-          rawEvent: {
-            directory: this.config.cwd,
-            payload: { type: "message.updated", properties: { info: message.info } },
-          },
-          eventCount: 0,
-        });
-        for (const part of message.parts) {
-          await this.consumeOpenCodeStreamEvent({
-            rawEvent: {
-              directory: this.config.cwd,
-              payload: { type: "message.part.updated", properties: { part } },
-            },
-            eventCount: 0,
-          });
-        }
-      }
-      if (runnerStatus === "idle" && this.activeForegroundTurnId === turnId) {
-        const latestAssistant = messages
-          .slice(boundary)
-          .findLast((message) => message.info.role === "assistant");
-        const persistedError =
-          latestAssistant && "error" in latestAssistant.info
-            ? latestAssistant.info.error
-            : undefined;
-        await this.consumeOpenCodeStreamEvent({
-          rawEvent: {
-            directory: this.config.cwd,
-            payload: persistedError
-              ? {
-                  type: "session.error",
-                  properties: { sessionID: this.sessionId, error: persistedError },
-                }
-              : {
-                  type: "session.status",
-                  properties: { sessionID: this.sessionId, status: { type: "idle" } },
-                },
-          },
-          eventCount: 0,
-        });
+    if (revision !== this.gapRepairRevision) return;
+    if (runnerStatus === null) {
+      this.scheduleGapRepair(revision, delay);
+      return;
+    }
+    if (dispatchMessageId === null) {
+      if (runnerStatus === "idle") {
+        this.suppressAssistantMessagesUntilIdle.active = false;
+        this.finishForegroundTurn({ type: "turn_completed", provider: "opencode" }, turnId);
       }
       return;
     }
-    this.scheduleGapRepair(revision, delay);
+    const messages = await readOpenCodeSessionMessagesFromSdk(
+      this.client,
+      { id: this.sessionId, directory: this.config.cwd } as OpenCodePersistedSession,
+      this.recoveryAbortController.signal,
+    ).catch(() => null);
+    if (revision !== this.gapRepairRevision) return;
+    if (messages === null) {
+      this.scheduleGapRepair(revision, delay);
+      return;
+    }
+    const boundary = messages.findIndex((message) => message.info.id === dispatchMessageId);
+    if (boundary < 0) {
+      if (runnerStatus === "idle") {
+        this.finishForegroundTurn(
+          { type: "turn_failed", provider: "opencode", error: "Active dispatch not found" },
+          turnId,
+        );
+      }
+      return;
+    }
+    for (const message of messages.slice(boundary)) {
+      if (revision !== this.gapRepairRevision) return;
+      await this.consumeOpenCodeStreamEvent({
+        rawEvent: {
+          directory: this.config.cwd,
+          payload: { type: "message.updated", properties: { info: message.info } },
+        },
+        eventCount: 0,
+      });
+      for (const part of message.parts) {
+        if (revision !== this.gapRepairRevision) return;
+        await this.consumeOpenCodeStreamEvent({
+          rawEvent: {
+            directory: this.config.cwd,
+            payload: { type: "message.part.updated", properties: { part } },
+          },
+          eventCount: 0,
+        });
+      }
+    }
+    if (runnerStatus === "idle" && this.activeForegroundTurnId === turnId) {
+      await this.settleRecoveredGap(messages, boundary);
+    }
+  }
+
+  private async refreshGapScope(refresh: boolean): Promise<void> {
+    if (!refresh) return;
+    await this.hydrateChildSessions(true).catch(() => undefined);
+    await this.reconcileBlockingRequests();
+  }
+
+  private async settleRecoveredGap(
+    messages: OpenCodeSessionMessage[],
+    boundary: number,
+  ): Promise<void> {
+    const latestAssistant = messages
+      .slice(boundary)
+      .findLast((message) => message.info.role === "assistant");
+    const persistedError =
+      latestAssistant && "error" in latestAssistant.info ? latestAssistant.info.error : undefined;
+    const payload = persistedError
+      ? {
+          type: "session.error" as const,
+          properties: { sessionID: this.sessionId, error: persistedError },
+        }
+      : {
+          type: "session.status" as const,
+          properties: { sessionID: this.sessionId, status: { type: "idle" as const } },
+        };
+    await this.consumeOpenCodeStreamEvent({
+      rawEvent: { directory: this.config.cwd, payload },
+      eventCount: 0,
+    });
   }
 
   private scheduleGapRepair(revision: number, delayMs: number): void {
@@ -4356,7 +4359,6 @@ class OpenCodeAgentSession implements AgentSession {
     return this.turnState.status === "stopping" && this.turnState.stop === stop;
   }
 
-  /** Stops the session runner and returns the abort this Stop issued. */
   private issueStop(turnId: string | null): Promise<void> {
     if (this.turnState.status === "stopping") {
       // Stop pressed again during a stop retries that same stop. There is one
@@ -4382,7 +4384,6 @@ class OpenCodeAgentSession implements AgentSession {
     return abort;
   }
 
-  /** Issues one more session-scoped abort for this stop and returns it. */
   private issueOwnedAbort(stop: OpenCodeStop): Promise<void> {
     const abort = this.runOwnedAbort(stop.pendingCancellationTurnId);
     // Abort is session-scoped, so its settlement is too: an older request lands
@@ -4497,9 +4498,7 @@ class OpenCodeAgentSession implements AgentSession {
     for (const callback of this.subscribers) {
       try {
         callback(tagged);
-      } catch {
-        // Subscriber callback error isolation
-      }
+      } catch {}
     }
   }
 

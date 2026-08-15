@@ -2910,6 +2910,53 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("abandons a repair when its turn fails during a snapshot read", async () => {
+    vi.useFakeTimers();
+    const { parent: session, openCode } = await createParentSession("ses_replaced_repair");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    openCode.sessionPromptAsyncEvents = [];
+    const firstDispatch = createTestDeferred<{ data: Record<string, never> }>();
+    let dispatchAttempts = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      dispatchAttempts += 1;
+      return dispatchAttempts === 1 ? firstDispatch.promise : { data: {} };
+    };
+    const retryStatus = createTestDeferred<{ data: Record<string, never> }>();
+    const retryStarted = createTestDeferred<void>();
+    let statusAttempts = 0;
+    openCode.sessionStatusImplementation = async () => {
+      statusAttempts += 1;
+      if (statusAttempts === 1) throw new Error("snapshot unavailable");
+      retryStarted.resolve();
+      return retryStatus.promise;
+    };
+    openCode.sessionMessagesResponse = { data: [] };
+
+    try {
+      await session.startTurn("first turn");
+      openCode.emitEvent({ type: "reconnected" });
+      await vi.waitFor(() => expect(statusAttempts).toBe(1));
+      await vi.advanceTimersByTimeAsync(100);
+      await retryStarted.promise;
+
+      firstDispatch.reject(new Error("first dispatch failed"));
+      await vi.waitFor(() => expect(countEvents(events, "turn_failed")).toBe(1));
+      await session.startTurn("second turn");
+      retryStatus.resolve({ data: {} });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(openCode.calls.sessionMessages).toHaveLength(0);
+      expect(countEvents(events, "turn_started")).toBe(2);
+      expect(countEvents(events, "turn_failed")).toBe(1);
+    } finally {
+      firstDispatch.resolve({ data: {} });
+      retryStatus.resolve({ data: {} });
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("preserves failed blocking-request snapshots and resolves successful empty ones", async () => {
     const { parent: session, openCode } = await createParentSession("ses_request_recovery");
     const events: AgentStreamEvent[] = [];
