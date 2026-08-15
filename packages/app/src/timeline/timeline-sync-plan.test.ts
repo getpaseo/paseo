@@ -5,6 +5,7 @@ import {
   isTimelineResumeSnapshotAuthoritative,
   planTimelineOlderFetch,
   planTimelinePromptJump,
+  planTimelineResumeFetch,
   planTimelineTailFetch,
 } from "./timeline-sync-plan";
 
@@ -14,6 +15,15 @@ describe("timeline sync planning", () => {
 
     expect(plan).toEqual({
       direction: "tail",
+      limit: TIMELINE_FETCH_PAGE_SIZE,
+      projection: "projected",
+    });
+  });
+
+  test("a restored canonical range catches up after its exact end", () => {
+    expect(planTimelineResumeFetch({ epoch: "epoch-1", endSeq: 49 })).toEqual({
+      direction: "after",
+      cursor: { epoch: "epoch-1", seq: 49 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
     });

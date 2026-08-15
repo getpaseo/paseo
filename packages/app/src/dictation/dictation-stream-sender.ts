@@ -1,13 +1,32 @@
 import { generateMessageId } from "@/types/stream";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { i18n } from "@/i18n/i18next";
 
 const MAX_CHUNKS_PER_FLUSH_TURN = 128;
+const DICTATION_DRAIN_IDLE_TIMEOUT_MS = 30_000;
 
 const waitForNextFlushTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+type DictationStreamAckMessage = Extract<SessionOutboundMessage, { type: "dictation_stream_ack" }>;
+
+interface DrainWaitResult {
+  kind: "signaled" | "timed-out";
+}
+
+export interface DictationStreamClient {
+  readonly isConnected: boolean;
+  startDictationStream(dictationId: string, format: string): Promise<void>;
+  sendDictationStreamChunk(dictationId: string, seq: number, audio: string, format: string): void;
+  finishDictationStream(
+    dictationId: string,
+    finalSeq: number,
+  ): Promise<{ dictationId: string; text: string }>;
+  cancelDictationStream(dictationId: string): void;
+  subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void;
+}
+
 export interface DictationStreamSenderParams {
-  client: DaemonClient | null;
+  client: DictationStreamClient | null;
   format: string;
   createDictationId?: () => string;
 }
@@ -30,28 +49,50 @@ interface DictationFinishResult {
  * so enqueues can't "miss" a flush due to in-flight await/coalescing bugs.
  */
 export class DictationStreamSender {
-  private client: DaemonClient | null;
+  private client: DictationStreamClient | null = null;
   private readonly format: string;
   private readonly createDictationId: () => string;
 
   private dictationId: string | null = null;
   private sendSeq = 0;
+  private acknowledgedSeq = -1;
   private segments: string[] = [];
   private streamReady = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private drainWaiters: Array<() => void> = [];
+  private clientCleanup: (() => void) | null = null;
 
   private startGeneration = 0;
   private startPromise: Promise<void> | null = null;
 
   constructor(params: DictationStreamSenderParams) {
-    this.client = params.client;
     this.format = params.format;
     this.createDictationId = params.createDictationId ?? generateMessageId;
+    this.setClient(params.client);
   }
 
-  setClient(client: DaemonClient | null): void {
+  setClient(client: DictationStreamClient | null): void {
+    if (this.client === client) {
+      return;
+    }
+
+    if (this.clientCleanup) {
+      this.clientCleanup();
+      this.clientCleanup = null;
+    }
+    this.resetStreamForReplay();
     this.client = client;
+
+    if (!client) {
+      return;
+    }
+
+    this.clientCleanup = client.subscribeRawMessages((message) => {
+      if (message.type !== "dictation_stream_ack") {
+        return;
+      }
+      this.handleAck(message);
+    });
   }
 
   getDictationId(): string | null {
@@ -60,6 +101,10 @@ export class DictationStreamSender {
 
   getSegmentCount(): number {
     return this.segments.length;
+  }
+
+  dispose(): void {
+    this.setClient(null);
   }
 
   getFinalSeq(): number {
@@ -71,22 +116,19 @@ export class DictationStreamSender {
   }
 
   clearAll(): void {
-    this.clearScheduledFlush();
-    this.dictationId = null;
-    this.sendSeq = 0;
+    this.resetStreamForReplay();
     this.segments = [];
-    this.streamReady = false;
-    this.startPromise = null;
-    this.startGeneration += 1;
   }
 
   resetStreamForReplay(): void {
     this.clearScheduledFlush();
     this.dictationId = null;
     this.sendSeq = 0;
+    this.acknowledgedSeq = -1;
     this.streamReady = false;
     this.startPromise = null;
     this.startGeneration += 1;
+    this.resolveDrainWaiters();
   }
 
   enqueueSegment(base64Pcm: string): void {
@@ -113,6 +155,9 @@ export class DictationStreamSender {
     const client = this.client;
     const dictationId = this.dictationId;
     if (!client?.isConnected || !dictationId || !this.streamReady) {
+      if (!client?.isConnected && this.hasPendingSegments()) {
+        this.invalidateStream();
+      }
       return 0;
     }
 
@@ -120,10 +165,16 @@ export class DictationStreamSender {
     while (this.sendSeq < this.segments.length && sent < MAX_CHUNKS_PER_FLUSH_TURN) {
       const seq = this.sendSeq;
       const audio = this.segments[seq];
-      client.sendDictationStreamChunk(dictationId, seq, audio, this.format);
+      try {
+        client.sendDictationStreamChunk(dictationId, seq, audio, this.format);
+      } catch {
+        this.invalidateStream();
+        return sent;
+      }
       this.sendSeq = seq + 1;
       sent += 1;
     }
+
     if (this.hasPendingSegments()) {
       this.scheduleFlush();
     } else {
@@ -144,6 +195,7 @@ export class DictationStreamSender {
     const dictationId = this.createDictationId();
     this.dictationId = dictationId;
     this.sendSeq = 0;
+    this.acknowledgedSeq = -1;
     this.streamReady = false;
 
     const start = (async () => {
@@ -161,7 +213,10 @@ export class DictationStreamSender {
         // If starting failed, keep the segments for retry but clear the stream so finish can error cleanly.
         if (this.startGeneration === generation && this.dictationId === dictationId) {
           this.dictationId = null;
+          this.sendSeq = 0;
+          this.acknowledgedSeq = -1;
           this.streamReady = false;
+          this.resolveDrainWaiters();
         }
         throw error;
       })
@@ -198,7 +253,7 @@ export class DictationStreamSender {
     }
 
     this.flush();
-    await this.waitForFlushDrain();
+    await this.waitForFlushDrain(finalSeq);
     return client.finishDictationStream(dictationId, finalSeq);
   }
 
@@ -213,6 +268,25 @@ export class DictationStreamSender {
 
   private hasPendingSegments(): boolean {
     return this.sendSeq < this.segments.length;
+  }
+
+  private hasPendingDelivery(finalSeq: number): boolean {
+    return this.hasPendingSegments() || this.acknowledgedSeq < finalSeq;
+  }
+
+  private handleAck(message: DictationStreamAckMessage): void {
+    if (message.payload.dictationId !== this.dictationId) {
+      return;
+    }
+    if (message.payload.ackSeq <= this.acknowledgedSeq) {
+      return;
+    }
+    this.acknowledgedSeq = message.payload.ackSeq;
+    this.resolveDrainWaiters();
+  }
+
+  private invalidateStream(): void {
+    this.resetStreamForReplay();
   }
 
   private scheduleFlush(): void {
@@ -233,17 +307,42 @@ export class DictationStreamSender {
     this.flushTimer = null;
   }
 
-  private async waitForFlushDrain(): Promise<void> {
-    while (this.hasPendingSegments()) {
+  private async waitForFlushDrain(finalSeq: number): Promise<void> {
+    while (this.hasPendingDelivery(finalSeq)) {
       const client = this.client;
       if (!client?.isConnected || !this.dictationId || !this.streamReady) {
         throw new Error("Failed to flush dictation stream");
       }
-      await new Promise<void>((resolve) => {
-        this.drainWaiters.push(resolve);
-      });
+      const result = await this.waitForDrainSignal();
+      if (result.kind === "timed-out") {
+        this.invalidateStream();
+        throw new Error("Timed out waiting for dictation stream delivery");
+      }
       await waitForNextFlushTurn();
     }
+  }
+
+  private waitForDrainSignal(): Promise<DrainWaitResult> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let waiter: (() => void) | null = null;
+    const signal = new Promise<"signaled">((resolve) => {
+      waiter = () => resolve("signaled");
+      this.drainWaiters.push(waiter);
+    });
+    const timeout = new Promise<"timed-out">((resolve) => {
+      timeoutHandle = setTimeout(() => resolve("timed-out"), DICTATION_DRAIN_IDLE_TIMEOUT_MS);
+    });
+
+    return Promise.race([signal, timeout])
+      .finally(() => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        if (waiter) {
+          this.drainWaiters = this.drainWaiters.filter((candidate) => candidate !== waiter);
+        }
+      })
+      .then((kind) => ({ kind }));
   }
 
   private resolveDrainWaiters(): void {

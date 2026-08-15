@@ -20,6 +20,7 @@ import {
   __resetPullRequestStatusCacheForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
+  discardChanges,
   CHECKOUT_DIFF_MAX_STRUCTURED_BYTES,
   createPullRequest,
   getCachedCheckoutShortstat,
@@ -106,6 +107,10 @@ function initRepo(): { tempDir: string; repoDir: string } {
   execFileSync("git", ["add", "."], { cwd: repoDir });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], { cwd: repoDir });
   return { tempDir, repoDir };
+}
+
+function readTextFile(path: string): string {
+  return readFileSync(path, "utf8").replaceAll("\r\n", "\n");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -514,6 +519,19 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("includes both paths for a staged rename in structured diffs", async () => {
+    execFileSync("git", ["mv", "file.txt", "renamed.txt"], { cwd: repoDir });
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+
+    expect(diff.structured).toContainEqual(
+      expect.objectContaining({ path: "renamed.txt", oldPath: "file.txt" }),
+    );
   });
 
   it("reads the origin URL once when collecting facts for an origin-tracking branch", async () => {
@@ -3696,5 +3714,134 @@ const x = 1;
     it("is case insensitive on Windows paths", () => {
       expect(isDescendantPath("c:\\repo\\child", "C:\\repo")).toBe(true);
     });
+  });
+});
+
+describe("discardChanges", () => {
+  it("discards staged and unstaged modifications, deletions, and untracked files", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      writeFileSync(join(repoDir, "file.txt"), "changed\n");
+      writeFileSync(join(repoDir, "staged.txt"), "staged\n");
+      execFileSync("git", ["add", "staged.txt"], { cwd: repoDir });
+      mkdirSync(join(repoDir, "junk"), { recursive: true });
+      writeFileSync(join(repoDir, "junk", "scratch.txt"), "scratch\n");
+
+      await discardChanges(repoDir, ["file.txt", "staged.txt", "junk"]);
+
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
+      expect(existsSync(join(repoDir, "staged.txt"))).toBe(false);
+      expect(existsSync(join(repoDir, "junk"))).toBe(false);
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir })
+        .toString()
+        .trim();
+      expect(status).toBe("");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores both sides of a staged rename", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      execFileSync("git", ["mv", "file.txt", "renamed.txt"], { cwd: repoDir });
+
+      await discardChanges(repoDir, ["file.txt", "renamed.txt"]);
+
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
+      expect(existsSync(join(repoDir, "renamed.txt"))).toBe(false);
+      expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe("");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("unstages and removes files in a repository with an unborn HEAD", async () => {
+    const tempDir = realpathSync.native(mkdtempSync(join(tmpdir(), "checkout-git-unborn-")));
+    const repoDir = join(tempDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir });
+      writeFileSync(join(repoDir, "new.txt"), "new\n");
+      execFileSync("git", ["add", "new.txt"], { cwd: repoDir });
+
+      await discardChanges(repoDir, ["new.txt"]);
+
+      expect(existsSync(join(repoDir, "new.txt"))).toBe(false);
+      expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe("");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discards a nested folder pathspec without touching sibling changes", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      mkdirSync(join(repoDir, "nested"));
+      writeFileSync(join(repoDir, "nested", "tracked.txt"), "original\n");
+      execFileSync("git", ["add", "nested/tracked.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add nested"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, "nested", "tracked.txt"), "changed\n");
+      writeFileSync(join(repoDir, "nested", "untracked.txt"), "remove\n");
+      writeFileSync(join(repoDir, "outside.txt"), "keep\n");
+
+      await discardChanges(repoDir, ["nested"]);
+
+      expect(readTextFile(join(repoDir, "nested", "tracked.txt"))).toBe("original\n");
+      expect(existsSync(join(repoDir, "nested", "untracked.txt"))).toBe(false);
+      expect(readFileSync(join(repoDir, "outside.txt"), "utf8")).toBe("keep\n");
+      expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe(
+        "?? outside.txt\n",
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a staged deletion", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      execFileSync("git", ["rm", "file.txt"], { cwd: repoDir });
+      await discardChanges(repoDir, ["file.txt"]);
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves files outside the given pathspecs untouched", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      writeFileSync(join(repoDir, "file.txt"), "changed\n");
+      writeFileSync(join(repoDir, "other.txt"), "keep\n");
+      await discardChanges(repoDir, ["file.txt"]);
+      expect(readTextFile(join(repoDir, "file.txt"))).toBe("hello\n");
+      expect(readFileSync(join(repoDir, "other.txt"), "utf8")).toBe("keep\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats requested filenames as literal pathspecs", async () => {
+    const { tempDir, repoDir } = initRepo();
+    try {
+      writeFileSync(join(repoDir, "foo[ab].txt"), "literal original\n");
+      writeFileSync(join(repoDir, "fooa.txt"), "sibling original\n");
+      execFileSync("git", ["add", "foo[ab].txt", "fooa.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add pathspec files"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, "foo[ab].txt"), "literal changed\n");
+      writeFileSync(join(repoDir, "fooa.txt"), "sibling changed\n");
+
+      await discardChanges(repoDir, ["foo[ab].txt"]);
+
+      expect(readTextFile(join(repoDir, "foo[ab].txt"))).toBe("literal original\n");
+      expect(readTextFile(join(repoDir, "fooa.txt"))).toBe("sibling changed\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

@@ -200,7 +200,10 @@ function createDeferred<T>() {
 }
 
 function createAsyncSubscription() {
-  return { unsubscribe: vi.fn(() => Promise.resolve()) };
+  return {
+    updateIgnore: vi.fn(() => Promise.resolve()),
+    unsubscribe: vi.fn(() => Promise.resolve()),
+  };
 }
 
 function createGitHubServiceStub(): ForgeService {
@@ -262,7 +265,10 @@ interface CreateServiceTestOptions {
 
 function buildDefaultTestServiceDeps() {
   return {
-    subscribe: vi.fn(async () => ({ unsubscribe: vi.fn(async () => {}) })),
+    subscribe: vi.fn(async () => ({
+      updateIgnore: vi.fn(async () => {}),
+      unsubscribe: vi.fn(async () => {}),
+    })),
     getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutSnapshotFacts(cwd)),
     getCheckoutRefDerivedState: vi.fn(async (_cwd, facts, current) => ({
       ...current,
@@ -287,6 +293,11 @@ function buildDefaultTestServiceDeps() {
       signal: null,
     })),
     getWorkspaceGitSelfHealPhaseMs: vi.fn(() => 30_000),
+    createWatcherLivenessCanary: vi.fn(() => ({
+      path: "",
+      filterEvents: (events) => events,
+      verify: vi.fn(async () => {}),
+    })),
     now: () => new Date("2026-04-12T00:00:00.000Z"),
   };
 }
@@ -1235,7 +1246,11 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("watches nested repository changes through one recursive checkout subscription", async () => {
     const unsubscribe = vi.fn(async () => {});
-    const subscribe = vi.fn(async () => ({ unsubscribe }));
+    const updateIgnore = vi.fn(async () => {});
+    const subscribe = vi.fn(async () => ({
+      updateIgnore,
+      unsubscribe,
+    }));
     const service = createService({ subscribe });
 
     const subscription = await service.requestWorkingTreeWatch(
@@ -1256,7 +1271,11 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("requestWorkingTreeWatch reference-counts watchers by cwd", async () => {
     const unsubscribe = vi.fn(async () => {});
-    const subscribe = vi.fn(async () => ({ unsubscribe }));
+    const updateIgnore = vi.fn(async () => {});
+    const subscribe = vi.fn(async () => ({
+      updateIgnore,
+      unsubscribe,
+    }));
     const service = createService({ subscribe });
 
     const firstListener = vi.fn();

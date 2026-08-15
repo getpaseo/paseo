@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { z } from "zod";
 import type { SidebarCalloutAction, SidebarCalloutVariant } from "@/components/sidebar-callout";
 
 export interface SidebarCalloutOptions {
@@ -44,21 +45,7 @@ export function normalizeDismissalKey(key: string | null | undefined): string | 
   return trimmed ? trimmed : null;
 }
 
-export function parseDismissedCalloutKeys(value: string | null): Set<string> {
-  if (!value) {
-    return new Set();
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((entry): entry is string => typeof entry === "string"));
-  } catch {
-    return new Set();
-  }
-}
+export const DismissedCalloutKeysSchema = z.array(z.string());
 
 export function serializeDismissedCalloutKeys(keys: ReadonlySet<string>): string {
   return JSON.stringify([...keys]);

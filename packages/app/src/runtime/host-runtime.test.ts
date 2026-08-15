@@ -445,6 +445,9 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     setItem: async (key, value) => {
       values.set(key, value);
     },
+    removeItem: async (key) => {
+      values.delete(key);
+    },
   };
 }
 
@@ -1384,6 +1387,54 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("revokes push notifications before removing a host", async () => {
+    const host = makeHost({ connections: [makeHost().connections[0]!] });
+    const revocation = createDeferred<void>();
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([host]),
+      "@paseo:e2e": "1",
+    });
+    const store = new HostRuntimeStore({
+      storage,
+      deps: makeDeps({}, []),
+      revokePushNotifications: async ({ serverId }) => {
+        expect(serverId).toBe(host.serverId);
+        expect(store.getHosts().map((candidate) => candidate.serverId)).toEqual([host.serverId]);
+        await revocation.promise;
+      },
+    });
+    await store.boot();
+
+    const removal = store.removeHost(host.serverId);
+    expect(store.getHosts().map((candidate) => candidate.serverId)).toEqual([host.serverId]);
+    revocation.resolve();
+    await removal;
+
+    expect(store.getHosts()).toEqual([]);
+  });
+
+  it("revokes push notifications when removing a host's final connection", async () => {
+    const host = makeHost({ connections: [makeHost().connections[0]!] });
+    const revokedServerIds: string[] = [];
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([host]),
+      "@paseo:e2e": "1",
+    });
+    const store = new HostRuntimeStore({
+      storage,
+      deps: makeDeps({}, []),
+      revokePushNotifications: async ({ serverId }) => {
+        revokedServerIds.push(serverId);
+      },
+    });
+    await store.boot();
+
+    await store.removeConnection(host.serverId, host.connections[0]!.id);
+
+    expect(revokedServerIds).toEqual([host.serverId]);
+    expect(store.getHosts()).toEqual([]);
+  });
+
   it("restores the display replica before declaring the host registry loaded", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();

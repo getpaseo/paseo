@@ -259,6 +259,39 @@ test("seeds an uncommitted exact-project config into the mapped worktree directo
   expect(existsSync(path.join(result.worktree.worktreePath, "paseo.json"))).toBe(false);
 });
 
+test("does not overwrite a committed exact-project config with source checkout edits", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  const committedConfig = JSON.stringify({ worktree: { setup: ["npm ci"] } });
+  writeFileSync(path.join(sourceDir, "paseo.json"), committedConfig);
+  commitAll(repoDir, "add subproject config");
+  writeFileSync(
+    path.join(sourceDir, "paseo.json"),
+    JSON.stringify({ worktree: { setup: ["npm install"] } }),
+  );
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "preserve-nested-config",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(committedConfig);
+  expect(
+    execFileSync("git", ["status", "--porcelain"], {
+      cwd: result.worktree.worktreePath,
+      encoding: "utf8",
+    }),
+  ).toBe("");
+});
+
 test("removes a new worktree when its ref does not contain the selected project directory", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
@@ -458,9 +491,8 @@ test("an explicit project FK remains unchanged when its worktree comes from anot
   });
 });
 
-// POSIX-only: Windows git worktree paths need separate canonicalization coverage.
 test.skipIf(isPlatform("win32"))(
-  "reuses an existing worktree and still upserts the workspace",
+  "creates a suffixed worktree when the preferred slug is occupied",
   async () => {
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -492,11 +524,10 @@ test.skipIf(isPlatform("win32"))(
       deps,
     );
 
-    expect(second.created).toBe(false);
-    expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
+    expect(second.created).toBe(true);
+    expect(second.worktree.worktreePath).not.toBe(first.worktree.worktreePath);
+    expect(path.basename(second.worktree.worktreePath)).toBe("reuse-me-1");
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
-    // Creation never dedupes by directory: the same worktree path yields a
-    // distinct workspace record on the second call.
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
@@ -932,7 +963,7 @@ test.skipIf(isPlatform("win32"))(
     expect(worktreeList).toContain(created.worktreePath);
 
     // Recreating without pruning fails with the stale registration pinning the
-    // branch — this is the case restore must heal.
+    // path — this is the case restore must heal.
     await expect(
       createWorktree({
         cwd: repoDir,
@@ -941,7 +972,7 @@ test.skipIf(isPlatform("win32"))(
         runSetup: false,
         paseoHome,
       }),
-    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+    ).rejects.toThrow("missing but already registered worktree");
 
     // The restore-side prune frees the stale registration; recreate then succeeds.
     execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
@@ -986,7 +1017,7 @@ test.skipIf(isPlatform("win32"))(
 );
 
 test.skipIf(isPlatform("win32"))(
-  "rejects with BranchAlreadyCheckedOutError when the kept branch is checked out elsewhere",
+  "creates a suffixed branch when the requested branch is checked out elsewhere",
   async () => {
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -1002,15 +1033,16 @@ test.skipIf(isPlatform("win32"))(
     });
     expect(existsSync(first.worktreePath)).toBe(true);
 
-    await expect(
-      createWorktree({
-        cwd: repoDir,
-        worktreeSlug: "busy-branch-again",
-        source: { kind: "checkout-branch", branchName: "busy-branch" },
-        runSetup: false,
-        paseoHome,
-      }),
-    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+    const second = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "busy-branch-again",
+      source: { kind: "checkout-branch", branchName: "busy-branch" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(second.branchName).toBe("busy-branch-1");
+    expect(existsSync(second.worktreePath)).toBe(true);
   },
 );
 

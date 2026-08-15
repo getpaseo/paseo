@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "vitest";
-import type { CliAuthorizationPoll } from "./client.js";
+import type { CliAuthorizationPoll } from "./hub-client/index.js";
 import { CliLoginFlow, SystemBrowser } from "./login-flow.js";
 
 describe("Hub CLI login browser flow", () => {
