@@ -116,6 +116,9 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       }
       if (key === "Backspace") {
         previousText = previousText.slice(0, -1);
+        if (replacementDesynced) {
+          return { data: "", shouldClear: false };
+        }
         return { data: "\x7f", shouldClear: false };
       }
       if (key === "Enter" || key === "Return" || key === "return") {
@@ -152,9 +155,10 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       }
 
       if (!text.startsWith(previousText)) {
-        const compositionEdit = replacementDesynced
-          ? ""
-          : resolveCompositionEdit(previousText, text);
+        let compositionEdit = "";
+        if (!replacementDesynced) {
+          compositionEdit = resolveCompositionEdit(previousText, text);
+        }
         if (compositionEdit === "") {
           replacementDesynced = true;
         }

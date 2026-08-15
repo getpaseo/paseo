@@ -335,6 +335,15 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("他们")).toEqual({ data: "", shouldClear: false });
   });
 
+  it("does not backspace terminal content after a swallowed replacement", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
+    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("th")).toEqual({ data: "", shouldClear: false });
+  });
+
   it("resumes composition once the line is cleared", () => {
     const input = createTerminalTextInputState();
 
