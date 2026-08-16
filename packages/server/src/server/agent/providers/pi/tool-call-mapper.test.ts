@@ -5,6 +5,7 @@ import {
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  type PiToolResult,
 } from "./tool-call-mapper.js";
 
 describe("Pi tool call mapper", () => {
@@ -183,6 +184,36 @@ describe("Pi tool call mapper", () => {
     });
 
     expect(mapToolDetail(toolCall, result)).toBeNull();
+  });
+
+  test("falls back to an unknown card for a successful todo call with malformed details", () => {
+    const toolCall = parseToolArgs("todo", {
+      action: "create",
+      subject: "泡一杯咖啡",
+    });
+    const malformedResults: Array<PiToolResult> = [
+      "just a string",
+      {},
+      { output: "Created #1" },
+      { details: { tasks: "not an array" } },
+    ];
+
+    for (const result of malformedResults) {
+      expect(mapToolDetail(toolCall, result)).toEqual({
+        type: "unknown",
+        input: { action: "create", subject: "泡一杯咖啡" },
+        output: result,
+      });
+    }
+  });
+
+  test("keeps suppressing successful todo calls that carry no result (still running)", () => {
+    const toolCall = parseToolArgs("todo", {
+      action: "list",
+    });
+
+    expect(mapToolDetail(toolCall, null)).toBeNull();
+    expect(mapToolDetail(toolCall, undefined)).toBeNull();
   });
 
   test("maps failed todo calls to unknown detail so the error surfaces", () => {

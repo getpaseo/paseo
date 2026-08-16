@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { parseToolResult } from "./tool-call-mapper.js";
-import { mapPiTodoToolResult } from "./todo-mapper.js";
+import { canMapPiTodoToolResult, mapPiTodoToolResult } from "./todo-mapper.js";
 
 const SAMPLE_TASKS = [
   { id: 1, subject: "泡一杯咖啡", status: "pending" },
@@ -113,6 +113,25 @@ describe("Pi todo mapper", () => {
       type: "todo",
       items: [],
     });
+  });
+
+  test("canMapPiTodoToolResult distinguishes renderable snapshots from malformed input", () => {
+    expect(canMapPiTodoToolResult(null)).toBe(false);
+    expect(canMapPiTodoToolResult("not an object")).toBe(false);
+    expect(canMapPiTodoToolResult({})).toBe(false);
+    expect(canMapPiTodoToolResult({ details: { tasks: "not an array" } })).toBe(false);
+    expect(canMapPiTodoToolResult({ details: {} })).toBe(false);
+
+    expect(
+      canMapPiTodoToolResult({
+        details: { action: "list", params: { action: "list" }, tasks: [], nextId: 1 },
+      }),
+    ).toBe(true);
+    expect(
+      canMapPiTodoToolResult({
+        details: { tasks: [{ id: 1, subject: "x", status: "pending" }] },
+      }),
+    ).toBe(true);
   });
 
   test("returns null for malformed input", () => {

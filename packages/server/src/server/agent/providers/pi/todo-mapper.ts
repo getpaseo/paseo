@@ -30,6 +30,20 @@ function readTodoTasks(details: unknown): PiTodoTask[] {
 }
 
 /**
+ * Whether a Pi rpiv-todo tool result carries a renderable task snapshot.
+ *
+ * rpiv-todo stores the full task list in `details.tasks` on every operation.
+ * A result is renderable only when `details` is a record and `details.tasks`
+ * is an array (possibly empty — an empty list is a valid state that clears
+ * the previous TodoListCard). Anything else is malformed and can't produce
+ * a TodoListCard.
+ */
+export function canMapPiTodoToolResult(result: PiToolResult): boolean {
+  const details = typeof result === "object" && result !== null ? result.details : undefined;
+  return isRecord(details) && Array.isArray(details.tasks);
+}
+
+/**
  * Parse a Pi rpiv-todo tool result and produce a todo timeline item
  * for Paseo's TodoListCard component.
  *
@@ -39,11 +53,13 @@ function readTodoTasks(details: unknown): PiTodoTask[] {
  */
 export function mapPiTodoToolResult(result: PiToolResult): AgentTimelineItem | null {
   const details = typeof result === "object" && result !== null ? result.details : undefined;
-  const tasks = readTodoTasks(details);
-  if (!isRecord(details) || !Array.isArray(details.tasks)) {
-    // Malformed result: nothing we can render. Stay silent.
+  if (!canMapPiTodoToolResult(result)) {
+    // Malformed result: nothing we can render. Stay silent — the caller
+    // (tool-call-mapper) falls back to an unknown tool-call card so the
+    // operation and its output are not lost.
     return null;
   }
+  const tasks = readTodoTasks(details);
   // Filter deleted (tombstoned) tasks. An empty list is still a valid state
   // — it clears the previous TodoListCard (clear/delete-final-task).
   const visibleTasks = tasks.filter((t) => t.status !== "deleted");

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import { canMapPiTodoToolResult } from "./todo-mapper.js";
 
 interface BashToolInput {
   command: string;
@@ -346,8 +347,19 @@ export function mapToolDetail(
 
   if (toolCall.toolName === "todo" && !isError) {
     // Successful todo calls are rendered as TodoListCard timeline items by
-    // the agent layer (see agent.ts), not as tool-call cards.
-    return null;
+    // the agent layer (see agent.ts), not as tool-call cards. A null result
+    // means the call is still running (or produced nothing) — keep
+    // suppressing it too. Only when we have a concrete but malformed result
+    // (no renderable task snapshot) do we fall back to an unknown tool-call
+    // card, so the operation and its output stay visible instead of silently
+    // disappearing.
+    return canMapPiTodoToolResult(parsedResult) || parsedResult === null
+      ? null
+      : {
+          type: "unknown",
+          input: toolCall.args,
+          output: parsedResult,
+        };
   }
 
   if (isTaskToolCall(toolCall)) {
