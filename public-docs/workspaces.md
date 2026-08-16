@@ -27,25 +27,7 @@ my-app
 
 Each workspace is a separate place to work. You can keep one for your main checkout, create another for a feature, or open a GitHub PR as another workspace.
 
-## Manage projects from the CLI
-
-Register the current directory, then use the returned project ID to manage it:
-
-```bash
-cd ~/dev/my-app
-paseo project create
-paseo project ls
-paseo project rename <project-id> "My app"
-```
-
-Reset the name to the directory-derived default or remove the project from Paseo:
-
-```bash
-paseo project rename <project-id> --reset
-paseo project delete <project-id>
-```
-
-Deleting a project archives its active workspaces but leaves the project directory on disk. See the [CLI project reference](/docs/cli#projects) for remote daemon paths and command details.
+Use the [CLI project commands](/docs/cli#projects) to register, list, rename, or delete projects.
 
 ## Workspaces contain sessions
 

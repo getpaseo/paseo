@@ -113,10 +113,6 @@ Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. Th
 The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
-paseo project create [path]
-paseo project ls
-paseo project rename <project-id> <name>
-paseo project delete <project-id>
 paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base main
 paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
