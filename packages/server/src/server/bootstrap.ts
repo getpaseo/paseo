@@ -533,6 +533,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     mcp: {
       enabled: config.mcpEnabled ?? true,
       injectIntoAgents: config.mcpInjectIntoAgents ?? true,
+      nativeAgentTools: config.mcpNativeAgentTools !== false,
     },
     ...(config.hostnames !== undefined ? { hostnames: config.hostnames } : {}),
     cors: { allowedOrigins: config.corsAllowedOrigins },

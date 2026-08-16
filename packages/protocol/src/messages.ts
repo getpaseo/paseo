@@ -196,6 +196,7 @@ export const MutableDaemonConfigSchema = z
       .object({
         enabled: z.boolean().optional(),
         injectIntoAgents: z.boolean(),
+        nativeAgentTools: z.boolean().optional(),
       })
       .passthrough(),
     hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
@@ -230,7 +231,13 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
-    mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
+    mcp: z
+      .object({
+        injectIntoAgents: z.boolean().optional(),
+        nativeAgentTools: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
