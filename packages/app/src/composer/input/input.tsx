@@ -495,6 +495,7 @@ function useAutoFocusOnWebEffect(
         const active = typeof document !== "undefined" ? document.activeElement : null;
         return Boolean(element) && active === element;
       },
+      deferInitialAttempt: true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFocus, autoFocusKey]);
