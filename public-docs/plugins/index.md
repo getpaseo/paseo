@@ -94,6 +94,26 @@ paseo plugin reload counter-plugin
 
 A reload stops the old plugin, runs its cleanup, compiles the current source, and starts it again. A failed reload stays failed and reports its load error; fix the source and reload again.
 
+## Debug backend output
+
+Use normal Node logging in daemon-side handlers and cleanup:
+
+```ts
+console.log("Refreshing issues");
+console.error("Issue refresh failed", error);
+```
+
+Read recent stdout and stderr from **Settings → Plugins → Logs** or the CLI:
+
+```bash
+paseo plugin logs counter-plugin
+paseo plugin logs counter-plugin --json
+```
+
+The log tail survives reloads and crashes, so inspect it when a plugin fails to start or an RPC
+rejects. See [Debug backend output](/docs/plugins/reference#debug-backend-output) for retention and
+security behavior.
+
 ## Next
 
 - [Plugin reference](/docs/plugins/reference), add daemon behavior, use the Paseo SDK, contribute attachments, and manage lifecycle.

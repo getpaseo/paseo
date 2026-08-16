@@ -440,6 +440,14 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   };
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
     listPlugins: () => [plugin],
+    getLogs: () => [
+      {
+        sequence: 1,
+        timestamp: "2026-08-16T12:00:00.000Z",
+        stream: "stdout",
+        message: "ready",
+      },
+    ],
     installDirectory: async () => plugin,
     inspectDirectory: async () => ({ id: "example" }),
     reloadPlugin: async () => plugin,
@@ -456,6 +464,11 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   const session = createSessionForTest({ messages, pluginRuntime });
 
   await session.handleMessage({ type: "plugin.list.request", requestId: "list" });
+  await session.handleMessage({
+    type: "plugin.logs.get.request",
+    requestId: "logs",
+    pluginId: "example",
+  });
   await session.handleMessage({
     type: "plugin.directory.install.request",
     requestId: "install",
@@ -480,6 +493,7 @@ test("routes plugin requests and releases its owned catalog subscription on clea
 
   expect(messages.map((message) => message.type)).toEqual([
     "plugin.list.response",
+    "plugin.logs.get.response",
     "plugin.directory.install.response",
     "plugin.reload.response",
     "plugin.disable.response",

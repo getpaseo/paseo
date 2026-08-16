@@ -1,6 +1,6 @@
 ---
 title: Plugin reference
-description: Local plugin files, contributions, Paseo SDK access, RPCs, attachments, lifecycle, hosts, and CLI commands.
+description: Local plugin files, contributions, Paseo SDK access, RPCs, attachments, logs, lifecycle, hosts, and CLI commands.
 nav: Reference
 order: 46
 category: Plugins
@@ -164,6 +164,40 @@ Inputs and outputs are validated on both sides. RPC names start with a lowercase
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
+## Debug backend output
+
+Backend contributions can write to stdout and stderr with normal Node logging:
+
+```ts
+console.log("Refreshing issues");
+console.error("Issue refresh failed", error);
+```
+
+Paseo captures output emitted during initialization, RPC handlers, cleanup, and process failure.
+Protocol traffic uses a separate channel, so `console.log()` cannot corrupt plugin RPCs.
+
+Open **Settings → Plugins → Logs** for the plugin, or inspect the same recent tail from the daemon
+CLI:
+
+```bash
+paseo plugin logs my-plugin
+paseo plugin logs my-plugin --json
+paseo plugin logs my-plugin --host <url>
+```
+
+The command returns a snapshot rather than following live output. Refresh the settings view or run
+the command again for newer entries. Each entry includes its timestamp, stdout or stderr stream,
+sequence, and message.
+
+Paseo retains up to 500 entries and 256 KiB per plugin in memory. Individual lines are capped at
+16 KiB. Reload, disable, initialization failure, and process failure retain the tail. Removing the
+plugin clears it, and a daemon restart starts a new tail. Structured copies are also written to the
+daemon log at `$PASEO_HOME/daemon.log`.
+
+Only daemon-side output is captured. Logs from client surfaces remain in the app runtime. Do not log
+credentials, access tokens, or other secrets: connected users can read the retained tail, and the
+daemon log persists it.
+
 ## Add a composer attachment source
 
 An attachment source searches external resources and returns a stable text snapshot for an agent prompt. Keep credentials and vendor calls in the backend handler.
@@ -222,6 +256,7 @@ paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin ls
 paseo plugin reload my-plugin
+paseo plugin logs my-plugin
 paseo plugin disable my-plugin
 paseo plugin enable my-plugin
 paseo plugin remove my-plugin
@@ -245,4 +280,5 @@ Use `paseo plugin ls` to read the current status and error.
 | Client module is unavailable | Import only the host-provided client modules listed above.                                                                              |
 | RPC rejects                  | Check both Zod schemas and the daemon-side handler error.                                                                               |
 | Edited code does not appear  | Run `npm run typecheck`, then `paseo plugin reload <id>`.                                                                               |
-| Reload fails                 | Fix the reported source error and reload again; Paseo does not restore the previous bundle.                                             |
+| Reload fails                 | Read `paseo plugin ls` and `paseo plugin logs <id>`, fix the source error, then reload; Paseo does not restore the previous bundle.     |
+| Plugin exits unexpectedly    | Read `paseo plugin logs <id>` for retained initialization, cleanup, stderr, and final crash output.                                     |

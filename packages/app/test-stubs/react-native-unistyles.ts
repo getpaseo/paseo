@@ -30,6 +30,10 @@ const testTheme = {
     sm: 14,
     base: 16,
   },
+  fontFamily: {
+    ui: "sans-serif",
+    mono: "monospace",
+  },
   fontWeight: {
     normal: "400",
     medium: "500",

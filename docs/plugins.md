@@ -74,6 +74,12 @@ plugin before compiling and starting from disk. A failed reload stays failed; Pa
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Remove deletes only its
 configuration, never its source directory. The global `pluginsEnabled` switch remains available.
 
+Server contributions can write to stdout and stderr with normal Node logging. Inspect the recent
+in-memory tail from the host plugin settings or with `paseo plugin logs <id>`. Reload, disable, and
+process failure retain the tail; removing the plugin clears it. Daemon restarts do not retain the
+tail, but structured copies remain in `$PASEO_HOME/daemon.log`. Plugin output can contain secrets,
+so do not log credentials or tokens.
+
 ## Contribute behavior and UI
 
 Default export one contribution function. Paseo calls it with a plugin-scoped context. The compiler

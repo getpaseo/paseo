@@ -97,6 +97,8 @@ function createPausedRuntime() {
   const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
+    getLogs: () => [],
+    clearLogs: () => undefined,
     startPlugin: async (pluginId, _path, canPublish) => {
       markStarted();
       await startGate;
@@ -127,6 +129,8 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
   const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
+    getLogs: () => [],
+    clearLogs: () => undefined,
     startPlugin: async (pluginId, _path, canPublish) => {
       starts.push(pluginId);
       if (pluginId === pausedPluginId) {
@@ -147,6 +151,48 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("retains logs when disabled and clears them only when removed", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const entries = [
+      {
+        sequence: 1,
+        timestamp: "2026-08-16T12:00:00.000Z",
+        stream: "stdout" as const,
+        message: "ready",
+      },
+    ];
+    const cleared: string[] = [];
+    const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
+      catalog: () => [],
+      invoke: async () => undefined,
+      getLogs: () => entries,
+      clearLogs: (pluginId) => {
+        cleared.push(pluginId);
+        entries.length = 0;
+      },
+      startPlugin: async () => undefined,
+      stopPluginById: async () => false,
+      stopAll: async () => undefined,
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const service = createService(
+      home,
+      { example: { source: "directory", path: "/plugins/example", enabled: false } },
+      runtime,
+    );
+
+    expect(service.getLogs("example")).toEqual(entries);
+    await service.disablePlugin("example");
+    expect(service.getLogs("example")).toEqual(entries);
+    expect(cleared).toEqual([]);
+
+    await service.removePlugin("example");
+    expect(cleared).toEqual(["example"]);
+    expect(entries).toEqual([]);
+  });
+
   it("publishes each configured plugin after its startup state settles", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

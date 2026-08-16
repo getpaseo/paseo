@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
+import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
@@ -11,10 +12,19 @@ import { PluginSessionSocket } from "./session-socket.js";
 
 const ENTRY_FILENAME = "index.tsx";
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_LOG_ENTRIES = 500;
+const MAX_LOG_BYTES = 256 * 1024;
+const MAX_LOG_LINE_BYTES = 16 * 1024;
+
+interface PluginOutputStream {
+  on(event: "data", listener: (chunk: Buffer | string) => void): this;
+}
 
 interface PluginChild {
   connected: boolean;
   killed: boolean;
+  stdout?: PluginOutputStream | null;
+  stderr?: PluginOutputStream | null;
   send(message: PluginProcessRequest, callback?: (error: Error | null) => void): boolean;
   kill(): boolean;
   disconnect(): void;
@@ -33,6 +43,7 @@ interface LoadedPlugin {
   clientBundle: string;
   methods: ReadonlySet<string>;
   child: PluginChild;
+  outputCapture: PluginOutputCapture;
   pending: Map<string, PendingInvocation>;
   sessionSocket: PluginSessionSocket;
   sessionClosed: Promise<void>;
@@ -41,6 +52,79 @@ interface LoadedPlugin {
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
+}
+
+interface PluginLogTail {
+  entries: PluginLogEntry[];
+  bytes: number;
+  nextSequence: number;
+}
+
+class PluginOutputCapture {
+  private readonly pending = new Map<PluginLogEntry["stream"], Buffer>([
+    ["stdout", Buffer.alloc(0)],
+    ["stderr", Buffer.alloc(0)],
+  ]);
+  private readonly overflowed = new Set<PluginLogEntry["stream"]>();
+  private readonly lastActivity = new Map<PluginLogEntry["stream"], number>();
+  private activitySequence = 0;
+  private flushed = false;
+
+  constructor(
+    child: PluginChild,
+    private readonly emit: (stream: PluginLogEntry["stream"], message: string) => void,
+  ) {
+    child.stdout?.on("data", (chunk) => this.write("stdout", chunk));
+    child.stderr?.on("data", (chunk) => this.write("stderr", chunk));
+    child.on("close", () => this.flush());
+  }
+
+  private write(stream: PluginLogEntry["stream"], chunk: Buffer | string): void {
+    if (this.flushed) return;
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let offset = 0;
+    while (offset < data.length) {
+      const newline = data.indexOf(0x0a, offset);
+      const end = newline === -1 ? data.length : newline;
+      this.append(stream, data.subarray(offset, end));
+      if (newline === -1) return;
+      this.emitLine(stream);
+      offset = newline + 1;
+    }
+  }
+
+  private append(stream: PluginLogEntry["stream"], chunk: Buffer): void {
+    if (chunk.length > 0) this.lastActivity.set(stream, ++this.activitySequence);
+    const current = this.pending.get(stream) ?? Buffer.alloc(0);
+    const remaining = MAX_LOG_LINE_BYTES - current.length;
+    if (chunk.length > remaining) this.overflowed.add(stream);
+    if (remaining <= 0) return;
+    this.pending.set(stream, Buffer.concat([current, chunk.subarray(0, remaining)]));
+  }
+
+  private emitLine(stream: PluginLogEntry["stream"]): void {
+    let line = this.pending.get(stream) ?? Buffer.alloc(0);
+    if (!this.overflowed.has(stream) && line.at(-1) === 0x0d) line = line.subarray(0, -1);
+    this.emit(stream, line.toString("utf8"));
+    this.pending.set(stream, Buffer.alloc(0));
+    this.overflowed.delete(stream);
+    this.lastActivity.delete(stream);
+  }
+
+  private flush(): void {
+    if (this.flushed) return;
+    this.flushed = true;
+    const pendingStreams = (["stdout", "stderr"] as const)
+      .filter(
+        (stream) => (this.pending.get(stream)?.length ?? 0) > 0 || this.overflowed.has(stream),
+      )
+      .sort(
+        (left, right) => (this.lastActivity.get(left) ?? 0) - (this.lastActivity.get(right) ?? 0),
+      );
+    for (const stream of pendingStreams) {
+      this.emitLine(stream);
+    }
+  }
 }
 
 export interface PluginPaseoSessionHost {
@@ -76,7 +160,7 @@ function spawnPluginChild(): PluginChild {
   return fork(fileURLToPath(resolveWorkerUrl()), [], {
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
-    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   }) as PluginChild;
 }
 
@@ -104,6 +188,7 @@ async function requireRegularFile(filePath: string, label: string): Promise<void
 
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
+  private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
@@ -155,6 +240,21 @@ export class PluginRuntime {
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  getLogs(pluginId: string): PluginLogEntry[] {
+    return (
+      this.logTails.get(pluginId)?.entries.map((entry) => ({
+        sequence: entry.sequence,
+        timestamp: entry.timestamp,
+        stream: entry.stream,
+        message: entry.message,
+      })) ?? []
+    );
+  }
+
+  clearLogs(pluginId: string): void {
+    this.logTails.delete(pluginId);
+  }
+
   async invoke(pluginId: string, method: string, input: unknown): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
@@ -196,6 +296,9 @@ export class PluginRuntime {
     const sessionHost = this.sessionHost;
     if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
     const child = this.spawnChild();
+    const outputCapture = new PluginOutputCapture(child, (stream, message) => {
+      this.appendLog(pluginId, stream, message);
+    });
     const sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
     const sessionAttachment = await sessionHost
@@ -260,6 +363,7 @@ export class PluginRuntime {
       clientBundle: bundles.clientBundle,
       methods: new Set(methods),
       child,
+      outputCapture,
       pending,
       sessionSocket,
       sessionClosed: sessionAttachment.closed,
@@ -314,6 +418,28 @@ export class PluginRuntime {
       invocation.reject(new Error(message));
     }
     loaded.pending.clear();
+  }
+
+  private appendLog(pluginId: string, stream: PluginLogEntry["stream"], message: string): void {
+    let tail = this.logTails.get(pluginId);
+    if (!tail) {
+      tail = { entries: [], bytes: 0, nextSequence: 1 };
+      this.logTails.set(pluginId, tail);
+    }
+    const entry: PluginLogEntry = {
+      sequence: tail.nextSequence++,
+      timestamp: new Date().toISOString(),
+      stream,
+      message,
+    };
+    tail.entries.push(entry);
+    tail.bytes += Buffer.byteLength(message);
+    while (tail.entries.length > MAX_LOG_ENTRIES || tail.bytes > MAX_LOG_BYTES) {
+      const removed = tail.entries.shift();
+      if (!removed) break;
+      tail.bytes -= Buffer.byteLength(removed.message);
+    }
+    this.logger.info({ pluginId, ...entry }, "Plugin output");
   }
 
   private notify(pluginId: string, error?: string): void {

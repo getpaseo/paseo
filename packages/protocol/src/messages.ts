@@ -1353,6 +1353,12 @@ export const PluginListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const PluginLogsGetRequestSchema = z.object({
+  type: z.literal("plugin.logs.get.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+});
+
 export const PluginDirectoryInstallRequestSchema = z.object({
   type: z.literal("plugin.directory.install.request"),
   requestId: z.string(),
@@ -2855,6 +2861,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsRequestSchema,
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
+  PluginLogsGetRequestSchema,
   PluginDirectoryInstallRequestSchema,
   PluginDirectoryInspectRequestSchema,
   PluginReloadRequestSchema,
@@ -3190,6 +3197,8 @@ export const ServerInfoStatusPayloadSchema = z
         plugins: z.boolean().optional(),
         // COMPAT(pluginManagement): added in v0.4.0, remove gate after 2027-08-14.
         pluginManagement: z.boolean().optional(),
+        // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
+        pluginLogs: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -5858,9 +5867,26 @@ export const PluginListItemSchema = z.object({
 });
 export type PluginListItem = z.infer<typeof PluginListItemSchema>;
 
+export const PluginLogEntrySchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  timestamp: z.string().datetime(),
+  stream: z.enum(["stdout", "stderr"]),
+  message: z.string(),
+});
+export type PluginLogEntry = z.infer<typeof PluginLogEntrySchema>;
+
 export const PluginListResponseSchema = z.object({
   type: z.literal("plugin.list.response"),
   payload: z.object({ requestId: z.string(), plugins: z.array(PluginListItemSchema) }),
+});
+
+export const PluginLogsGetResponseSchema = z.object({
+  type: z.literal("plugin.logs.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    pluginId: PluginIdSchema,
+    entries: z.array(PluginLogEntrySchema),
+  }),
 });
 
 export const PluginDirectoryInstallResponseSchema = z.object({
@@ -5905,6 +5931,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
+  PluginLogsGetResponseSchema,
   PluginDirectoryInstallResponseSchema,
   PluginDirectoryInspectResponseSchema,
   PluginReloadResponseSchema,

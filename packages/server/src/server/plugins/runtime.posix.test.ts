@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
@@ -23,6 +24,8 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
     for (const listener of listeners.get(event) ?? []) listener(message as never);
   };
   return {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
     connected: true,
     killed: false,
     send(message: { type: string }, callback?: (error: Error | null) => void) {
@@ -61,8 +64,9 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
 
 function createTestRuntime(
   dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[1]> = {},
+  logger = pino({ level: "silent" }),
 ): PluginRuntime {
-  return new PluginRuntime(pino({ level: "silent" }), {
+  return new PluginRuntime(logger, {
     ...dependencies,
     sessionHost: dependencies.sessionHost ?? {
       async attachPluginSocket(_pluginId, socket) {
@@ -128,6 +132,14 @@ function createTrackedSessionHost() {
   };
 }
 
+function lifecycleMessages(runtime: PluginRuntime): string[] {
+  return runtime
+    .getLogs("lifecycle-output")
+    .map((entry) => entry.message)
+    .filter((message) => message === "initialized" || message === "initialization warning")
+    .sort();
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
@@ -135,6 +147,122 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
+    const directory = await createPlugin(
+      "output",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("output", []);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("output", directory);
+
+    child.stdout.write("first\r");
+    child.stdout.write("\n");
+    child.stderr.write("problem\nfinal stderr");
+    child.stdout.write("final stdout");
+    await runtime.stopPluginById("output");
+
+    expect(runtime.getLogs("output").map(({ stream, message }) => ({ stream, message }))).toEqual([
+      { stream: "stdout", message: "first" },
+      { stream: "stderr", message: "problem" },
+      { stream: "stderr", message: "final stderr" },
+      { stream: "stdout", message: "final stdout" },
+    ]);
+    expect(runtime.getLogs("output").map((entry) => entry.sequence)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("writes plugin output through the daemon logger with structured identity fields", async () => {
+    const directory = await createPlugin(
+      "tagged-output",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("tagged-output", []);
+    const records: Array<Record<string, unknown>> = [];
+    const logger = pino(
+      { level: "info" },
+      { write: (line: string) => records.push(JSON.parse(line) as Record<string, unknown>) },
+    );
+    const runtime = createTestRuntime({ spawnChild: () => child }, logger);
+    await runtime.startPlugin("tagged-output", directory);
+
+    child.stderr.write("connection failed\n");
+
+    expect(records.find((record) => record.msg === "Plugin output")).toMatchObject({
+      module: "plugins",
+      pluginId: "tagged-output",
+      sequence: 1,
+      stream: "stderr",
+      message: "connection failed",
+    });
+    expect(records.find((record) => record.msg === "Plugin output")?.timestamp).toEqual(
+      expect.any(String),
+    );
+    await runtime.stopAll();
+  });
+
+  it("bounds retained output by entry count, total bytes, and individual line bytes", async () => {
+    const directory = await createPlugin(
+      "noisy",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("noisy", []);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("noisy", directory);
+
+    child.stdout.write(
+      `${Array.from({ length: 510 }, (_, index) => `line-${index}`).join("\n")}\n`,
+    );
+    expect(runtime.getLogs("noisy")).toHaveLength(500);
+    expect(runtime.getLogs("noisy")[0]?.message).toBe("line-10");
+
+    child.stdout.write(`${Array.from({ length: 20 }, () => "x".repeat(16 * 1024)).join("\n")}\n`);
+    expect(runtime.getLogs("noisy")).toHaveLength(16);
+
+    child.stderr.write("y".repeat(20 * 1024));
+    await runtime.stopPluginById("noisy");
+    const logs = runtime.getLogs("noisy");
+    expect(logs).toHaveLength(16);
+    expect(logs.at(-1)).toMatchObject({ stream: "stderr", message: "y".repeat(16 * 1024) });
+  });
+
+  it("captures output emitted during initialization and cleanup across reloads", async () => {
+    const directory = await createPlugin(
+      "lifecycle-output",
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  console.log("initialized");
+  console.error("initialization warning");
+  return () => process.stdout.write("cleanup fragment");
+}`,
+    );
+    const runtime = createTestRuntime();
+
+    await runtime.startPlugin("lifecycle-output", directory);
+    await expect
+      .poll(() => lifecycleMessages(runtime))
+      .toEqual(["initialization warning", "initialized"]);
+    await runtime.stopPluginById("lifecycle-output");
+    await runtime.startPlugin("lifecycle-output", directory);
+    await runtime.stopPluginById("lifecycle-output");
+
+    const logs = runtime.getLogs("lifecycle-output");
+    expect(
+      logs
+        .filter((entry) => entry.stream === "stdout")
+        .map((entry) => entry.message)
+        .filter((message) => message === "initialized" || message === "cleanup fragment"),
+    ).toEqual(["initialized", "cleanup fragment", "initialized", "cleanup fragment"]);
+    expect(
+      logs
+        .filter((entry) => entry.stream === "stderr")
+        .map((entry) => entry.message)
+        .filter((message) => message === "initialization warning"),
+    ).toEqual(["initialization warning", "initialization warning"]);
+    expect(logs.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: logs.length }, (_, index) => index + 1),
+    );
+  });
+
   it("waits for the old subprocess to exit before starting its replacement", async () => {
     const directory = await createPlugin(
       "reloadable",
@@ -427,6 +555,7 @@ export default function contribute(plugin: any) {
       "crashing",
       `export default function contribute(plugin: unknown) {
   void plugin;
+  process.stdout.write("before crash");
   setTimeout(() => process.exit(17), 20);
   return () => undefined;
 }`,
@@ -443,6 +572,7 @@ export default function contribute(plugin: any) {
     await expect(crashed).resolves.toBe("Plugin process exited: crashing");
     expect(sessions.active.size).toBe(0);
     expect(runtime.catalog()).toEqual([]);
+    expect(runtime.getLogs("crashing").map((entry) => entry.message)).toContain("before crash");
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );

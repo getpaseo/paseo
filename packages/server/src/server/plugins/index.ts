@@ -2,6 +2,7 @@ import path from "node:path";
 import type pino from "pino";
 import {
   PluginIdSchema,
+  type PluginLogEntry,
   type PluginListItem,
   type PluginSource,
 } from "@getpaseo/protocol/messages";
@@ -12,6 +13,8 @@ import { PluginRuntime } from "./runtime.js";
 interface PluginRuntimePort {
   catalog(): Array<{ id: string; clientBundle: string }>;
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  getLogs(pluginId: string): PluginLogEntry[];
+  clearLogs(pluginId: string): void;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
@@ -87,6 +90,11 @@ export class PluginService {
         return item;
       })
       .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  getLogs(pluginId: string): PluginLogEntry[] {
+    this.requireSource(pluginId);
+    return this.runtime.getLogs(pluginId);
   }
 
   catalog(): Array<{ id: string; clientBundle: string }> {
@@ -170,6 +178,7 @@ export class PluginService {
     this.configStore.patch({ plugins: sources });
     await this.enqueue(async () => {
       await stopping;
+      this.runtime.clearLogs(pluginId);
       this.errors.delete(pluginId);
       this.notify(pluginId);
     });

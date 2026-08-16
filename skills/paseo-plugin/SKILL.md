@@ -172,6 +172,24 @@ Inputs and outputs are validated on both sides. Backend handlers receive the sam
 
 Use TanStack Query for async request state, caching, and mutations.
 
+### Debug daemon-side behavior
+
+Backend contributions can use normal Node logging. `console.log()` writes to the plugin's stdout;
+`console.error()` writes to stderr. Paseo captures both streams without interfering with plugin IPC.
+
+Inspect recent output after install, reload, an RPC failure, or a subprocess crash:
+
+```bash
+paseo plugin logs my-plugin
+paseo plugin logs my-plugin --json
+paseo plugin logs my-plugin --host <url>
+```
+
+The same tail is available from **Settings → Plugins → Logs**. It includes initialization, handler,
+cleanup, and final crash output. Reload, disable, and process failure retain the tail. Removing the
+plugin clears it; restarting the daemon clears the in-memory tail. Structured copies also go to the
+daemon log. Never log credentials or other secrets.
+
 ## Add a composer attachment source
 
 Define a search RPC and register a declarative source:
@@ -253,12 +271,13 @@ paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin ls
 paseo plugin reload my-plugin
+paseo plugin logs my-plugin
 paseo plugin disable my-plugin
 paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-Use `--host <url>` when managing a daemon other than the CLI default. Plugin source edits require `paseo plugin reload`; config changes to the global switch require `paseo reload`. A failed plugin reload stays failed; inspect `paseo plugin ls`, fix the reported error, typecheck, and reload again. `remove` deletes configuration, never the source directory.
+Use `--host <url>` when managing a daemon other than the CLI default. Plugin source edits require `paseo plugin reload`; config changes to the global switch require `paseo reload`. A failed plugin reload stays failed; inspect `paseo plugin ls` for the load error and `paseo plugin logs <id>` for subprocess output, fix the source, typecheck, and reload again. `remove` deletes configuration, never the source directory.
 
 Do not restart the daemon to load source changes. Restarting it can kill the agent performing the work.
 
@@ -276,5 +295,6 @@ Common failures:
 
 - Missing sidebar item: wrong host, plugin not `running`, invalid Lucide icon, or sidebar item points to a missing surface.
 - Unavailable client module: client bundles can use only the host-provided modules listed above.
-- RPC rejection: input or output failed its Zod schema, or the handler threw.
+- RPC rejection: input or output failed its Zod schema, or the handler threw. Inspect `paseo plugin logs <id>` for handler output.
+- Plugin exits or reload fails: inspect `paseo plugin ls` for status and `paseo plugin logs <id>` for initialization, cleanup, or crash output.
 - Stale UI: source was edited without `paseo plugin reload <id>`.
