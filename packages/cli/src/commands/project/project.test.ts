@@ -1,6 +1,6 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runCreateCommand } from "./create.js";
+import { resolveProjectPath, runCreateCommand } from "./create.js";
 import { runDeleteCommand } from "./delete.js";
 import { createProjectCommand } from "./index.js";
 import { runLsCommand } from "./ls.js";
@@ -57,6 +57,23 @@ describe("project commands", () => {
       path: "/tmp/paseo",
     });
     expect(close).toHaveBeenCalled();
+  });
+
+  it("resolves paths locally and leaves daemon-owned paths unchanged", () => {
+    expect(resolveProjectPath({ cwd: "/home/user", pathArg: "repo" })).toBe(
+      path.resolve("/home/user/repo"),
+    );
+    expect(resolveProjectPath({ cwd: "/home/user" })).toBe(path.resolve("/home/user"));
+    expect(
+      resolveProjectPath({ cwd: "/home/user", pathArg: "/srv/repo", daemonTarget: "host:6767" }),
+    ).toBe("/srv/repo");
+    expect(
+      resolveProjectPath({ cwd: "/home/user", pathArg: "~/repo", daemonTarget: "host:6767" }),
+    ).toBe("~/repo");
+  });
+
+  it("requires a daemon-owned path for an explicit target", () => {
+    expect(() => resolveProjectPath({ cwd: "/home/user", daemonTarget: "host:6767" })).toThrow();
   });
 
   it("lists projects", async () => {
