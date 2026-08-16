@@ -1266,6 +1266,7 @@ describe("createWebStreamStrategy", () => {
     HTMLElement.prototype.scrollTo = scrollTo;
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
+    const onReadingPositionChange = vi.fn();
     const renderInput: StreamRenderInput = {
       agentId: "agent",
       segments: {
@@ -1284,6 +1285,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: vi.fn(),
+      onReadingPositionChange,
       onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
@@ -1309,6 +1311,15 @@ describe("createWebStreamStrategy", () => {
     if (!(contentNode instanceof HTMLElement)) {
       throw new Error("Expected agent chat content node");
     }
+    const firstRow = contentNode.querySelector('[data-history-row-id="message-1"]');
+    const secondRow = contentNode.querySelector('[data-history-row-id="message-2"]');
+    if (!(firstRow instanceof HTMLElement) || !(secondRow instanceof HTMLElement)) {
+      throw new Error("Expected retained history rows");
+    }
+    let rowsShifted = false;
+    scrollContainer.getBoundingClientRect = vi.fn(() => ({ top: 0 }) as DOMRect);
+    firstRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 4 : 120 }) as DOMRect);
+    secondRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 120 : 160 }) as DOMRect);
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
@@ -1316,13 +1327,16 @@ describe("createWebStreamStrategy", () => {
     const viewportObservation = observed.get(scrollContainer);
     expect(viewportObservation).toBeDefined();
     act(() => notifyResize(scrollContainer, contentNode));
+    expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-1");
 
     act(() => root?.render(renderWithActivity(false)));
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
     expect(viewportObservation?.disconnect).toHaveBeenCalledOnce();
     scrollTo.mockClear();
+    rowsShifted = true;
     act(() => root?.render(renderWithActivity(true)));
     act(() => notifyResize(scrollContainer, contentNode));
+    expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-2");
     expect(scrollTo).not.toHaveBeenCalled();
 
     act(() => root?.render(renderWithActivity(false)));

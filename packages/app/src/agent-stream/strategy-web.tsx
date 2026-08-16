@@ -903,6 +903,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const nextGeometry = getObservedViewportGeometry(scrollContainer);
       if (pendingResumeGeometryCheckRef.current) {
         pendingResumeGeometryCheckRef.current = false;
+        reportReadingPosition();
         const previousGeometry = lastObservedViewportGeometryRef.current;
         lastObservedViewportGeometryRef.current = nextGeometry;
         if (previousGeometry && observedViewportGeometriesEqual(previousGeometry, nextGeometry)) {
@@ -935,6 +936,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     applyHistoryStartPrependAnchor,
     evaluateHistoryStart,
     isActive,
+    reportReadingPosition,
     scheduleHistoryStartPrependSettle,
     scheduleStickToBottom,
     updateScrollMetrics,
