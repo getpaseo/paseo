@@ -6,8 +6,11 @@ import type { ComposerTextInputHandle, ComposerTextInputProps } from "./text-inp
 interface WebTextInputElement extends TextInput {
   value?: string;
   setSelectionRange?: (start: number, end: number) => void;
-  addEventListener: (type: "compositionend", listener: EventListener) => void;
-  removeEventListener: (type: "compositionend", listener: EventListener) => void;
+  addEventListener: (type: "compositionstart" | "compositionend", listener: EventListener) => void;
+  removeEventListener: (
+    type: "compositionstart" | "compositionend",
+    listener: EventListener,
+  ) => void;
 }
 
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
@@ -21,6 +24,7 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
   ) {
     const inputRef = useRef<TextInput | null>(null);
     const textRef = useRef(text);
+    const isComposingRef = useRef(false);
     const onChangeTextRef = useRef(onChangeText);
     onChangeTextRef.current = onChangeText;
 
@@ -28,7 +32,11 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
       const input = inputRef.current as WebTextInputElement | null;
       if (!input) return;
 
+      const startComposition = () => {
+        isComposingRef.current = true;
+      };
       const endComposition = () => {
+        isComposingRef.current = false;
         const nextText = input.value ?? "";
         if (nextText !== textRef.current) {
           textRef.current = nextText;
@@ -36,14 +44,17 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
         }
       };
 
+      input.addEventListener("compositionstart", startComposition);
       input.addEventListener("compositionend", endComposition);
       return () => {
+        input.removeEventListener("compositionstart", startComposition);
         input.removeEventListener("compositionend", endComposition);
       };
     }, []);
 
     const handleChangeText = useCallback(
       (nextText: string) => {
+        if (isComposingRef.current) return;
         if (nextText === textRef.current) return;
         textRef.current = nextText;
         onChangeText(nextText);

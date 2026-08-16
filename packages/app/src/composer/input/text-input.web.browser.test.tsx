@@ -147,16 +147,23 @@ describe("ComposerTextInput web IME composition", () => {
     expect(mounted.textarea.value).toBe("你好");
   });
 
-  it("does not report committed text twice when the input event already reported it", () => {
+  it("defers Korean IME input events until composition commits", () => {
     const changes: string[] = [];
     const mounted = mountInput((text) => changes.push(text));
 
     act(() => {
       dispatchComposition(mounted.textarea, "compositionstart");
-      typeFromIme(mounted.textarea, "你好");
+      typeFromIme(mounted.textarea, "ㅎ");
+      typeFromIme(mounted.textarea, "하");
+      typeFromIme(mounted.textarea, "한");
+    });
+
+    expect(changes).toEqual([]);
+
+    act(() => {
       dispatchComposition(mounted.textarea, "compositionend");
     });
 
-    expect(changes).toEqual(["你好"]);
+    expect(changes).toEqual(["한"]);
   });
 });
