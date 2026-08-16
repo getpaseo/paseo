@@ -133,6 +133,47 @@ test.describe("usage settings", () => {
     await expect(card.getByText("64%")).toBeVisible();
   });
 
+  test("keeps a localized balance reset within its usage card", async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 320, height: 844 });
+    const serverId = getServerId();
+    await installUsageReportsFixture(page, {
+      lists: [
+        [
+          report({
+            sourceId: "fixture",
+            sourceLabel: "Fixture plan",
+            report: {
+              balances: [
+                {
+                  id: "credits",
+                  label: "Credits available for additional usage",
+                  remaining: 999_999_999_999_999,
+                  unit: "credits",
+                  resetsAt: "2026-12-31T23:59:00.000Z",
+                },
+              ],
+            },
+          }),
+        ],
+      ],
+    });
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+
+    const card = page.getByTestId("usage-card");
+    const value = page.getByTestId("provider-usage-balance-credits-value");
+    await expect(value).toBeVisible({ timeout: 10_000 });
+    const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
+    expect(cardBox).not.toBeNull();
+    expect(valueBox).not.toBeNull();
+    expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
+      (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+    );
+  });
+
   test("asks to update a host without usage support and never calls it", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();

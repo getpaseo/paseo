@@ -66,7 +66,12 @@ export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
         <Text style={styles.label} numberOfLines={1}>
           {balance.label}
         </Text>
-        <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
+        <Text
+          style={styles.value}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID={`provider-usage-balance-${balance.id}-value`}
+        >
           {amountText}
           {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
