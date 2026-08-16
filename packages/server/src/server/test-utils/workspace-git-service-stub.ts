@@ -1,6 +1,10 @@
 import type { CheckoutDiffResult } from "../../utils/checkout-git.js";
 import { deriveProjectSlug } from "../workspace-git-metadata.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
+import type {
+  WorkspaceGitRuntimeSnapshot,
+  WorkspaceGitService,
+  WorkspaceGitWorkspace,
+} from "../workspace-git-service.js";
 
 export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -31,7 +35,10 @@ export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRu
 export function createNoopWorkspaceGitService(
   overrides: Partial<WorkspaceGitService> = {},
 ): WorkspaceGitService {
-  const service: WorkspaceGitService = {
+  let service!: WorkspaceGitService;
+  service = {
+    bindWorkspace: ({ cwd }) => bindWorkspaceGitService(service, cwd),
+    bindLegacy: (cwd) => bindWorkspaceGitService(service, cwd),
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
@@ -60,6 +67,20 @@ export function createNoopWorkspaceGitService(
       return deriveProjectSlug(cwd, snapshot.git.isGit ? snapshot.git.remoteUrl : null);
     },
     resolveForge: async () => null,
+    commit: async () => {},
+    discardChanges: async () => {},
+    createBranch: async () => {},
+    switchBranch: async () => ({ source: "local" }),
+    fetch: async () => {},
+    listCommits: async () => ({ baseRef: null, commits: [] }),
+    getCommitFileDiff: async () => null,
+    stashPush: async () => {},
+    stashPop: async () => {},
+    mergeToBase: async (cwd) => cwd,
+    mergeFromBase: async () => {},
+    pull: async () => {},
+    push: async () => {},
+    renameBranch: async (_cwd, branch) => ({ previousBranch: null, currentBranch: branch }),
     resolveRepoRoot: async (cwd: string) => cwd,
     resolveDefaultBranch: async () => "main",
     resolveRepoRemoteUrl: async () => null,
@@ -117,4 +138,61 @@ export function createNoopWorkspaceGitService(
   };
 
   return service;
+}
+
+export function bindWorkspaceGitService(
+  service: WorkspaceGitService,
+  cwd: string,
+): WorkspaceGitWorkspace {
+  return {
+    cwd,
+    register: (listener) => service.registerWorkspace({ cwd }, listener),
+    observe: async (listener) => service.registerWorkspace({ cwd }, listener),
+    peekSnapshot: () => service.peekSnapshot(cwd),
+    getCheckout: () => service.getCheckout(cwd),
+    getSnapshot: (options) =>
+      options === undefined ? service.getSnapshot(cwd) : service.getSnapshot(cwd, options),
+    resolveForge: () => service.resolveForge(cwd),
+    getCheckoutDiff: (options, readOptions) => service.getCheckoutDiff(cwd, options, readOptions),
+    validateBranchRef: (ref, options) =>
+      options === undefined
+        ? service.validateBranchRef(cwd, ref)
+        : service.validateBranchRef(cwd, ref, options),
+    hasLocalBranch: (branch, options) =>
+      options === undefined
+        ? service.hasLocalBranch(cwd, branch)
+        : service.hasLocalBranch(cwd, branch, options),
+    suggestBranches: (options, readOptions) =>
+      readOptions === undefined
+        ? service.suggestBranchesForCwd(cwd, options)
+        : service.suggestBranchesForCwd(cwd, options, readOptions),
+    listStashes: (options, readOptions) =>
+      readOptions === undefined
+        ? service.listStashes(cwd, options)
+        : service.listStashes(cwd, options, readOptions),
+    listWorktrees: (options) => service.listWorktrees(cwd, options),
+    getProjectSlug: (options) => service.getProjectSlug(cwd, options),
+    resolveRepoRoot: (options) => service.resolveRepoRoot(cwd, options),
+    resolveDefaultBranch: (options) => service.resolveDefaultBranch(cwd, options),
+    resolveRepoRemoteUrl: (options) => service.resolveRepoRemoteUrl(cwd, options),
+    commit: (options) => service.commit(cwd, options),
+    discardChanges: (paths) => service.discardChanges(cwd, paths),
+    createBranch: (options) => service.createBranch(cwd, options),
+    switchBranch: (branch) => service.switchBranch(cwd, branch),
+    fetch: () => service.fetch(cwd),
+    listCommits: () => service.listCommits(cwd),
+    getCommitFileDiff: (input) => service.getCommitFileDiff(cwd, input),
+    stashPush: (message) => service.stashPush(cwd, message),
+    stashPop: (stashIndex) => service.stashPop(cwd, stashIndex),
+    mergeToBase: (options) => service.mergeToBase(cwd, options),
+    mergeFromBase: (options) => service.mergeFromBase(cwd, options),
+    pull: () => service.pull(cwd),
+    push: () => service.push(cwd),
+    renameBranch: (branch) => service.renameBranch(cwd, branch),
+    refresh: (options) => service.refresh(cwd, options),
+    requestWorkingTreeWatch: (onChange) => service.requestWorkingTreeWatch(cwd, onChange),
+    scheduleRefresh: () => service.scheduleRefreshForCwd(cwd),
+    stateMayHaveChanged: () => service.onWorkspaceStateMayHaveChanged(cwd),
+    invalidateForge: () => service.invalidateForge(cwd),
+  };
 }

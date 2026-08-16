@@ -82,6 +82,7 @@ interface UseAssistantImageInput {
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
+  workspaceId?: string;
 }
 
 type PreviewUrlState =
@@ -377,6 +378,7 @@ export function useAssistantImage({
   client,
   workspaceRoot,
   serverId,
+  workspaceId,
 }: UseAssistantImageInput): AssistantImageResult {
   const { t } = useTranslation();
   const resolution = useMemo(
@@ -387,7 +389,8 @@ export function useAssistantImage({
   const fileAcquisition = useMemo(() => {
     const port: AssistantImageFileAcquisitionPort | null = client
       ? {
-          readFile: async (cwd, path) => await client.readFile(cwd, path),
+          readFile: async (cwd, path, selectedWorkspaceId) =>
+            await client.readFile(cwd, path, undefined, selectedWorkspaceId),
           persist: persistAttachmentFromBytes,
         }
       : null;
@@ -395,10 +398,11 @@ export function useAssistantImage({
       port,
       resolution,
       serverId,
+      workspaceId,
       occurrenceKey,
       unavailableMessage: t("message.attachments.imagePreviewUnavailable"),
     });
-  }, [client, occurrenceKey, resolution, serverId, t]);
+  }, [client, occurrenceKey, resolution, serverId, t, workspaceId]);
   const dataImageAcquisition = useMemo(
     () => createDataImageAcquisition({ source, dataImage }),
     [dataImage, source],

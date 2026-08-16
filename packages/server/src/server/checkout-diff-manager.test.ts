@@ -13,6 +13,7 @@ vi.mock("./checkout-git-utils.js", () => ({
 import type pino from "pino";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import { bindWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -64,6 +65,7 @@ function createPendingManager() {
     unsubscribeCalls: number;
     resolve(): void;
   }> = [];
+  let boundLegacy: ReturnType<typeof bindWorkspaceGitService> | null = null;
   const workspaceGitService = {
     getCheckoutDiff: async () => ({ diff: "", structured: [] }),
     getSnapshot: async () => createWorkspaceSnapshot(),
@@ -86,6 +88,9 @@ function createPendingManager() {
       };
       watches.push(watch);
       return pending.promise;
+    },
+    bindLegacy(cwd: string) {
+      return (boundLegacy ??= bindWorkspaceGitService(this as unknown as WorkspaceGitService, cwd));
     },
   };
   const logger = { child: () => logger, warn: () => {} };
@@ -123,6 +128,7 @@ describe("CheckoutDiffManager", () => {
       };
     });
 
+    let boundLegacy: ReturnType<typeof bindWorkspaceGitService> | null = null;
     const workspaceGitService = {
       subscribe: vi.fn(),
       peekSnapshot: vi.fn(),
@@ -139,6 +145,12 @@ describe("CheckoutDiffManager", () => {
       scheduleRefreshForCwd: vi.fn(),
       requestWorkingTreeWatch: mockRequestWorkingTreeWatch,
       dispose: vi.fn(),
+      bindLegacy(cwd: string) {
+        return (boundLegacy ??= bindWorkspaceGitService(
+          this as unknown as WorkspaceGitService,
+          cwd,
+        ));
+      },
     };
 
     const logger = {
@@ -244,7 +256,7 @@ describe("CheckoutDiffManager", () => {
     expect(watches[0].unsubscribeCalls).toBe(1);
   });
 
-  test("diffCwd uses repoRoot from the working tree watch result", async () => {
+  test("the bound workspace owns the diff cwd", async () => {
     const { manager, workspaceGitService } = createManager({ repoRoot: "/tmp/repo" });
 
     await manager.subscribe(
@@ -256,7 +268,7 @@ describe("CheckoutDiffManager", () => {
     );
 
     expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith(
-      "/tmp/repo",
+      "/tmp/repo/packages/server",
       expect.objectContaining({ mode: "uncommitted", includeStructured: true }),
       undefined,
     );
@@ -327,7 +339,7 @@ describe("CheckoutDiffManager", () => {
 
     expect(getCheckoutDiff).toHaveBeenNthCalledWith(
       1,
-      "/tmp/repo",
+      "/tmp/repo/packages/server",
       expect.objectContaining({ mode: "uncommitted" }),
       undefined,
     );

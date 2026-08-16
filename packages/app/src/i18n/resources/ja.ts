@@ -1111,6 +1111,8 @@ export const ja: TranslationResources = {
   newWorkspace: {
     title: "新しいワークスペース",
     create: "作成",
+    runtime: { local: "ローカル", worktree: "ワークツリー", label: "ランタイム" },
+    runtimeProbe: { preparing: "環境を準備しています" },
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
@@ -1132,6 +1134,7 @@ export const ja: TranslationResources = {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
+      runtime: "Choose where the workspace runs",
       startingRef: "開始点を選択",
       launch: "Choose what to launch",
     },

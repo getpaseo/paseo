@@ -11,7 +11,6 @@ import { CommitRow } from "./commit-row";
 
 interface CommitsSectionProps {
   serverId: string;
-  cwd: string;
   onCommitPress: (sha: string) => void;
 }
 
@@ -82,7 +81,7 @@ function CommitsSectionContent({
   );
 }
 
-export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionProps) {
+export function CommitsSection({ serverId, onCommitPress }: CommitsSectionProps) {
   const { t } = useTranslation();
   const { preferences, updatePreferences } = useChangesPreferences();
   const isPanelActive = useRetainedPanelActive();
@@ -91,7 +90,6 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
   const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
     serverId,
-    cwd,
     enabled: !collapsed,
   });
 

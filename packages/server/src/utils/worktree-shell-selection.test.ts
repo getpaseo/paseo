@@ -1,5 +1,6 @@
 import { type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,11 +32,46 @@ function emitSuccessfulClose(child: ChildProcess): void {
 function createSpawnChildStub(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
   Object.assign(child, {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
   });
-  queueMicrotask(() => emitSuccessfulClose(child));
+  queueMicrotask(() => {
+    (child.stdout as PassThrough).end();
+    (child.stderr as PassThrough).end();
+    emitSuccessfulClose(child);
+  });
   return child;
+}
+
+async function captureBoundSetupArgv(
+  resolveCommand: (command: string) => Promise<string | null>,
+): Promise<readonly string[]> {
+  const run = vi.fn(async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    stdout.end();
+    stderr.end();
+    return {
+      stdin: new PassThrough(),
+      stdout,
+      stderr,
+      exited: Promise.resolve({ code: 0, signal: null }),
+      kill: vi.fn(),
+    };
+  });
+  const { runWorktreeSetupCommands } = await import("./worktree.js");
+  await runWorktreeSetupCommands({
+    worktreePath: "/workspace",
+    branchName: "runtime-branch",
+    cleanupOnFailure: false,
+    execution: {
+      readFile: async () =>
+        Buffer.from(JSON.stringify({ worktree: { setup: ["printf runtime-shell"] } })),
+      resolveCommand,
+      run,
+    },
+  });
+  return run.mock.calls[0]![0].argv;
 }
 
 describe("worktree shell selection", () => {
@@ -178,5 +214,63 @@ describe("worktree shell selection", () => {
       }
       rmSync(worktreePath, { recursive: true, force: true });
     }
+  });
+
+  it("selects the bound runtime shell by capability instead of the host platform", async () => {
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const run = vi.fn(async () => {
+      stdout.end("runtime shell\n");
+      stderr.end();
+      return {
+        stdin: new PassThrough(),
+        stdout,
+        stderr,
+        exited: Promise.resolve({ code: 0, signal: null }),
+        kill: vi.fn(),
+      };
+    });
+    const { runWorktreeSetupCommands } = await import("./worktree.js");
+    const results = await runWorktreeSetupCommands({
+      worktreePath: "/workspace",
+      branchName: "runtime-branch",
+      cleanupOnFailure: false,
+      execution: {
+        readFile: async () =>
+          Buffer.from(JSON.stringify({ worktree: { setup: ["printf runtime-shell"] } })),
+        resolveCommand: async (command) => (command === "bash" ? "/runtime/bin/bash" : null),
+        run,
+      },
+    });
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        argv: ["/runtime/bin/bash", "-c", "printf runtime-shell"],
+        cwd: "/workspace",
+      }),
+    );
+    expect(results).toMatchObject([{ stdout: "runtime shell\n", exitCode: 0 }]);
+    expect(spawnProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers PowerShell when the runtime exposes Windows and POSIX shells", async () => {
+    const argv = await captureBoundSetupArgv(async (command) => `/runtime/bin/${command}`);
+    expect(argv).toEqual([
+      "/runtime/bin/powershell",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "printf runtime-shell",
+    ]);
+  });
+
+  it("falls back to cmd when a Windows runtime has no PowerShell", async () => {
+    const argv = await captureBoundSetupArgv(async (command) =>
+      command === "cmd.exe" ? "C:\\Windows\\System32\\cmd.exe" : null,
+    );
+    expect(argv).toEqual(["C:\\Windows\\System32\\cmd.exe", "/c", "printf runtime-shell"]);
   });
 });

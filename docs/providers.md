@@ -103,7 +103,9 @@ Daemon bootstrap reconciles that ledger in the background, without blocking star
 
 ## Provider Snapshot Refresh Contract
 
-The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
+The daemon keeps provider snapshots per bound workspace, with separate legacy cwd and semantic global scopes. New Workspace first ensures one invisible provider-probe workspace for the selected `(projectId, runtimeId)`, then reads the snapshot through that workspace binding. The probe is created through `WorkspaceRuntimeService`, so availability, models, and modes come from the selected runtime. Probe creation never runs repository setup. Old clients and bare-cwd callers keep the cwd snapshot path; do not replace or remove it.
+
+Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` after the workspace runtime has bound its private placement. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
 
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
@@ -114,13 +116,13 @@ that were still active when the deadline expired.
 
 Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
 
-Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.
+Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and workspace identity, or per cwd for the legacy path, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.
 
 Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
 
 Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
 
-Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that scope; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only global.
+Boundary tests should assert observable behavior: New Workspace never falls back to a host cwd after selecting a runtime; cold reads may call provider availability/model/mode discovery for that scope; warm reads and registry replacement must not; explicit workspace refreshes affect only one workspace; settings refresh wipes all scopes but immediately refreshes only global.
 
 ---
 

@@ -148,7 +148,10 @@ export function findByType<T extends SessionOutboundMessage["type"]>(
 // ---------------------------------------------------------------------------
 
 export interface ProviderSnapshotManagerSpies {
-  getSnapshot: ReturnType<typeof vi.fn<[cwd?: string], ProviderSnapshotEntry[]>>;
+  getSnapshot: ReturnType<
+    typeof vi.fn<[cwd?: string, workspaceId?: string], ProviderSnapshotEntry[]>
+  >;
+  readSnapshot: ReturnType<typeof vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>>;
   refreshSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
   refreshSettingsSnapshot: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
   warmUpSnapshotForCwd: ReturnType<typeof vi.fn<[unknown], Promise<void>>>;
@@ -175,7 +178,13 @@ export interface ProviderSnapshotManagerSpies {
 export function createProviderSnapshotManagerStub(): {
   manager: ProviderSnapshotManager;
 } & ProviderSnapshotManagerSpies {
-  const getSnapshot = vi.fn<[cwd?: string], ProviderSnapshotEntry[]>(() => []);
+  const getSnapshot = vi.fn<[cwd?: string, workspaceId?: string], ProviderSnapshotEntry[]>(
+    () => [],
+  );
+  const readSnapshot = vi.fn<[unknown], Promise<ProviderSnapshotEntry[]>>(async (options) => {
+    const { cwd, workspaceId } = options as { cwd?: string | null; workspaceId?: string };
+    return getSnapshot(cwd ?? undefined, workspaceId);
+  });
   const refreshSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
   const refreshSettingsSnapshot = vi.fn<[unknown], Promise<void>>(async () => {});
   const warmUpSnapshotForCwd = vi.fn<[unknown], Promise<void>>(async () => {});
@@ -218,6 +227,7 @@ export function createProviderSnapshotManagerStub(): {
   const destroy = vi.fn<[], void>();
   const stub = {
     getSnapshot,
+    readSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,
@@ -244,6 +254,7 @@ export function createProviderSnapshotManagerStub(): {
   return {
     manager,
     getSnapshot,
+    readSnapshot,
     refreshSnapshotForCwd,
     refreshSettingsSnapshot,
     warmUpSnapshotForCwd,

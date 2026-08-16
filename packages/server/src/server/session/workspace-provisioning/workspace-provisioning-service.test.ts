@@ -506,6 +506,30 @@ test("directory creation persists the live branch and a trimmed title", async ()
   expect(workspace).toMatchObject({ branch: "main", title: "Focused work" });
 });
 
+test("selected-runtime directory creation stays provisional until runtime placement is persisted", async () => {
+  const repo = path.join(tmpDir, "repo");
+  gitRoots.add(repo);
+
+  const workspace = await provisioning.createWorkspaceForDirectory(repo, null, undefined, {
+    runtimeId: "docker",
+  });
+
+  expect(await workspaceRegistry.get(workspace.workspaceId)).toMatchObject({
+    cwd: repo,
+    runtime: { runtimeId: "docker" },
+  });
+  expect(await workspaceRegistry.list()).toEqual([]);
+
+  await workspaceRegistry.update(workspace.workspaceId, (record) => ({
+    ...record,
+    cwd: "/workspace",
+  }));
+
+  expect(await workspaceRegistry.list()).toEqual([
+    expect.objectContaining({ workspaceId: workspace.workspaceId, cwd: "/workspace" }),
+  ]);
+});
+
 test("createWorkspaceForDirectory honors an explicit active project without cwd containment", async () => {
   const project = await projectRegistry.getOrCreateActiveByRoot({
     rootPath: path.join(tmpDir, "elsewhere"),

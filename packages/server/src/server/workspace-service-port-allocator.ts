@@ -2,6 +2,7 @@ import net from "node:net";
 import { execCommand } from "../utils/spawn.js";
 import { findFreePort } from "./service-proxy.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type { BoundWorkspaceRuntime } from "./workspace-runtime/index.js";
 
 const PORT_SCRIPT_TIMEOUT_MS = 10_000;
 const PORT_SCRIPT_MAX_OUTPUT_BYTES = 1024;
@@ -19,6 +20,7 @@ export interface AllocateWorkspaceServicePortOptions {
   scriptName: string;
   workspaceId: string;
   branchName: string | null;
+  runtime?: Pick<BoundWorkspaceRuntime, "run" | "resolveCommand">;
   reservedPorts?: ReadonlySet<number>;
 }
 
@@ -33,6 +35,7 @@ export async function allocateWorkspaceServicePort(
       workspaceId: options.workspaceId,
       branchName: options.branchName,
       reservedPorts: options.reservedPorts,
+      runtime: options.runtime,
     });
   }
   if (options.allocation?.range) {
@@ -51,25 +54,32 @@ async function allocatePortFromScript(options: {
   workspaceId: string;
   branchName: string | null;
   reservedPorts: ReadonlySet<number> | undefined;
+  runtime: Pick<BoundWorkspaceRuntime, "run" | "resolveCommand"> | undefined;
 }): Promise<number> {
   let result: { stdout: string; stderr: string };
   try {
-    result = await execCommand(
+    const argv: [string, ...string[]] = [
       options.command,
-      [options.scriptName, options.workspaceId, options.branchName ?? "", options.cwd],
-      {
-        cwd: options.cwd,
-        envOverlay: {
-          PASEO_SCRIPTNAME: options.scriptName,
-          PASEO_WORKSPACE_ID: options.workspaceId,
-          PASEO_BRANCH_NAME: options.branchName ?? "",
-          PASEO_WORKTREE_PATH: options.cwd,
-        },
-        timeout: PORT_SCRIPT_TIMEOUT_MS,
-        maxBuffer: PORT_SCRIPT_MAX_OUTPUT_BYTES,
-        shell: false,
-      },
-    );
+      options.scriptName,
+      options.workspaceId,
+      options.branchName ?? "",
+      options.cwd,
+    ];
+    const env = {
+      PASEO_SCRIPTNAME: options.scriptName,
+      PASEO_WORKSPACE_ID: options.workspaceId,
+      PASEO_BRANCH_NAME: options.branchName ?? "",
+      PASEO_WORKTREE_PATH: options.cwd,
+    };
+    result = options.runtime
+      ? await runInWorkspace(options.runtime, argv, env)
+      : await execCommand(options.command, argv.slice(1), {
+          cwd: options.cwd,
+          envOverlay: env,
+          timeout: PORT_SCRIPT_TIMEOUT_MS,
+          maxBuffer: PORT_SCRIPT_MAX_OUTPUT_BYTES,
+          shell: false,
+        });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Service port script '${options.command}' failed: ${detail}`, { cause: error });
@@ -89,6 +99,53 @@ async function allocatePortFromScript(options: {
     throw new Error(`Service port script '${options.command}' returned reserved port ${port}`);
   }
   return port;
+}
+
+async function runInWorkspace(
+  runtime: Pick<BoundWorkspaceRuntime, "run" | "resolveCommand">,
+  argv: [string, ...string[]],
+  env: Record<string, string>,
+): Promise<{ stdout: string; stderr: string }> {
+  const executable = await runtime.resolveCommand(argv[0]);
+  if (!executable) throw new Error(`command is unavailable in the workspace: ${argv[0]}`);
+  const process = await runtime.run({
+    argv: [executable, ...argv.slice(1)],
+    cwd: ".",
+    env,
+    purpose: { kind: "workspace-script", script: "service-port-allocation" },
+  });
+  process.stdin.end();
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        process.kill("SIGKILL");
+        reject(new Error(`timed out after ${PORT_SCRIPT_TIMEOUT_MS}ms`));
+      }, PORT_SCRIPT_TIMEOUT_MS);
+    });
+    const [stdout, stderr, exit] = await Promise.race([
+      Promise.all([readBounded(process.stdout), readBounded(process.stderr), process.exited]),
+      timedOut,
+    ]);
+    if (exit.code !== 0 || exit.signal !== null) {
+      throw new Error(`exited with ${exit.code ?? exit.signal}: ${stderr || stdout}`);
+    }
+    return { stdout, stderr };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function readBounded(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > PORT_SCRIPT_MAX_OUTPUT_BYTES) throw new Error("output exceeded limit");
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function allocatePortFromRange(

@@ -93,7 +93,11 @@ export class ProviderCatalogSession {
   }
 
   start(): void {
-    const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
+    const handleProviderSnapshotChange = (
+      entries: ProviderSnapshotEntry[],
+      cwd: string,
+      workspaceId?: string,
+    ) => {
       // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
       const visibleEntries = entries.filter((entry) =>
         this.host.isProviderVisibleToClient(entry.provider),
@@ -106,6 +110,7 @@ export class ProviderCatalogSession {
           type: "providers_snapshot_update",
           payload: {
             ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+            ...(workspaceId ? { workspaceId } : {}),
             entries: [],
             ...encoded,
             generatedAt: new Date().toISOString(),
@@ -117,6 +122,7 @@ export class ProviderCatalogSession {
         type: "providers_snapshot_update",
         payload: {
           ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+          ...(workspaceId ? { workspaceId } : {}),
           entries: clientEntries,
           generatedAt: new Date().toISOString(),
         },
@@ -393,9 +399,12 @@ export class ProviderCatalogSession {
   ): Promise<void> {
     // COMPAT(providersSnapshot): keep legacy provider-list RPCs alongside snapshot flow.
     const snapshotCwd = msg.cwd?.trim() ? resolveSnapshotCwd(expandTilde(msg.cwd)) : undefined;
-    const entries = this.providerSnapshotManager
-      .getSnapshot(snapshotCwd)
-      .filter((entry) => this.host.isProviderVisibleToClient(entry.provider));
+    const entries = (
+      await this.providerSnapshotManager.readSnapshot({
+        cwd: snapshotCwd,
+        workspaceId: msg.workspaceId,
+      })
+    ).filter((entry) => this.host.isProviderVisibleToClient(entry.provider));
     const clientEntries = this.downgradeEntryModesForClient(entries);
 
     if (this.host.supportsCompactProviderSnapshots()) {
@@ -433,6 +442,7 @@ export class ProviderCatalogSession {
     if (msg.cwd) {
       await this.providerSnapshotManager.refreshSnapshotForCwd({
         cwd: expandTilde(msg.cwd),
+        workspaceId: msg.workspaceId,
         providers: msg.providers,
       });
     } else {

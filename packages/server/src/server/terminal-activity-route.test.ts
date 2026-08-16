@@ -71,7 +71,7 @@ afterEach(async () => {
     for (const terminal of terminalsByCwd.flat()) {
       await manager.killTerminalAndWait(terminal.id);
     }
-    manager.killAll();
+    await manager.killAll();
     manager = null;
   }
   while (temporaryDirs.length > 0) {

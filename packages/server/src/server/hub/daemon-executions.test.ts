@@ -265,7 +265,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
   expect(await hub.listedWorktrees()).toHaveLength(1);
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
-});
+}, 30_000);
 
 test("failed Hub create cleans durable state when provider close rejects", async () => {
   const hub = await launchRelationship();

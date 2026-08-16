@@ -354,6 +354,14 @@ describe("DaemonConfigStore", () => {
       JSON.stringify(
         {
           ...initial,
+          workspaceRuntimes: {
+            docker: {
+              type: "command",
+              label: "Container Lab",
+              command: ["runtime-package"],
+              options: { arbitrary: { retained: true } },
+            },
+          },
           agents: {
             providers: {
               gemini: {
@@ -395,6 +403,12 @@ describe("DaemonConfigStore", () => {
       label: "Gemini",
       command: ["gemini", "--acp"],
       enabled: false,
+    });
+    expect(persisted.workspaceRuntimes?.docker).toEqual({
+      type: "command",
+      label: "Container Lab",
+      command: ["runtime-package"],
+      options: { arbitrary: { retained: true } },
     });
   });
 

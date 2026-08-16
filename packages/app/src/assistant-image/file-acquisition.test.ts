@@ -6,10 +6,10 @@ import {
 } from "./file-acquisition";
 
 class MemoryFileAcquisitionPort implements AssistantImageFileAcquisitionPort {
-  readonly reads: Array<{ cwd: string; path: string }> = [];
+  readonly reads: Array<{ cwd: string; path: string; workspaceId?: string }> = [];
 
-  async readFile(cwd: string, path: string) {
-    this.reads.push({ cwd, path });
+  async readFile(cwd: string, path: string, workspaceId?: string) {
+    this.reads.push({ cwd, path, ...(workspaceId ? { workspaceId } : {}) });
     return {
       kind: "image" as const,
       path,
@@ -38,6 +38,7 @@ describe("assistant image file acquisition", () => {
     const common = {
       resolution: { kind: "file_rpc" as const, cwd: "/workspace", path: "reconnect.png" },
       serverId: "server",
+      workspaceId: "workspace-selected",
       occurrenceKey: "agent:message:reconnect-image",
       unavailableMessage: "Image unavailable",
     };
@@ -48,6 +49,23 @@ describe("assistant image file acquisition", () => {
     expect(disconnected?.key).toBe(connected?.key);
     await expect(disconnected?.locate()).rejects.toThrow("Image unavailable");
     await expect(connected?.locate()).resolves.toMatchObject({ mimeType: "image/png" });
-    expect(connectedPort.reads).toEqual([{ cwd: "/workspace", path: "reconnect.png" }]);
+    expect(connectedPort.reads).toEqual([
+      { cwd: "/workspace", path: "reconnect.png", workspaceId: "workspace-selected" },
+    ]);
+  });
+
+  it("keeps legacy file acquisition cwd-compatible when workspaceId is absent", async () => {
+    const port = new MemoryFileAcquisitionPort();
+    const acquisition = createAssistantImageFileAcquisition({
+      port,
+      resolution: { kind: "file_rpc", cwd: "/legacy", path: "preview.png" },
+      serverId: "server",
+      occurrenceKey: "agent:message:legacy-image",
+      unavailableMessage: "Image unavailable",
+    });
+
+    await acquisition?.locate();
+
+    expect(port.reads).toEqual([{ cwd: "/legacy", path: "preview.png" }]);
   });
 });

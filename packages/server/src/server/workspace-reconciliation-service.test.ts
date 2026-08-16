@@ -367,6 +367,51 @@ describe("WorkspaceReconciliationService", () => {
     expect(workspaces.get("w1")?.archivedAt).toEqual(expect.any(String));
   });
 
+  test("never treats a selected runtime compatibility cwd as a host directory", async () => {
+    const projectRoot = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "reconcile-runtime-project-")),
+    );
+    tempDirs.push(projectRoot);
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "runtime-project",
+      createPersistedProjectRecord({
+        projectId: "runtime-project",
+        rootPath: projectRoot,
+        kind: "git",
+        displayName: "runtime-project",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "docker-workspace",
+      createPersistedWorkspaceRecord({
+        workspaceId: "docker-workspace",
+        projectId: "runtime-project",
+        cwd: "/workspace",
+        kind: "local_checkout",
+        displayName: "docker-workspace",
+        runtime: { runtimeId: "docker" },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+    });
+
+    await service.reconcileGitMetadata();
+    const result = await service.runOnce();
+
+    expect(result.changesApplied).not.toContainEqual(
+      expect.objectContaining({ kind: "workspace_archived", workspaceId: "docker-workspace" }),
+    );
+    expect(workspaces.get("docker-workspace")?.archivedAt).toBeNull();
+  });
+
   test("reads fresh checkout facts on every metadata pass", async () => {
     const projectRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-fresh-git-")));
     tempDirs.push(projectRoot);
@@ -693,6 +738,7 @@ describe("WorkspaceReconciliationService", () => {
       workspaceId: "w1",
       projectId: "p1",
       cwd: "/tmp/does-not-exist-reconcile-orphan",
+      hostVisiblePath: null,
       kind: "directory",
       displayName: "orphan",
       title: null,
@@ -706,6 +752,7 @@ describe("WorkspaceReconciliationService", () => {
       updatedAt: expect.any(String),
       archivedAt: expect.any(String),
       autoArchivedChangeRequestUrl: null,
+      deletionRequestedAt: null,
     });
     expect(projects.get("p1")).toEqual(project);
   });

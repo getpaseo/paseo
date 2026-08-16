@@ -43,6 +43,7 @@ import type { ForgeService } from "../services/forge-service.js";
 import { areEquivalentPaths } from "../utils/path.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
+  type CreatePaseoWorktreeDeps,
   type CreatePaseoWorktreeFn,
 } from "./paseo-worktree-service.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -375,6 +376,41 @@ function createPaseoWorktreeForTest(options: {
         : {}),
       workspaceGitService,
       workspaceProvisioning,
+      workspaceRegistry,
+      workspaceRuntime: {
+        create: async (runtimeInput) => {
+          if (runtimeInput.placement.kind !== "resolved-worktree") {
+            throw new Error("Expected resolved worktree placement");
+          }
+          const worktree = await createWorktreePrimitive({
+            cwd:
+              runtimeInput.project.source.kind === "host-directory"
+                ? runtimeInput.project.source.path
+                : input.cwd,
+            worktreeSlug: runtimeInput.placement.worktreeSlug,
+            source: runtimeInput.placement.source,
+            runSetup: false,
+            paseoHome: options.paseoHome,
+          });
+          const record = await workspaceRegistry.get(runtimeInput.workspaceId);
+          if (record) {
+            await workspaceRegistry.upsert({
+              ...record,
+              cwd: worktree.worktreePath,
+              hostVisiblePath: worktree.worktreePath,
+              runtime: { runtimeId: "worktree" },
+            });
+          }
+          return {
+            workspaceId: runtimeInput.workspaceId,
+            runtimeId: "worktree",
+            cwd: worktree.worktreePath,
+            hostVisiblePath: worktree.worktreePath,
+            materializedFreshContent: true,
+          };
+        },
+        destroy: async () => {},
+      } as unknown as CreatePaseoWorktreeDeps["workspaceRuntime"],
     });
   };
 }
@@ -2027,6 +2063,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         requestId: "req-default-scope-sibling",
         worktreePath: sharedCwd,
         repoRoot: repoDir,
+        workspaceId: workspaceA,
       },
     );
 

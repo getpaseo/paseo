@@ -399,11 +399,13 @@ function FilePreviewBody({
 
 export function FilePane({
   serverId,
+  workspaceId,
   workspaceRoot,
   location,
   navigationRevision,
 }: {
   serverId: string;
+  workspaceId: string;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
@@ -447,6 +449,7 @@ export function FilePane({
   });
   const liveFile = useLiveFile({
     client,
+    workspaceId,
     cwd: readTarget?.cwd ?? null,
     path: readTarget?.path ?? null,
     enabled,
@@ -487,6 +490,7 @@ export function FilePane({
     <FilePanePresentation
       serverId={serverId}
       client={client}
+      workspaceId={workspaceId}
       readTarget={readTarget}
       preview={preview}
       liveFile={liveFile.model}
@@ -533,6 +537,7 @@ function isEditableTextFile(input: {
 
 function FilePanePresentation({
   serverId,
+  workspaceId,
   client,
   readTarget,
   preview,
@@ -554,6 +559,7 @@ function FilePanePresentation({
   imagePreviewUri,
 }: {
   serverId: string;
+  workspaceId: string;
   client: DaemonClient | null;
   readTarget: { cwd: string; path: string } | null;
   preview: ExplorerFile | null;
@@ -589,6 +595,7 @@ function FilePanePresentation({
       <EditableFilePane
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
+        workspaceId={workspaceId}
         cwd={readTarget.cwd}
         path={readTarget.path}
         preview={preview as TextExplorerFile}
@@ -644,6 +651,7 @@ function FilePanePresentation({
 
 function EditableFilePane({
   client,
+  workspaceId,
   cwd,
   path,
   preview,
@@ -659,6 +667,7 @@ function EditableFilePane({
   navigationRevision,
 }: {
   client: DaemonClient;
+  workspaceId: string;
   cwd: string;
   path: string;
   preview: TextExplorerFile;
@@ -680,10 +689,10 @@ function EditableFilePane({
   const session = useMemo(
     () => ({
       write(input: { content: string; expectedModifiedAt: string; expectedRevision?: string }) {
-        return client.writeFile({ cwd, path, ...input });
+        return client.writeFile({ cwd, path, workspaceId, ...input });
       },
     }),
-    [client, cwd, path],
+    [client, cwd, path, workspaceId],
   );
   const [model] = useState(() => {
     return new FileEditorModel({

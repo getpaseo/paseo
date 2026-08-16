@@ -11,14 +11,19 @@ import type {
 } from "../../workspace-git-service.js";
 import { createGitMutationService } from "./git-mutation-service.js";
 
-// The production module reads only WorkspaceGitService.{validateBranchRef,getSnapshot,
-// hasLocalBranch,invalidateForge}. The fake below implements exactly that slice as an
+// The production module reads only the named WorkspaceGitService branch capabilities. The fake
+// below implements exactly that slice as an
 // in-memory adapter; the happy-path tests cross the real git boundary against a temp repo,
 // since that is where checkoutResolvedBranch / `git checkout -b` actually run.
 
 type GitSource = Pick<
   WorkspaceGitService,
-  "validateBranchRef" | "getSnapshot" | "hasLocalBranch" | "invalidateForge"
+  | "validateBranchRef"
+  | "getSnapshot"
+  | "hasLocalBranch"
+  | "invalidateForge"
+  | "switchBranch"
+  | "createBranch"
 >;
 
 const logger = pino({ level: "silent" });
@@ -52,6 +57,16 @@ function createFakeGit(opts: FakeGitOptions = {}) {
     },
     invalidateForge(cwd) {
       invalidateCalls.push({ cwd });
+    },
+    async switchBranch(cwd, branch) {
+      execFileSync("git", ["checkout", branch], { cwd, stdio: "pipe" });
+      return { source: resolution.kind === "remote" ? "remote" : "local" };
+    },
+    async createBranch(cwd, options) {
+      execFileSync("git", ["checkout", "-b", options.branch, options.baseRef], {
+        cwd,
+        stdio: "pipe",
+      });
     },
   };
   return { git, snapshotCalls, invalidateCalls };

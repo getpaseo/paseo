@@ -35,14 +35,15 @@ That matters because real development rarely fits into one long chat. You might 
 
 In Paseo, the workspace is the stable container. The sessions are what you run inside it.
 
-## Choose the isolation
+## Choose the runtime
 
-Every workspace has an isolation mode:
+Every workspace has a runtime:
 
 - **Local** uses an existing directory, such as your main checkout. Use it when sessions should share the files already on disk.
 - **Worktree** creates or opens a managed git worktree. Use it when a task needs its own directory and branch.
+- **Docker** materializes the project's committed Git content in a container-owned workspace. Use it when files, tools, and providers should run in the configured image instead of the host environment.
 
-The workspace is the product concept; a git worktree is one way to isolate its files. More than one workspace can refer to the same managed worktree, and Paseo removes that worktree after its last workspace is archived.
+The workspace is the product concept; the runtime chooses where its files and commands live. More than one workspace can refer to the same managed worktree, and Paseo removes that worktree after its last workspace is archived.
 
 ## Creating a workspace
 

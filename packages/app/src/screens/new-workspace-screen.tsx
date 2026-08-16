@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
@@ -9,7 +8,14 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  Box,
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
@@ -30,12 +36,13 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useForgeSearchQuery } from "@/git/use-forge-search-query";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
-import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
+import { useLegacyForgeSearchQuery } from "@/git/use-forge-search-query";
+import { useLegacyCheckoutStatusQuery } from "@/git/use-status-query";
+import { ensureLegacyCheckoutStatus } from "@/git/checkout-status-cache";
+import { PreWorkspaceComposerGitOwner } from "@/git/workspace-git";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import type { TerminalProfile, WorkspaceRuntimeCatalogEntry } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
@@ -118,6 +125,16 @@ import {
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import {
+  resolveWorkspaceProviderProbeTarget,
+  resolveWorkspaceProviderSnapshotScope,
+  resolveWorkspaceRuntimeSelection,
+  runtimeLabel,
+  type WorkspaceProviderProbeState,
+  type WorkspaceRuntimeCatalogState,
+  type WorkspaceRuntimeVocabulary,
+} from "@/new-workspace-runtime/model";
+import { useWorkspaceProviderProbe } from "@/new-workspace-runtime/use-provider-probe";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -154,6 +171,53 @@ function isNewWorkspacePending(input: {
   isDraftHandoffActive: boolean;
 }): boolean {
   return input.pendingAction !== null || input.isDraftHandoffActive;
+}
+
+function isWorkspaceCreationBlocked(input: {
+  isPending: boolean;
+  canCreateWorkspace: boolean;
+  isProviderProbeReady: boolean;
+}): boolean {
+  return input.isPending || !input.canCreateWorkspace || !input.isProviderProbeReady;
+}
+
+function WorkspaceCreationError({ error }: { error: string | null }): ReactElement | null {
+  return error ? <Text style={styles.errorText}>{error}</Text> : null;
+}
+
+function WorkspaceProviderProbeFeedback({
+  probe,
+  onRetry,
+}: {
+  probe: WorkspaceProviderProbeState;
+  onRetry: () => void;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  if (probe.status === "legacy" || probe.status === "ready") return null;
+  if (probe.status === "loading") {
+    return (
+      <Text accessibilityLiveRegion="polite" style={styles.probeStatusText}>
+        {t("newWorkspace.runtimeProbe.preparing")}
+      </Text>
+    );
+  }
+  return (
+    <View style={styles.probeErrorRow}>
+      <Text accessibilityRole="alert" style={styles.errorText}>
+        {probe.error}
+      </Text>
+      <Pressable accessibilityRole="button" onPress={onRetry}>
+        <Text style={styles.probeRetryText}>{t("common.actions.retry")}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function resolveWorkspaceCreationError(
+  actionError: string | null,
+  catalogError: string | null,
+): string | null {
+  return actionError ?? catalogError;
 }
 
 function buildFirstAgentContext(input: {
@@ -409,7 +473,7 @@ function PickerOptionItem({
   );
 }
 
-function IsolationOptionItem({
+function RuntimeOptionItem({
   optionId,
   label,
   selected,
@@ -431,18 +495,14 @@ function IsolationOptionItem({
   const leadingSlot = useMemo(
     () => (
       <View style={styles.rowIconBox}>
-        {optionId === "worktree" ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <Folder size={iconSize} color={iconColor} />
-        )}
+        <Box size={iconSize} color={iconColor} />
       </View>
     ),
-    [optionId, iconSize, iconColor],
+    [iconSize, iconColor],
   );
   return (
     <ComboboxItem
-      testID={`workspace-create-isolation-${optionId}`}
+      testID={`workspace-create-runtime-${optionId}`}
       label={label}
       selected={selected}
       active={active}
@@ -620,12 +680,12 @@ function newWorkspaceHostOptionTestID(serverId: string): string {
   return `new-workspace-host-picker-option-${serverId}`;
 }
 
-function IsolationPickerTrigger({
+function RuntimePickerTrigger({
   pickerAnchorRef,
   onPress,
   disabled,
   badgePressableStyle,
-  isolation,
+  accessibilityLabel,
   label,
   tooltipLabel,
   iconColor,
@@ -635,7 +695,7 @@ function IsolationPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  isolation: "local" | "worktree";
+  accessibilityLabel: string;
   label: string;
   tooltipLabel: string;
   iconColor: string;
@@ -647,19 +707,15 @@ function IsolationPickerTrigger({
         <ComboboxTrigger
           chevron={metaChevron}
           ref={pickerAnchorRef}
-          testID="workspace-create-isolation-trigger"
+          testID="workspace-create-runtime-trigger"
           onPress={onPress}
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel="Workspace isolation"
+          accessibilityLabel={accessibilityLabel}
         >
           <View style={styles.badgeIconBox}>
-            {isolation === "worktree" ? (
-              <GitBranch size={iconSize} color={iconColor} />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
+            <Box size={iconSize} color={iconColor} />
           </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
@@ -679,51 +735,46 @@ function FormRow({ children }: { children: React.ReactNode }) {
   return <View style={styles.row}>{children}</View>;
 }
 
-interface WorkspaceIsolationState {
-  isolation: "local" | "worktree";
-  setIsolation: (value: "local" | "worktree") => void;
-  effectiveIsolation: "local" | "worktree";
-  canCreateWorktree: boolean;
+interface WorkspaceRuntimeState {
+  runtimeId: string;
+  setRuntimeId: (value: string) => void;
+  availableRuntimes: readonly WorkspaceRuntimeCatalogEntry[];
+  showRuntimeControl: boolean;
   showRefPicker: boolean;
+  canCreateWorkspace: boolean;
+  catalogError: string | null;
+  vocabulary: WorkspaceRuntimeVocabulary;
 }
 
-// Preserve the user's worktree choice while route metadata is provisional. Once
-// the authoritative placement arrives, unsupported projects fall back to local.
-function useWorkspaceIsolation(input: {
+// Preserve the remembered choice until the runtime catalog and project metadata
+// are authoritative. Only a resolved catalog may choose an available fallback.
+function useWorkspaceRuntime(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
-}): WorkspaceIsolationState {
-  const { supportsMultiplicity, worktreeSupport } = input;
-  // The last isolation choice is remembered alongside the other New Workspace
-  // form preferences (provider, model, mode). A manual in-screen pick overrides
-  // the remembered default until the screen remounts.
+  catalog: WorkspaceRuntimeCatalogState;
+}): WorkspaceRuntimeState {
   const { preferences, updatePreferences } = useFormPreferences();
-  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
-  const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
-  const isWorktree = isolation === "worktree" && canCreateWorktree;
+  const [manualRuntimeId, setManualRuntimeId] = useState<string | null>(null);
+  const selectedRuntimeId = manualRuntimeId ?? preferences.runtimeId ?? "local";
+  const selection = resolveWorkspaceRuntimeSelection({
+    catalog: input.catalog,
+    selectedRuntimeId,
+    supportsMultiplicity: input.supportsMultiplicity,
+    worktreeSupport: input.worktreeSupport,
+  });
 
-  const setIsolation = useCallback(
-    (value: "local" | "worktree") => {
-      setManualIsolation(value);
-      void updatePreferences({ isolation: value });
+  const setRuntimeId = useCallback(
+    (value: string) => {
+      setManualRuntimeId(value);
+      void updatePreferences({ runtimeId: value });
     },
     [updatePreferences],
   );
 
   return {
-    isolation,
-    setIsolation,
-    effectiveIsolation: isWorktree ? "worktree" : "local",
-    canCreateWorktree,
-    showRefPicker: !supportsMultiplicity || isWorktree,
+    ...selection,
+    setRuntimeId,
   };
-}
-
-function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
-  return isolation === "worktree"
-    ? t("newWorkspace.isolation.worktree")
-    : t("newWorkspace.isolation.local");
 }
 
 function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
@@ -796,7 +847,8 @@ async function createAndMergeWorkspace(input: {
 
 async function createMultiplicityWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  isolation: "local" | "worktree";
+  runtimeId: string;
+  sendRuntimeId: boolean;
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
@@ -812,12 +864,13 @@ async function createMultiplicityWorkspace(input: {
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
-  const isWorktree = input.isolation === "worktree";
+  const isWorktree = input.runtimeId === "worktree";
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
   });
   const payload = await input.client.createWorkspace({
+    ...(input.sendRuntimeId ? { runtimeId: input.runtimeId } : {}),
     source: isWorktree
       ? {
           kind: "worktree",
@@ -842,6 +895,14 @@ async function createMultiplicityWorkspace(input: {
     : normalizedWorkspace;
   input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
   return normalizedWorkspace;
+}
+
+function resolveSelectedHostProjectId(
+  project: HostProjectListItem | null,
+  serverId: string,
+): string | null {
+  if (!project) return null;
+  return getHostProjectId(project, serverId) ?? null;
 }
 
 interface CreateChatAgentInput {
@@ -968,13 +1029,28 @@ function buildComposerConfig(input: {
   workspaceDirectory: string | null;
   sourceDirectory: string | null;
   initialSetup?: WorkspaceDraftTabSetup | null;
+  providerSnapshotTarget: ReturnType<typeof resolveWorkspaceProviderProbeTarget>;
 }): Parameters<typeof useAgentInputDraft>[0]["composer"] {
-  const { serverId, isConnected, workspaceDirectory, sourceDirectory, initialSetup } = input;
+  const {
+    serverId,
+    isConnected,
+    workspaceDirectory,
+    sourceDirectory,
+    initialSetup,
+    providerSnapshotTarget,
+  } = input;
   const workingDir = workspaceDirectory || sourceDirectory || undefined;
+  const providerSnapshotScope = resolveWorkspaceProviderSnapshotScope(
+    providerSnapshotTarget,
+    workingDir ?? null,
+  );
   return {
     initialServerId: serverId || null,
     initialValues: buildComposerInitialValues({ workingDir, initialSetup }),
     initialFeatureValues: initialSetup?.featureValues,
+    workspaceId: providerSnapshotScope.workspaceId,
+    providerSnapshotCwd: providerSnapshotScope.cwd,
+    isTargetDaemonReady: providerSnapshotScope.enabled,
     isVisible: true,
     onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workingDir,
@@ -1311,12 +1387,14 @@ interface NewWorkspaceFormStackInput {
     selectedServerId: string;
     onSelect: (id: string) => void;
   };
-  isolation: FormPickerControl & {
-    effectiveIsolation: "local" | "worktree";
+  runtime: FormPickerControl & {
+    runtimeId: string;
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
     renderOption: RefPickerRenderOption;
-    canCreateWorktree: boolean;
+    showControl: boolean;
+    usesRuntimeCatalog: boolean;
+    triggerLabel: string;
   };
   base: FormPickerControl & {
     selectedSourceDirectory: string | null;
@@ -1339,15 +1417,63 @@ interface NewWorkspaceFormStackInput {
   };
 }
 
+function RuntimeControl({
+  runtime,
+  isPending,
+  desktopControlStyle,
+  badgePressableStyle,
+}: {
+  runtime: NewWorkspaceFormStackInput["runtime"];
+  isPending: boolean;
+  desktopControlStyle: React.ComponentProps<typeof View>["style"];
+  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+}) {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  return (
+    <View style={desktopControlStyle}>
+      <RuntimePickerTrigger
+        pickerAnchorRef={runtime.anchorRef}
+        onPress={runtime.open}
+        disabled={isPending}
+        badgePressableStyle={badgePressableStyle}
+        accessibilityLabel={runtime.usesRuntimeCatalog ? "Runtime" : "Workspace isolation"}
+        label={runtime.triggerLabel}
+        tooltipLabel={
+          runtime.usesRuntimeCatalog
+            ? t("newWorkspace.tooltips.runtime")
+            : t("newWorkspace.tooltips.isolation")
+        }
+        iconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.sm}
+      />
+      <Combobox
+        options={runtime.options}
+        value={runtime.runtimeId}
+        onSelect={runtime.onSelect}
+        title={
+          runtime.usesRuntimeCatalog
+            ? t("newWorkspace.runtime.label")
+            : t("newWorkspace.isolation.label")
+        }
+        open={runtime.openState}
+        onOpenChange={runtime.onOpenChange}
+        desktopPlacement="bottom-start"
+        anchorRef={runtime.anchorRef}
+        renderOption={runtime.renderOption}
+      />
+    </View>
+  );
+}
+
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = input;
+  const { isCompact, isPending, project, host, runtime, base, launch } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
-  const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
@@ -1445,31 +1571,13 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
-  const isolationControl = isolation.canCreateWorktree ? (
-    <View style={desktopControlStyle}>
-      <IsolationPickerTrigger
-        pickerAnchorRef={isolation.anchorRef}
-        onPress={isolation.open}
-        disabled={isPending}
-        badgePressableStyle={badgePressableStyle}
-        isolation={isolation.effectiveIsolation}
-        label={isolationTriggerLabel}
-        tooltipLabel={t("newWorkspace.tooltips.isolation")}
-        iconColor={theme.colors.foregroundMuted}
-        iconSize={theme.iconSize.sm}
-      />
-      <Combobox
-        options={isolation.options}
-        value={isolation.effectiveIsolation}
-        onSelect={isolation.onSelect}
-        title={t("newWorkspace.isolation.label")}
-        open={isolation.openState}
-        onOpenChange={isolation.onOpenChange}
-        desktopPlacement="bottom-start"
-        anchorRef={isolation.anchorRef}
-        renderOption={isolation.renderOption}
-      />
-    </View>
+  const runtimeControl = runtime.showControl ? (
+    <RuntimeControl
+      runtime={runtime}
+      isPending={isPending}
+      desktopControlStyle={desktopControlStyle}
+      badgePressableStyle={badgePressableStyle}
+    />
   ) : null;
 
   const baseControl = base.showRefPicker ? (
@@ -1519,23 +1627,45 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
       <FormRow>{projectControl}</FormRow>
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
-      {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
+      {runtimeControl ? <FormRow>{runtimeControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
-      {isolationControl ? null : <View style={styles.baseSpacer} />}
+      {runtimeControl ? null : <View style={styles.baseSpacer} />}
       {baseControl ? null : <View style={styles.baseSpacer} />}
     </View>
   ) : (
     <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
       {projectControl}
       {hostControl}
-      {isolationControl}
+      {runtimeControl}
       {baseControl}
       <View style={styles.launchSpacer} />
       {launchControl}
     </View>
   );
+}
+
+function useWorkspaceRuntimeCatalog(input: {
+  serverId: string;
+  supportsWorkspaceRuntimes: boolean;
+  isConnected: boolean;
+  client: ReturnType<typeof useHostRuntimeClient>;
+}): WorkspaceRuntimeCatalogState {
+  const { t } = useTranslation();
+  const query = useQuery({
+    queryKey: ["workspace-runtimes", input.serverId],
+    queryFn: async () => {
+      if (!input.client) throw new Error(t("newWorkspace.errors.hostDisconnected"));
+      return input.client.listWorkspaceRuntimes();
+    },
+    enabled: input.supportsWorkspaceRuntimes && input.isConnected && Boolean(input.client),
+    staleTime: Infinity,
+  });
+  if (!input.supportsWorkspaceRuntimes) return { status: "legacy" };
+  if (query.isError) return { status: "error", error: toErrorMessage(query.error) };
+  if (query.data) return { status: "ready", runtimes: query.data.runtimes };
+  return { status: "loading" };
 }
 
 export function NewWorkspaceScreen({
@@ -1571,6 +1701,8 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  // COMPAT(workspaceRuntimes): added in v0.3.2, remove gate after 2027-02-11.
+  const supportsWorkspaceRuntimes = useHostFeature(selectedServerId, "workspaceRuntimes");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
@@ -1580,12 +1712,12 @@ export function NewWorkspaceScreen({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
-  const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
+  const [runtimePickerOpen, setRuntimePickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
-  const isolationPickerAnchorRef = useRef<View>(null);
+  const runtimePickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
 
@@ -1630,6 +1762,12 @@ export function NewWorkspaceScreen({
   const workspace = createdWorkspace;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
+  const runtimeCatalog = useWorkspaceRuntimeCatalog({
+    serverId: selectedServerId,
+    supportsWorkspaceRuntimes,
+    isConnected,
+    client,
+  });
   const {
     selectedProject,
     selectedSourceDirectory,
@@ -1671,6 +1809,36 @@ export function NewWorkspaceScreen({
   const projectIconDataByProjectViewKey = useProjectIcons({
     projects: projectIconTargets,
   });
+  const worktreeSupport = selectedProject
+    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
+    : "unsupported";
+  const {
+    runtimeId,
+    setRuntimeId,
+    availableRuntimes,
+    showRuntimeControl,
+    showRefPicker,
+    canCreateWorkspace,
+    catalogError,
+    vocabulary: runtimeVocabulary,
+  } = useWorkspaceRuntime({
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    worktreeSupport,
+    catalog: runtimeCatalog,
+  });
+  const selectedHostProjectId = resolveSelectedHostProjectId(selectedProject, selectedServerId);
+  const providerProbe = useWorkspaceProviderProbe({
+    serverId: selectedServerId,
+    projectId: selectedHostProjectId,
+    runtimeId,
+    supportsWorkspaceRuntimes,
+    isConnected,
+    client,
+  });
+  const providerProbeTarget = resolveWorkspaceProviderProbeTarget({
+    supportsWorkspaceRuntimes,
+    probe: providerProbe,
+  });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
@@ -1686,6 +1854,7 @@ export function NewWorkspaceScreen({
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
       sourceDirectory: selectedSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
+      providerSnapshotTarget: providerProbeTarget,
     }),
   });
   const composerState = chatDraft.composerState;
@@ -1717,20 +1886,17 @@ export function NewWorkspaceScreen({
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
-  const { status: checkoutStatus } = useCheckoutStatusQuery({
+  const { status: checkoutStatus } = useLegacyCheckoutStatusQuery({
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const worktreeSupport = selectedProject
-    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
-    : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
-  const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
-    useWorkspaceIsolation({
-      supportsMultiplicity: supportsWorkspaceMultiplicity,
-      worktreeSupport,
-    });
+  const isCreationBlocked = isWorkspaceCreationBlocked({
+    isPending,
+    canCreateWorkspace,
+    isProviderProbeReady: providerProbeTarget.kind !== "unavailable",
+  });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1754,7 +1920,7 @@ export function NewWorkspaceScreen({
     staleTime: 15_000,
   });
 
-  const githubPrSearchQuery = useForgeSearchQuery({
+  const githubPrSearchQuery = useLegacyForgeSearchQuery({
     client,
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
@@ -1878,31 +2044,43 @@ export function NewWorkspaceScreen({
     handle: handleProjectPick,
   });
 
-  const openIsolationPicker = useCallback(() => {
-    setIsolationPickerOpen(true);
+  const openRuntimePicker = useCallback(() => {
+    setRuntimePickerOpen(true);
   }, []);
 
-  const handleIsolationPickerOpenChange = useCallback((nextOpen: boolean) => {
-    setIsolationPickerOpen(nextOpen);
+  const handleRuntimePickerOpenChange = useCallback((nextOpen: boolean) => {
+    setRuntimePickerOpen(nextOpen);
   }, []);
 
   // "New worktree" is omitted entirely (not disabled) when the project isn't a
   // git checkout, since worktree isolation is impossible there.
-  const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
-    const localOption = { id: "local", label: isolationLabel(t, "local") };
-    if (!canCreateWorktree) return [localOption];
-    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
-  }, [canCreateWorktree, t]);
-
-  const handleSelectIsolationOption = useCallback(
-    (id: string) => {
-      setIsolation(id === "worktree" ? "worktree" : "local");
-      setIsolationPickerOpen(false);
-    },
-    [setIsolation],
+  const runtimeOptions = useMemo<ComboboxOptionType[]>(
+    () =>
+      availableRuntimes.map((runtime) => ({
+        id: runtime.runtimeId,
+        label: runtimeLabel(runtime, runtimeVocabulary, t),
+      })),
+    [availableRuntimes, runtimeVocabulary, t],
+  );
+  const runtimeTriggerLabel = useMemo(
+    () =>
+      runtimeLabel(
+        availableRuntimes.find((runtime) => runtime.runtimeId === runtimeId) ?? { runtimeId },
+        runtimeVocabulary,
+        t,
+      ),
+    [availableRuntimes, runtimeId, runtimeVocabulary, t],
   );
 
-  const renderIsolationOption = useCallback(
+  const handleSelectRuntimeOption = useCallback(
+    (id: string) => {
+      setRuntimeId(id);
+      setRuntimePickerOpen(false);
+    },
+    [setRuntimeId],
+  );
+
+  const renderRuntimeOption = useCallback(
     ({
       option,
       selected,
@@ -1915,7 +2093,7 @@ export function NewWorkspaceScreen({
       onPress: () => void;
     }) => {
       return (
-        <IsolationOptionItem
+        <RuntimeOptionItem
           optionId={option.id}
           label={option.label}
           selected={selected}
@@ -1992,9 +2170,9 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+      const createsWorktree = !supportsWorkspaceMultiplicity || runtimeId === "worktree";
       const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
+        ? await ensureLegacyCheckoutStatus({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
@@ -2009,7 +2187,8 @@ export function NewWorkspaceScreen({
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
             client: connectedClient,
-            isolation: effectiveIsolation,
+            runtimeId,
+            sendRuntimeId: supportsWorkspaceRuntimes,
             project: selectedProject,
             sourceDirectory: selectedSourceDirectory,
             checkoutRequest,
@@ -2033,7 +2212,7 @@ export function NewWorkspaceScreen({
     [
       buildCreateWorktreeInput,
       createdWorkspace,
-      effectiveIsolation,
+      runtimeId,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -2041,6 +2220,7 @@ export function NewWorkspaceScreen({
       selectedServerId,
       selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
+      supportsWorkspaceRuntimes,
       t,
       withConnectedClient,
     ],
@@ -2205,10 +2385,10 @@ export function NewWorkspaceScreen({
       composerState
         ? {
             ...composerState.agentControls,
-            disabled: isPending,
+            disabled: isCreationBlocked,
           }
         : undefined,
-    [composerState, isPending],
+    [composerState, isCreationBlocked],
   );
 
   const pickerEmptyText =
@@ -2242,16 +2422,18 @@ export function NewWorkspaceScreen({
       anchorRef: hostPickerAnchorRef,
       open: openHostPicker,
     },
-    isolation: {
-      anchorRef: isolationPickerAnchorRef,
-      open: openIsolationPicker,
-      effectiveIsolation,
-      options: isolationOptions,
-      onSelect: handleSelectIsolationOption,
-      openState: isolationPickerOpen,
-      onOpenChange: handleIsolationPickerOpenChange,
-      renderOption: renderIsolationOption,
-      canCreateWorktree,
+    runtime: {
+      anchorRef: runtimePickerAnchorRef,
+      open: openRuntimePicker,
+      runtimeId,
+      options: runtimeOptions,
+      onSelect: handleSelectRuntimeOption,
+      openState: runtimePickerOpen,
+      onOpenChange: handleRuntimePickerOpenChange,
+      renderOption: renderRuntimeOption,
+      showControl: showRuntimeControl,
+      usesRuntimeCatalog: supportsWorkspaceRuntimes,
+      triggerLabel: runtimeTriggerLabel,
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -2281,77 +2463,84 @@ export function NewWorkspaceScreen({
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
   return (
-    <FileDropZone style={styles.container}>
-      <ScreenHeader left={screenHeaderLeft} borderless />
-      <View style={contentStyle}>
-        <TitlebarDragRegion />
-        <ReanimatedAnimated.View style={centeredStyle}>
-          <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-          </View>
-          {formStack}
-          {isTerminalLaunch ? (
-            <Composer
-              externalKeyboardShift
-              inputMode="terminal"
-              readOnly={!terminalTakesPrompt}
-              placeholder={terminalPlaceholder}
-              submitLabel={terminalSubmitLabel}
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitTerminalLaunch}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-              submitButtonTestID="new-workspace-launch-submit"
-              isSubmitLoading={isPending}
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={terminalComposerValue}
-              onChangeText={setTerminalPromptText}
-              textReplacementKey={launchFocusKey}
-              attachments={NO_TERMINAL_ATTACHMENTS}
-              onChangeAttachments={noopChangeAttachments}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={noopClearDraft}
-              autoFocus={terminalTakesPrompt}
-              autoFocusKey={launchFocusKey}
+    <PreWorkspaceComposerGitOwner client={client} cwd={selectedSourceDirectory}>
+      <FileDropZone style={styles.container}>
+        <ScreenHeader left={screenHeaderLeft} borderless />
+        <View style={contentStyle}>
+          <TitlebarDragRegion />
+          <ReanimatedAnimated.View style={centeredStyle}>
+            <View style={styles.composerTitleContainer}>
+              <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+            </View>
+            {formStack}
+            {isTerminalLaunch ? (
+              <Composer
+                externalKeyboardShift
+                inputMode="terminal"
+                readOnly={!terminalTakesPrompt}
+                placeholder={terminalPlaceholder}
+                submitLabel={terminalSubmitLabel}
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitTerminalLaunch}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+                submitButtonTestID="new-workspace-launch-submit"
+                isSubmitLoading={isPending}
+                isSubmitDisabled={isCreationBlocked}
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={terminalComposerValue}
+                onChangeText={setTerminalPromptText}
+                textReplacementKey={launchFocusKey}
+                attachments={NO_TERMINAL_ATTACHMENTS}
+                onChangeAttachments={noopChangeAttachments}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={noopClearDraft}
+                autoFocus={terminalTakesPrompt}
+                autoFocusKey={launchFocusKey}
+              />
+            ) : (
+              <Composer
+                externalKeyboardShift
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitNewWorkspace}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.create")}
+                submitButtonTestID="workspace-create-submit"
+                submitIcon="return"
+                isSubmitLoading={isPending}
+                isSubmitDisabled={isCreationBlocked}
+                waitForGithubAutoAttachOnSubmit
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={chatDraft.text}
+                onChangeText={chatDraft.editText}
+                textReplacementKey={chatDraft.textReplacementKey}
+                attachments={chatDraft.attachments}
+                attachmentScopeKeys={visibleDraftContextScopeKeys}
+                onChangeAttachments={chatDraft.setAttachments}
+                onGithubPrDetected={handleGithubPrDetected}
+                onGithubPrAutoAttach={handleGithubPrAutoAttach}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={handleClearDraft}
+                autoFocus
+                autoFocusKey={launchFocusKey}
+                commandDraftConfig={composerState?.commandDraftConfig}
+                agentControls={agentControlsWithDisabled}
+              />
+            )}
+            <WorkspaceCreationError
+              error={resolveWorkspaceCreationError(errorMessage, catalogError)}
             />
-          ) : (
-            <Composer
-              externalKeyboardShift
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.create")}
-              submitButtonTestID="workspace-create-submit"
-              submitIcon="return"
-              isSubmitLoading={isPending}
-              waitForGithubAutoAttachOnSubmit
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={chatDraft.text}
-              onChangeText={chatDraft.editText}
-              textReplacementKey={chatDraft.textReplacementKey}
-              attachments={chatDraft.attachments}
-              attachmentScopeKeys={visibleDraftContextScopeKeys}
-              onChangeAttachments={chatDraft.setAttachments}
-              onGithubPrDetected={handleGithubPrDetected}
-              onGithubPrAutoAttach={handleGithubPrAutoAttach}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={handleClearDraft}
-              autoFocus
-              autoFocusKey={launchFocusKey}
-              commandDraftConfig={composerState?.commandDraftConfig}
-              agentControls={agentControlsWithDisabled}
-            />
-          )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        </ReanimatedAnimated.View>
-      </View>
-    </FileDropZone>
+            <WorkspaceProviderProbeFeedback probe={providerProbe} onRetry={providerProbe.retry} />
+          </ReanimatedAnimated.View>
+        </View>
+      </FileDropZone>
+    </PreWorkspaceComposerGitOwner>
   );
 }
 
@@ -2393,6 +2582,21 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.destructive,
+    lineHeight: 20,
+  },
+  probeStatusText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 20,
+  },
+  probeErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  probeRetryText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.accent,
     lineHeight: 20,
   },
   formStack: {

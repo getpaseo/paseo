@@ -143,6 +143,7 @@ export interface SeedDaemonClient {
     timeout?: number,
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
+  cancelAgent(agentId: string): Promise<void>;
   refreshAgent(agentId: string): Promise<unknown>;
   fetchAgent(options: {
     agentId: string;
@@ -173,6 +174,10 @@ export interface SeedDaemonClient {
     handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
   ): () => void;
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
+  listWorkspaceScripts(workspaceId: string): Promise<{
+    scripts: Array<{ lifecycle: "running" | "stopped"; scriptName: string }>;
+  }>;
+  stopWorkspaceScript(workspaceId: string, scriptName: string): Promise<{ error?: string | null }>;
 }
 
 export async function connectSeedClient(options?: {

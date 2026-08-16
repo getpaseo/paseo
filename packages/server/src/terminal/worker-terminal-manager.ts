@@ -12,6 +12,7 @@ import type {
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
   TerminalSession,
+  TerminalPtyLaunchInput,
   TerminalStateSnapshot,
 } from "./terminal.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
@@ -27,14 +28,19 @@ import type {
 } from "./terminal-manager.js";
 import type {
   TerminalWorkerRequest,
+  TerminalWorkerParentMessage,
   TerminalWorkerResponse,
   TerminalWorkerToParentMessage,
+  TerminalWorkerMessage,
+  TerminalWorkerPtyCommand,
   WorkerCreateTerminalOptions,
   TerminalWorkerStateResult,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
 const REQUEST_TIMEOUT_MS = 10000;
+const RUNTIME_PTY_TERM_TIMEOUT_MS = 500;
+const RUNTIME_PTY_KILL_TIMEOUT_MS = 500;
 
 type RequiredWorkerTerminalInfo = WorkerTerminalInfo & { workspaceId: string };
 
@@ -82,10 +88,10 @@ interface WorkerTerminalRecord {
 interface TerminalWorkerProcess {
   connected: boolean;
   killed: boolean;
-  send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
+  send(message: TerminalWorkerParentMessage, callback: (error: Error | null) => void): boolean;
   disconnect(): void;
   kill(): boolean;
-  on(event: "message", listener: (message: TerminalWorkerToParentMessage) => void): this;
+  on(event: "message", listener: (message: TerminalWorkerMessage) => void): this;
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
 
@@ -93,7 +99,20 @@ interface WorkerTerminalManagerOptions {
   requestTimeoutMs?: number;
   forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  launchPty?: RuntimeTerminalLauncher;
 }
+
+interface RuntimeTerminalProcess {
+  onData(listener: (data: string) => void): () => void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
+type RuntimeTerminalLauncher = (
+  input: TerminalPtyLaunchInput,
+) => Promise<RuntimeTerminalProcess | null>;
 
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
@@ -128,6 +147,22 @@ function isResponse(message: TerminalWorkerToParentMessage): message is Terminal
   return message.type === "response";
 }
 
+function isPtyCommand(message: TerminalWorkerMessage): message is TerminalWorkerPtyCommand {
+  return (
+    message.type === "ptySpawn" ||
+    message.type === "ptyWrite" ||
+    message.type === "ptyResize" ||
+    message.type === "ptyKill"
+  );
+}
+
+function capturePromiseError(promise: Promise<void>): Promise<unknown | null> {
+  return promise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+}
+
 function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerminalInfo {
   return {
     id: info.id,
@@ -153,6 +188,7 @@ export function createWorkerTerminalManager(
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
+  const runtimePtys = new Map<string, RuntimeTerminalProcess>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -161,7 +197,9 @@ export function createWorkerTerminalManager(
   const terminalWorkspaceContributionChangedListeners =
     new Set<TerminalWorkspaceContributionChangedListener>();
   let workerExited = false;
+  let shuttingDown = false;
   let workerShutdownTimer: ReturnType<typeof setTimeout> | null = null;
+  let workerFailureCleanup: Promise<unknown | null> | null = null;
 
   function emitTerminalsChanged(event: TerminalsChangedEvent): void {
     for (const listener of Array.from(terminalsChangedListeners)) {
@@ -588,7 +626,11 @@ export function createWorkerTerminalManager(
     }
   }
 
-  worker.on("message", (message: TerminalWorkerToParentMessage) => {
+  worker.on("message", (message: TerminalWorkerMessage) => {
+    if (isPtyCommand(message)) {
+      handlePtyCommand(message);
+      return;
+    }
     if (isResponse(message)) {
       const pending = pendingRequests.get(message.requestId);
       if (!pending) {
@@ -606,13 +648,180 @@ export function createWorkerTerminalManager(
     handleWorkerEvent(message);
   });
 
-  worker.on("exit", (code, signal) => {
+  function handlePtyCommand(message: TerminalWorkerPtyCommand): void {
+    if (message.type === "ptySpawn") {
+      void launchRuntimePty(message);
+      return;
+    }
+    const process = runtimePtys.get(message.processId);
+    if (!process) return;
+    if (message.type === "ptyWrite") process.write(message.data);
+    else if (message.type === "ptyResize") process.resize(message.cols, message.rows);
+    else process.kill(message.signal);
+  }
+
+  async function launchRuntimePty(
+    message: Extract<TerminalWorkerPtyCommand, { type: "ptySpawn" }>,
+  ): Promise<void> {
+    try {
+      const process = (await managerOptions.launchPty?.(message.input)) ?? null;
+      if (!process) {
+        await sendWorkerMessage({
+          type: "ptySpawnResult",
+          processId: message.processId,
+          mode: "legacy",
+        });
+        return;
+      }
+      if (workerExited || shuttingDown) {
+        await terminateRuntimePty(process);
+        return;
+      }
+      runtimePtys.set(message.processId, process);
+      try {
+        await sendWorkerMessage({
+          type: "ptySpawnResult",
+          processId: message.processId,
+          mode: "runtime",
+        });
+      } catch (error) {
+        runtimePtys.delete(message.processId);
+        await terminateRuntimePty(process);
+        beginWorkerFailure(error);
+        return;
+      }
+      process.onData((data) => {
+        void sendWorkerMessage({ type: "ptyData", processId: message.processId, data }).catch(
+          beginWorkerFailure,
+        );
+      });
+      void observeRuntimePtyExit(message.processId, process);
+    } catch (error) {
+      void sendWorkerMessage({
+        type: "ptySpawnError",
+        processId: message.processId,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(beginWorkerFailure);
+    }
+  }
+
+  async function observeRuntimePtyExit(
+    processId: string,
+    process: RuntimeTerminalProcess,
+  ): Promise<void> {
+    try {
+      const exit = await process.exited;
+      runtimePtys.delete(processId);
+      await sendWorkerMessage({ type: "ptyExit", processId, exit });
+    } catch (error) {
+      runtimePtys.delete(processId);
+      try {
+        await sendWorkerMessage({
+          type: "ptyData",
+          processId,
+          data: `${error instanceof Error ? error.message : String(error)}\r\n`,
+        });
+        await sendWorkerMessage({
+          type: "ptyExit",
+          processId,
+          exit: { code: 1, signal: null },
+        });
+      } catch (sendError) {
+        beginWorkerFailure(sendError);
+      }
+    }
+  }
+
+  function sendWorkerMessage(message: TerminalWorkerParentMessage): Promise<void> {
+    if (workerExited || !worker.connected) {
+      return Promise.reject(new Error("Terminal worker is not running"));
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        worker.send(message, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function beginWorkerFailure(error: unknown): void {
+    if (workerFailureCleanup) return;
     workerExited = true;
+    const failure = error instanceof Error ? error : new Error(String(error));
+    rejectPendingRequests(failure);
+    for (const terminalId of Array.from(recordsById.keys())) removeRecord(terminalId);
+    workerFailureCleanup = capturePromiseError(cleanupAfterWorkerFailure());
+  }
+
+  async function cleanupAfterWorkerFailure(): Promise<void> {
+    try {
+      await terminateRuntimePtys();
+    } finally {
+      if (worker.connected) {
+        try {
+          worker.disconnect();
+        } catch {
+          // The worker can exit between the connected check and disconnect.
+        }
+      }
+    }
+  }
+
+  async function terminateRuntimePtys(): Promise<void> {
+    const processes = Array.from(runtimePtys.values());
+    runtimePtys.clear();
+    const results = await Promise.allSettled(processes.map(terminateRuntimePty));
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length > 0) {
+      const details = failures
+        .map((failure) => (failure instanceof Error ? failure.message : String(failure)))
+        .join("; ");
+      throw new AggregateError(failures, `Failed to terminate runtime PTYs: ${details}`);
+    }
+  }
+
+  async function terminateRuntimePty(process: RuntimeTerminalProcess): Promise<void> {
+    try {
+      process.kill("SIGTERM");
+    } catch {
+      // The process can exit between the state check and the signal.
+    }
+    if (await waitForRuntimePtyExit(process, RUNTIME_PTY_TERM_TIMEOUT_MS)) return;
+    try {
+      process.kill("SIGKILL");
+    } catch {
+      // The process can exit between the timeout and the signal.
+    }
+    if (!(await waitForRuntimePtyExit(process, RUNTIME_PTY_KILL_TIMEOUT_MS))) {
+      throw new Error("Runtime PTY remained alive after SIGKILL");
+    }
+  }
+
+  async function waitForRuntimePtyExit(
+    process: RuntimeTerminalProcess,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return Promise.race([
+      process.exited.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
+
+  worker.on("exit", (code, signal) => {
     if (workerShutdownTimer) {
       clearTimeout(workerShutdownTimer);
       workerShutdownTimer = null;
     }
-    rejectPendingRequests(new Error(`Terminal worker exited (${signal ?? code ?? "unknown"})`));
+    beginWorkerFailure(new Error(`Terminal worker exited (${signal ?? code ?? "unknown"})`));
   });
 
   function sendRequest(input: TerminalWorkerRequestInput): Promise<unknown> {
@@ -813,23 +1022,45 @@ export function createWorkerTerminalManager(
       return Array.from(terminalIdsByCwd.keys());
     },
 
-    killAll(): void {
-      void sendRequest({ type: "killAll" })
-        .catch(() => {
-          // no-op
-        })
-        .finally(() => {
-          if (worker.connected) {
-            worker.disconnect();
-          }
-          if (!worker.killed && !workerShutdownTimer) {
-            workerShutdownTimer = setTimeout(() => {
-              worker.kill();
-            }, 1000);
-          }
-        });
-      for (const terminalId of Array.from(recordsById.keys())) {
-        removeRecord(terminalId);
+    async killAll(): Promise<void> {
+      shuttingDown = true;
+      let requestError: unknown;
+      let cleanupError: unknown;
+      try {
+        if (!workerExited) {
+          await sendRequest({ type: "killAll" });
+        }
+      } catch (error) {
+        requestError = error;
+        beginWorkerFailure(error);
+      }
+      try {
+        if (workerFailureCleanup) {
+          cleanupError = await workerFailureCleanup;
+        } else {
+          await terminateRuntimePtys();
+        }
+      } catch (error) {
+        cleanupError = error;
+      } finally {
+        for (const terminalId of Array.from(recordsById.keys())) {
+          removeRecord(terminalId);
+        }
+        if (worker.connected) worker.disconnect();
+        if (!worker.killed && !workerShutdownTimer) {
+          workerShutdownTimer = setTimeout(() => {
+            worker.kill();
+          }, 1000);
+        }
+      }
+      if (cleanupError) {
+        if (requestError) {
+          throw new AggregateError([requestError, cleanupError], "Terminal cleanup failed");
+        }
+        throw cleanupError;
+      }
+      if (requestError) {
+        throw requestError;
       }
     },
 
@@ -858,6 +1089,6 @@ export function createWorkerTerminalManager(
   };
 }
 
-export function terminateWorkerTerminalManager(manager: TerminalManager): void {
-  manager.killAll();
+export function terminateWorkerTerminalManager(manager: TerminalManager): Promise<void> {
+  return manager.killAll();
 }

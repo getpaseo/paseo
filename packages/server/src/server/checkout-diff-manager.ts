@@ -1,6 +1,10 @@
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type {
+  WorkspaceGitRuntimeSnapshot,
+  WorkspaceGitService,
+  WorkspaceGitWorkspace,
+} from "./workspace-git-service.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 
@@ -8,6 +12,7 @@ const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 
 type CheckoutDiffWorkspace = Pick<
   WorkspaceGitService,
+  | "bindLegacy"
   | "getCheckoutDiff"
   | "getSnapshot"
   | "peekSnapshot"
@@ -32,7 +37,7 @@ export interface CheckoutDiffMetrics {
 interface CheckoutDiffWatchTarget {
   key: string;
   cwd: string;
-  diffCwd: string;
+  workspaceGit: WorkspaceGitWorkspace;
   compare: CheckoutDiffCompareInput;
   listeners: Set<(snapshot: CheckoutDiffSnapshotPayload) => void>;
   workingTreeWatchUnsubscribe: (() => void) | null;
@@ -56,6 +61,12 @@ export interface CheckoutDiffSubscriptionRequest {
   signal?: AbortSignal;
 }
 
+export interface CheckoutDiffWorkspaceSubscriptionRequest {
+  workspaceGit: WorkspaceGitWorkspace;
+  compare: CheckoutDiffCompareInput;
+  signal?: AbortSignal;
+}
+
 export interface CheckoutDiffSubscription {
   initial: CheckoutDiffSnapshotPayload;
   unsubscribe: () => void;
@@ -64,6 +75,8 @@ export interface CheckoutDiffSubscription {
 export class CheckoutDiffManager {
   private readonly workspaceGitService: CheckoutDiffWorkspace;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
+  private readonly workspaceTokens = new WeakMap<WorkspaceGitWorkspace, number>();
+  private nextWorkspaceToken = 1;
 
   constructor(options: {
     logger: pino.Logger;
@@ -77,9 +90,22 @@ export class CheckoutDiffManager {
     params: CheckoutDiffSubscriptionRequest,
     listener: (snapshot: CheckoutDiffSnapshotPayload) => void,
   ): Promise<CheckoutDiffSubscription> {
-    const cwd = params.cwd;
+    return this.subscribeWorkspace(
+      {
+        workspaceGit: this.workspaceGitService.bindLegacy(params.cwd),
+        compare: params.compare,
+        signal: params.signal,
+      },
+      listener,
+    );
+  }
+
+  async subscribeWorkspace(
+    params: CheckoutDiffWorkspaceSubscriptionRequest,
+    listener: (snapshot: CheckoutDiffSnapshotPayload) => void,
+  ): Promise<CheckoutDiffSubscription> {
     const compare = this.normalizeCompare(params.compare);
-    const target = this.ensureTarget(cwd, compare);
+    const target = this.ensureTarget(params.workspaceGit, compare);
     target.listeners.add(listener);
     target.openPromise ??= this.openTarget(target);
 
@@ -100,10 +126,7 @@ export class CheckoutDiffManager {
     try {
       await target.openPromise;
       const initial =
-        target.latestPayload ??
-        (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
-          diffCwd: target.diffCwd,
-        }));
+        target.latestPayload ?? (await this.computeCheckoutDiffSnapshot(target, false));
       target.latestPayload = initial;
       target.latestFingerprint = JSON.stringify(initial);
       return { initial, unsubscribe };
@@ -114,11 +137,12 @@ export class CheckoutDiffManager {
   }
 
   scheduleRefreshForCwd(cwd: string): void {
-    const resolvedCwd = expandTilde(cwd);
+    this.scheduleRefreshForWorkspace(this.workspaceGitService.bindLegacy(expandTilde(cwd)));
+  }
+
+  scheduleRefreshForWorkspace(workspaceGit: WorkspaceGitWorkspace): void {
     for (const target of this.targets.values()) {
-      if (target.cwd !== resolvedCwd && target.diffCwd !== resolvedCwd) {
-        continue;
-      }
+      if (target.workspaceGit !== workspaceGit) continue;
       this.scheduleTargetRefresh(target);
     }
   }
@@ -156,9 +180,17 @@ export class CheckoutDiffManager {
       : { mode: "base", ignoreWhitespace };
   }
 
-  private buildTargetKey(cwd: string, compare: CheckoutDiffCompareInput): string {
+  private buildTargetKey(
+    workspaceGit: WorkspaceGitWorkspace,
+    compare: CheckoutDiffCompareInput,
+  ): string {
+    let workspaceToken = this.workspaceTokens.get(workspaceGit);
+    if (workspaceToken === undefined) {
+      workspaceToken = this.nextWorkspaceToken++;
+      this.workspaceTokens.set(workspaceGit, workspaceToken);
+    }
     return JSON.stringify([
-      cwd,
+      workspaceToken,
       compare.mode,
       compare.mode === "base" ? (compare.baseRef ?? "") : "",
       compare.ignoreWhitespace === true,
@@ -245,23 +277,20 @@ export class CheckoutDiffManager {
   }
 
   private async computeCheckoutDiffSnapshot(
-    cwd: string,
-    compare: CheckoutDiffCompareInput,
-    options?: { diffCwd?: string; force?: boolean; reason?: string },
+    target: CheckoutDiffWatchTarget,
+    force: boolean,
+    reason = "checkout-diff-refresh",
   ): Promise<CheckoutDiffSnapshotPayload> {
-    const diffCwd = options?.diffCwd ?? cwd;
+    const { cwd, compare, workspaceGit } = target;
     try {
-      const diffResult = await this.workspaceGitService.getCheckoutDiff(
-        diffCwd,
+      const diffResult = await workspaceGit.getCheckoutDiff(
         {
           mode: compare.mode,
           baseRef: compare.baseRef,
           ignoreWhitespace: compare.ignoreWhitespace,
           includeStructured: true,
         },
-        options?.force
-          ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }
-          : undefined,
+        force ? { force: true, reason } : undefined,
       );
       if (diffResult.diffTooLarge) {
         return {
@@ -302,11 +331,11 @@ export class CheckoutDiffManager {
       do {
         target.refreshQueued = false;
         target.refreshQueuedForce = false;
-        const snapshot = await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
-          diffCwd: target.diffCwd,
-          force: currentForce,
-          ...(currentForce ? { reason: "working-tree-watch" } : {}),
-        });
+        const snapshot = await this.computeCheckoutDiffSnapshot(
+          target,
+          currentForce,
+          currentForce ? "working-tree-watch" : "checkout-diff-refresh",
+        );
         target.latestPayload = snapshot;
         const fingerprint = JSON.stringify(snapshot);
         if (fingerprint !== target.latestFingerprint) {
@@ -326,8 +355,12 @@ export class CheckoutDiffManager {
     }
   }
 
-  private ensureTarget(cwd: string, compare: CheckoutDiffCompareInput): CheckoutDiffWatchTarget {
-    const targetKey = this.buildTargetKey(cwd, compare);
+  private ensureTarget(
+    workspaceGit: WorkspaceGitWorkspace,
+    compare: CheckoutDiffCompareInput,
+  ): CheckoutDiffWatchTarget {
+    const cwd = workspaceGit.cwd;
+    const targetKey = this.buildTargetKey(workspaceGit, compare);
     const existing = this.targets.get(targetKey);
     if (existing) {
       return existing;
@@ -336,7 +369,7 @@ export class CheckoutDiffManager {
     const target: CheckoutDiffWatchTarget = {
       key: targetKey,
       cwd,
-      diffCwd: cwd,
+      workspaceGit,
       compare,
       listeners: new Set(),
       workingTreeWatchUnsubscribe: null,
@@ -360,16 +393,14 @@ export class CheckoutDiffManager {
   private async openTarget(target: CheckoutDiffWatchTarget): Promise<void> {
     if (target.compare.mode === "base") {
       const snapshot =
-        this.workspaceGitService.peekSnapshot(target.cwd) ??
-        (await this.workspaceGitService.getSnapshot(target.cwd, { includeForge: false }));
-      target.diffCwd = snapshot.git.repoRoot ?? target.cwd;
+        target.workspaceGit.peekSnapshot() ??
+        (await target.workspaceGit.getSnapshot({ includeForge: false }));
       if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
         return;
       }
       this.rememberWorkspaceSnapshot(target, snapshot);
-      const workspaceSubscription = this.workspaceGitService.registerWorkspace(
-        { cwd: target.cwd },
-        (nextSnapshot) => this.rememberWorkspaceSnapshot(target, nextSnapshot),
+      const workspaceSubscription = target.workspaceGit.register((nextSnapshot) =>
+        this.rememberWorkspaceSnapshot(target, nextSnapshot),
       );
       if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
         workspaceSubscription.unsubscribe();
@@ -379,11 +410,9 @@ export class CheckoutDiffManager {
       return;
     }
 
-    const { repoRoot, unsubscribe } = await this.workspaceGitService.requestWorkingTreeWatch(
-      target.cwd,
-      () => this.scheduleTargetRefresh(target),
+    const { unsubscribe } = await target.workspaceGit.requestWorkingTreeWatch(() =>
+      this.scheduleTargetRefresh(target),
     );
-    target.diffCwd = repoRoot ?? target.cwd;
     if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
       unsubscribe();
       return;

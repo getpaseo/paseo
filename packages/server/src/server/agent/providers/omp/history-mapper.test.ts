@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
-import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentStreamEvent, ProviderWorkspace } from "../../agent-sdk-types.js";
 import { streamOmpCoreHistory, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
@@ -26,7 +26,82 @@ async function collectHistory(
   return events;
 }
 
+function stateWorkspace(content: string): ProviderWorkspace {
+  return {
+    cwd: ".",
+    async resolveExecutable(command) {
+      return command;
+    },
+    async launch() {
+      throw new Error("not used");
+    },
+    launchDeferred() {
+      throw new Error("not used");
+    },
+    async runProbe() {
+      throw new Error("not used");
+    },
+    async readWorkspaceText() {
+      throw new Error("not used");
+    },
+    async writeWorkspaceText() {
+      throw new Error("not used");
+    },
+    async listState(path) {
+      return { path, entries: [] };
+    },
+    async readStateText() {
+      return content;
+    },
+    async findStateFile() {
+      return null;
+    },
+    async materializeStateFile() {
+      throw new Error("not used");
+    },
+    async removeStateFile() {
+      throw new Error("not used");
+    },
+    allowsHostService() {
+      return false;
+    },
+  };
+}
+
 describe("OMP history mapper", () => {
+  test("reads a selected session transcript through provider state access", async () => {
+    const workspace = stateWorkspace(
+      JSON.stringify({
+        type: "message",
+        id: "selected-user",
+        parentId: null,
+        message: { role: "user", content: "selected runtime history" },
+      }),
+    );
+    const readStateText = vi.spyOn(workspace, "readStateText");
+    const events: AgentStreamEvent[] = [];
+
+    for await (const event of streamOmpHistory({
+      sessionFile: "/runtime/home/.omp/agent/sessions/project/session.jsonl",
+      provider: "omp",
+      workspace,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: {
+          type: "user_message",
+          text: "selected runtime history",
+          messageId: "selected-user",
+        },
+      }),
+    );
+    expect(readStateText).toHaveBeenCalledWith(".omp/agent/sessions/project/session.jsonl");
+  });
+
   test("coalesces replayed subagent poll calls by target set", async () => {
     const events = await collectHistory([
       {

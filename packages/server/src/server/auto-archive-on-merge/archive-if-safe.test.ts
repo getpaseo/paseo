@@ -11,9 +11,15 @@ import {
   type ArchiveIfSafeDependencies,
   type AutoArchiveArchiveOptions,
 } from "./archive-if-safe.js";
-import type { ArchiveResult, ActiveWorkspaceRef } from "../workspace-archive-service.js";
+import {
+  archiveByScope,
+  type ArchiveResult,
+  type ActiveWorkspaceRef,
+  killTerminalsForWorkspace,
+} from "../workspace-archive-service.js";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
+import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 
@@ -114,7 +120,7 @@ function createHarness(overrides?: {
     clearWorkspaceArchiving: vi.fn(),
     emitWorkspaceUpdatesForWorkspaceIds: vi.fn(),
   };
-  const archiveByScope = vi.fn(
+  const archiveByScopeMock = vi.fn(
     overrides?.archiveByScope ??
       (async () =>
         ({
@@ -126,7 +132,7 @@ function createHarness(overrides?: {
   const resolveWorkspaceIdAtPath = vi.fn(
     overrides?.resolveWorkspaceIdAtPath ?? (async () => "ws-auto-archive"),
   ) as unknown as ArchiveIfSafeDependencies["resolveWorkspaceIdAtPath"];
-  const isPaseoOwnedWorktreeCwd = vi.fn(
+  const isPaseoOwnedWorktreeCwdMock = vi.fn(
     overrides?.isPaseoOwnedWorktreeCwd ??
       (async () => ({
         allowed: true,
@@ -136,9 +142,9 @@ function createHarness(overrides?: {
       })),
   ) as unknown as ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   const deps: ArchiveIfSafeDependencies = {
-    archiveByScope,
+    archiveByScope: archiveByScopeMock,
     resolveWorkspaceIdAtPath,
-    isPaseoOwnedWorktreeCwd,
+    isPaseoOwnedWorktreeCwd: isPaseoOwnedWorktreeCwdMock,
     killTerminalsForWorkspace: vi.fn(),
   };
   const log = createLogger();
@@ -337,6 +343,13 @@ function createRealOutcomeHarness(input: {
     options,
     log: logger,
     inFlight: new Set<string>(),
+    deps: {
+      archiveByScope,
+      resolveWorkspaceIdAtPath: async () =>
+        active.find((workspace) => workspace.kind === "worktree")?.workspaceId ?? null,
+      isPaseoOwnedWorktreeCwd,
+      killTerminalsForWorkspace,
+    } satisfies ArchiveIfSafeDependencies,
   };
 }
 
@@ -492,6 +505,7 @@ describe("archiveIfSafe", () => {
       {
         scope: { kind: "workspace", workspaceId: "ws-auto-archive" },
         requestId: "auto-archive-on-merge",
+        releaseBacking: true,
       },
     );
     expect(harness.log.info).toHaveBeenCalledWith(
@@ -586,6 +600,7 @@ describe("archiveIfSafe", () => {
       inFlight: harness.inFlight,
       options: harness.options,
       log: harness.log,
+      deps: harness.deps,
     });
 
     expect(archivedWorkspaceIds.has(workspaceA)).toBe(true);
@@ -614,6 +629,7 @@ describe("archiveIfSafe", () => {
       inFlight: harness.inFlight,
       options: harness.options,
       log: harness.log,
+      deps: harness.deps,
     });
 
     expect(archivedWorkspaceIds.has(workspaceA)).toBe(true);

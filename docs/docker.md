@@ -10,7 +10,7 @@ The image source lives in [`docker/`](../docker/).
 
 The official image:
 
-- builds `@getpaseo/server` and `@getpaseo/cli` from source-built workspace tarballs
+- builds `@getpaseo/server`, `@getpaseo/cli`, and their public workspace packages from source-built workspace tarballs
 - runs the daemon as the non-root `paseo` user
 - listens on `0.0.0.0:6767` inside the container
 - enables the bundled daemon web UI with `PASEO_WEB_UI_ENABLED=true`

@@ -12,6 +12,7 @@ import {
   mountServerDataPushRouter,
   workspaceTerminalsPushRoute,
 } from "@/data/push-router";
+import type { WorkspaceGitClient } from "@/git/workspace-git";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -56,6 +57,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   unsubscribeCheckoutDiffCalls: string[];
   subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
   unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
+  workspaceGit: (target: { workspaceId: string; cwd: string }) => WorkspaceGitClient;
 } {
   const handlers: Record<RouterMessageType, RouterHandler[]> = {
     providers_snapshot_update: [],
@@ -94,29 +96,35 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     }
   }
 
+  function workspaceGit(target: { workspaceId: string; cwd: string }): WorkspaceGitClient {
+    return {
+      ...target,
+      queryIdentity: ["selected", target.workspaceId],
+      async subscribeDiff(
+        compare: Parameters<WorkspaceGitClient["subscribeDiff"]>[0],
+        requestOptions: Parameters<WorkspaceGitClient["subscribeDiff"]>[1],
+      ) {
+        const subscriptionId = requestOptions?.subscriptionId ?? "subscription";
+        subscribeCheckoutDiffCalls.push({ cwd: target.cwd, compare, subscriptionId });
+        if (config.rejectCheckoutDiffSubscribe) throw new Error("subscribe failed");
+        return {
+          workspaceId: target.workspaceId,
+          subscriptionId,
+          cwd: target.cwd,
+          files: [],
+          error: null,
+          requestId: requestOptions?.requestId ?? "subscribe-checkout-diff",
+        };
+      },
+      unsubscribeDiff(subscriptionId: string) {
+        unsubscribeCheckoutDiffCalls.push(subscriptionId);
+      },
+    } as unknown as WorkspaceGitClient;
+  }
+
   return {
     client: {
       on,
-      async subscribeCheckoutDiff(cwd, compare, requestOptions) {
-        subscribeCheckoutDiffCalls.push({
-          cwd,
-          compare,
-          subscriptionId: requestOptions.subscriptionId,
-        });
-        if (config.rejectCheckoutDiffSubscribe) {
-          throw new Error("subscribe failed");
-        }
-        return {
-          subscriptionId: requestOptions.subscriptionId,
-          cwd,
-          files: [],
-          error: null,
-          requestId: requestOptions.requestId ?? "subscribe-checkout-diff",
-        };
-      },
-      unsubscribeCheckoutDiff(subscriptionId) {
-        unsubscribeCheckoutDiffCalls.push(subscriptionId);
-      },
       subscribeTerminals(subscription) {
         subscribeTerminalCalls.push(subscription);
       },
@@ -129,6 +137,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     unsubscribeCheckoutDiffCalls,
     subscribeTerminalCalls,
     unsubscribeTerminalCalls,
+    workspaceGit,
   };
 }
 
@@ -180,7 +189,8 @@ describe("server data push router", () => {
     const fake = createFakeClient();
     const serverId = "server-1";
     const cwd = "/repo";
-    const queryKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const target = fake.workspaceGit({ workspaceId: "workspace-a", cwd });
+    const queryKey = checkoutDiffQueryKey(serverId, target, "base", "main", true);
     const subscriptionId = `checkoutDiff:${JSON.stringify(queryKey)}`;
     const observer = new QueryObserver(queryClient, {
       queryKey,
@@ -192,7 +202,7 @@ describe("server data push router", () => {
         enabled: true,
         serverId,
         subscriptionId,
-        cwd,
+        workspaceGit: target,
         compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
       }),
     });
@@ -252,7 +262,8 @@ describe("server data push router", () => {
     const fake = createFakeClient({ rejectCheckoutDiffSubscribe: true });
     const serverId = "server-1";
     const cwd = "/repo";
-    const queryKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const target = fake.workspaceGit({ workspaceId: "workspace-a", cwd });
+    const queryKey = checkoutDiffQueryKey(serverId, target, "base", "main", true);
     const subscriptionId = `checkoutDiff:${JSON.stringify(queryKey)}`;
     const observer = new QueryObserver(queryClient, {
       queryKey,
@@ -264,7 +275,7 @@ describe("server data push router", () => {
         enabled: true,
         serverId,
         subscriptionId,
-        cwd,
+        workspaceGit: target,
         compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
       }),
     });
@@ -339,7 +350,8 @@ describe("server data push router", () => {
     const serverId = "server-1";
     const cwd = "/repo";
     const workspaceId = "workspace-a";
-    const checkoutDiffKey = checkoutDiffQueryKey(serverId, cwd, "base", "main", true);
+    const target = fake.workspaceGit({ workspaceId, cwd });
+    const checkoutDiffKey = checkoutDiffQueryKey(serverId, target, "base", "main", true);
     const checkoutDiffSubscriptionId = `checkoutDiff:${JSON.stringify(checkoutDiffKey)}`;
     const terminalKey = buildTerminalsQueryKey(serverId, cwd, workspaceId);
     const checkoutDiffObserver = new QueryObserver(queryClient, {
@@ -352,7 +364,7 @@ describe("server data push router", () => {
         enabled: true,
         serverId,
         subscriptionId: checkoutDiffSubscriptionId,
-        cwd,
+        workspaceGit: target,
         compare: { mode: "base", baseRef: "main", ignoreWhitespace: true },
       }),
     });
@@ -508,7 +520,17 @@ describe("server data push router", () => {
     const providerKey = providersSnapshotQueryKey(serverId);
     const daemonConfigKey = daemonConfigQueryKey(serverId);
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
-    const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
+    const diffKey = checkoutDiffQueryKey(
+      serverId,
+      {
+        workspaceId: "workspace-a",
+        cwd: "/repo",
+        queryIdentity: ["selected", "workspace-a"],
+      },
+      "uncommitted",
+      undefined,
+      false,
+    );
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
 

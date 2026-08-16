@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
-import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { basename, extname, isAbsolute, join } from "node:path";
+import type { AgentProvider, AgentStreamEvent, ProviderWorkspace } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
@@ -46,6 +46,7 @@ export async function* streamOmpHistory(input: {
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
   visitedSessionFiles?: Set<string>;
+  workspace?: ProviderWorkspace;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
     return;
@@ -60,6 +61,7 @@ export async function* streamOmpHistory(input: {
     entries = await readActiveOmpEntryChain(
       input.sessionFile,
       input.runtimeSession?.activeBranchEntryId,
+      input.workspace,
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -87,7 +89,12 @@ export async function* streamOmpHistory(input: {
     }
   }
   for (const transcript of readSubagentTranscripts(messages, input.sessionFile)) {
-    yield* replaySubagentTranscript(transcript, input.provider, visitedSessionFiles);
+    yield* replaySubagentTranscript(
+      transcript,
+      input.provider,
+      visitedSessionFiles,
+      input.workspace,
+    );
   }
 }
 
@@ -95,13 +102,16 @@ async function* replaySubagentTranscript(
   transcript: OmpSubagentTranscript,
   provider: AgentProvider,
   visitedSessionFiles: Set<string>,
+  workspace?: ProviderWorkspace,
 ): AsyncGenerator<AgentStreamEvent> {
-  const childEntries = await readActiveOmpEntryChain(transcript.sessionFile).catch(
-    (error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    },
-  );
+  const childEntries = await readActiveOmpEntryChain(
+    transcript.sessionFile,
+    undefined,
+    workspace,
+  ).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
   const resolvedModel = extractOmpSubagentModel(childEntries);
   const firstTimestamp = normalizeProviderReplayTimestamp(childEntries[0]?.timestamp);
   yield subagentUpsert(transcript, provider, "running", firstTimestamp, resolvedModel);
@@ -109,6 +119,7 @@ async function* replaySubagentTranscript(
     sessionFile: transcript.sessionFile,
     provider,
     visitedSessionFiles,
+    workspace,
   })) {
     if (event.type === "timeline") {
       yield {
@@ -293,8 +304,11 @@ function stripExtension(filePath: string): string {
 export async function readActiveOmpEntryChain(
   sessionFile: string,
   activeEntryId?: string,
+  workspace?: ProviderWorkspace,
 ): Promise<OmpSessionEntry[]> {
-  const content = await readFile(sessionFile, "utf8");
+  const content = workspace
+    ? await workspace.readStateText(toOmpProviderStatePath(sessionFile))
+    : await readFile(sessionFile, "utf8");
   const entries = content.split("\n").flatMap((line) => {
     if (!line.trim()) return [];
     try {
@@ -318,6 +332,17 @@ export async function readActiveOmpEntryChain(
     current = current.parentId ? byId.get(current.parentId) : undefined;
   }
   return chain.toReversed();
+}
+
+function toOmpProviderStatePath(sessionFile: string): string {
+  if (!isAbsolute(sessionFile)) return sessionFile.split("\\").join("/");
+  const normalized = sessionFile.split("\\").join("/");
+  const marker = "/.omp/";
+  const markerIndex = normalized.indexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(`OMP selected-runtime session path is outside provider state: ${sessionFile}`);
+  }
+  return normalized.slice(markerIndex + 1);
 }
 
 function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {

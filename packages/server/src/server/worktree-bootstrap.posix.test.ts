@@ -44,7 +44,7 @@ async function cleanupTerminalManager(terminalManager: TerminalManager): Promise
   );
   const terminals = terminalsByCwd.flat();
   await Promise.all(terminals.map((terminal) => killTerminal(terminalManager, terminal)));
-  terminalManager.killAll();
+  await terminalManager.killAll();
 }
 
 function killTerminal(terminalManager: TerminalManager, terminal: TerminalSession): Promise<void> {

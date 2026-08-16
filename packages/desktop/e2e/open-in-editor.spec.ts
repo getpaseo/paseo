@@ -1,6 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
-import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
+import { openSettings } from "../../app/e2e/support/helpers/app";
 import { installDesktopRuntime } from "./support/runtime";
 import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 
@@ -119,7 +119,6 @@ test.describe("Workspace open in editor", () => {
     });
     const recordsAfterReturnOpen = (await readEditorOpenRecords(recordPath)).length;
 
-    await gotoAppShell(page);
     await workspace.navigateTo();
     await page.getByTestId("workspace-open-in-editor-primary").click();
     await expectEditorOpened({

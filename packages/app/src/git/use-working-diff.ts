@@ -16,7 +16,7 @@ import { useCheckoutStatusQuery } from "@/git/use-status-query";
 
 interface UseWorkingDiffOptions {
   serverId: string;
-  workspaceId?: string;
+  workspaceId: string;
   cwd: string;
   ignoreWhitespace: boolean;
   enabled: boolean;
@@ -36,7 +36,7 @@ export function useWorkingDiff({
     isLoading: isStatusLoading,
     isError: isStatusError,
     error: statusError,
-  } = useCheckoutStatusQuery({ serverId, cwd });
+  } = useCheckoutStatusQuery({ serverId });
   const gitStatus = status && status.isGit ? status : null;
   const isGit = Boolean(gitStatus);
   const notGit = status !== null && !status.isGit && !status.error;
@@ -83,7 +83,6 @@ export function useWorkingDiff({
     isLoading: isDiffLoading,
   } = useCheckoutDiffQuery({
     serverId,
-    cwd,
     mode: diffMode,
     baseRef,
     ignoreWhitespace,

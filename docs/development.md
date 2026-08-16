@@ -304,7 +304,7 @@ Worktrees inherit committed Git state only; uncommitted source-checkout changes 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
 
-Lifecycle commands run in the worktree through a stable script shell: `bash`
+For runtime-selected workspaces, lifecycle commands run inside the selected runtime through a stable script shell. Legacy worktrees use `bash`
 resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
 Windows. They inherit the daemon environment plus Paseo's lifecycle variables;
 login and interactive shell startup files are not loaded, and Bash's `BASH_ENV`

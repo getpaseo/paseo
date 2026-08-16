@@ -278,7 +278,7 @@ export function createScriptStatusEmitter({
   runtimeStore,
   daemonPort,
   serviceProxyPublicBaseUrl,
-  resolveWorkspaceDirectory,
+  resolveWorkspaceProjection,
   logger,
 }: {
   sessions: () => SessionEmitter[];
@@ -286,13 +286,18 @@ export function createScriptStatusEmitter({
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null | (() => number | null);
   serviceProxyPublicBaseUrl?: string | null;
-  resolveWorkspaceDirectory: (workspaceId: string) => string | null | Promise<string | null>;
+  resolveWorkspaceProjection: (
+    workspaceId: string,
+  ) =>
+    | { workspaceDirectory: string; paseoConfig: PaseoConfig | null }
+    | null
+    | Promise<{ workspaceDirectory: string; paseoConfig: PaseoConfig | null } | null>;
   logger: Logger;
 }): (workspaceId: string, scripts: ScriptHealthEntry[]) => void {
   return (workspaceId, scripts) => {
     void (async () => {
-      const workspaceDirectory = await resolveWorkspaceDirectory(workspaceId);
-      if (!workspaceDirectory) {
+      const projection = await resolveWorkspaceProjection(workspaceId);
+      if (!projection) {
         return;
       }
 
@@ -303,8 +308,8 @@ export function createScriptStatusEmitter({
 
       const projected = buildWorkspaceScriptPayloads({
         workspaceId,
-        workspaceDirectory,
-        paseoConfig: readPaseoConfigForProjection(workspaceDirectory, logger),
+        workspaceDirectory: projection.workspaceDirectory,
+        paseoConfig: projection.paseoConfig,
         serviceProxy,
         runtimeStore,
         daemonPort: resolvedDaemonPort,
@@ -320,6 +325,8 @@ export function createScriptStatusEmitter({
       for (const session of sessions()) {
         session.emit(message);
       }
-    })();
+    })().catch((error) => {
+      logger.warn({ err: error, workspaceId }, "Failed to emit workspace script status");
+    });
   };
 }

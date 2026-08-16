@@ -70,6 +70,7 @@ function createHarness(input?: {
   directories?: string[];
   paseoHome?: string;
   worktreesRoot?: string;
+  inspectRuntime?: (workspaceId: string) => Promise<"missing" | "paused" | "ready" | "error">;
 }) {
   const workspace = input?.workspace === undefined ? createWorkspace() : input.workspace;
   const project = input?.project === undefined ? createProject() : input.project;
@@ -85,6 +86,7 @@ function createHarness(input?: {
     unarchiveWorkspace: async (record) => {
       unarchived.push(record.workspaceId);
     },
+    inspectRuntime: input?.inspectRuntime,
   });
   return { service, unarchived };
 }
@@ -113,6 +115,42 @@ describe("workspace recovery", () => {
     await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
       workspaceId: workspace.workspaceId,
       action: "unarchive",
+    });
+    expect(unarchived).toEqual([workspace.workspaceId]);
+  });
+
+  test("unarchives a ready archived runtime without presenting it as a restore", async () => {
+    const workspace = createWorkspace({ runtime: { runtimeId: "worktree" } });
+    const { service, unarchived } = createHarness({
+      workspace,
+      inspectRuntime: async () => "ready",
+    });
+
+    await expect(service.inspect(workspace.workspaceId)).resolves.toMatchObject({
+      kind: "recoverable",
+      action: "unarchive",
+    });
+    await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "unarchive",
+    });
+    expect(unarchived).toEqual([workspace.workspaceId]);
+  });
+
+  test("restores a paused archived runtime through its runtime-aware unarchive owner", async () => {
+    const workspace = createWorkspace({ runtime: { runtimeId: "worktree" } });
+    const { service, unarchived } = createHarness({
+      workspace,
+      inspectRuntime: async () => "paused",
+    });
+
+    await expect(service.inspect(workspace.workspaceId)).resolves.toMatchObject({
+      kind: "recoverable",
+      action: "restore",
+    });
+    await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "restore",
     });
     expect(unarchived).toEqual([workspace.workspaceId]);
   });

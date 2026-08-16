@@ -262,6 +262,61 @@ describe("terminal-session-controller legacy terminal creation", () => {
     ]);
   });
 
+  test("never selects a runtime terminal from compatibility cwd", async () => {
+    const cwd = "/workspace";
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const createTerminal = vi.fn();
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(),
+      createTerminal,
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      clearTerminalAttention: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRefs: async () => [
+        { workspaceId: "docker-a", cwd, runtimeId: "docker" },
+        { workspaceId: "docker-b", cwd, runtimeId: "docker" },
+      ],
+    });
+
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd,
+      requestId: "selected-without-id",
+    });
+
+    expect(createTerminal).not.toHaveBeenCalled();
+    expect(outboundMessages).toEqual([
+      {
+        type: "create_terminal_response",
+        payload: {
+          terminal: null,
+          error: "workspaceId is required",
+          requestId: "selected-without-id",
+        },
+      },
+    ]);
+  });
+
   test("forwards the client-provided viewport size to the terminal manager", async () => {
     const outboundMessages: SessionOutboundMessage[] = [];
     const createTerminal = vi.fn(

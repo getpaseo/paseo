@@ -50,6 +50,8 @@ import type {
 import type { GitCommandRuntimeMetricsSnapshot } from "../utils/git-command-runtime-metrics.js";
 import { snapshotGitCommandRuntimeMetrics } from "../utils/run-git-command.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import type { ProviderProbeService } from "./provider-probe/index.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import {
   createPushNotifications,
@@ -206,6 +208,12 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
 
 function createFallbackWorkspaceGitService(): WorkspaceGitService {
   return {
+    bindWorkspace: ({ workspaceId }) => {
+      throw new Error(`Workspace Git runtime is not available: ${workspaceId}`);
+    },
+    bindLegacy: () => {
+      throw new Error("Workspace Git service is not available");
+    },
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
@@ -224,6 +232,20 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
     resolveForge: async () => null,
+    commit: async () => {},
+    discardChanges: async () => {},
+    createBranch: async () => {},
+    switchBranch: async () => ({ source: "local" }),
+    fetch: async () => {},
+    listCommits: async () => ({ baseRef: null, commits: [] }),
+    getCommitFileDiff: async () => null,
+    stashPush: async () => {},
+    stashPop: async () => {},
+    mergeToBase: async (cwd) => cwd,
+    mergeFromBase: async () => {},
+    pull: async () => {},
+    push: async () => {},
+    renameBranch: async (_cwd, branch) => ({ previousBranch: null, currentBranch: branch }),
     getCheckoutDiff: async () => ({ diff: "" }),
     validateBranchRef: async () => ({ kind: "not-found" }),
     hasLocalBranch: async () => false,
@@ -325,6 +347,7 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
+    requestDeletion: async () => {},
   };
 }
 
@@ -537,6 +560,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
+  private readonly providerProbe: ProviderProbeService | undefined;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
@@ -632,6 +657,8 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
+    workspaceRuntime?: WorkspaceRuntimeService,
+    providerProbe?: ProviderProbeService,
     pluginRuntime?: SessionOptions["pluginRuntime"],
   ) {
     this.logger = logger.child({ module: "websocket-server" });
@@ -651,6 +678,8 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.workspaceRuntime = workspaceRuntime;
+    this.providerProbe = providerProbe;
     const requiredServices = requireWebSocketServices({
       scheduleService,
       checkoutDiffManager,
@@ -1342,6 +1371,9 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private createSocketSession(options: SocketSessionOptions): Session {
+    if (!this.workspaceRuntime) {
+      throw new Error("Workspace runtime service was not composed");
+    }
     return new Session({
       clientId: options.clientId,
       appVersion: options.appVersion,
@@ -1369,6 +1401,8 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceRuntime: this.workspaceRuntime,
+      providerProbe: this.providerProbe,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
@@ -1599,6 +1633,8 @@ export class VoiceAssistantWebSocketServer {
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: true,
+        // COMPAT(workspaceRuntimes): added in v0.3.2, remove gate after 2027-02-11.
+        workspaceRuntimes: true,
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: true,
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.

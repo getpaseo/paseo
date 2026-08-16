@@ -16,7 +16,8 @@ import {
 
 type CheckoutPrStatus = NonNullable<CheckoutPrStatusResponse["payload"]["status"]>;
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
-type PullRequestTimelineInput = Parameters<PrPaneTimelineClient["pullRequestTimeline"]>[0];
+type PullRequestTimelineInput = Parameters<PrPaneTimelineClient["getPullRequestTimeline"]>[0];
+const workspaceId = "workspace-1";
 
 const githubStatus: CheckoutPrStatus["github"] = {
   mergeStateStatus: null,
@@ -82,7 +83,7 @@ function createTimelineClient(
   const calls: PullRequestTimelineInput[] = [];
   return {
     calls,
-    pullRequestTimeline: async (input) => {
+    getPullRequestTimeline: async (input) => {
       calls.push(input);
       return respond(input);
     },
@@ -181,7 +182,12 @@ describe("shouldFetchTimelineFrom", () => {
 describe("createInMemoryUnsupportedTimelineRegistry", () => {
   it("remembers added keys and answers has() against them", () => {
     const registry = createInMemoryUnsupportedTimelineRegistry();
-    const key = unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 });
+    const key = unsupportedTimelineKey({
+      serverId: "host",
+      workspaceId,
+      cwd: "/repo",
+      prNumber: 99,
+    });
 
     expect(registry.has(key)).toBe(false);
     registry.add(key);
@@ -189,14 +195,20 @@ describe("createInMemoryUnsupportedTimelineRegistry", () => {
   });
 
   it("uses serverId, cwd, and prNumber to scope each key", () => {
-    expect(unsupportedTimelineKey({ serverId: "host-a", cwd: "/repo", prNumber: 1 })).not.toEqual(
-      unsupportedTimelineKey({ serverId: "host-b", cwd: "/repo", prNumber: 1 }),
+    expect(
+      unsupportedTimelineKey({ serverId: "host-a", workspaceId, cwd: "/repo", prNumber: 1 }),
+    ).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host-b", workspaceId, cwd: "/repo", prNumber: 1 }),
     );
-    expect(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-a", prNumber: 1 })).not.toEqual(
-      unsupportedTimelineKey({ serverId: "host", cwd: "/repo-b", prNumber: 1 }),
+    expect(
+      unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo-a", prNumber: 1 }),
+    ).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo-b", prNumber: 1 }),
     );
-    expect(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 1 })).not.toEqual(
-      unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 2 }),
+    expect(
+      unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo", prNumber: 1 }),
+    ).not.toEqual(
+      unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo", prNumber: 2 }),
     );
   });
 });
@@ -210,15 +222,14 @@ describe("fetchPrPaneTimelinePage", () => {
       client,
       registry,
       serverId: "host",
+      workspaceId,
       cwd: "/repo",
       prNumber: 42,
       repoOwner: "getpaseo",
       repoName: "paseo",
     });
 
-    expect(client.calls).toEqual([
-      { cwd: "/repo", prNumber: 42, repoOwner: "getpaseo", repoName: "paseo" },
-    ]);
+    expect(client.calls).toEqual([{ prNumber: 42, repoOwner: "getpaseo", repoName: "paseo" }]);
   });
 
   it("returns the daemon's timeline payload on success", async () => {
@@ -241,6 +252,7 @@ describe("fetchPrPaneTimelinePage", () => {
       client,
       registry,
       serverId: "host",
+      workspaceId,
       cwd: "/repo",
       prNumber: 42,
       repoOwner: "getpaseo",
@@ -262,6 +274,7 @@ describe("fetchPrPaneTimelinePage", () => {
         client,
         registry,
         serverId: "host",
+        workspaceId,
         cwd: "/repo",
         prNumber: 99,
         repoOwner: "getpaseo",
@@ -270,7 +283,9 @@ describe("fetchPrPaneTimelinePage", () => {
     ).rejects.toBe(error);
 
     expect(
-      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 })),
+      registry.has(
+        unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo", prNumber: 99 }),
+      ),
     ).toBe(true);
   });
 
@@ -286,6 +301,7 @@ describe("fetchPrPaneTimelinePage", () => {
         client,
         registry,
         serverId: "host",
+        workspaceId,
         cwd: "/repo",
         prNumber: 99,
         repoOwner: "getpaseo",
@@ -294,16 +310,18 @@ describe("fetchPrPaneTimelinePage", () => {
     ).rejects.toBe(error);
 
     expect(
-      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo", prNumber: 99 })),
+      registry.has(
+        unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo", prNumber: 99 }),
+      ),
     ).toBe(false);
   });
 
   it("scopes recorded tuples per serverId+cwd+prNumber so other PRs can still be tried", async () => {
     const client = createTimelineClient(async (input) => {
-      if (input.cwd === "/repo-a") {
+      if (input.prNumber === 1) {
         throw unsupportedTimelineError();
       }
-      return timelinePayload({ cwd: input.cwd, prNumber: input.prNumber });
+      return timelinePayload({ cwd: "/repo-b", prNumber: input.prNumber });
     });
     const registry = createInMemoryUnsupportedTimelineRegistry();
 
@@ -312,6 +330,7 @@ describe("fetchPrPaneTimelinePage", () => {
         client,
         registry,
         serverId: "host",
+        workspaceId,
         cwd: "/repo-a",
         prNumber: 1,
         repoOwner: "getpaseo",
@@ -323,6 +342,7 @@ describe("fetchPrPaneTimelinePage", () => {
       client,
       registry,
       serverId: "host",
+      workspaceId,
       cwd: "/repo-b",
       prNumber: 2,
       repoOwner: "getpaseo",
@@ -331,10 +351,14 @@ describe("fetchPrPaneTimelinePage", () => {
 
     expect(result.prNumber).toBe(2);
     expect(
-      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-a", prNumber: 1 })),
+      registry.has(
+        unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo-a", prNumber: 1 }),
+      ),
     ).toBe(true);
     expect(
-      registry.has(unsupportedTimelineKey({ serverId: "host", cwd: "/repo-b", prNumber: 2 })),
+      registry.has(
+        unsupportedTimelineKey({ serverId: "host", workspaceId, cwd: "/repo-b", prNumber: 2 }),
+      ),
     ).toBe(false);
   });
 });

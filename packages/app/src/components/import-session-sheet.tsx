@@ -68,10 +68,18 @@ function buildSessionsQueriesConfig(args: {
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   cwd: string | null | undefined;
+  workspaceId?: string | null;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, sessionsQueryRoot, visible, client, cwd, hostDisconnectedMessage } =
-    args;
+  const {
+    providersToFetch,
+    sessionsQueryRoot,
+    visible,
+    client,
+    cwd,
+    workspaceId,
+    hostDisconnectedMessage,
+  } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
@@ -82,6 +90,7 @@ function buildSessionsQueriesConfig(args: {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await client.fetchRecentProviderSessions({
+        ...(workspaceId ? { workspaceId } : {}),
         ...(cwd ? { cwd } : {}),
         providers: [provider],
         limit: PER_PROVIDER_LIMIT,
@@ -274,6 +283,7 @@ export function ImportSessionSheet({
 
   const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
     cwd,
+    workspaceId,
     enabled: visible,
   });
   const supportsWorkspaceTarget = useHostFeature(serverId, "importSessionWorkspaceTarget");
@@ -294,8 +304,8 @@ export function ImportSessionSheet({
   );
 
   const sessionsQueryRoot = useMemo(
-    () => ["recent-provider-sessions", cwd ?? null] as const,
-    [cwd],
+    () => ["recent-provider-sessions", workspaceId ?? null, cwd ?? null] as const,
+    [cwd, workspaceId],
   );
 
   const queriesConfig = useMemo(
@@ -306,9 +316,10 @@ export function ImportSessionSheet({
         visible,
         client,
         cwd,
+        workspaceId,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, sessionsQueryRoot, visible, client, cwd, t],
+    [providersToFetch, sessionsQueryRoot, visible, client, cwd, workspaceId, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });

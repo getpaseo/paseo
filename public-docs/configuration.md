@@ -91,6 +91,26 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 
 Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
+## Workspace runtimes
+
+New Workspace always offers Local and Worktree. Other runtimes appear only when you register an
+external command runtime in daemon configuration:
+
+```json
+{
+  "workspaceRuntimes": {
+    "isolated": {
+      "type": "command",
+      "label": "Isolated",
+      "command": ["/absolute/path/to/runtime-executable"],
+      "options": {}
+    }
+  }
+}
+```
+
+Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Remove an entry to unregister it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.

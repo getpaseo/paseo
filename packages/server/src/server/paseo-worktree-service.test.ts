@@ -24,6 +24,7 @@ import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 import { deriveProjectKey } from "./project-key.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const cleanupPaths: string[] = [];
 
@@ -497,7 +498,8 @@ test.skipIf(isPlatform("win32"))(
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
     const paseoHome = path.join(tempDir, ".paseo");
-    const firstDeps = createDeps();
+    const runtimeHome = path.join(tempDir, "runtime-home");
+    const firstDeps = createDeps({ runtimeHome });
     const first = await createPaseoWorktree(
       {
         cwd: repoDir,
@@ -512,6 +514,7 @@ test.skipIf(isPlatform("win32"))(
       events,
       projects: firstDeps.projects,
       workspaces: firstDeps.workspaces,
+      runtimeHome,
     });
 
     const second = await createPaseoWorktree(
@@ -526,6 +529,8 @@ test.skipIf(isPlatform("win32"))(
 
     expect(second.created).toBe(true);
     expect(second.worktree.worktreePath).not.toBe(first.worktree.worktreePath);
+    // Compatibility cwd is presentation data; repeated requests get distinct
+    // runtime-owned placement and identity.
     expect(path.basename(second.worktree.worktreePath)).toBe("reuse-me-1");
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
@@ -1055,6 +1060,7 @@ function createDeps(options?: {
   events?: string[];
   projects?: Map<string, PersistedProjectRecord>;
   workspaces?: Map<string, PersistedWorkspaceRecord>;
+  runtimeHome?: string;
 }): TestDeps {
   const events = options?.events ?? [];
   const projects = options?.projects ?? new Map<string, PersistedProjectRecord>();
@@ -1119,6 +1125,29 @@ function createDeps(options?: {
     workspaceGitService,
     logger: createTestLogger(),
   });
+  const runtimeHome =
+    options?.runtimeHome ?? mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-runtime-"));
+  if (!options?.runtimeHome) cleanupPaths.push(runtimeHome);
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: runtimeHome,
+    worktreesRoot: path.join(runtimeHome, "worktrees"),
+    resolveRuntimeId: async (workspaceId) =>
+      workspaces.get(workspaceId)?.runtime?.runtimeId ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      workspaces.set(workspaceId, {
+        ...workspace,
+        cwd: placement.cwd,
+        hostVisiblePath: placement.hostVisiblePath ?? null,
+        runtime: { runtimeId },
+      });
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  });
 
   return {
     github: createGitHubServiceStub(),
@@ -1126,6 +1155,8 @@ function createDeps(options?: {
     workspaces,
     workspaceGitService,
     workspaceProvisioning,
+    workspaceRuntime,
+    workspaceRegistry,
   };
 }
 

@@ -119,6 +119,10 @@ test("focused contracts stay inside existing required checks", () => {
   assert.doesNotMatch(changes, /Install dependencies|npm run build/);
 
   assert.match(server, /test:hub-cli-contract/);
+  assert.match(server, /npm test --workspace=@getpaseo\/workspace-runtime-contract/);
+  assert.match(server, /npm test --workspace=@getpaseo\/workspace-helper/);
+  assert.match(server, /node --test scripts\/workspace-runtime-standalone\.test\.mjs/);
+  assert.match(server, /node --test scripts\/server-clean-build\.test\.mjs/);
   assert.match(server, /npm run test --workspace=@getpaseo\/server/);
   assert.ok(!jobs.has("hub-cli-contract"));
 
@@ -159,7 +163,13 @@ test("PR routing declares stable behavior ownership", () => {
     ],
     quality: ["**/*.{cjs,js,json,jsx,mjs,ts,tsx}", "packages/expo-two-way-audio/**"],
     hub: ["packages/cli/src/commands/hub/**", "packages/server/src/server/hub/**"],
-    server: ["packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
+    server: [
+      "packages/server/**",
+      "runtimes/fixture/**",
+      "packages/workspace-helper/**",
+      "packages/workspace-runtime-contract/**",
+      "packages/app/e2e/support/fixtures/recording.*",
+    ],
     desktop: [
       "packages/desktop/**",
       "packages/app/src/desktop/**",

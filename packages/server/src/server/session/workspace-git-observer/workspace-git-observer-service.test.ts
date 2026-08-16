@@ -5,7 +5,7 @@ import type { WorkspaceDescriptorPayload } from "../../messages.js";
 import type {
   WorkspaceGitListener,
   WorkspaceGitRuntimeSnapshot,
-  WorkspaceGitService,
+  WorkspaceGitWorkspace,
 } from "../../workspace-git-service.js";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import { createWorkspaceGitObserverService } from "./workspace-git-observer-service.js";
@@ -54,33 +54,64 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((done) => setImmediate(done));
 }
 
-function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
+function buildHarness(
+  opts: {
+    emitWorkspaceIdRejects?: boolean;
+    distinctWorkspaceBindings?: boolean;
+    selectedWorkspaceIds?: ReadonlySet<string>;
+  } = {},
+) {
   const listeners = new Map<string, WorkspaceGitListener>();
   const registerCalls: string[] = [];
   const unsubscribeCalls: string[] = [];
-  const emitCwdCalls: string[] = [];
   const emitWorkspaceIdCalls: string[] = [];
-  const statusCalls: Array<{ cwd: string; branch: string | null }> = [];
+  const statusCalls: Array<{
+    workspaceId: string | undefined;
+    cwd: string;
+    branch: string | null;
+  }> = [];
   const branchChanges: Array<[string, string | null, string | null]> = [];
   const warnCalls: unknown[][] = [];
   const describeCalls: PersistedWorkspaceRecord[] = [];
   let describeResult: WorkspaceDescriptorPayload | null = null;
 
-  const workspaceGitService: Pick<WorkspaceGitService, "registerWorkspace"> = {
-    registerWorkspace({ cwd }, listener) {
-      registerCalls.push(cwd);
-      listeners.set(cwd, listener);
+  const workspaces = new Map<string, WorkspaceGitWorkspace>();
+  function resolveWorkspaceGit(workspaceId: string, cwd: string) {
+    const selected = opts.distinctWorkspaceBindings || opts.selectedWorkspaceIds?.has(workspaceId);
+    const key = selected ? workspaceId : cwd;
+    let workspaceGit = workspaces.get(key);
+    if (workspaceGit) {
       return {
-        unsubscribe() {
-          unsubscribeCalls.push(cwd);
-          listeners.delete(cwd);
-        },
+        address: selected
+          ? { kind: "selected" as const, workspaceId, cwd }
+          : { kind: "legacy" as const, cwd },
+        workspaceGit,
       };
-    },
-  };
+    }
+    workspaceGit = {
+      cwd,
+      register(listener) {
+        registerCalls.push(cwd);
+        listeners.set(key, listener);
+        return {
+          unsubscribe() {
+            unsubscribeCalls.push(cwd);
+            listeners.delete(key);
+          },
+        };
+      },
+    } as WorkspaceGitWorkspace;
+    workspaces.set(key, workspaceGit);
+    return {
+      address: selected
+        ? { kind: "selected" as const, workspaceId, cwd }
+        : { kind: "legacy" as const, cwd },
+      workspaceGit,
+    };
+  }
 
   const service = createWorkspaceGitObserverService({
-    workspaceGitService,
+    resolveWorkspaceGit,
     describeWorkspaceRecordWithGitData: async (workspace) => {
       describeCalls.push(workspace);
       if (!describeResult) {
@@ -88,17 +119,12 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
       }
       return describeResult;
     },
-    emitWorkspaceUpdateForCwd: async (cwd) => {
-      emitCwdCalls.push(cwd);
-      if (opts.emitCwdRejects) {
-        throw new Error("emit boom");
-      }
-    },
     emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
       emitWorkspaceIdCalls.push(workspaceId);
+      if (opts.emitWorkspaceIdRejects) throw new Error("emit boom");
     },
-    emitStatusUpdate: (cwd, snapshot) => {
-      statusCalls.push({ cwd, branch: snapshot.git.currentBranch ?? null });
+    emitStatusUpdate: (workspaceId, cwd, snapshot) => {
+      statusCalls.push({ workspaceId, cwd, branch: snapshot.git.currentBranch ?? null });
     },
     onBranchChanged: (workspaceId, oldBranch, newBranch) => {
       branchChanges.push([workspaceId, oldBranch, newBranch]);
@@ -114,12 +140,18 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
     listener(makeSnapshot(cwd, branch));
   }
 
+  function emitWorkspaceSnapshot(workspaceId: string, cwd: string, branch: string | null): void {
+    const listener = listeners.get(workspaceId);
+    if (!listener) throw new Error(`no listener registered for ${workspaceId}`);
+    listener(makeSnapshot(cwd, branch));
+  }
+
   return {
     service,
     emitSnapshot,
+    emitWorkspaceSnapshot,
     registerCalls,
     unsubscribeCalls,
-    emitCwdCalls,
     emitWorkspaceIdCalls,
     statusCalls,
     branchChanges,
@@ -245,8 +277,8 @@ describe("git snapshot listener", () => {
     h.emitSnapshot(WS1, "feature");
     await flushMicrotasks();
     expect(h.branchChanges).toEqual([["ws1", null, "feature"]]);
-    expect(h.emitCwdCalls).toEqual([WS1]);
-    expect(h.statusCalls).toEqual([{ cwd: WS1, branch: "feature" }]);
+    expect(h.emitWorkspaceIdCalls).toEqual(["ws1"]);
+    expect(h.statusCalls).toEqual([{ workspaceId: "ws1", cwd: WS1, branch: "feature" }]);
   });
 
   test("does not re-fire onBranchChanged when the branch is unchanged", () => {
@@ -258,12 +290,39 @@ describe("git snapshot listener", () => {
   });
 
   test("logs and swallows an emit failure without skipping the status update", async () => {
-    const h = buildHarness({ emitCwdRejects: true });
+    const h = buildHarness({ emitWorkspaceIdRejects: true });
     h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     expect(() => h.emitSnapshot(WS1, "feature")).not.toThrow();
-    expect(h.statusCalls).toEqual([{ cwd: WS1, branch: "feature" }]);
+    expect(h.statusCalls).toEqual([{ workspaceId: "ws1", cwd: WS1, branch: "feature" }]);
     await flushMicrotasks();
     expect(h.warnCalls).toHaveLength(1);
+  });
+
+  test("a selected snapshot updates only its owning same-cwd workspace", async () => {
+    const h = buildHarness({ distinctWorkspaceBindings: true });
+    h.service.syncObservers([
+      makeDescriptor({ id: "selected-a", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "selected-b", workspaceDirectory: WS1 }),
+    ]);
+
+    h.emitWorkspaceSnapshot("selected-a", WS1, "branch-a");
+    await flushMicrotasks();
+
+    expect(h.branchChanges).toEqual([["selected-a", null, "branch-a"]]);
+    expect(h.emitWorkspaceIdCalls).toEqual(["selected-a"]);
+    expect(h.statusCalls).toEqual([{ workspaceId: "selected-a", cwd: WS1, branch: "branch-a" }]);
+  });
+
+  test("a legacy cwd branch event does not cross into a selected same-cwd workspace", () => {
+    const h = buildHarness({ selectedWorkspaceIds: new Set(["selected"]) });
+    h.service.syncObservers([
+      makeDescriptor({ id: "legacy", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "selected", workspaceDirectory: WS1 }),
+    ]);
+
+    h.service.handleBranchSnapshot({ cwd: WS1 }, "legacy-next");
+
+    expect(h.branchChanges).toEqual([["legacy", null, "legacy-next"]]);
   });
 });
 

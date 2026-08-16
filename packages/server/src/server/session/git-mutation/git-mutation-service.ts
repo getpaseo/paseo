@@ -1,12 +1,10 @@
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
-import {
-  checkoutResolvedBranch,
-  type CheckoutExistingBranchResult,
-  type GitMutationRefreshReason,
+import type {
+  CheckoutExistingBranchResult,
+  GitMutationRefreshReason,
 } from "../../../utils/checkout-git.js";
-import { runGitCommand } from "../../../utils/run-git-command.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitService, WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import { assertSafeGitRef as assertWorktreeSafeGitRef } from "../../worktree-session.js";
 
 /**
@@ -21,6 +19,8 @@ import { assertSafeGitRef as assertWorktreeSafeGitRef } from "../../worktree-ses
  * session as loose callbacks.
  */
 export interface GitMutationService {
+  bind(workspaceGit: WorkspaceGitWorkspace): BoundGitMutation;
+  /** Explicit compatibility path for callers that do not own a workspace record yet. */
   checkoutExistingBranch(cwd: string, branch: string): Promise<CheckoutExistingBranchResult>;
   createBranchFromBase(params: {
     cwd: string;
@@ -34,9 +34,20 @@ export interface GitMutationService {
   ): Promise<void>;
 }
 
+export interface BoundGitMutation {
+  checkoutExistingBranch(branch: string): Promise<CheckoutExistingBranchResult>;
+  createBranchFromBase(params: { baseBranch: string; newBranchName: string }): Promise<void>;
+  notify(reason: GitMutationRefreshReason, options?: { invalidateForge?: boolean }): Promise<void>;
+}
+
 type GitMutationGitSource = Pick<
   WorkspaceGitService,
-  "validateBranchRef" | "getSnapshot" | "hasLocalBranch" | "invalidateForge"
+  | "validateBranchRef"
+  | "getSnapshot"
+  | "hasLocalBranch"
+  | "invalidateForge"
+  | "switchBranch"
+  | "createBranch"
 >;
 
 export function createGitMutationService(deps: {
@@ -44,6 +55,72 @@ export function createGitMutationService(deps: {
   logger: pino.Logger;
 }): GitMutationService {
   const { workspaceGitService, logger } = deps;
+
+  function bind(workspaceGit: WorkspaceGitWorkspace): BoundGitMutation {
+    async function isBoundWorkingTreeDirty(): Promise<boolean> {
+      try {
+        const snapshot = await workspaceGit.getSnapshot();
+        return snapshot.git.isDirty === true;
+      } catch (error) {
+        throw new Error(
+          `Unable to inspect git status for ${workspaceGit.cwd}: ${getErrorMessage(error)}`,
+          { cause: error },
+        );
+      }
+    }
+
+    async function ensureBoundWorkingTreeClean(): Promise<void> {
+      if (await isBoundWorkingTreeDirty()) {
+        throw new Error(
+          "Working directory has uncommitted changes. Commit or stash before switching branches.",
+        );
+      }
+    }
+
+    async function notify(
+      reason: GitMutationRefreshReason,
+      options?: { invalidateForge?: boolean },
+    ): Promise<void> {
+      if (options?.invalidateForge) {
+        workspaceGit.invalidateForge();
+      }
+      try {
+        await workspaceGit.getSnapshot({ force: true, reason });
+      } catch (error) {
+        logger.warn(
+          { err: error, cwd: workspaceGit.cwd, reason },
+          "Failed to force-refresh workspace git snapshot after mutation",
+        );
+      }
+    }
+
+    return {
+      async checkoutExistingBranch(branch) {
+        assertSafeGitRef(branch, "branch");
+        const resolution = await workspaceGit.validateBranchRef(branch);
+        if (resolution.kind === "not-found") throw new Error(`Branch not found: ${branch}`);
+        await ensureBoundWorkingTreeClean();
+        const result = await workspaceGit.switchBranch(branch);
+        await notify("switch-branch", { invalidateForge: true });
+        return result;
+      },
+      async createBranchFromBase({ baseBranch, newBranchName }) {
+        assertSafeGitRef(baseBranch, "base branch");
+        assertSafeGitRef(newBranchName, "new branch");
+        const baseResolution = await workspaceGit.validateBranchRef(baseBranch);
+        if (baseResolution.kind === "not-found") {
+          throw new Error(`Base branch not found: ${baseBranch}`);
+        }
+        if (await workspaceGit.hasLocalBranch(newBranchName)) {
+          throw new Error(`Branch already exists: ${newBranchName}`);
+        }
+        await ensureBoundWorkingTreeClean();
+        await workspaceGit.createBranch({ branch: newBranchName, baseRef: baseBranch });
+        await notify("create-branch");
+      },
+      notify,
+    };
+  }
 
   function assertSafeGitRef(ref: string, label: string): void {
     if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
@@ -91,6 +168,7 @@ export function createGitMutationService(deps: {
   }
 
   return {
+    bind,
     async checkoutExistingBranch(cwd, branch) {
       assertSafeGitRef(branch, "branch");
       const resolution = await workspaceGitService.validateBranchRef(cwd, branch);
@@ -98,7 +176,7 @@ export function createGitMutationService(deps: {
         throw new Error(`Branch not found: ${branch}`);
       }
       await ensureCleanWorkingTree(cwd);
-      const result = await checkoutResolvedBranch({ cwd, resolution });
+      const result = await workspaceGitService.switchBranch(cwd, branch);
       await notifyGitMutation(cwd, "switch-branch", { invalidateForge: true });
       return result;
     },
@@ -118,9 +196,9 @@ export function createGitMutationService(deps: {
       }
 
       await ensureCleanWorkingTree(cwd);
-      await runGitCommand(["checkout", "-b", newBranchName, baseBranch], {
-        cwd,
-        timeout: 120_000,
+      await workspaceGitService.createBranch(cwd, {
+        branch: newBranchName,
+        baseRef: baseBranch,
       });
       await notifyGitMutation(cwd, "create-branch");
     },

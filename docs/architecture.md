@@ -75,6 +75,8 @@ not retain non-Git directories.
 | `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
+| `server/workspace-runtime/`     | Runtime-neutral workspace lifecycle, execution, files, Git observation        |
+| `server/provider-probe/`        | Invisible runtime-bound workspaces for pre-creation provider discovery        |
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
 | `server/schedule/`              | Cron-based scheduled agents                                                   |
 
@@ -84,6 +86,19 @@ The source of truth for WebSocket messages, binary frame codecs, endpoint parsin
 agent timeline types, provider config schemas, and other values shared by daemon
 and clients. Server, app, CLI, and `@getpaseo/client` all depend on this package;
 it does not depend on the server.
+
+### Workspace runtime packages
+
+`packages/workspace-runtime-contract` owns the versioned command-runtime lifecycle and exec wire
+contract. `packages/workspace-helper` owns the official confined files/watch/command-resolution
+executable and its typed binding. The daemon depends on those two packages and registers command
+runtimes without importing an implementation.
+
+`runtimes/fixture` is a private generic contract fixture. Runtime implementations live in their own
+repositories and depend on published versions of the two public workspace packages. CLI, Desktop,
+server, release workflows, and the daemon image do not depend on, bundle, publish, or register an
+implementation. Tests invoke registered runtimes through their public command, never through source
+imports.
 
 ### `packages/client` — Daemon client library and SDK facade
 

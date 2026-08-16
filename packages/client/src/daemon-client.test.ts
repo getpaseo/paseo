@@ -1981,7 +1981,7 @@ test("listDirectory sends a list file explorer request and returns directory ent
   mock.triggerOpen();
   await connectPromise;
 
-  const responsePromise = client.listDirectory("/tmp/project", "src", "req-list");
+  const responsePromise = client.listDirectory("/tmp/project", "src", "req-list", "workspace-1");
 
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
     type: "session",
@@ -1990,6 +1990,7 @@ test("listDirectory sends a list file explorer request and returns directory ent
       cwd: "/tmp/project",
       path: "src",
       mode: "list",
+      workspaceId: "workspace-1",
       requestId: "req-list",
     },
   });
@@ -2948,6 +2949,91 @@ test("sends first-agent prompt context with workspace.create.request", async () 
     error: "local title sentinel",
     setupTerminalId: null,
   });
+});
+
+test("lists workspace runtimes and sends an explicit creation runtime", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_runtime_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const listPromise = client.listWorkspaceRuntimes("req-runtime-list");
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.runtime.list.request",
+    requestId: "req-runtime-list",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.runtime.list.response",
+      payload: {
+        requestId: "req-runtime-list",
+        runtimes: [{ runtimeId: "fixture", builtin: false, requiresGitProject: true }],
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({
+    runtimes: [{ runtimeId: "fixture", builtin: false, requiresGitProject: true }],
+  });
+
+  const probePromise = client.ensureWorkspaceRuntimeProbe(
+    { projectId: "project-1", runtimeId: "fixture" },
+    "req-runtime-probe",
+  );
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.runtime.ensure_probe.request",
+    projectId: "project-1",
+    runtimeId: "fixture",
+    requestId: "req-runtime-probe",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.runtime.ensure_probe.response",
+      payload: {
+        requestId: "req-runtime-probe",
+        workspaceId: "probe-fixture",
+        status: "ready",
+        error: null,
+      },
+    }),
+  );
+  await expect(probePromise).resolves.toMatchObject({
+    workspaceId: "probe-fixture",
+    status: "ready",
+  });
+
+  const createPromise = client.createWorkspace(
+    {
+      source: { kind: "directory", path: "/tmp/project" },
+      runtimeId: "fixture",
+    },
+    "req-runtime-create",
+  );
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.create.request",
+    requestId: "req-runtime-create",
+    runtimeId: "fixture",
+    source: { kind: "directory", path: "/tmp/project" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: "req-runtime-create",
+        workspace: null,
+        setupTerminalId: null,
+        error: "fixture sentinel",
+      },
+    }),
+  );
+  await expect(createPromise).resolves.toMatchObject({ error: "fixture sentinel" });
 });
 
 test("sends project.remove.request", async () => {
@@ -3962,6 +4048,199 @@ test("requests checkout pull via RPC", async () => {
     success: true,
     error: null,
   });
+});
+
+test("bound workspace Git carries identity for the normal mutation surface", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const workspaceGit = client.bindWorkspaceGit({ workspaceId: "workspace-a", cwd: "/shared" });
+
+  const pull = workspaceGit.pull("bound-pull");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "checkout_pull_request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+    requestId: "bound-pull",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout_pull_response",
+      payload: { cwd: "/shared", requestId: "bound-pull", success: true, error: null },
+    }),
+  );
+  await expect(pull).resolves.toMatchObject({ success: true });
+
+  const discard = workspaceGit.discardChanges({ paths: ["changed.ts"] });
+  const discardRequest = parseSentFrame(mock.sent[1]);
+  expect(discardRequest).toMatchObject({
+    type: "checkout.discard_changes.request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+    paths: ["changed.ts"],
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout.discard_changes.response",
+      payload: {
+        cwd: "/shared",
+        requestId: discardRequest.requestId,
+        success: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(discard).resolves.toMatchObject({ success: true });
+
+  const checkDetails = workspaceGit.getForgeCheckDetails(
+    { repoOwner: "getpaseo", repoName: "paseo", checkRunId: 42 },
+    "bound-check-details",
+  );
+  expect(parseSentFrame(mock.sent[2])).toMatchObject({
+    type: "checkout.forge.get_check_details.request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+    repoOwner: "getpaseo",
+    repoName: "paseo",
+    checkRunId: 42,
+    requestId: "bound-check-details",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout.forge.get_check_details.response",
+      payload: {
+        cwd: "/shared",
+        requestId: "bound-check-details",
+        success: true,
+        details: {
+          checkRunId: 42,
+          name: "Runtime check",
+          output: { title: "Runtime check", summary: "runtime logs", text: "runtime output" },
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+        },
+        error: null,
+      },
+    }),
+  );
+  await expect(checkDetails).resolves.toMatchObject({
+    success: true,
+    details: { output: { text: "runtime output" } },
+  });
+
+  expect(Object.keys(workspaceGit)).toEqual(
+    expect.arrayContaining([
+      "getStatus",
+      "getDiff",
+      "subscribeDiff",
+      "commit",
+      "listCommits",
+      "getCommitFileDiff",
+      "getBranchSuggestions",
+      "switchBranch",
+      "stashSave",
+      "stashPop",
+      "stashList",
+      "pull",
+      "refresh",
+    ]),
+  );
+});
+
+test.each(["", "   "])(
+  "selected workspace Git rejects identity %j before it can become a legacy request",
+  (workspaceId) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    expect(() => client.bindWorkspaceGit({ workspaceId, cwd: "/shared" })).toThrow(
+      "workspaceId is required for selected workspace Git",
+    );
+    expect(mock.sent).toEqual([]);
+  },
+);
+
+test.each(["", "   "])(
+  "selected workspace Git rejects cwd %j before sending a daemon request",
+  (cwd) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    expect(() => client.bindWorkspaceGit({ workspaceId: "workspace-a", cwd })).toThrow(
+      "cwd is required for selected workspace Git",
+    );
+    expect(mock.sent).toEqual([]);
+  },
+);
+
+test("selected workspace Git normalizes its complete address before sending", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const workspaceGit = client.bindWorkspaceGit({
+    workspaceId: " workspace-a ",
+    cwd: " /shared ",
+  });
+  const status = workspaceGit.getStatus({ requestId: "normalized-status" });
+
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "checkout_status_request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout_status_response",
+      payload: {
+        cwd: "/shared",
+        requestId: "normalized-status",
+        isGit: false,
+        isPaseoOwnedWorktree: false,
+        repoRoot: null,
+        currentBranch: null,
+        isDirty: null,
+        baseRef: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        remoteUrl: null,
+        error: null,
+      },
+    }),
+  );
+  await status;
 });
 
 test("renames a branch via RPC", async () => {

@@ -544,8 +544,18 @@ describe("script-status-projection", () => {
       serviceProxy: routeStore,
       runtimeStore,
       daemonPort: 6767,
-      resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
-        requestedWorkspaceId === "workspace-emitter" ? workspace.repoDir : null,
+      resolveWorkspaceProjection: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === "workspace-emitter"
+          ? {
+              workspaceDirectory: "/workspace",
+              paseoConfig: {
+                scripts: {
+                  api: { type: "service", command: "npm run api" },
+                  typecheck: { command: "npm run typecheck" },
+                },
+              },
+            }
+          : null,
       logger: createTestLogger(),
     });
 

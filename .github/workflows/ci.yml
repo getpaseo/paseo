@@ -102,6 +102,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Enforce workspace runtime ownership boundaries
+        run: npm run check:workspace-runtime-boundaries && node --test scripts/workspace-runtime-boundaries.test.mjs
+
   typecheck:
     name: typecheck
     needs: changes
@@ -129,6 +132,8 @@ jobs:
       - name: Verify public package contents
         run: |
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/workspace-runtime-contract
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/workspace-helper
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
@@ -162,6 +167,18 @@ jobs:
 
       - name: Build server dependencies
         run: npm run build:server-deps
+
+      - name: Test workspace runtime command contract package
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm test --workspace=@getpaseo/workspace-runtime-contract && npm test --workspace=@getpaseo/workspace-helper
+
+      - name: Prove the command runtime fixture is independently installable
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+        run: node --test scripts/workspace-runtime-standalone.test.mjs
+
+      - name: Prove clean server builds own public prerequisites
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+        run: node --test scripts/server-clean-build.test.mjs
 
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}

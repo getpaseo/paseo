@@ -31,11 +31,13 @@ export interface ParsedDiffFile {
 interface HighlightDiffWithFileContentOptions {
   oldFileContent?: string | null;
   newFileContent?: string | null;
+  allowFileRead?: boolean;
 }
 
 interface ParseAndHighlightDiffOptions {
   getOldFileContent?: (file: ParsedDiffFile) => Promise<string | null>;
   getNewFileContent?: (file: ParsedDiffFile) => Promise<string | null>;
+  allowFileRead?: boolean;
 }
 
 /**
@@ -347,6 +349,10 @@ export async function highlightDiffWithFileContent(
     return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
   }
 
+  if (options.allowFileRead === false) {
+    return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
+  }
+
   const filePath = resolve(cwd, file.path);
   try {
     const fileContent = await readFile(filePath, "utf-8");
@@ -416,6 +422,7 @@ export async function parseAndHighlightDiff(
       return highlightDiffWithFileContent(file, cwd, {
         oldFileContent: oldFileContent ?? undefined,
         newFileContent: newFileContent ?? undefined,
+        allowFileRead: options.allowFileRead,
       });
     }),
   );

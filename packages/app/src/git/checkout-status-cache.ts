@@ -5,15 +5,21 @@ import {
   checkoutCommitsQueryKey,
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
+  legacyCheckoutStatusQueryKey,
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
 import { expireStaleDiffModeOverrides } from "@/review/store";
+import type { WorkspaceGitClient, WorkspaceGitStatusTarget } from "./workspace-git";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
 
 export interface CheckoutStatusClient {
+  getStatus: WorkspaceGitClient["getStatus"];
+}
+
+export interface LegacyCheckoutStatusClient {
   getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
 }
 
@@ -24,14 +30,18 @@ export interface CheckoutStatusClient {
 export async function fetchCheckoutStatus({
   client,
   serverId,
-  cwd,
+  target,
 }: {
   client: CheckoutStatusClient;
   serverId: string;
-  cwd: string;
+  target: WorkspaceGitStatusTarget;
 }): Promise<CheckoutStatusPayload> {
-  const payload = await client.getCheckoutStatus(cwd);
-  expireStaleDiffModeOverrides({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
+  const payload = await client.getStatus();
+  expireStaleDiffModeOverrides({
+    serverId,
+    cwd: target.cwd,
+    isDirty: payload.isGit && payload.isDirty,
+  });
   return payload;
 }
 
@@ -39,16 +49,38 @@ export async function ensureCheckoutStatus({
   queryClient,
   client,
   serverId,
-  cwd,
+  target,
 }: {
   queryClient: QueryClient;
   client: CheckoutStatusClient;
   serverId: string;
+  target: WorkspaceGitStatusTarget;
+}): Promise<CheckoutStatusPayload> {
+  return await queryClient.fetchQuery({
+    queryKey: checkoutStatusQueryKey(serverId, target),
+    queryFn: () => fetchCheckoutStatus({ client, serverId, target }),
+    staleTime: Infinity,
+  });
+}
+
+export async function ensureLegacyCheckoutStatus({
+  queryClient,
+  client,
+  serverId,
+  cwd,
+}: {
+  queryClient: QueryClient;
+  client: LegacyCheckoutStatusClient;
+  serverId: string;
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
   return await queryClient.fetchQuery({
-    queryKey: checkoutStatusQueryKey(serverId, cwd),
-    queryFn: () => fetchCheckoutStatus({ client, serverId, cwd }),
+    queryKey: legacyCheckoutStatusQueryKey(serverId, cwd),
+    queryFn: async () => {
+      const payload = await client.getCheckoutStatus(cwd);
+      expireStaleDiffModeOverrides({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
+      return payload;
+    },
     staleTime: Infinity,
   });
 }
@@ -67,9 +99,15 @@ export function applyCheckoutStatusUpdateFromEvent({
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
   const cachePayload = prStatus ? { ...payload, prStatus } : payload;
-  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
+  if (payload.workspaceId === undefined) return;
+  const target = {
+    workspaceId: payload.workspaceId,
+    cwd: payload.cwd,
+    queryIdentity: ["selected", payload.workspaceId] as const,
+  };
+  queryClient.setQueryData(checkoutStatusQueryKey(serverId, target), cachePayload);
   void queryClient.invalidateQueries({
-    queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
+    queryKey: checkoutCommitsQueryKey(serverId, target),
   });
   expireStaleDiffModeOverrides({
     serverId,
@@ -82,14 +120,14 @@ export function applyCheckoutStatusUpdateFromEvent({
   }
 
   const previous = queryClient.getQueryData<CheckoutPrStatusPayload>(
-    checkoutPrStatusQueryKey(serverId, prStatus.cwd),
+    checkoutPrStatusQueryKey(serverId, target),
   );
-  queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, prStatus.cwd), prStatus);
+  queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, target), prStatus);
 
   // The PR activity timeline has no push channel; mark it stale when the pushed PR status
   // meaningfully changed. Active panes refetch immediately, evicted ones on next mount.
   if (hasPrStatusChanged(previous, prStatus)) {
-    void invalidatePrPaneTimelineForCheckout(queryClient, { serverId, cwd: prStatus.cwd });
+    void invalidatePrPaneTimelineForCheckout(queryClient, { serverId, target });
   }
 }
 

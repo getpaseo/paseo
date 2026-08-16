@@ -174,7 +174,7 @@ function updateSelectionPreferences(input: {
         ...(model && thinkingOptionId ? { thinkingByModel: { [model]: thinkingOptionId } } : {}),
       },
     }),
-    isolation: input.isolation,
+    runtimeId: input.isolation,
   };
 }
 

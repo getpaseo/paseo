@@ -1,29 +1,24 @@
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
 import {
-  archiveLocalWorkspaceFromDaemon,
   archiveWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
   connectNewWorkspaceDaemonClient,
-  expectWorkspaceIsolationSelected,
+  expectWorkspaceRuntimeSelected,
   openNewWorkspaceComposer,
-  openProjectViaDaemon,
-  openStartingRefPicker,
-  selectBranchInPicker,
 } from "../support/helpers/new-workspace";
+import {
+  gotoNewWorkspaceForRuntime,
+  seedGitProjectForRuntime,
+} from "../support/helpers/new-workspace-runtime";
 import { expectNoTruncation } from "../support/helpers/no-truncation";
-import { createTempGitRepo } from "../support/helpers/workspace";
 import { getServerId } from "../support/helpers/server-id";
-import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Regression for "the local / worktree selection in the new workspace is not
-// remembered." The isolation choice persists in the create-form preferences
-// (FormPreferences.isolation), so it must survive the create→reopen remount:
-// creating a worktree workspace navigates away from /new and unmounts it, and
-// reopening New Workspace has to still show "New worktree".
-test.describe("New workspace isolation memory", () => {
+// Regression for "the Local / Worktree runtime selection in New Workspace is not
+// remembered." The runtime choice persists in the create-form preferences, so it
+// must survive the create→reopen remount: creating a Worktree workspace
+// navigates away from /new and unmounts it.
+test.describe("New workspace runtime memory", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
-  const localWorkspaceIds = new Set<string>();
   const createdWorktreeDirectories = new Set<string>();
 
   test.describe.configure({ timeout: 240_000 });
@@ -33,45 +28,26 @@ test.describe("New workspace isolation memory", () => {
   });
 
   test.afterEach(async () => {
-    if (client) {
-      for (const workspaceDirectory of createdWorktreeDirectories) {
-        await archiveWorkspaceFromDaemon(client, workspaceDirectory).catch(() => undefined);
-      }
-      for (const workspaceId of localWorkspaceIds) {
-        await archiveLocalWorkspaceFromDaemon(client, workspaceId).catch(() => undefined);
-      }
+    for (const workspaceDirectory of createdWorktreeDirectories) {
+      await archiveWorkspaceFromDaemon(client, workspaceDirectory).catch(() => undefined);
     }
     createdWorktreeDirectories.clear();
-    localWorkspaceIds.clear();
     await client?.close().catch(() => undefined);
   });
 
-  test("remembers the worktree isolation choice after creating a workspace", async ({ page }) => {
-    const serverId = getServerId();
-    const tempRepo = await createTempGitRepo("isolation-memory-", { branches: ["main", "dev"] });
+  test("remembers the Worktree runtime after creating a workspace", async ({ page }) => {
+    const project = await seedGitProjectForRuntime();
 
     try {
-      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
-      localWorkspaceIds.add(openedProject.workspaceId);
-
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-
-      // First visit: the screen opens on Local, switch it to New worktree and create.
-      await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
-      });
-      await expectWorkspaceIsolationSelected(page, "local");
-      await page.getByTestId("workspace-create-isolation-trigger").click();
-      const isolationPopup = page.getByTestId("combobox-desktop-container").last();
-      await expect(isolationPopup).toBeVisible({ timeout: 30_000 });
-      await expectNoTruncation(isolationPopup);
-      await page.getByTestId("workspace-create-isolation-worktree").click();
-      await expectWorkspaceIsolationSelected(page, "worktree");
-
-      await openStartingRefPicker(page);
-      await selectBranchInPicker(page, "dev");
+      // First visit: the screen opens on Local, switch it to Worktree and create.
+      await gotoNewWorkspaceForRuntime(page, project);
+      await expectWorkspaceRuntimeSelected(page, "local");
+      await page.getByRole("button", { name: "Runtime", exact: true }).click();
+      const runtimePopup = page.getByRole("dialog").last();
+      await expect(runtimePopup).toBeVisible({ timeout: 30_000 });
+      await expectNoTruncation(runtimePopup);
+      await runtimePopup.getByRole("button", { name: "Worktree", exact: true }).click();
+      await expectWorkspaceRuntimeSelected(page, "worktree");
 
       const createButton = page
         .getByTestId("message-input-root")
@@ -80,21 +56,21 @@ test.describe("New workspace isolation memory", () => {
       await createButton.click();
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
-        serverId,
+        serverId: getServerId(),
         client,
-        previousWorkspaceId: openedProject.workspaceId,
-        projectDisplayName: openedProject.projectDisplayName,
+        previousWorkspaceId: "",
+        projectDisplayName: project.projectDisplayName,
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
-      // Second visit (fresh mount of /new): the worktree choice must stick.
+      // Second visit (fresh mount of /new): the runtime choice must stick.
       await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
+        projectKey: project.projectKey,
+        projectDisplayName: project.projectDisplayName,
       });
-      await expectWorkspaceIsolationSelected(page, "worktree");
+      await expectWorkspaceRuntimeSelected(page, "worktree");
     } finally {
-      await tempRepo.cleanup();
+      await project.cleanup();
     }
   });
 });

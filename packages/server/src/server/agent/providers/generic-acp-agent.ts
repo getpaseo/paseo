@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags, FetchCatalogOptions } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
@@ -84,14 +84,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
     this.diagnosticPhaseTimeoutMs = options.diagnosticPhaseTimeoutMs;
   }
 
-  protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
-    return {
-      command: this.command[0],
-      args: this.command.slice(1),
-    };
-  }
-
-  override async isAvailable(): Promise<boolean> {
+  override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+    if (options?.scope === "workspace" && options.workspace) {
+      return super.isAvailable(options);
+    }
     const launch = await this.resolveConfiguredLaunch();
     const availability = await checkProviderLaunchAvailable(launch);
     return availability.available;

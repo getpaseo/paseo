@@ -4,6 +4,7 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import { z } from "zod";
 import { createProviderSnapshotCache, type ProviderSnapshotCache } from "./provider-snapshot-cache";
+import type { ProviderSnapshotCacheScope } from "./provider-snapshot-cache";
 
 const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v1:";
 const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v1";
@@ -11,6 +12,14 @@ const SnapshotIndexSchema = z.object({
   version: z.literal(1),
   entries: z.array(z.object({ key: z.string(), bytes: z.number(), writtenAt: z.string() })),
 });
+
+function legacyScope(cwd: string | null): ProviderSnapshotCacheScope {
+  return { type: "legacy-cwd", cwd };
+}
+
+function snapshotKey(serverId: string, cwd: string | null): string {
+  return `${SNAPSHOT_KEY_PREFIX}${JSON.stringify([serverId, legacyScope(cwd)])}`;
+}
 
 function createStorage(maxSnapshotBytes = Number.POSITIVE_INFINITY) {
   const values = new Map<string, string>();
@@ -132,7 +141,7 @@ function writeSnapshot(
 ): Promise<void> {
   return cache.write({
     serverId: "server-1",
-    cwd: input.cwd,
+    scope: legacyScope(input.cwd),
     hash: input.label,
     generatedAt: input.generatedAt,
     compactSnapshot: compactProviderSnapshot(snapshotEntries(input.label)),
@@ -161,12 +170,12 @@ describe("provider snapshot cache", () => {
 
     await cache.write({
       serverId: "server-1",
-      cwd: "/repo",
+      scope: { type: "legacy-cwd", cwd: "/repo" },
       hash: "snapshot-hash",
       generatedAt: "2026-08-04T00:00:00.000Z",
       compactSnapshot: compactProviderSnapshot(entries),
     });
-    const cached = await cache.read("server-1", "/repo");
+    const cached = await cache.read("server-1", { type: "legacy-cwd", cwd: "/repo" });
 
     expect(cached?.entries).toEqual(entries);
     expect(cached?.entries[0]?.models?.[0]?.thinkingOptions).toBe(
@@ -177,9 +186,12 @@ describe("provider snapshot cache", () => {
   it("discards an invalid cache record", async () => {
     const storage = createStorage();
     const cache = createProviderSnapshotCache(storage);
-    storage.values.set('@paseo/provider-snapshot/v1:["server-1","/repo"]', "not json");
+    storage.values.set(
+      '@paseo/provider-snapshot/v1:["server-1",{"type":"legacy-cwd","cwd":"/repo"}]',
+      "not json",
+    );
 
-    await expect(cache.read("server-1", "/repo")).resolves.toBeNull();
+    await expect(cache.read("server-1", { type: "legacy-cwd", cwd: "/repo" })).resolves.toBeNull();
     expect([...storage.values.keys()].some((key) => key.startsWith(SNAPSHOT_KEY_PREFIX))).toBe(
       false,
     );
@@ -193,29 +205,29 @@ describe("provider snapshot cache", () => {
     await Promise.all([
       cache.write({
         serverId: "server-1",
-        cwd: "/oldest",
+        scope: legacyScope("/oldest"),
         hash: "oldest",
         generatedAt: "2026-08-01T00:00:00.000Z",
         compactSnapshot: compactProviderSnapshot(snapshotEntries("oldest")),
       }),
       cache.write({
         serverId: "server-1",
-        cwd: "/middle",
+        scope: legacyScope("/middle"),
         hash: "middle",
         generatedAt: "2026-08-02T00:00:00.000Z",
         compactSnapshot: compactProviderSnapshot(snapshotEntries("middle")),
       }),
       cache.write({
         serverId: "server-1",
-        cwd: "/newest",
+        scope: legacyScope("/newest"),
         hash: "newest",
         generatedAt: "2026-08-03T00:00:00.000Z",
         compactSnapshot: compactProviderSnapshot(snapshotEntries("newest")),
       }),
     ]);
 
-    await expect(cache.read("server-1", "/oldest")).resolves.toBeNull();
-    await expect(cache.read("server-1", "/newest")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/oldest"))).resolves.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/newest"))).resolves.not.toBeNull();
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
     expectIndexMatchesSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
@@ -228,14 +240,14 @@ describe("provider snapshot cache", () => {
 
     await cache.write({
       serverId: "server-1",
-      cwd: "/current",
+      scope: legacyScope("/current"),
       hash: "current",
       generatedAt: "2026-08-03T00:00:00.000Z",
       compactSnapshot: compactProviderSnapshot(snapshotEntries("current")),
     });
 
     expect(storage.values.has('@paseo/provider-snapshot/v1:["server-1","/legacy"]')).toBe(false);
-    await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/current"))).resolves.not.toBeNull();
     expectIndexMatchesSnapshots(storage.values);
   });
 
@@ -244,7 +256,7 @@ describe("provider snapshot cache", () => {
     storage.values.set('@paseo/provider-snapshot/v1:["server-1","/legacy"]', "legacy");
     const cache = createProviderSnapshotCache(storage);
 
-    await expect(cache.read("server-1", "/legacy")).resolves.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/legacy"))).resolves.toBeNull();
 
     expect(storage.values.has('@paseo/provider-snapshot/v1:["server-1","/legacy"]')).toBe(false);
     expectIndexMatchesSnapshots(storage.values);
@@ -257,7 +269,7 @@ describe("provider snapshot cache", () => {
     const cache = createProviderSnapshotCache(storage);
 
     await Promise.all([
-      cache.read("server-1", "/legacy"),
+      cache.read("server-1", legacyScope("/legacy")),
       writeSnapshot(cache, {
         cwd: "/current",
         label: "current",
@@ -265,7 +277,7 @@ describe("provider snapshot cache", () => {
       }),
     ]);
 
-    await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/current"))).resolves.not.toBeNull();
     expectIndexMatchesSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
@@ -286,7 +298,7 @@ describe("provider snapshot cache", () => {
       generatedAt: "2026-08-02T00:00:00.000Z",
     });
 
-    await expect(cache.read("server-1", "/repo")).resolves.toMatchObject({
+    await expect(cache.read("server-1", legacyScope("/repo"))).resolves.toMatchObject({
       hash: "replacement-is-larger",
     });
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
@@ -312,7 +324,7 @@ describe("provider snapshot cache", () => {
       generatedAt: "2026-08-02T00:00:00.000Z",
     });
 
-    await expect(tinyCache.read("server-1", "/repo")).resolves.toBeNull();
+    await expect(tinyCache.read("server-1", legacyScope("/repo"))).resolves.toBeNull();
     expect(snapshotBytes(storage.values)).toBe(0);
     expectIndexMatchesSnapshots(storage.values);
   });
@@ -330,7 +342,7 @@ describe("provider snapshot cache", () => {
     });
 
     expect(storage.values.has(`${SNAPSHOT_KEY_PREFIX}legacy`)).toBe(false);
-    await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/current"))).resolves.not.toBeNull();
     expectIndexMatchesSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
@@ -360,7 +372,7 @@ describe("provider snapshot cache", () => {
       generatedAt: "2026-08-02T00:00:00.000Z",
     });
 
-    await expect(cache.read("server-1", "/emoji")).resolves.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/emoji"))).resolves.toBeNull();
     expectIndexMatchesSnapshots(storage.values);
   });
 
@@ -379,7 +391,7 @@ describe("provider snapshot cache", () => {
     await Promise.all(writes);
 
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
-    await expect(cache.read("server-1", "/repo-249")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/repo-249"))).resolves.not.toBeNull();
     expectIndexMatchesSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
@@ -394,7 +406,7 @@ describe("provider snapshot cache", () => {
         label: "stable",
         generatedAt: "2026-08-01T00:00:00.000Z",
       });
-      const failedKey = `${SNAPSHOT_KEY_PREFIX}["server-1","/failed"]`;
+      const failedKey = snapshotKey("server-1", "/failed");
       storage.failNext("setItem", timing, failedKey);
 
       await writeSnapshot(cache, {
@@ -409,8 +421,8 @@ describe("provider snapshot cache", () => {
         label: "next",
         generatedAt: "2026-08-03T00:00:00.000Z",
       });
-      await expect(restarted.read("server-1", "/stable")).resolves.not.toBeNull();
-      await expect(restarted.read("server-1", "/next")).resolves.not.toBeNull();
+      await expect(restarted.read("server-1", legacyScope("/stable"))).resolves.not.toBeNull();
+      await expect(restarted.read("server-1", legacyScope("/next"))).resolves.not.toBeNull();
       expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(2_000);
       expectIndexMatchesSnapshots(storage.values);
     },
@@ -436,7 +448,7 @@ describe("provider snapshot cache", () => {
 
       const restarted = createProviderSnapshotCache(storage, { maxBytes: 2_000 });
       await expect(
-        restarted.read("server-1", "/orphan-after-index-failure"),
+        restarted.read("server-1", legacyScope("/orphan-after-index-failure")),
       ).resolves.not.toBeNull();
       expectIndexMatchesSnapshots(storage.values);
       expect(storage.stats.getAllKeysCalls).toBe(2);
@@ -482,7 +494,7 @@ describe("provider snapshot cache", () => {
     expect(storage.values.get("@paseo/unrelated")).toBe("keep-me");
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
     expectIndexMatchesSnapshots(storage.values);
-    await expect(restarted.read("server-1", "/final")).resolves.not.toBeNull();
+    await expect(restarted.read("server-1", legacyScope("/final"))).resolves.not.toBeNull();
   });
 
   it("evicts before writing when storage has no temporary headroom", async () => {
@@ -506,7 +518,7 @@ describe("provider snapshot cache", () => {
       generatedAt: "2026-08-03T00:00:00.000Z",
     });
 
-    await expect(cache.read("server-1", "/newest")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", legacyScope("/newest"))).resolves.not.toBeNull();
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
     expectIndexMatchesSnapshots(storage.values);
   });
@@ -515,12 +527,12 @@ describe("provider snapshot cache", () => {
     "recovers when invalid-record cleanup fails %s deletion",
     async (timing) => {
       const storage = createStorage();
-      const key = `${SNAPSHOT_KEY_PREFIX}["server-1","/invalid"]`;
+      const key = snapshotKey("server-1", "/invalid");
       storage.values.set(key, "invalid");
       storage.failNext("multiRemove", timing);
       const cache = createProviderSnapshotCache(storage);
 
-      await expect(cache.read("server-1", "/invalid")).resolves.toBeNull();
+      await expect(cache.read("server-1", legacyScope("/invalid"))).resolves.toBeNull();
       await writeSnapshot(cache, {
         cwd: "/recovered",
         label: "recovered",
@@ -528,8 +540,37 @@ describe("provider snapshot cache", () => {
       });
 
       expect(storage.values.has(key)).toBe(false);
-      await expect(cache.read("server-1", "/recovered")).resolves.not.toBeNull();
+      await expect(cache.read("server-1", legacyScope("/recovered"))).resolves.not.toBeNull();
       expectIndexMatchesSnapshots(storage.values);
     },
   );
+
+  it("keeps selected workspaces with the same cwd structurally isolated", async () => {
+    const storage = createStorage();
+    const cache = createProviderSnapshotCache(storage);
+    const snapshot = (provider: "claude" | "codex") =>
+      compactProviderSnapshot([{ provider, status: "ready", enabled: true, models: [] }]);
+
+    await cache.write({
+      serverId: "server-1",
+      scope: { type: "workspace", workspaceId: "workspace-a" },
+      hash: "hash-a",
+      generatedAt: "2026-08-11T00:00:00.000Z",
+      compactSnapshot: snapshot("claude"),
+    });
+    await cache.write({
+      serverId: "server-1",
+      scope: { type: "workspace", workspaceId: "workspace-b" },
+      hash: "hash-b",
+      generatedAt: "2026-08-11T00:00:01.000Z",
+      compactSnapshot: snapshot("codex"),
+    });
+
+    await expect(
+      cache.read("server-1", { type: "workspace", workspaceId: "workspace-a" }),
+    ).resolves.toMatchObject({ hash: "hash-a" });
+    await expect(
+      cache.read("server-1", { type: "workspace", workspaceId: "workspace-b" }),
+    ).resolves.toMatchObject({ hash: "hash-b" });
+  });
 });

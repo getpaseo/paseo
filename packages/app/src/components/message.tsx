@@ -736,6 +736,7 @@ interface AssistantMessageProps {
   message: string;
   timestamp: number;
   workspaceRoot?: string;
+  workspaceId?: string;
   serverId?: string;
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
@@ -799,6 +800,7 @@ function AssistantMarkdownImage({
   hasLeadingContent,
   client,
   workspaceRoot,
+  workspaceId,
   serverId,
 }: {
   source: string;
@@ -807,6 +809,7 @@ function AssistantMarkdownImage({
   hasLeadingContent: boolean;
   client?: DaemonClient | null;
   workspaceRoot?: string;
+  workspaceId?: string;
   serverId?: string;
 }) {
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
@@ -821,6 +824,7 @@ function AssistantMarkdownImage({
     occurrenceKey,
     client,
     workspaceRoot,
+    workspaceId,
     serverId,
   });
   const binding = image.status === "failed" ? null : image.binding;
@@ -1448,6 +1452,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp: _timestamp,
   workspaceRoot,
+  workspaceId,
   serverId,
   client,
   spacing = "default",
@@ -1885,12 +1890,22 @@ export const AssistantMessage = memo(function AssistantMessage({
             hasLeadingContent={hasLeadingContent}
             client={client}
             workspaceRoot={workspaceRoot}
+            workspaceId={workspaceId}
             serverId={serverId}
           />
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
+  }, [
+    client,
+    fileLinkActions,
+    markdownParser,
+    occurrenceKey,
+    phase,
+    serverId,
+    workspaceId,
+    workspaceRoot,
+  ]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
   const keyedBlocks = useMemo(

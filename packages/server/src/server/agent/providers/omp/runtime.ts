@@ -13,6 +13,7 @@ import type {
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProviderWorkspace } from "../../agent-sdk-types.js";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
@@ -29,6 +30,8 @@ export interface OmpRuntimeLaunch {
 }
 
 export interface OmpStartSessionInput {
+  workspace?: ProviderWorkspace;
+  agentId?: string;
   cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;

@@ -253,6 +253,7 @@ async function resolveSessionCreateAgent(
   // introduced by this validation).
   const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: builtSessionConfig.cwd,
+    workspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
     provider: builtSessionConfig.provider,
     requestedMode: builtSessionConfig.modeId,
     featureValues: builtSessionConfig.featureValues,
@@ -339,6 +340,7 @@ async function resolveMcpCreateAgent(
     input,
     provider,
     resolvedCwd,
+    workspaceId: intent.workspaceId,
     parentAgent,
   });
 
@@ -387,11 +389,13 @@ async function resolveMcpProviderCreateConfig(params: {
   input: CreateAgentFromMcpInput;
   provider: string;
   resolvedCwd: string;
+  workspaceId: string;
   parentAgent: ManagedAgent | null;
 }): Promise<{ modeId?: string; featureValues?: Record<string, unknown> }> {
   const passthroughConfig = params.input.config;
   return params.dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: params.resolvedCwd,
+    workspaceId: params.workspaceId,
     provider: params.provider,
     requestedMode: params.input.mode ?? passthroughConfig?.modeId,
     featureValues: params.input.features ?? passthroughConfig?.featureValues,

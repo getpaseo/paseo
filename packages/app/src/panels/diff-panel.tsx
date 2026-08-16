@@ -20,6 +20,7 @@ import {
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { usePaneContext } from "@/panels/pane-context";
@@ -155,6 +156,7 @@ function WorkingDiffPanel() {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
   const panelPreferences = useDiffPanelPreferences();
+  const workspaceGit = useRequiredWorkspaceGit();
   const [expandedPaths, setExpandedPaths] = useState<string[] | null>(null);
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
 
@@ -180,16 +182,20 @@ function WorkingDiffPanel() {
   const runRefresh = useCheckoutGitActionsStore((state) => state.refresh);
   const isRefreshing =
     useCheckoutGitActionsStore((state) =>
-      state.getStatus({ serverId, cwd: cwd ?? "", actionId: "refresh" }),
+      state.getStatus({
+        serverId,
+        target: workspaceGit,
+        actionId: "refresh",
+      }),
     ) === "pending";
   const refresh = useCallback(() => {
     if (!cwd || isRefreshing) {
       return;
     }
-    void runRefresh({ serverId, cwd }).catch((error) => {
+    void runRefresh({ serverId, target: workspaceGit }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
+  }, [cwd, isRefreshing, runRefresh, serverId, t, toast, workspaceGit]);
 
   const expandedPathSet = useMemo(
     () => (expandedPaths === null ? null : new Set(expandedPaths)),
@@ -276,7 +282,6 @@ function CommitDiffPanel() {
   invariant(target.kind === "commit_diff", "CommitDiffPanel requires commit_diff target");
   const { files, isLoading, error, capabilityMissing } = useCommitDiffFiles({
     serverId,
-    cwd: cwd ?? "",
     sha: target.sha,
     enabled: Boolean(cwd),
   });

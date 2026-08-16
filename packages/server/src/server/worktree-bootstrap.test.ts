@@ -36,7 +36,7 @@ async function cleanupTerminalManager(terminalManager: TerminalManager): Promise
   );
   const terminals = terminalsByCwd.flat();
   await Promise.all(terminals.map((terminal) => killTerminal(terminalManager, terminal)));
-  terminalManager.killAll();
+  await terminalManager.killAll();
 }
 
 function killTerminal(terminalManager: TerminalManager, terminal: TerminalSession): Promise<void> {
@@ -310,6 +310,8 @@ describe("runAsyncWorktreeBootstrap", () => {
     name?: string;
     title?: string;
     env?: Record<string, string>;
+    command?: string;
+    args?: string[];
   }
 
   interface StubTerminalRecord {
@@ -540,6 +542,89 @@ describe("runAsyncWorktreeBootstrap", () => {
       exitCode: null,
       terminalId: "term-1",
     });
+  });
+
+  it("launches selected-runtime scripts directly in their public cwd", async () => {
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      runtimeCwd: "/workspace",
+      runtime: {
+        scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
+        run: async () => {
+          throw new Error("unused");
+        },
+        resolveCommand: async () => null,
+      },
+      paseoConfig: {
+        scripts: {
+          proof: {
+            command: "pwd > workspace-script-output.txt",
+          },
+        },
+      },
+      workspaceId: "docker-workspace",
+      projectSlug: "repo",
+      branchName: null,
+      scriptName: "proof",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
+    });
+
+    expect(createTerminalCalls).toEqual([
+      expect.objectContaining({
+        cwd: "/workspace",
+        command: "/bin/sh",
+        args: ["-lc", "pwd > workspace-script-output.txt"],
+      }),
+    ]);
+    expect(terminalRecords[0]?.sentInputs).toEqual([]);
+  });
+
+  it("keeps selected Local scripts in one reusable persistent shell", async () => {
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+    const options = {
+      repoRoot: repoDir,
+      runtimeCwd: repoDir,
+      runtime: {
+        scriptTerminal: { kind: "persistent-shell" as const },
+        run: async () => {
+          throw new Error("unused");
+        },
+        resolveCommand: async () => null,
+      },
+      paseoConfig: { scripts: { proof: { command: "printf local-script" } } },
+      workspaceId: "selected-local-workspace",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "proof",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager,
+    };
+
+    const first = await spawnWorkspaceScript(options);
+    terminalRecords[0]?.triggerCommandFinished(0);
+    const second = await spawnWorkspaceScript(options);
+
+    expect(second.terminalId).toBe(first.terminalId);
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(createTerminalCalls[0]).not.toHaveProperty("command");
+    expect(terminalRecords[0]?.sentInputs).toEqual([
+      "printf local-script\r",
+      "printf local-script\r",
+    ]);
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

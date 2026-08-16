@@ -21,6 +21,8 @@ Evidence is something someone else can look at:
 - A video of the interaction
 - Logs, requests, responses
 
+Workspace-runtime changes include the selected Local/Worktree parity cases, the shared common-Git watcher assertion, the fixture Desktop journey, and the blocking Docker matrix when Docker behavior changes. Provider-probe changes also include lifecycle/restart evidence and proof that probe records, processes, watchers, containers, and volumes do not leak.
+
 Redact what you need to, keep the technical details. If an agent did the work, submit its raw output. A summary drops the details someone else needs to check it.
 
 ## Does it work well

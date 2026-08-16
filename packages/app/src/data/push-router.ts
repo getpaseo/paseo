@@ -14,6 +14,8 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import type { ProviderSnapshotCacheScope } from "@/data/provider-snapshot-cache";
+import type { WorkspaceGitClient } from "@/git/workspace-git";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -47,7 +49,7 @@ interface CheckoutDiffRoute {
   enabled: boolean;
   serverId: string;
   subscriptionId: string;
-  cwd: string;
+  workspaceGit: WorkspaceGitClient;
   compare: CheckoutDiffCompare;
 }
 
@@ -72,12 +74,6 @@ interface ServerDataPushClient {
     type: TType,
     handler: (message: Extract<SessionOutboundMessage, { type: TType }>) => void,
   ): () => void;
-  subscribeCheckoutDiff(
-    cwd: string,
-    compare: CheckoutDiffCompare,
-    options: { subscriptionId: string; requestId?: string },
-  ): Promise<CheckoutDiffResponsePayload>;
-  unsubscribeCheckoutDiff(subscriptionId: string): void;
   subscribeTerminals(input: { cwd: string; workspaceId?: string }): void;
   unsubscribeTerminals(input: { cwd: string; workspaceId?: string }): void;
 }
@@ -140,7 +136,7 @@ export function checkoutDiffPushRoute(input: {
   enabled: boolean;
   serverId: string;
   subscriptionId: string;
-  cwd: string;
+  workspaceGit: WorkspaceGitClient;
   compare: CheckoutDiffCompare;
 }): ServerDataQueryMeta {
   return {
@@ -149,7 +145,7 @@ export function checkoutDiffPushRoute(input: {
       enabled: input.enabled,
       serverId: input.serverId,
       subscriptionId: input.subscriptionId,
-      cwd: input.cwd,
+      workspaceGit: input.workspaceGit,
       compare: input.compare,
     },
   };
@@ -194,7 +190,11 @@ export function applyProvidersSnapshotUpdate(input: {
   if (input.message.type !== "providers_snapshot_update") {
     return;
   }
-  const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
+  const queryKey = providersSnapshotQueryKey(
+    input.serverId,
+    input.message.payload.cwd,
+    input.message.payload.workspaceId,
+  );
   input.queryClient.setQueryData(queryKey, {
     entries: input.message.payload.entries,
     generatedAt: input.message.payload.generatedAt,
@@ -204,7 +204,12 @@ export function applyProvidersSnapshotUpdate(input: {
   if (compactSnapshot && snapshotHash) {
     void (input.cache ?? providerSnapshotCache).write({
       serverId: input.serverId,
-      cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+      scope: input.message.payload.workspaceId
+        ? { type: "workspace", workspaceId: input.message.payload.workspaceId }
+        : ({
+            type: "legacy-cwd",
+            cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+          } satisfies ProviderSnapshotCacheScope),
       hash: snapshotHash,
       generatedAt: input.message.payload.generatedAt,
       compactSnapshot,
@@ -341,8 +346,8 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
-    for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
-      unsubscribeCheckoutDiff(input.client, subscriptionId);
+    for (const route of activeCheckoutDiffSubscriptions.values()) {
+      unsubscribeCheckoutDiff(route);
     }
     activeCheckoutDiffSubscriptions.clear();
     for (const route of activeTerminalSubscriptions.values()) {
@@ -363,7 +368,7 @@ function reconcileCheckoutDiffSubscriptions(input: {
     if (desired && areCheckoutDiffRoutesEqual(current, desired)) {
       continue;
     }
-    unsubscribeCheckoutDiff(input.client, subscriptionId);
+    unsubscribeCheckoutDiff(current);
     input.active.delete(subscriptionId);
   }
 
@@ -372,8 +377,8 @@ function reconcileCheckoutDiffSubscriptions(input: {
       continue;
     }
     input.active.set(subscriptionId, desired);
-    void input.client
-      .subscribeCheckoutDiff(desired.cwd, desired.compare, {
+    void desired.workspaceGit
+      .subscribeDiff(desired.compare, {
         subscriptionId,
         requestId: `push-router:${input.serverId}:${subscriptionId}`,
       })
@@ -383,7 +388,7 @@ function reconcileCheckoutDiffSubscriptions(input: {
         }
         console.error("[server-data] subscribeCheckoutDiff failed", {
           serverId: input.serverId,
-          cwd: desired.cwd,
+          cwd: desired.workspaceGit.cwd,
           error,
         });
       });
@@ -652,15 +657,15 @@ function readServerDataRoute(value: Record<string, unknown>): ServerDataRoute | 
   const domain = value.domain;
   const enabled = value.enabled;
   const serverId = value.serverId;
-  const cwd = value.cwd;
-  if (typeof enabled !== "boolean" || typeof serverId !== "string" || typeof cwd !== "string") {
+  if (typeof enabled !== "boolean" || typeof serverId !== "string") {
     return null;
   }
 
   if (domain === "checkoutDiff") {
     const subscriptionId = value.subscriptionId;
     const compare = readCheckoutDiffCompare(value.compare);
-    if (typeof subscriptionId !== "string" || !compare) {
+    const workspaceGit = readWorkspaceGitClient(value.workspaceGit);
+    if (typeof subscriptionId !== "string" || !compare || !workspaceGit) {
       return null;
     }
     return {
@@ -668,12 +673,14 @@ function readServerDataRoute(value: Record<string, unknown>): ServerDataRoute | 
       enabled,
       serverId,
       subscriptionId,
-      cwd,
+      workspaceGit,
       compare,
     };
   }
 
   if (domain === "workspaceTerminals") {
+    const cwd = value.cwd;
+    if (typeof cwd !== "string") return null;
     const workspaceId = value.workspaceId;
     if (workspaceId !== undefined && typeof workspaceId !== "string") {
       return null;
@@ -720,7 +727,7 @@ function areCheckoutDiffRoutesEqual(
   return (
     left?.serverId === right.serverId &&
     left.subscriptionId === right.subscriptionId &&
-    left.cwd === right.cwd &&
+    left.workspaceGit === right.workspaceGit &&
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
     left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
@@ -731,10 +738,13 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
   return (
     queryKey[0] === "checkoutDiff" &&
     queryKey[1] === route.serverId &&
-    queryKey[2] === route.cwd &&
-    queryKey[3] === route.compare.mode &&
-    queryKey[4] === (route.compare.baseRef ?? "") &&
-    queryKey[5] === (route.compare.ignoreWhitespace === true)
+    Array.isArray(queryKey[2]) &&
+    queryKey[2][0] === route.workspaceGit.queryIdentity[0] &&
+    queryKey[2][1] === route.workspaceGit.queryIdentity[1] &&
+    queryKey[3] === route.workspaceGit.cwd &&
+    queryKey[4] === route.compare.mode &&
+    queryKey[5] === (route.compare.baseRef ?? "") &&
+    queryKey[6] === (route.compare.ignoreWhitespace === true)
   );
 }
 
@@ -763,12 +773,23 @@ function workspaceTerminalSubscriptionInput(route: WorkspaceTerminalsRoute): {
   };
 }
 
-function unsubscribeCheckoutDiff(client: ServerDataPushClient, subscriptionId: string): void {
+function unsubscribeCheckoutDiff(route: CheckoutDiffRoute): void {
   try {
-    client.unsubscribeCheckoutDiff(subscriptionId);
+    route.workspaceGit.unsubscribeDiff(route.subscriptionId);
   } catch {
     // Disconnect cleanup can race with explicit subscription teardown.
   }
+}
+
+function readWorkspaceGitClient(value: unknown): WorkspaceGitClient | null {
+  if (!isRecord(value)) return null;
+  return typeof value.workspaceId === "string" &&
+    value.workspaceId.length > 0 &&
+    typeof value.cwd === "string" &&
+    typeof value.subscribeDiff === "function" &&
+    typeof value.unsubscribeDiff === "function"
+    ? (value as unknown as WorkspaceGitClient)
+    : null;
 }
 
 function isQueryForServer(queryKey: QueryKey, kind: string, serverId: string): boolean {

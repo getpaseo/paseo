@@ -36,6 +36,7 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderWorkspace,
   type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
@@ -63,6 +64,7 @@ import {
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
+import { providerWorkspaceFromCatalogOptions } from "../workspace/index.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
@@ -222,8 +224,9 @@ interface PiRpcAgentSessionOptions {
   initialState: PiSessionState;
   capabilities: AgentCapabilityFlags;
   currentModeId?: string | null;
-  cleanup?: () => void;
+  cleanup?: () => void | Promise<void>;
   extensionTimeoutMs?: number;
+  workspace?: ProviderWorkspace;
 }
 
 interface PiResumeConfig {
@@ -251,7 +254,7 @@ interface PiMcpConfigFile {
 
 interface PiTempFile {
   path: string;
-  cleanup: () => void;
+  cleanup: () => void | Promise<void>;
 }
 
 interface PiCapturedEntry extends PiCapturedUserMessageEntry {
@@ -400,7 +403,13 @@ function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
   return model?.input?.includes("image") === true;
 }
 
-function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+function renderTextOnlyImageHint(
+  image: { data: string; mimeType: string },
+  selectedWorkspace: boolean,
+): string {
+  if (selectedWorkspace) {
+    return "[Image attachment omitted: selected runtime model has no image input]";
+  }
   try {
     const materialized = materializeProviderImage({
       data: image.data,
@@ -414,7 +423,7 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
 
 function convertPromptInput(
   prompt: AgentPromptInput,
-  options: { model: PiModel | null | undefined },
+  options: { model: PiModel | null | undefined; workspace?: ProviderWorkspace },
 ): PiPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
@@ -438,7 +447,7 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(renderTextOnlyImageHint(block, Boolean(options.workspace)));
       }
       continue;
     }
@@ -533,6 +542,8 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfig?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
+    workspace: input.launchContext?.workspace,
+    agentId: input.launchContext?.agentId,
   };
 }
 
@@ -622,12 +633,11 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
-  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
-  const filePath = join(dir, "paseo-integration.mjs");
-  writeFileSync(
-    filePath,
-    `
+async function createPiPaseoExtensionFile(
+  systemPrompt?: string,
+  workspace?: ProviderWorkspace,
+): Promise<PiTempFile> {
+  const content = `
 	function decodePayload(encoded) {
 	  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 	}
@@ -753,25 +763,45 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    },
 	  });
 	}
-`.trimStart(),
-    "utf8",
-  );
+`.trimStart();
+  if (workspace) {
+    const stateFile = await workspace.materializeStateFile({
+      name: "paseo-integration.mjs",
+      content,
+    });
+    return { path: stateFile.path, cleanup: stateFile.remove };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
+  const filePath = join(dir, "paseo-integration.mjs");
+  writeFileSync(filePath, content, "utf8");
   return {
     path: filePath,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
-function combineCleanup(cleanups: Array<(() => void) | undefined>): (() => void) | undefined {
-  const activeCleanups = cleanups.filter((cleanup): cleanup is () => void => Boolean(cleanup));
+function combineCleanup(
+  cleanups: Array<(() => void | Promise<void>) | undefined>,
+): (() => Promise<void>) | undefined {
+  const activeCleanups = cleanups.filter((cleanup): cleanup is () => void | Promise<void> =>
+    Boolean(cleanup),
+  );
   if (activeCleanups.length === 0) {
     return undefined;
   }
-  return () => {
+  return async () => {
     for (const cleanup of activeCleanups) {
-      cleanup();
+      await cleanup();
     }
   };
+}
+
+async function cleanupPiSessionFiles(
+  mcpConfig: PiMcpConfigFile | null,
+  paseoExtension: PiTempFile | null,
+): Promise<void> {
+  await mcpConfig?.cleanup();
+  await paseoExtension?.cleanup();
 }
 
 function isPiMcpAdapterCommand(command: PiRpcSlashCommand): boolean {
@@ -1260,6 +1290,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.capabilities = options.capabilities;
     this.provider = PI_PROVIDER;
     this.currentModeId = options.currentModeId ?? null;
+    this.workspace = options.workspace;
     this.cleanup = options.cleanup;
     this.lastKnownThinkingOptionId =
       normalizePiThinkingOption(options.config.thinkingOptionId) ??
@@ -1274,6 +1305,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly runtimeSession: PiRuntimeSession;
   private readonly config: AgentSessionConfig;
+  private readonly workspace?: ProviderWorkspace;
   private readonly cleanup?: () => void;
   private readonly extensionTimeoutMs: number;
 
@@ -1298,7 +1330,10 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = convertPromptInput(prompt, {
+      model: this.state.model,
+      workspace: this.workspace,
+    });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     this.lastInterruptedTurnId = null;
@@ -1531,7 +1566,7 @@ export class PiRpcAgentSession implements AgentSession {
       await this.runtimeSession.close();
     } finally {
       this.rejectAllExtensionResults(new Error("Pi session closed"));
-      this.cleanup?.();
+      await this.cleanup?.();
     }
   }
 
@@ -2376,14 +2411,22 @@ export class PiRpcAgentClient implements AgentClient {
       ...this.runtimeSettings?.env,
       ...launchContext?.env,
     };
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
-    const paseoExtension = createPiPaseoExtensionFile(
+    const mcpConfig = await this.prepareMcpConfig(
+      config.cwd,
+      config.mcpServers,
+      mcpEnv,
+      launchContext?.workspace,
+    );
+    const paseoExtension = await createPiPaseoExtensionFile(
       composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      launchContext?.workspace,
     );
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
-        cwd: config.cwd,
+        cwd: launchContext?.workspace?.cwd ?? config.cwd,
+        workspace: launchContext?.workspace,
+        agentId: launchContext?.agentId,
         model: config.model,
         thinkingOptionId:
           normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
@@ -2393,8 +2436,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });
     } catch (error) {
-      mcpConfig?.cleanup();
-      paseoExtension?.cleanup();
+      await cleanupPiSessionFiles(mcpConfig, paseoExtension);
       throw error;
     }
     try {
@@ -2405,11 +2447,11 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: capabilitiesForSession(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        workspace: launchContext?.workspace,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
-      paseoExtension?.cleanup();
+      await cleanupPiSessionFiles(mcpConfig, paseoExtension);
       throw error;
     }
   }
@@ -2435,12 +2477,14 @@ export class PiRpcAgentClient implements AgentClient {
       resumeConfig.cwd,
       resumeConfig.config.mcpServers,
       mcpEnv,
+      launchContext?.workspace,
     );
-    const paseoExtension = createPiPaseoExtensionFile(
+    const paseoExtension = await createPiPaseoExtensionFile(
       composeSystemPromptParts(
         resumeConfig.config.systemPrompt,
         resumeConfig.config.daemonAppendSystemPrompt,
       ),
+      launchContext?.workspace,
     );
     let runtimeSession: PiRuntimeSession;
     try {
@@ -2454,8 +2498,7 @@ export class PiRpcAgentClient implements AgentClient {
         }),
       );
     } catch (error) {
-      mcpConfig?.cleanup();
-      paseoExtension?.cleanup();
+      await cleanupPiSessionFiles(mcpConfig, paseoExtension);
       throw error;
     }
     try {
@@ -2466,11 +2509,11 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: capabilitiesForSession(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        workspace: launchContext?.workspace,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
-      mcpConfig?.cleanup();
-      paseoExtension?.cleanup();
+      await cleanupPiSessionFiles(mcpConfig, paseoExtension);
       throw error;
     }
   }
@@ -2479,6 +2522,8 @@ export class PiRpcAgentClient implements AgentClient {
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
+    const workspace = providerWorkspaceFromCatalogOptions(options);
+    const cwd = workspace?.cwd ?? (options.scope === "global" ? homedir() : options.cwd);
     let runtimeSession: PiRuntimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     const closeSession = () => {
@@ -2491,7 +2536,8 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       await runProviderRefreshActivity(context, "runtime.start", async () => {
         runtimeSession = await this.runtime.startSession({
-          cwd: options.scope === "global" ? homedir() : options.cwd,
+          cwd,
+          workspace,
           signal: context?.signal,
         });
         if (context?.signal.aborted) await closeSession();
@@ -2519,6 +2565,7 @@ export class PiRpcAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    if (options?.workspace) return [];
     return await listPiImportableSessions({
       ...options,
       sessionDir: this.providerParams.sessionDir,
@@ -2527,7 +2574,9 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const importConfig = await readPiImportSessionConfig(input.providerHandleId);
+    const importConfig = context.launchContext?.workspace
+      ? {}
+      : await readPiImportSessionConfig(input.providerHandleId);
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,
@@ -2537,9 +2586,16 @@ export class PiRpcAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
     try {
       const launch = await this.resolvePiLaunch();
+      if (options) {
+        const workspace = providerWorkspaceFromCatalogOptions(options);
+        if (workspace) {
+          await workspace.resolveExecutable(launch.command);
+          return true;
+        }
+      }
       const availability = await checkProviderLaunchAvailable(launch);
       return availability.available;
     } catch {
@@ -2577,9 +2633,13 @@ export class PiRpcAgentClient implements AgentClient {
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
     env: Record<string, string> | undefined,
+    workspace?: ProviderWorkspace,
   ): Promise<PiMcpConfigFile | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
+    }
+    if (workspace) {
+      throw new Error("Pi MCP configuration is unavailable in a selected workspace runtime");
     }
     if (!(await this.detectMcpAdapter(cwd, env))) {
       return null;

@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+const OptionalNonEmptyWorkspaceIdSchema = z.string().min(1).optional();
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -1275,6 +1277,7 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
 export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
   type: z.literal("fetch_recent_provider_sessions_request"),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
   cwd: z.string().optional(),
   providers: z.array(z.string()).optional(),
   since: z.string().optional(),
@@ -1514,6 +1517,7 @@ export const ListAvailableProvidersRequestMessageSchema = z.object({
 export const GetProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("get_providers_snapshot_request"),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   // COMPAT(compactProviderSnapshots): old daemons ignore this field and return a full snapshot.
   ifNoneMatch: z.string().optional(),
   requestId: z.string(),
@@ -1522,6 +1526,7 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   providers: z.array(AgentProviderSchema).optional(),
   requestId: z.string(),
 });
@@ -1899,16 +1904,21 @@ const CheckoutDiffCompareSchema = z.object({
   ignoreWhitespace: z.boolean().optional(),
 });
 
+const OptionalWorkspaceGitIdSchema = z.string().trim().min(1).optional();
+const WorkspaceGitCwdSchema = z.string().trim().min(1);
+
 export const CheckoutStatusRequestSchema = z.object({
   type: z.literal("checkout_status_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const SubscribeCheckoutDiffRequestSchema = z.object({
   type: z.literal("subscribe_checkout_diff_request"),
   subscriptionId: z.string(),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   compare: CheckoutDiffCompareSchema,
   requestId: z.string(),
 });
@@ -1920,7 +1930,8 @@ export const UnsubscribeCheckoutDiffRequestSchema = z.object({
 
 export const CheckoutCommitRequestSchema = z.object({
   type: z.literal("checkout_commit_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   message: z.string().optional(),
   addAll: z.boolean().optional(),
   requestId: z.string(),
@@ -1928,7 +1939,8 @@ export const CheckoutCommitRequestSchema = z.object({
 
 export const CheckoutMergeRequestSchema = z.object({
   type: z.literal("checkout_merge_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   baseRef: z.string().optional(),
   strategy: z.enum(["merge", "squash"]).optional(),
   requireCleanTarget: z.boolean().optional(),
@@ -1937,7 +1949,8 @@ export const CheckoutMergeRequestSchema = z.object({
 
 export const CheckoutMergeFromBaseRequestSchema = z.object({
   type: z.literal("checkout_merge_from_base_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   baseRef: z.string().optional(),
   requireCleanTarget: z.boolean().optional(),
   requestId: z.string(),
@@ -1945,32 +1958,37 @@ export const CheckoutMergeFromBaseRequestSchema = z.object({
 
 export const CheckoutPullRequestSchema = z.object({
   type: z.literal("checkout_pull_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutPushRequestSchema = z.object({
   type: z.literal("checkout_push_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutRefreshRequestSchema = z.object({
   type: z.literal("checkout.refresh.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutDiscardChangesRequestSchema = z.object({
   type: z.literal("checkout.discard_changes.request"),
   cwd: z.string(),
+  workspaceId: OptionalWorkspaceGitIdSchema,
   paths: z.array(z.string()).min(1),
   requestId: z.string(),
 });
 
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   title: z.string().optional(),
   body: z.string().optional(),
   baseRef: z.string().optional(),
@@ -1979,14 +1997,16 @@ export const CheckoutPrCreateRequestSchema = z.object({
 
 export const CheckoutPrMergeRequestSchema = z.object({
   type: z.literal("checkout_pr_merge_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   mergeMethod: z.enum(["merge", "squash", "rebase"]),
   requestId: z.string(),
 });
 
 export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.forge.set_auto_merge.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   enabled: z.boolean(),
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   requestId: z.string(),
@@ -1996,7 +2016,8 @@ export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
 // all supported clients use checkout.forge.set_auto_merge.*.
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   enabled: z.boolean(),
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   requestId: z.string(),
@@ -2023,13 +2044,15 @@ const CheckoutCommitSchema = z.object({
 
 export const CheckoutCommitsListRequestSchema = z.object({
   type: z.literal("checkout.commits.list.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutCommitFileDiffRequestSchema = z.object({
   type: z.literal("checkout.commits.file_diff.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   sha: z.string(),
   path: z.string(),
   requestId: z.string(),
@@ -2038,7 +2061,8 @@ export const CheckoutCommitFileDiffRequestSchema = z.object({
 const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
 
 const CheckoutCheckDetailsRequestPayloadSchema = z.object({
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   // GitHub addresses check runs by owner/name. GitLab resolves the project from
   // cwd and omits these GitHub-only single-segment fields.
   repoOwner: GitHubRepoSegmentSchema.optional(),
@@ -2071,13 +2095,15 @@ export const CheckoutGithubGetCheckDetailsRequestSchema =
 
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const PullRequestTimelineRequestSchema = z.object({
   type: z.literal("pull_request_timeline_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   prNumber: z.number(),
   repoOwner: z.string(),
   repoName: z.string(),
@@ -2086,28 +2112,32 @@ export const PullRequestTimelineRequestSchema = z.object({
 
 export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branchName: z.string(),
   requestId: z.string(),
 });
 
 export const CheckoutSwitchBranchRequestSchema = z.object({
   type: z.literal("checkout_switch_branch_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branch: z.string(),
   requestId: z.string(),
 });
 
 export const CheckoutRenameBranchRequestSchema = z.object({
   type: z.literal("checkout.rename_branch.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branch: z.string(),
   requestId: z.string(),
 });
 
 export const StashSaveRequestSchema = z.object({
   type: z.literal("stash_save_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** Branch name to tag the stash with for later identification. */
   branch: z.string().optional(),
   requestId: z.string(),
@@ -2115,7 +2145,8 @@ export const StashSaveRequestSchema = z.object({
 
 export const StashPopRequestSchema = z.object({
   type: z.literal("stash_pop_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** Zero-based index from stash_list_response. */
   stashIndex: z.number().int().min(0),
   requestId: z.string(),
@@ -2123,7 +2154,8 @@ export const StashPopRequestSchema = z.object({
 
 export const StashListRequestSchema = z.object({
   type: z.literal("stash_list_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** If true, only return paseo-created stashes. Default true. */
   paseoOnly: z.boolean().optional(),
   requestId: z.string(),
@@ -2131,7 +2163,8 @@ export const StashListRequestSchema = z.object({
 
 export const BranchSuggestionsRequestSchema = z.object({
   type: z.literal("branch_suggestions_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string().optional(),
   limit: z.number().int().min(1).max(200).optional(),
   requestId: z.string(),
@@ -2170,7 +2203,8 @@ export const GitHubSearchKindSchema = ForgeSearchKindSchema;
 
 export const ForgeSearchRequestSchema = z.object({
   type: z.literal("forge.search.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string(),
   limit: z.number().int().min(1).max(50).optional(),
   kinds: z.array(ForgeSearchKindSchema).optional(),
@@ -2181,7 +2215,8 @@ export const ForgeSearchRequestSchema = z.object({
 // clients use forge.search.*.
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string(),
   limit: z.number().int().min(1).max(50).optional(),
   kinds: z.array(GitHubSearchKindSchema).optional(),
@@ -2215,7 +2250,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   // Explicit workspace record to archive. A directory can back multiple workspaces
   // (Model B), so resolving the target by cwd alone picks the wrong record. When
   // present the daemon archives this exact workspace; when absent it falls back to
-  // resolving by worktreePath, preferring the worktree-kind record on a cwd tie.
+  // resolving by worktreePath only when it identifies one workspace unambiguously.
   workspaceId: z.string().optional(),
   // COMPAT(worktreeArchiveScope): added in v0.1.97, drop the gate when floor >= v0.1.97.
   // Scope of the archive operation. "workspace" archives a single workspace record
@@ -2329,12 +2364,32 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceRuntimeCatalogEntrySchema = z.object({
+  runtimeId: z.string(),
+  builtin: z.boolean(),
+  label: z.string().optional(),
+  requiresGitProject: z.boolean(),
+});
+
+export const WorkspaceRuntimeListRequestSchema = z.object({
+  type: z.literal("workspace.runtime.list.request"),
+  requestId: z.string(),
+});
+
+export const WorkspaceRuntimeEnsureProbeRequestSchema = z.object({
+  type: z.literal("workspace.runtime.ensure_probe.request"),
+  projectId: z.string(),
+  runtimeId: z.string(),
+  requestId: z.string(),
+});
+
 // Create a new workspace record. Unlike open_project, this never deduplicates by
 // directory: it always produces a fresh workspace. The source discriminates
 // between an existing local directory and a newly created paseo worktree.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   requestId: z.string(),
+  runtimeId: z.string().optional(),
   // Optional user-set title applied to the created workspace.
   title: z.string().optional(),
   // Optional prompt context for workspace-level name/branch generation.
@@ -2436,6 +2491,7 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -2466,6 +2522,7 @@ export const FileSubscribeRequestSchema = z.object({
   path: z.string(),
   subscriptionId: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileUnsubscribeRequestSchema = z.object({
@@ -2482,6 +2539,7 @@ export const FileWriteRequestSchema = z.object({
   expectedModifiedAt: z.string(),
   expectedRevision: z.string().optional(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileEntryCreateRequestSchema = z.object({
@@ -2519,6 +2577,7 @@ export const ProjectIconRequestSchema = z.object({
   type: z.literal("project_icon_request"),
   cwd: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const ProjectIconGetRequestSchema = z.object({
@@ -2532,6 +2591,7 @@ export const FileDownloadTokenRequestSchema = z.object({
   cwd: z.string(),
   path: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileUploadRequestSchema = z.object({
@@ -2943,6 +3003,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectGithubCloneRequestSchema,
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
+  WorkspaceRuntimeListRequestSchema,
+  WorkspaceRuntimeEnsureProbeRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
@@ -3206,6 +3268,8 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(workspaceRuntimes): added in v0.3.2, remove gate after 2027-02-11.
+        workspaceRuntimes: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -3558,6 +3622,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
+    // Explicit capability for host editor/file-manager integrations. Runtime-local cwd is not enough.
+    // COMPAT(host-visible-path): added in v0.3.1; older daemons omit this capability.
+    hostVisiblePath: z.string().optional(),
     // COMPAT(worktreeSlug): added in v0.2.6, remove optional after 2027-01-31.
     // Present only for Paseo-owned worktrees; this is the basename of their root directory.
     worktreeSlug: z.string().optional(),
@@ -4235,6 +4302,24 @@ export const WorkspaceCreateResponseSchema = z.object({
   }),
 });
 
+export const WorkspaceRuntimeListResponseSchema = z.object({
+  type: z.literal("workspace.runtime.list.response"),
+  payload: z.object({
+    runtimes: z.array(WorkspaceRuntimeCatalogEntrySchema),
+    requestId: z.string(),
+  }),
+});
+
+export const WorkspaceRuntimeEnsureProbeResponseSchema = z.object({
+  type: z.literal("workspace.runtime.ensure_probe.response"),
+  payload: z.object({
+    workspaceId: z.string().nullable(),
+    status: z.enum(["ready", "error"]),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const WorkspaceClearAttentionResponseSchema = z.object({
   type: z.literal("workspace.clear_attention.response"),
   payload: z.object({
@@ -4496,6 +4581,7 @@ const AheadBehindSchema = z.object({
 });
 
 const CheckoutStatusCommonSchema = z.object({
+  workspaceId: OptionalNonEmptyWorkspaceIdSchema,
   cwd: z.string(),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
@@ -4697,6 +4783,7 @@ export const CheckoutStatusUpdateSchema = z.object({
 
 const CheckoutDiffSubscriptionPayloadSchema = z.object({
   subscriptionId: z.string(),
+  workspaceId: OptionalNonEmptyWorkspaceIdSchema,
   cwd: z.string(),
   files: z.array(ParsedDiffFileSchema),
   error: CheckoutErrorSchema.nullable(),
@@ -5466,6 +5553,7 @@ export const ProvidersSnapshotUpdateMessageSchema = z.object({
   type: z.literal("providers_snapshot_update"),
   payload: z.object({
     cwd: z.string().optional(),
+    workspaceId: z.string().optional(),
     entries: z.array(ProviderSnapshotEntrySchema),
     compactSnapshot: CompactProviderSnapshotSchema.optional(),
     snapshotHash: z.string().optional(),
@@ -5964,6 +6052,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
+  WorkspaceRuntimeListResponseSchema,
+  WorkspaceRuntimeEnsureProbeResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
@@ -6199,6 +6289,13 @@ export type WorkspaceRecoveryRestoreResponse = z.infer<
 >;
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
 export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
+export type WorkspaceRuntimeCatalogEntry = z.infer<typeof WorkspaceRuntimeCatalogEntrySchema>;
+export type WorkspaceRuntimeListPayload = z.infer<
+  typeof WorkspaceRuntimeListResponseSchema
+>["payload"];
+export type WorkspaceRuntimeEnsureProbePayload = z.infer<
+  typeof WorkspaceRuntimeEnsureProbeResponseSchema
+>["payload"];
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type ProjectRemoveResponsePayload = z.infer<typeof ProjectRemoveResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;

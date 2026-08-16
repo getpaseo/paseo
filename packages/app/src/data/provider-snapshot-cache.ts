@@ -56,11 +56,15 @@ export interface CachedProviderSnapshot extends StoredProviderSnapshot {
   entries: ProviderSnapshotEntry[];
 }
 
+export type ProviderSnapshotCacheScope =
+  | { type: "workspace"; workspaceId: string }
+  | { type: "legacy-cwd"; cwd: string | null };
+
 export interface ProviderSnapshotCache {
-  read(serverId: string, cwd: string | null): Promise<CachedProviderSnapshot | null>;
+  read(serverId: string, scope: ProviderSnapshotCacheScope): Promise<CachedProviderSnapshot | null>;
   write(input: {
     serverId: string;
-    cwd: string | null;
+    scope: ProviderSnapshotCacheScope;
     hash: string;
     generatedAt: string;
     compactSnapshot: CompactProviderSnapshot;
@@ -74,8 +78,8 @@ export class ProviderSnapshotCacheMissError extends Error {
   }
 }
 
-function cacheKey(serverId: string, cwd: string | null): string {
-  return `${CACHE_KEY_PREFIX}:${JSON.stringify([serverId, cwd])}`;
+function cacheKey(serverId: string, scope: ProviderSnapshotCacheScope): string {
+  return `${CACHE_KEY_PREFIX}:${JSON.stringify([serverId, scope])}`;
 }
 
 function storedBytes(key: string, value: string): number {
@@ -160,13 +164,13 @@ export function createProviderSnapshotCache(
 
   async function writeSnapshot(input: {
     serverId: string;
-    cwd: string | null;
+    scope: ProviderSnapshotCacheScope;
     hash: string;
     generatedAt: string;
     compactSnapshot: CompactProviderSnapshot;
   }): Promise<void> {
     const currentIndex = await ensureCacheIndex();
-    const key = cacheKey(input.serverId, input.cwd);
+    const key = cacheKey(input.serverId, input.scope);
     const stored = StoredProviderSnapshotSchema.safeParse({
       version: CACHE_VERSION,
       hash: input.hash,
@@ -206,11 +210,11 @@ export function createProviderSnapshotCache(
   }
 
   return {
-    async read(serverId, cwd) {
+    async read(serverId, scope) {
       try {
         return await runSerialized(async () => {
           const currentIndex = await ensureCacheIndex();
-          const key = cacheKey(serverId, cwd);
+          const key = cacheKey(serverId, scope);
           const value = await storage.getItem(key);
           if (value === null) return null;
           try {

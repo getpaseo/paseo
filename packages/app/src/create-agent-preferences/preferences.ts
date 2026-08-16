@@ -16,7 +16,7 @@ export interface FormPreferences {
   provider?: string;
   providerPreferences?: Record<string, ProviderPreferences>;
   favoriteModels?: Array<{ provider: string; modelId: string }>;
-  isolation?: "local" | "worktree";
+  runtimeId?: string;
   launchTarget?: LaunchTarget;
 }
 
@@ -46,7 +46,7 @@ export const FormPreferencesSchema = z.strictObject({
       }),
     )
     .optional(),
-  isolation: z.enum(["local", "worktree"]).optional(),
+  runtimeId: z.string().min(1).optional(),
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
   launchTarget: launchTargetSchema.optional(),
@@ -58,6 +58,9 @@ const LegacyProviderPreferencesSchema = z.strictObject({
   thinkingOptionId: z.string().optional(),
 });
 
+const CurrentStoredFormPreferencesSchema = FormPreferencesSchema.extend({
+  isolation: z.enum(["local", "worktree"]).optional(),
+});
 const LegacyFormPreferencesSchema = z
   .strictObject({
     workingDir: z.string().optional(),
@@ -86,7 +89,11 @@ const LegacyFormPreferencesSchema = z
   });
 
 export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
-  FormPreferencesSchema,
+  CurrentStoredFormPreferencesSchema.transform(({ isolation, ...preferences }) =>
+    preferences.runtimeId !== undefined || isolation === undefined
+      ? preferences
+      : { ...preferences, runtimeId: isolation },
+  ),
   LegacyFormPreferencesSchema,
 ]);
 

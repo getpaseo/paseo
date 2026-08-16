@@ -54,6 +54,11 @@ type RecoveryPlan =
       state: Extract<WorkspaceRecoveryState, { kind: "recoverable" }>;
       workspace: PersistedWorkspaceRecord;
       sourceRepoRoot: string;
+    }
+  | {
+      kind: "runtime-restore";
+      state: Extract<WorkspaceRecoveryState, { kind: "recoverable" }>;
+      workspace: PersistedWorkspaceRecord;
     };
 
 type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavailable" }>;
@@ -65,6 +70,7 @@ export function createWorkspaceRecoveryService(deps: {
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  inspectRuntime?: (workspaceId: string) => Promise<"missing" | "paused" | "ready" | "error">;
 }): WorkspaceRecoveryService {
   async function resolveRecovery(
     workspaceId: string,
@@ -94,6 +100,30 @@ export function createWorkspaceRecoveryService(deps: {
         workspaceId,
         reason: "project_not_found",
         message: "The project for this archived workspace no longer exists.",
+      };
+    }
+
+    if (workspace.runtime) {
+      if (!deps.inspectRuntime) {
+        return {
+          kind: "unavailable",
+          workspaceId,
+          reason: "workspace_directory_missing",
+          message: "The workspace runtime is not available on this host.",
+        };
+      }
+      const runtimeStatus = await deps.inspectRuntime(workspaceId);
+      if (runtimeStatus === "ready") {
+        return createRecoveryPlan({ action: "unarchive", workspace });
+      }
+      if (runtimeStatus === "paused") {
+        return createRecoveryPlan({ action: "runtime-restore", workspace });
+      }
+      return {
+        kind: "unavailable",
+        workspaceId,
+        reason: "workspace_directory_missing",
+        message: `The archived workspace runtime is ${runtimeStatus}.`,
       };
     }
 
@@ -150,7 +180,7 @@ export function createWorkspaceRecoveryService(deps: {
       await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
     }
     await deps.unarchiveWorkspace(resolved.workspace);
-    return { workspaceId, action: resolved.kind };
+    return { workspaceId, action: resolved.state.action };
   }
 
   async function recreateArchivedWorktree(
@@ -237,7 +267,8 @@ export function createWorkspaceRecoveryService(deps: {
 function createRecoveryPlan(
   input:
     | { action: "unarchive"; workspace: PersistedWorkspaceRecord }
-    | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string },
+    | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string }
+    | { action: "runtime-restore"; workspace: PersistedWorkspaceRecord },
 ): RecoveryPlan {
   const state = {
     kind: "recoverable" as const,
@@ -251,6 +282,13 @@ function createRecoveryPlan(
       state: { ...state, action: input.action },
       workspace: input.workspace,
       sourceRepoRoot: input.sourceRepoRoot,
+    };
+  }
+  if (input.action === "runtime-restore") {
+    return {
+      kind: input.action,
+      state: { ...state, action: "restore" },
+      workspace: input.workspace,
     };
   }
   return {

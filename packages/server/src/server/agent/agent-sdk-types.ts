@@ -6,8 +6,10 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { ProviderWorkspace } from "./providers/workspace/index.js";
 
 export type { AgentProviderNotice, AgentTaskItem };
+export type { ProviderWorkspace } from "./providers/workspace/index.js";
 
 export type AgentProvider = string;
 
@@ -522,6 +524,7 @@ export interface AgentSlashCommand {
 
 export interface ListImportableSessionsOptions {
   limit?: number;
+  workspace?: ProviderWorkspace;
   /**
    * Optional cwd hint. Providers that can cheaply pre-filter importable
    * sessions by working directory should do so before doing expensive work.
@@ -598,6 +601,7 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  workspace?: ProviderWorkspace;
 }
 
 export interface AgentCreateSessionOptions {
@@ -672,6 +676,8 @@ export type FetchCatalogOptions =
   | {
       scope: "workspace";
       cwd: string;
+      workspaceId?: string;
+      workspace?: ProviderWorkspace;
       force: boolean;
     };
 
@@ -737,18 +743,24 @@ export interface AgentClient {
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(signal?: AbortSignal): Promise<boolean>;
+  isAvailable(options?: FetchCatalogOptions, signal?: AbortSignal): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import type { CheckoutPipeline } from "@getpaseo/protocol/messages";
 import { useFetchQuery } from "@/data/query";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { prPanePipelineQueryKey } from "./query-keys";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 
 /** Poll cadence for an in-progress pipeline; finished pipelines are immutable. */
 const LIVE_PIPELINE_REFETCH_MS = 15_000;
@@ -10,7 +11,6 @@ const FINISHED_PIPELINE_STALE_MS = 24 * 60 * 60 * 1_000;
 
 export interface UseGitLabPipelineOptions {
   serverId: string;
-  cwd: string;
   pipelineId: number | null;
   /** MR iid, so the fetch resolves a fork/detached head pipeline correctly. */
   changeRequestNumber: number;
@@ -38,27 +38,32 @@ export interface UseGitLabPipelineResult {
  */
 export function useGitLabPipeline({
   serverId,
-  cwd,
   pipelineId,
   changeRequestNumber,
   enabled,
   live,
 }: UseGitLabPipelineOptions): UseGitLabPipelineResult {
-  const daemonClient = useHostRuntimeClient(serverId);
+  const workspaceGit = useRequiredWorkspaceGit();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const shouldFetch = enabled && !!daemonClient && isConnected && !!cwd && pipelineId !== null;
+  const shouldFetch = enabled && !!workspaceGit && isConnected && pipelineId !== null;
 
   const query = useFetchQuery<CheckoutPipeline | null>({
     queryKey: useMemo(
-      () => prPanePipelineQueryKey({ serverId, cwd, pipelineId, changeRequestNumber }),
-      [serverId, cwd, pipelineId, changeRequestNumber],
+      () =>
+        prPanePipelineQueryKey({
+          serverId,
+          queryIdentity: workspaceGit.queryIdentity,
+          cwd: workspaceGit.cwd,
+          pipelineId,
+          changeRequestNumber,
+        }),
+      [serverId, workspaceGit, pipelineId, changeRequestNumber],
     ),
     queryFn: async () => {
-      if (!daemonClient || pipelineId === null) {
+      if (!workspaceGit || pipelineId === null) {
         return null;
       }
-      const payload = await daemonClient.checkoutForgeGetCheckDetails({
-        cwd,
+      const payload = await workspaceGit.getForgeCheckDetails({
         checkRunId: pipelineId,
         changeRequestNumber,
       });

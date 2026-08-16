@@ -11,8 +11,15 @@ export function providersSnapshotQueryRoot(serverId: string | null) {
   return [PROVIDERS_SNAPSHOT_QUERY_ROOT, serverId] as const;
 }
 
-export function providersSnapshotQueryKey(serverId: string | null, cwd?: string | null) {
+export function providersSnapshotQueryKey(
+  serverId: string | null,
+  cwd?: string | null,
+  workspaceId?: string | null,
+) {
   const normalizedCwd = normalizeProvidersSnapshotCwd(cwd);
+  if (workspaceId) {
+    return [PROVIDERS_SNAPSHOT_QUERY_ROOT, serverId, "workspace", workspaceId] as const;
+  }
   return normalizedCwd
     ? ([PROVIDERS_SNAPSHOT_QUERY_ROOT, serverId, "cwd", normalizedCwd] as const)
     : ([PROVIDERS_SNAPSHOT_QUERY_ROOT, serverId, "home"] as const);
@@ -22,10 +29,12 @@ export function providersSnapshotRequestOptions(input: {
   cwd?: string | null;
   providers?: AgentProvider[];
   ifNoneMatch?: string;
+  workspaceId?: string | null;
 }) {
   const normalizedCwd = normalizeProvidersSnapshotCwd(input.cwd);
   return {
     ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     ...(input.providers ? { providers: input.providers } : {}),
     ...(input.ifNoneMatch ? { ifNoneMatch: input.ifNoneMatch } : {}),
   };

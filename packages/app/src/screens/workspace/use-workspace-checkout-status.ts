@@ -4,10 +4,10 @@ import { useTranslation } from "react-i18next";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
 import { fetchCheckoutStatus } from "@/git/checkout-status-cache";
 import { canCreateWorkspaceTerminal } from "@/screens/workspace/terminals/state";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import type { WorkspaceGitClient } from "@/git/workspace-git";
 
 interface UseWorkspaceCheckoutStatusInput {
-  client: ReturnType<typeof useHostRuntimeClient>;
+  workspaceGit: WorkspaceGitClient | null;
   isConnected: boolean;
   isRouteFocused: boolean;
   normalizedServerId: string;
@@ -21,26 +21,25 @@ export function useWorkspaceCheckoutStatus(input: UseWorkspaceCheckoutStatusInpu
     () =>
       canCreateWorkspaceTerminal({
         isRouteFocused: input.isRouteFocused,
-        client: input.client,
+        client: input.workspaceGit,
         isConnected: input.isConnected,
         workspaceDirectory: input.workspaceDirectory,
       }),
-    [input.client, input.isConnected, input.isRouteFocused, input.workspaceDirectory],
+    [input.isConnected, input.isRouteFocused, input.workspaceDirectory, input.workspaceGit],
   );
   const checkoutQuery = useQuery({
-    queryKey: checkoutStatusQueryKey(
-      input.normalizedServerId,
-      input.workspaceDirectory ?? `missing-workspace-directory:${input.normalizedWorkspaceId}`,
-    ),
+    queryKey: input.workspaceGit
+      ? checkoutStatusQueryKey(input.normalizedServerId, input.workspaceGit)
+      : (["checkoutStatus", input.normalizedServerId, "unbound"] as const),
     enabled: isCheckoutQueryEnabled,
     queryFn: async () => {
-      if (!input.client || !input.workspaceDirectory) {
+      if (!input.workspaceGit) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return await fetchCheckoutStatus({
-        client: input.client,
+        client: input.workspaceGit,
         serverId: input.normalizedServerId,
-        cwd: input.workspaceDirectory,
+        target: input.workspaceGit,
       });
     },
     staleTime: Infinity,

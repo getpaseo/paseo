@@ -66,6 +66,7 @@ export interface MergeCapability {
 
 export interface PaneChecksSlotContext {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   /** Change request (PR/MR) number, so a section can address its head pipeline. */
   changeRequestNumber: number;

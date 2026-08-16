@@ -87,6 +87,23 @@ const WorktreesConfigSchema = z
   })
   .strict();
 
+const CommandWorkspaceRuntimeConfigSchema = z
+  .object({
+    type: z.literal("command"),
+    label: z.string().min(1).optional(),
+    command: z
+      .array(z.string().min(1))
+      .min(1)
+      .transform((command) => command as [string, ...string[]]),
+    options: z.record(z.string(), z.json()).optional(),
+  })
+  .strict();
+
+const WorkspaceRuntimesConfigSchema = z.record(
+  z.string().min(1),
+  CommandWorkspaceRuntimeConfigSchema.nullable(),
+);
+
 const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, {
   message: "Expected a bcrypt hash",
 });
@@ -312,6 +329,7 @@ export const PersistedConfigSchema = z
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),
+    workspaceRuntimes: WorkspaceRuntimesConfigSchema.optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),

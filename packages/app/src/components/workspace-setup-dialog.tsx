@@ -31,6 +31,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { PreWorkspaceComposerGitOwner } from "@/git/workspace-git";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -429,27 +430,29 @@ export function WorkspaceSetupDialog() {
       testID="workspace-setup-dialog"
       desktopMaxWidth={640}
     >
-      <FileDropZone style={styles.section}>
-        <Composer
-          agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
-          serverId={serverId}
-          isPaneFocused={true}
-          onSubmitMessage={handleCreateChatAgent}
-          isSubmitLoading={pendingAction === "chat"}
-          blurOnSubmit={true}
-          value={chatDraft.text}
-          onChangeText={chatDraft.editText}
-          textReplacementKey={chatDraft.textReplacementKey}
-          attachments={chatDraft.attachments}
-          onChangeAttachments={chatDraft.setAttachments}
-          cwd={sourceDirectory}
-          clearDraft={chatDraft.clear}
-          autoFocus
-          commandDraftConfig={composerState?.commandDraftConfig}
-          agentControls={agentControlsWithDisabled}
-          inputWrapperStyle={styles.composerInputWrapper}
-        />
-      </FileDropZone>
+      <PreWorkspaceComposerGitOwner client={client} cwd={sourceDirectory}>
+        <FileDropZone style={styles.section}>
+          <Composer
+            agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
+            serverId={serverId}
+            isPaneFocused={true}
+            onSubmitMessage={handleCreateChatAgent}
+            isSubmitLoading={pendingAction === "chat"}
+            blurOnSubmit={true}
+            value={chatDraft.text}
+            onChangeText={chatDraft.editText}
+            textReplacementKey={chatDraft.textReplacementKey}
+            attachments={chatDraft.attachments}
+            onChangeAttachments={chatDraft.setAttachments}
+            cwd={sourceDirectory}
+            clearDraft={chatDraft.clear}
+            autoFocus
+            commandDraftConfig={composerState?.commandDraftConfig}
+            agentControls={agentControlsWithDisabled}
+            inputWrapperStyle={styles.composerInputWrapper}
+          />
+        </FileDropZone>
+      </PreWorkspaceComposerGitOwner>
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>

@@ -185,7 +185,7 @@ describe("fetchProvidersSnapshot", () => {
     expect(cache.writes).toEqual([
       {
         serverId,
-        cwd: "/repo-a",
+        scope: { type: "legacy-cwd", cwd: "/repo-a" },
         hash: "next-hash",
         generatedAt: "2026-01-02T00:00:00.000Z",
         compactSnapshot,
@@ -369,7 +369,7 @@ describe("applyProvidersSnapshotUpdate", () => {
     expect(cache.writes).toEqual([
       {
         serverId,
-        cwd: "/repo-a",
+        scope: { type: "legacy-cwd", cwd: "/repo-a" },
         hash: "push-hash",
         generatedAt: "2026-01-01T00:00:01.000Z",
         compactSnapshot,

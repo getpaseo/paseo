@@ -59,15 +59,16 @@ test.describe("Worktree restore", () => {
     });
     createdProjectIds.add(worktree.projectKey);
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
-    const agents = await Promise.all(
-      Array.from({ length: options.agentCount ?? 1 }, () =>
-        createIdleAgent(client, {
+    const agents = [];
+    for (let index = 0; index < (options.agentCount ?? 1); index += 1) {
+      agents.push(
+        await createIdleAgent(client, {
           cwd: worktree.workspaceDirectory,
           workspaceId: worktree.workspaceId,
           title: `${prefix}-${randomUUID().slice(0, 8)}`,
         }),
-      ),
-    );
+      );
+    }
     const agent = agents[0];
     if (!agent) {
       throw new Error("Expected at least one archived-worktree agent");
@@ -369,10 +370,7 @@ test.describe("Worktree restore", () => {
         timeout: 30_000,
       });
       await expect(
-        page.getByText(
-          "The archived workspace directory no longer exists and cannot be recreated.",
-          { exact: true },
-        ),
+        page.getByText("The archived workspace runtime is missing.", { exact: true }),
       ).toBeVisible();
       await expect(page.getByTestId("workspace-recovery-action")).toHaveCount(0);
     } finally {

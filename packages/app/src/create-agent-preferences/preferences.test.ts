@@ -61,12 +61,12 @@ describe("create agent preferences", () => {
 
     expect(await preferences.load()).toEqual({});
 
-    const successfulWrite = preferences.update({ isolation: "worktree" });
+    const successfulWrite = preferences.update({ runtimeId: "worktree" });
     await storage.nextWrite();
     storage.finishOldestWrite();
     await successfulWrite;
 
-    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ runtimeId: "worktree" });
   });
 
   it("flushes the full create-agent selection into provider preferences", async () => {
@@ -212,19 +212,32 @@ describe("create agent preferences", () => {
     expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({});
   });
 
-  it("persists and reloads the workspace isolation choice", async () => {
+  it("persists and reloads the workspace runtime choice", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);
 
-    const save = preferences.update({ isolation: "worktree" });
+    const save = preferences.update({ runtimeId: "fixture" });
     await storage.nextWrite();
     storage.finishOldestWrite();
     await save;
 
-    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ runtimeId: "fixture" });
     expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
-      isolation: "worktree",
+      runtimeId: "fixture",
     });
+  });
+
+  it("migrates the old isolation choice to a runtime id", () => {
+    expect(parseFormPreferences({ provider: "codex", isolation: "worktree" })).toEqual({
+      provider: "codex",
+      runtimeId: "worktree",
+    });
+  });
+
+  it("keeps an explicit runtime id when legacy isolation is also present", () => {
+    expect(
+      parseFormPreferences({ provider: "codex", runtimeId: "fixture", isolation: "worktree" }),
+    ).toEqual({ provider: "codex", runtimeId: "fixture" });
   });
 
   it("preserves legacy favourites across preference writes until host migration", async () => {
@@ -232,16 +245,16 @@ describe("create agent preferences", () => {
     const storage = new FakeCreateAgentPreferenceStorage({ stored: { favoriteModels } });
     const preferences = new CreateAgentPreferencesService(storage);
 
-    const save = preferences.update({ isolation: "worktree" });
+    const save = preferences.update({ runtimeId: "worktree" });
     await storage.nextWrite();
     storage.finishOldestWrite();
     await save;
 
-    expect(storage.savedPreferences()).toEqual({ favoriteModels, isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ favoriteModels, runtimeId: "worktree" });
   });
 
-  it("treats stored preferences without an isolation choice as undefined", () => {
-    expect(parseFormPreferences({ provider: "codex" }).isolation).toBeUndefined();
+  it("treats stored preferences without a runtime choice as undefined", () => {
+    expect(parseFormPreferences({ provider: "codex" }).runtimeId).toBeUndefined();
   });
 
   it("rejects an unknown isolation value as invalid stored preferences", () => {

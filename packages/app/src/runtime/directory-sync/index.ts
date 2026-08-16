@@ -331,7 +331,7 @@ export class DirectorySync {
         sort: [{ key: "activity_at", direction: "desc" }],
         ...(subscribe ? { subscribe: {} } : {}),
         page: cursor ? { limit: PAGE_LIMIT, cursor } : { limit: PAGE_LIMIT },
-        ...(supportsDirectorySync ? { sync: this.readCursors().workspaces ?? {} } : {}),
+        ...(supportsDirectorySync ? { sync: this.readUsableCursors().workspaces ?? {} } : {}),
       });
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
       if (payload.sync?.mode === "snapshot") transaction.snapshot.workspaces.clear();
@@ -387,7 +387,7 @@ export class DirectorySync {
         ...(subscribe ? { subscribe } : {}),
         page: cursor ? { limit, cursor } : { limit },
         ...(!input.filter && cursor === null && this.supportsDirectorySync()
-          ? { sync: this.readCursors().agents ?? {} }
+          ? { sync: this.readUsableCursors().agents ?? {} }
           : {}),
       });
       this.assertAgentTransactionCurrent(client, source, transaction);
@@ -459,7 +459,7 @@ export class DirectorySync {
     supportsDirectorySync: boolean,
   ): Promise<void> {
     const payload = await client.listProjects(
-      supportsDirectorySync ? { sync: this.readCursors().projects ?? {} } : undefined,
+      supportsDirectorySync ? { sync: this.readUsableCursors().projects ?? {} } : undefined,
     );
     this.assertWorkspaceTransactionCurrent(client, source, transaction);
     if (payload.sync?.mode === "snapshot") transaction.snapshot.projects.clear();
@@ -521,7 +521,7 @@ export class DirectorySync {
     });
   }
 
-  private readCursors(): DirectoryCursors {
+  private readPersistedCursors(): DirectoryCursors {
     const value = this.checkpoints?.readDirectoryCheckpoint(this.serverId);
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     const cursors: DirectoryCursors = {};
@@ -536,9 +536,23 @@ export class DirectorySync {
     return cursors;
   }
 
+  private readUsableCursors(): DirectoryCursors {
+    const persisted = this.readPersistedCursors();
+    const session = useSessionStore.getState().sessions[this.serverId];
+    return {
+      ...(session?.hasHydratedAgents && persisted.agents ? { agents: persisted.agents } : {}),
+      ...(session?.hasHydratedWorkspaces && persisted.projects
+        ? { projects: persisted.projects }
+        : {}),
+      ...(session?.hasHydratedWorkspaces && persisted.workspaces
+        ? { workspaces: persisted.workspaces }
+        : {}),
+    };
+  }
+
   private writeCursor(entity: keyof DirectoryCursors, cursor: DirectoryCursor): void {
     if (!this.checkpoints) return;
-    const current = this.readCursors();
+    const current = this.readPersistedCursors();
     const previous = current[entity];
     if (previous?.generation === cursor.generation && previous.afterSeq >= cursor.afterSeq) return;
     this.checkpoints.writeDirectoryCheckpoint(this.serverId, { ...current, [entity]: cursor });

@@ -12,25 +12,31 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 // agents under a workspace — those are keyed by `workspaceId`, and git facts
 // derive from a workspace's OWN cwd (id → cwd).
 //
-// Resolution: an exact directory match wins; otherwise the deepest enclosing
-// workspace directory, never the home directory; null when nothing encloses it.
+// Selected records participate only through their explicit host-visible-path
+// projection. Resolution fails closed on ambiguity. Otherwise an exact path wins,
+// then the deepest enclosing path, never the home directory.
 export function resolveWorkspaceIdForPath(
   cwd: string,
   workspaces: Iterable<PersistedWorkspaceRecord>,
 ): string | null {
   const workspaceRecords = Array.from(workspaces);
   const resolvedCwd = resolve(cwd);
-  const exactMatch = workspaceRecords.find((workspace) => resolve(workspace.cwd) === resolvedCwd);
-  if (exactMatch) {
-    return exactMatch.workspaceId;
+  const candidates = workspaceRecords.flatMap((workspace) => {
+    const visiblePath = workspace.runtime ? workspace.hostVisiblePath : workspace.cwd;
+    return visiblePath ? [{ workspace, visiblePath: resolve(visiblePath) }] : [];
+  });
+  const exactMatches = candidates.filter((candidate) => candidate.visiblePath === resolvedCwd);
+  if (exactMatches.length !== 0) {
+    return exactMatches.length === 1 ? (exactMatches[0]?.workspace.workspaceId ?? null) : null;
   }
 
   const userHome = resolve(homedir());
   let bestMatchLength = 0;
   let bestMatch: PersistedWorkspaceRecord | null = null;
-  for (const workspace of workspaceRecords) {
+  let bestMatchIsAmbiguous = false;
+  for (const { workspace, visiblePath } of candidates) {
     if (workspace.archivedAt) continue;
-    const workspaceCwd = resolve(workspace.cwd);
+    const workspaceCwd = visiblePath;
     if (workspaceCwd === userHome) continue;
     const prefix = workspaceCwd.endsWith(sep) ? workspaceCwd : `${workspaceCwd}${sep}`;
     if (!resolvedCwd.startsWith(prefix)) {
@@ -39,8 +45,11 @@ export function resolveWorkspaceIdForPath(
     if (workspaceCwd.length > bestMatchLength) {
       bestMatchLength = workspaceCwd.length;
       bestMatch = workspace;
+      bestMatchIsAmbiguous = false;
+    } else if (workspaceCwd.length === bestMatchLength) {
+      bestMatchIsAmbiguous = true;
     }
   }
 
-  return bestMatch?.workspaceId ?? null;
+  return bestMatchIsAmbiguous ? null : (bestMatch?.workspaceId ?? null);
 }

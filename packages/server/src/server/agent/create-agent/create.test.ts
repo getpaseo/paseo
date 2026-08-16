@@ -18,6 +18,7 @@ function createRealAgentManager(storage: AgentStorage): AgentManager {
   return new AgentManager({
     clients: createTestAgentClients(),
     registry: storage,
+    resolveProviderWorkspace: async () => null,
     logger,
   });
 }

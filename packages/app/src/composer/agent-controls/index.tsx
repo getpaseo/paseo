@@ -349,6 +349,7 @@ function pickDesktopModel({
 type AgentControlsSlice = {
   provider: string;
   cwd: string | null;
+  workspaceId: string | undefined;
   runtimeModelId: string | null;
   model: string | null | undefined;
   features: AgentFeature[] | undefined;
@@ -368,11 +369,22 @@ function selectAgentControlsSlice(
   return {
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
+    workspaceId: currentAgent.workspaceId,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
     features: currentAgent.features,
     thinkingOptionId: currentAgent.thinkingOptionId,
     lastUsage: currentAgent.lastUsage,
+  };
+}
+
+function providerSnapshotTarget(agent: AgentControlsSlice): {
+  cwd: string | null | undefined;
+  workspaceId: string | undefined;
+} {
+  return {
+    cwd: agent?.cwd,
+    workspaceId: agent?.workspaceId,
   };
 }
 
@@ -564,7 +576,7 @@ function ControlledAgentControls({
     }
   }, [updateDensityForWidth]);
 
-  const modelDisabled = disabled;
+  const modelDisabled = [disabled, isModelLoading].some(Boolean);
 
   const comboboxProviderOptions = useMemo<ComboboxOption[]>(
     () => toComboboxOptions(providerOptions),
@@ -1481,7 +1493,7 @@ export const AgentControls = memo(function AgentControls({
     isRefreshing: snapshotIsRefreshing,
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
-  } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
+  } = useProvidersSnapshot(serverId, providerSnapshotTarget(agent));
 
   const snapshotSelectedEntry = useMemo(
     () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),

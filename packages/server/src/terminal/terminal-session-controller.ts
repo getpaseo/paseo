@@ -88,6 +88,7 @@ export interface TerminalSessionControllerOptions {
 interface TerminalWorkspaceRef {
   workspaceId: string;
   cwd: string;
+  runtimeId?: string | null;
 }
 
 export interface TerminalSessionControllerMetrics {
@@ -584,7 +585,9 @@ export class TerminalSessionController {
   }
 
   private async resolveLegacyTerminalWorkspaceId(cwd: string): Promise<string | null> {
-    const workspaceRefs = await this.listTerminalWorkspaceRefs();
+    const workspaceRefs = (await this.listTerminalWorkspaceRefs()).filter(
+      (workspace) => workspace.runtimeId == null,
+    );
     if (workspaceRefs.length === 0) {
       return null;
     }

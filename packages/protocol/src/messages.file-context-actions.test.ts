@@ -149,6 +149,7 @@ describe("file context action messages", () => {
     const request = {
       type: "checkout.discard_changes.request",
       cwd: "/workspace",
+      workspaceId: "workspace-a",
       paths: ["src", "README.md"],
       requestId: "discard-1",
     };

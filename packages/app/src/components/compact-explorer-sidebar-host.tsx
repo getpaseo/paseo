@@ -12,6 +12,11 @@ import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-ch
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import { isWeb } from "@/constants/platform";
 import {
+  bindSelectedWorkspaceGit,
+  WorkspaceGitBoundary,
+  type WorkspaceGitClient,
+} from "@/git/workspace-git";
+import {
   resolveCompactExplorerSidebarHostModel,
   type CompactExplorerSidebarHostModel,
 } from "@/components/compact-explorer-sidebar-host-state";
@@ -23,6 +28,62 @@ interface CompactExplorerOpenGestureSurfaceProps {
 }
 
 const COMPACT_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
+
+function useCompactWorkspaceGit(
+  client: ReturnType<typeof useHostRuntimeClient>,
+  workspaceId: string | null | undefined,
+  cwd: string | null | undefined,
+): WorkspaceGitClient | null {
+  return useMemo(() => {
+    if (!client || !workspaceId || !cwd) {
+      return null;
+    }
+    return bindSelectedWorkspaceGit(client, { kind: "selected", workspaceId, cwd });
+  }, [client, cwd, workspaceId]);
+}
+
+function useCompactExplorerModel({
+  enabled,
+  isExplorerOpen,
+  selection,
+  workspace,
+  isGit,
+  showMobileAgent,
+}: {
+  enabled: boolean;
+  isExplorerOpen: boolean;
+  selection: Parameters<typeof resolveCompactExplorerSidebarHostModel>[0]["selection"];
+  workspace: Parameters<typeof resolveCompactExplorerSidebarHostModel>[0]["workspace"];
+  isGit: boolean;
+  showMobileAgent: () => void;
+}): CompactExplorerSidebarHostModel | null {
+  const retainedModelRef = useRef<CompactExplorerSidebarHostModel | null>(null);
+  const resolvedModel = useMemo(
+    () =>
+      resolveCompactExplorerSidebarHostModel({
+        previous: isExplorerOpen ? retainedModelRef.current : null,
+        selection,
+        workspace,
+        isGit,
+      }),
+    [isExplorerOpen, isGit, selection, workspace],
+  );
+  useEffect(() => {
+    if (!selection) {
+      retainedModelRef.current = null;
+      if (enabled && isExplorerOpen) showMobileAgent();
+      return;
+    }
+    if (!isExplorerOpen) {
+      retainedModelRef.current = null;
+      return;
+    }
+    if (resolvedModel) retainedModelRef.current = resolvedModel;
+  }, [enabled, isExplorerOpen, resolvedModel, selection, showMobileAgent]);
+
+  if (!selection) return null;
+  return resolvedModel ?? (isExplorerOpen ? retainedModelRef.current : null);
+}
 
 function CompactExplorerOpenGestureSurface({
   children,
@@ -41,9 +102,10 @@ function CompactExplorerOpenGestureSurface({
   );
 }
 
-function useActiveCompactExplorerSidebarModel(
-  enabled: boolean,
-): CompactExplorerSidebarHostModel | null {
+function useActiveCompactExplorerSidebarModel(enabled: boolean): {
+  model: CompactExplorerSidebarHostModel | null;
+  workspaceGit: WorkspaceGitClient | null;
+} {
   const selection = useActiveWorkspaceSelection();
   const workspace = useWorkspace(selection?.serverId ?? null, selection?.workspaceId ?? null);
   const isExplorerOpen = usePanelStore((state) =>
@@ -52,44 +114,32 @@ function useActiveCompactExplorerSidebarModel(
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const client = useHostRuntimeClient(selection?.serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(selection?.serverId ?? "");
-  const retainedModelRef = useRef<CompactExplorerSidebarHostModel | null>(null);
-  const { checkoutQuery } = useWorkspaceCheckoutStatus({
+  const workspaceGit = useCompactWorkspaceGit(
     client,
+    selection?.workspaceId,
+    workspace?.workspaceDirectory,
+  );
+  const { checkoutQuery } = useWorkspaceCheckoutStatus({
+    workspaceGit,
     isConnected,
     isRouteFocused: enabled && selection !== null,
     normalizedServerId: selection?.serverId ?? "",
     normalizedWorkspaceId: selection?.workspaceId ?? "",
     workspaceDirectory: workspace?.workspaceDirectory || null,
   });
-  const resolvedModel = useMemo(
-    () =>
-      resolveCompactExplorerSidebarHostModel({
-        previous: isExplorerOpen ? retainedModelRef.current : null,
-        selection,
-        workspace,
-        isGit: checkoutQuery.data?.isGit ?? false,
-      }),
-    [checkoutQuery.data?.isGit, isExplorerOpen, selection, workspace],
-  );
+  const model = useCompactExplorerModel({
+    enabled,
+    isExplorerOpen,
+    selection,
+    workspace,
+    isGit: checkoutQuery.data?.isGit ?? false,
+    showMobileAgent,
+  });
 
-  useEffect(() => {
-    if (!selection) {
-      retainedModelRef.current = null;
-      if (enabled && isExplorerOpen) {
-        showMobileAgent();
-      }
-      return;
-    }
-    if (!isExplorerOpen) {
-      retainedModelRef.current = null;
-      return;
-    }
-    if (resolvedModel) {
-      retainedModelRef.current = resolvedModel;
-    }
-  }, [enabled, isExplorerOpen, resolvedModel, selection, showMobileAgent]);
-
-  return selection ? (resolvedModel ?? (isExplorerOpen ? retainedModelRef.current : null)) : null;
+  return {
+    model,
+    workspaceGit,
+  };
 }
 
 interface CompactExplorerSidebarHostProps {
@@ -98,7 +148,7 @@ interface CompactExplorerSidebarHostProps {
 }
 
 export function CompactExplorerSidebarHost({ children, enabled }: CompactExplorerSidebarHostProps) {
-  const model = useActiveCompactExplorerSidebarModel(enabled);
+  const { model, workspaceGit } = useActiveCompactExplorerSidebarModel(enabled);
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
@@ -137,20 +187,22 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
   return (
     <>
       <CompactExplorerOpenGestureSurface
-        enabled={enabled && Boolean(model?.workspaceRoot)}
+        enabled={enabled && Boolean(model?.workspaceRoot) && Boolean(workspaceGit)}
         onOpenExplorer={handleOpenExplorer}
       >
         {children}
       </CompactExplorerOpenGestureSurface>
-      {enabled && model ? (
-        <CompactExplorerSidebar
-          serverId={model.serverId}
-          workspaceId={model.workspaceId}
-          workspaceRoot={model.workspaceRoot}
-          isGit={model.isGit}
-          onOpenFile={handleOpenFile}
-        />
-      ) : null}
+      <WorkspaceGitBoundary workspaceGit={workspaceGit}>
+        {enabled && model && workspaceGit ? (
+          <CompactExplorerSidebar
+            serverId={model.serverId}
+            workspaceId={model.workspaceId}
+            workspaceRoot={model.workspaceRoot}
+            isGit={model.isGit}
+            onOpenFile={handleOpenFile}
+          />
+        ) : null}
+      </WorkspaceGitBoundary>
     </>
   );
 }

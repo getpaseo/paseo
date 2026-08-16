@@ -26,12 +26,12 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
-  getWorktreeSetupCommands,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
   validateBranchSlug,
   type WorktreeConfig,
+  type WorktreeSetupExecution,
   type WorktreeSetupCommandResult,
   WorktreeSetupError,
 } from "../utils/worktree.js";
@@ -48,6 +48,7 @@ import {
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
 import type { WorkspaceSetupOperation } from "./workspace-setup-runtime.js";
+import type { BoundWorkspaceRuntime } from "./workspace-runtime/index.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -110,6 +111,7 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl?: string | null;
   onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
+  bindWorkspaceRuntime?: (workspaceId: string) => Promise<BoundWorkspaceRuntime>;
 }
 
 interface CreatePaseoWorktreeWorkflowDependencies extends CreatePaseoWorktreeInBackgroundDependencies {
@@ -650,6 +652,25 @@ export async function createPaseoWorktreeWorkflow(
       setupContinuation: {
         kind: "agent",
         startAfterAgentCreate: ({ agentId }) => {
+          if (dependencies.bindWorkspaceRuntime) {
+            void dependencies
+              .bindWorkspaceRuntime(workspace.workspaceId)
+              .then((runtime) =>
+                runWorktreeSetupCommands({
+                  worktreePath: workspace.cwd,
+                  branchName: workspace.branch ?? "",
+                  cleanupOnFailure: false,
+                  execution: createBoundSetupExecution(runtime),
+                }),
+              )
+              .catch((error) => {
+                dependencies.sessionLogger.error(
+                  { err: error, workspaceId: workspace.workspaceId, agentId },
+                  "Runtime-owned workspace setup failed",
+                );
+              });
+            return;
+          }
           void runAsyncWorktreeBootstrap({
             agentId,
             workspaceId: workspace.workspaceId,
@@ -736,37 +757,47 @@ export async function runWorktreeSetupInBackground(
 
       if (!options.shouldBootstrap) {
         emitSetupProgress("completed", null);
+      } else if (dependencies.bindWorkspaceRuntime) {
+        const runtime = await dependencies.bindWorkspaceRuntime(workspaceId);
+        const workspaceCwd = options.workspaceCwd ?? options.worktreePath;
+        setupResults = await runWorktreeSetupCommands({
+          worktreePath: workspaceCwd,
+          branchName: worktree.branchName,
+          cleanupOnFailure: false,
+          signal,
+          execution: createBoundSetupExecution(runtime),
+          onEvent: (event) => {
+            if (event.type === "command_started") setupStarted = true;
+            applyWorktreeSetupProgressEvent(progressAccumulator, event);
+            emitSetupProgress("running", null);
+          },
+        });
+        emitSetupProgress("completed", null);
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
-        const setupCommands = getWorktreeSetupCommands(workspaceCwd);
-        if (setupCommands.length === 0) {
-          setupStarted = true;
-          emitSetupProgress("completed", null);
-        } else {
-          const runtimeEnv = await resolveWorktreeRuntimeEnv({
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-            repoRootPath: options.repoRoot,
-          });
-          dependencies.terminalManager?.registerCwdEnv({
-            cwd: workspaceCwd,
-            env: runtimeEnv,
-          });
-          setupStarted = true;
-          setupResults = await runWorktreeSetupCommands({
-            worktreePath: workspaceCwd,
-            branchName: worktree.branchName,
-            cleanupOnFailure: false,
-            repoRootPath: options.repoRoot,
-            runtimeEnv,
-            signal,
-            onEvent: (event) => {
-              applyWorktreeSetupProgressEvent(progressAccumulator, event);
-              emitSetupProgress("running", null);
-            },
-          });
-          emitSetupProgress("completed", null);
-        }
+        const runtimeEnv = await resolveWorktreeRuntimeEnv({
+          worktreePath: worktree.worktreePath,
+          branchName: worktree.branchName,
+          repoRootPath: options.repoRoot,
+        });
+        dependencies.terminalManager?.registerCwdEnv({
+          cwd: workspaceCwd,
+          env: runtimeEnv,
+        });
+        setupResults = await runWorktreeSetupCommands({
+          worktreePath: workspaceCwd,
+          branchName: worktree.branchName,
+          cleanupOnFailure: false,
+          repoRootPath: options.repoRoot,
+          runtimeEnv,
+          signal,
+          onEvent: (event) => {
+            if (event.type === "command_started") setupStarted = true;
+            applyWorktreeSetupProgressEvent(progressAccumulator, event);
+            emitSetupProgress("running", null);
+          },
+        });
+        emitSetupProgress("completed", null);
       }
     } catch (error) {
       if (error instanceof WorktreeSetupError) {
@@ -795,4 +826,27 @@ export async function runWorktreeSetupInBackground(
   } finally {
     await dependencies.emitWorkspaceUpdateForWorkspaceId(options.workspaceId);
   }
+}
+
+function createBoundSetupExecution(runtime: BoundWorkspaceRuntime): WorktreeSetupExecution {
+  return {
+    async readFile(path) {
+      const stat = await runtime.files.stat(path);
+      if (stat.status === "missing") return null;
+      if (stat.status === "error") throw new Error(stat.error);
+      const file = await runtime.files.read(path);
+      const chunks: Buffer[] = [];
+      for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
+      return Buffer.concat(chunks);
+    },
+    resolveCommand: (command) => runtime.resolveCommand(command),
+    async run(input) {
+      return runtime.run({
+        cwd: ".",
+        argv: input.argv,
+        env: input.env,
+        purpose: { kind: "setup" },
+      });
+    },
+  };
 }

@@ -8,7 +8,7 @@ import {
 } from "./acquisition-cache";
 
 export interface AssistantImageFileAcquisitionPort {
-  readFile(cwd: string, path: string): Promise<FileReadResult>;
+  readFile(cwd: string, path: string, workspaceId?: string): Promise<FileReadResult>;
   persist(input: {
     id: string;
     bytes: Uint8Array;
@@ -26,6 +26,7 @@ export function createAssistantImageFileAcquisition(input: {
   port: AssistantImageFileAcquisitionPort | null;
   resolution: AssistantImageSourceResolution | null;
   serverId?: string;
+  workspaceId?: string;
   occurrenceKey: string;
   unavailableMessage: string;
 }): AssistantImageAcquisition | null {
@@ -36,6 +37,7 @@ export function createAssistantImageFileAcquisition(input: {
   return {
     key: createAssistantImageFileAcquisitionKey({
       serverId: input.serverId,
+      workspaceId: input.workspaceId,
       occurrenceKey: input.occurrenceKey,
       cwd: resolution.cwd,
       path: resolution.path,
@@ -44,13 +46,14 @@ export function createAssistantImageFileAcquisition(input: {
       if (!port) {
         throw new Error(input.unavailableMessage);
       }
-      const file = await port.readFile(resolution.cwd, resolution.path);
+      const file = await port.readFile(resolution.cwd, resolution.path, input.workspaceId);
       if (file.kind !== "image") {
         throw new Error(input.unavailableMessage);
       }
       return await port.persist({
         id: createAssistantImageFilePreviewAttachmentId({
           serverId: input.serverId,
+          workspaceId: input.workspaceId,
           occurrenceKey: input.occurrenceKey,
           mimeType: file.mime,
           path: file.path || resolution.path,

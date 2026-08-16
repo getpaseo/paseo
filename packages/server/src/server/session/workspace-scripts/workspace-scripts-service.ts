@@ -9,7 +9,7 @@ import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "../../service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type { ScriptHealthState } from "../../script-health-monitor.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitDirectory } from "../../workspace-git-directory.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -26,6 +26,10 @@ import {
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
+import type { WorkspaceRuntimeService } from "../../workspace-runtime/index.js";
+import { parsePaseoConfigContentsOrThrow } from "../../../utils/worktree.js";
+import { resolvePaseoConfigPath } from "../../../utils/paseo-config-file.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
@@ -42,7 +46,7 @@ export interface WorkspaceScriptsService {
   buildSnapshot(
     workspace: PersistedWorkspaceRecord,
     project?: PersistedProjectRecord | null,
-  ): WorkspaceScriptsPayload;
+  ): Promise<WorkspaceScriptsPayload>;
   emitStatusUpdate(workspaceId: string, workspaceDirectory: string): Promise<void>;
   list(workspaceId: string): Promise<WorkspaceScriptPayload[]>;
   launch(input: { workspaceId: string; scriptName: string }): Promise<WorkspaceScriptPayload>;
@@ -50,7 +54,42 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot">;
+export async function readWorkspacePaseoConfig(input: {
+  workspace: PersistedWorkspaceRecord;
+  workspaceRuntime?: WorkspaceRuntimeService | null;
+  logger: pino.Logger;
+}): Promise<PaseoConfig | null> {
+  const { workspace, workspaceRuntime, logger } = input;
+  if (!workspace.runtime) return readPaseoConfigForProjection(workspace.cwd, logger);
+  if (!workspaceRuntime) {
+    throw new Error(`Workspace runtime is not available: ${workspace.workspaceId}`);
+  }
+  const files = workspaceRuntime.files(workspace.workspaceId);
+  const version = await files.stat("paseo.json");
+  if (version.status === "missing") return null;
+  if (version.status === "error") {
+    logger.warn(
+      { workspaceId: workspace.workspaceId, error: version.error },
+      "Failed to read runtime paseo.json; treating workspace as having no scripts",
+    );
+    return null;
+  }
+  try {
+    const file = await files.read("paseo.json");
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
+    return parsePaseoConfigContentsOrThrow(
+      Buffer.concat(chunks),
+      resolvePaseoConfigPath(workspace.cwd),
+    );
+  } catch (error) {
+    logger.warn(
+      { workspaceId: workspace.workspaceId, err: error },
+      "Failed to parse runtime paseo.json; treating workspace as having no scripts",
+    );
+    return null;
+  }
+}
 
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
@@ -58,7 +97,8 @@ export function createWorkspaceScriptsService(deps: {
   terminalManager: TerminalManager | null;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   projectRegistry: Pick<ProjectRegistry, "get">;
-  workspaceGitService: WorkspaceScriptsGitSource;
+  workspaceGitDirectory: Pick<WorkspaceGitDirectory, "bindRecord">;
+  workspaceRuntime?: WorkspaceRuntimeService;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl: string | null;
@@ -74,7 +114,8 @@ export function createWorkspaceScriptsService(deps: {
     terminalManager,
     workspaceRegistry,
     projectRegistry,
-    workspaceGitService,
+    workspaceGitDirectory,
+    workspaceRuntime,
     getDaemonTcpPort,
     getDaemonTcpHost,
     serviceProxyPublicBaseUrl,
@@ -89,7 +130,7 @@ export function createWorkspaceScriptsService(deps: {
     workspace: PersistedWorkspaceRecord,
     project: { projectId: string; rootPath: string } | null,
   ) {
-    const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = workspaceGitDirectory.bindRecord(workspace).peekSnapshot();
     const currentBranch = snapshot?.git.currentBranch ?? workspace.branch ?? null;
     if (project) {
       return {
@@ -106,17 +147,17 @@ export function createWorkspaceScriptsService(deps: {
     };
   }
 
-  function buildSnapshot(
+  async function buildSnapshot(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord | null = null,
-  ): WorkspaceScriptsPayload {
+  ): Promise<WorkspaceScriptsPayload> {
     if (!serviceProxy || !scriptRuntimeStore) {
       return [];
     }
     return buildWorkspaceScriptPayloads({
       workspaceId: workspace.workspaceId,
       workspaceDirectory: workspace.cwd,
-      paseoConfig: readPaseoConfigForProjection(workspace.cwd, logger),
+      paseoConfig: await readWorkspacePaseoConfig({ workspace, workspaceRuntime, logger }),
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
@@ -133,7 +174,7 @@ export function createWorkspaceScriptsService(deps: {
       const project = await projectRegistry.get(workspace.projectId);
       emit({
         type: "script_status_update",
-        payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
+        payload: { workspaceId, scripts: await buildSnapshot(workspace, project) },
       });
     } catch (error) {
       logger.warn({ err: error, workspaceId }, "Failed to project workspace script status");
@@ -163,7 +204,7 @@ export function createWorkspaceScriptsService(deps: {
     requireAvailable();
     const workspace = await getWorkspace(workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
-    return buildSnapshot(workspace, project);
+    return await buildSnapshot(workspace, project);
   }
 
   async function launchProcess(input: { workspaceId: string; scriptName: string }) {
@@ -171,8 +212,21 @@ export function createWorkspaceScriptsService(deps: {
     const workspace = await getWorkspace(input.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
     const gitMetadata = resolveGitMetadata(workspace, project);
+    const paseoConfig = workspace.runtime
+      ? await readWorkspacePaseoConfig({ workspace, workspaceRuntime, logger })
+      : undefined;
+    if (workspace.runtime && !paseoConfig) {
+      throw new Error("Workspace does not contain a valid paseo.json");
+    }
     const result = await spawnWorkspaceScript({
       repoRoot: workspace.cwd,
+      ...(workspace.runtime
+        ? {
+            runtimeCwd: workspace.cwd,
+            paseoConfig: paseoConfig!,
+            runtime: await workspaceRuntime!.bind(workspace.workspaceId),
+          }
+        : {}),
       workspaceId: workspace.workspaceId,
       projectSlug: gitMetadata.projectSlug,
       branchName: gitMetadata.currentBranch,
@@ -197,13 +251,13 @@ export function createWorkspaceScriptsService(deps: {
     scriptName: string;
   }): Promise<WorkspaceScriptPayload> {
     const { workspace, project } = await launchProcess(input);
-    const script = buildSnapshot(workspace, project).find(
+    const script = (await buildSnapshot(workspace, project)).find(
       (entry) => entry.scriptName === input.scriptName,
     );
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }
-    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    await emitStatusUpdate(workspace.workspaceId, workspace.cwd);
     return script;
   }
 
@@ -225,20 +279,20 @@ export function createWorkspaceScriptsService(deps: {
     // The launcher's terminal exit listener owns route removal and runtime state updates.
     await available.terminalManager.killTerminalAndWait(runtime.terminalId);
 
-    const script = buildSnapshot(workspace, project).find(
+    const script = (await buildSnapshot(workspace, project)).find(
       (entry) => entry.scriptName === input.scriptName,
     );
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }
-    void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+    await emitStatusUpdate(workspace.workspaceId, workspace.cwd);
     return script;
   }
 
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {
     try {
       const { workspace, terminalId } = await launchProcess(request);
-      void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
+      await emitStatusUpdate(workspace.workspaceId, workspace.cwd);
       emit({
         type: "start_workspace_script_response",
         payload: {

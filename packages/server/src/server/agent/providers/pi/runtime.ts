@@ -8,6 +8,7 @@ import type {
   PiSessionStats,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProviderWorkspace } from "../../agent-sdk-types.js";
 
 export interface PiRuntimeLaunch {
   cwd: string;
@@ -26,6 +27,8 @@ export interface PiRuntimeLaunch {
 
 export interface PiStartSessionInput {
   cwd: string;
+  workspace?: ProviderWorkspace;
+  agentId?: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";

@@ -1,5 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { constants, existsSync, unlinkSync } from "fs";
 import { open } from "fs/promises";
 import { randomUUID } from "node:crypto";
@@ -137,13 +139,25 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import {
+  bindProviderWorkspace,
+  resolveProviderPlacementPolicy,
+} from "./agent/providers/workspace/index.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
+  resolveSelectedWorkspaceRuntimeId,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
+import {
+  createWorkspaceRuntimeService,
+  type WorkspaceRuntimeConfig,
+  type WorkspaceRuntimeRecordStore,
+  type WorkspaceRuntimeService,
+} from "./workspace-runtime/index.js";
+import { createProviderProbeService, type ProviderProbeService } from "./provider-probe/index.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
@@ -151,6 +165,7 @@ import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import { createWorkspaceGitDirectory } from "./workspace-git-directory.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
   archiveByScope,
@@ -185,7 +200,10 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
-import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
+import {
+  createWorkspaceScriptsService,
+  readWorkspacePaseoConfig,
+} from "./session/workspace-scripts/workspace-scripts-service.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
@@ -389,6 +407,8 @@ export interface PaseoDaemonConfig {
   daemonVersion?: string;
   desktopManaged?: boolean;
   worktreesRoot?: string;
+  workspaceRuntimes?: Readonly<Record<string, WorkspaceRuntimeConfig>>;
+  workspaceRuntimeCommandResolutionBase?: string;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -631,8 +651,30 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+  let workspaceRuntime: WorkspaceRuntimeService | null = null;
+  let providerProbe: ProviderProbeService | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    launchPty: async (input) => {
+      const workspace = await workspaceRegistry?.get(input.workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${input.workspaceId}`);
+      if (!resolveSelectedWorkspaceRuntimeId(workspace)) return null;
+      if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+      const relativeCwd = path.relative(workspace.cwd, input.cwd);
+      if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+        throw new Error(`Terminal cwd escapes workspace: ${input.cwd}`);
+      }
+      return workspaceRuntime.openTerminal({
+        workspaceId: input.workspaceId,
+        cwd: relativeCwd || undefined,
+        argv: input.argv,
+        env: input.env,
+        purpose: { kind: "terminal", terminalId: input.terminalId },
+        rows: input.rows,
+        cols: input.cols,
+        term: input.term,
+      });
+    },
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -665,8 +707,14 @@ export async function createPaseoDaemon(
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-      resolveWorkspaceDirectory: async (workspaceId) =>
-        (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
+      resolveWorkspaceProjection: async (workspaceId) => {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        if (!workspace) return null;
+        return {
+          workspaceDirectory: workspace.cwd,
+          paseoConfig: await readWorkspacePaseoConfig({ workspace, workspaceRuntime, logger }),
+        };
+      },
       logger,
       serviceProxyPublicBaseUrl,
     }),
@@ -791,6 +839,27 @@ export async function createPaseoDaemon(
 
     let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
     try {
+      if (entry.open) {
+        const opened = await entry.open();
+        res.setHeader("Content-Type", entry.mimeType);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${entry.fileName.replace(/["\r\n]/g, "_")}"`,
+        );
+        res.setHeader("Content-Length", opened.size.toString());
+        const stream = Readable.from(opened.chunks);
+        try {
+          await pipeline(stream, res);
+        } catch (err) {
+          logger.error({ err }, "Failed to stream runtime download");
+          if (!res.headersSent) res.status(500).json({ error: "Failed to read file" });
+          else res.destroy(err instanceof Error ? err : new Error(String(err)));
+        } finally {
+          await opened.chunks.cancel();
+        }
+        return;
+      }
+      if (!entry.absolutePath) throw new Error("Download source is unavailable");
       fileHandle = await open(entry.absolutePath, DOWNLOAD_OPEN_FLAGS);
       const fileStats = await fileHandle.stat();
       if (!fileStats.isFile()) {
@@ -849,14 +918,173 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  const providerWorkspaceBindings = new Map<string, ReturnType<typeof bindProviderWorkspace>>();
+  const bindWorkspaceProviderCapability = async (workspaceId: string, _runtimeId: string) => {
+    if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+    const cached = providerWorkspaceBindings.get(workspaceId);
+    if (cached) return cached;
+    const runtime = await workspaceRuntime.bind(workspaceId);
+    const workspace = bindProviderWorkspace({
+      runtime,
+      cwd: ".",
+      policy: resolveProviderPlacementPolicy({
+        capability: runtime.provider,
+        hostEnvironment: process.env,
+      }),
+    });
+    providerWorkspaceBindings.set(workspaceId, workspace);
+    return workspace;
+  };
+  providerProbe = createProviderProbeService({
+    filePath: path.join(config.paseoHome, "projects", "provider-probes.json"),
+    logger,
+    projects: projectRegistry,
+    runtime: {
+      create: (input) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.create(input);
+      },
+      inspect: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.inspect(workspaceId);
+      },
+      resume: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.resume(workspaceId);
+      },
+      pause: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.pause(workspaceId);
+      },
+      destroy: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.destroy(workspaceId);
+      },
+      listRuntimes: () => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.listRuntimes();
+      },
+    },
+    runtimeConfiguration: config.workspaceRuntimes,
+    bindWorkspaceProviderCapability,
+  });
+  const workspaceRecords: WorkspaceRuntimeRecordStore = {
+    resolveRuntimeId: async (workspaceId) =>
+      (await providerProbe?.records.resolveRuntimeId(workspaceId)) ??
+      resolveRegistryRuntimeId(workspaceId),
+    persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+      if (await providerProbe?.records.resolveRuntimeId(workspaceId)) {
+        await providerProbe.records.persistRuntimeId(workspaceId, runtimeId, placement);
+        return;
+      }
+      await persistRegistryRuntimeId(workspaceId, runtimeId, placement);
+    },
+    archiveWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "archiveWorkspaceRecord"),
+    restoreWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "restoreWorkspaceRecord"),
+    beginWorkspaceDeletion: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "beginWorkspaceDeletion"),
+    removeWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "removeWorkspaceRecord"),
+    listRuntimeRecords: async () => [
+      ...((await providerProbe?.records.listRuntimeRecords?.()) ?? []),
+      ...((await workspaceRegistry?.list()) ?? []).flatMap((workspace) =>
+        workspace.runtime
+          ? [
+              {
+                workspaceId: workspace.workspaceId,
+                runtimeId: workspace.runtime.runtimeId,
+                archived: workspace.archivedAt !== null,
+                deleting: workspace.deletionRequestedAt !== null,
+              },
+            ]
+          : [],
+      ),
+    ],
+  };
+  workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    externalRuntimes: config.workspaceRuntimes,
+    commandResolutionBase: config.workspaceRuntimeCommandResolutionBase,
+    ...workspaceRecords,
+  });
+  const detachProviderProbeInvalidation = projectRegistry.subscribeToMutations(async (mutation) => {
+    if (mutation.kind === "archive" || mutation.kind === "remove") {
+      await providerProbe?.invalidateProject(mutation.projectId);
+    }
+  });
+
+  async function resolveRegistryRuntimeId(workspaceId: string): Promise<string | null> {
+    const workspace = await workspaceRegistry?.get(workspaceId);
+    return workspace ? resolveSelectedWorkspaceRuntimeId(workspace) : null;
+  }
+
+  async function persistRegistryRuntimeId(
+    workspaceId: string,
+    runtimeId: string,
+    placement: { cwd: string; hostVisiblePath?: string },
+  ): Promise<void> {
+    const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cwd: placement.cwd,
+      hostVisiblePath: placement.hostVisiblePath ?? null,
+      runtime: { runtimeId },
+    }));
+    if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+  }
+
+  async function routeRuntimeRecord(
+    workspaceId: string,
+    operation:
+      | "archiveWorkspaceRecord"
+      | "restoreWorkspaceRecord"
+      | "beginWorkspaceDeletion"
+      | "removeWorkspaceRecord",
+  ): Promise<void> {
+    const probeRecords = providerProbe?.records;
+    if (probeRecords && (await probeRecords.resolveRuntimeId(workspaceId))) {
+      await probeRecords[operation]?.(workspaceId);
+      if (operation === "removeWorkspaceRecord") {
+        providerWorkspaceBindings.delete(workspaceId);
+      }
+      return;
+    }
+    if (operation === "archiveWorkspaceRecord") {
+      await workspaceRegistry?.archive(workspaceId, new Date().toISOString());
+      return;
+    }
+    if (operation === "restoreWorkspaceRecord") {
+      const restoredAt = new Date().toISOString();
+      const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
+        ...workspace,
+        archivedAt: null,
+        updatedAt: restoredAt,
+      }));
+      if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+      return;
+    }
+    if (operation === "beginWorkspaceDeletion") {
+      await workspaceRegistry?.requestDeletion(workspaceId, new Date().toISOString());
+      return;
+    }
+    await workspaceRegistry?.remove(workspaceId);
+    providerWorkspaceBindings.delete(workspaceId);
+  }
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    workspaceRuntime,
     deps: {
       forgeOverrides: { github },
     },
+  });
+  const workspaceGitDirectory = createWorkspaceGitDirectory({
+    workspaceRegistry,
+    workspaceGitService,
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
     serverId,
@@ -866,6 +1094,15 @@ export async function createPaseoDaemon(
     logger,
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
+  const resolveProviderWorkspace = async (workspaceId: string) => {
+    const probeWorkspace = await providerProbe?.resolveProviderWorkspace(workspaceId);
+    if (probeWorkspace) return probeWorkspace;
+    const workspace = await workspaceRegistry?.get(workspaceId);
+    if (!workspace) return undefined;
+    const runtimeId = resolveSelectedWorkspaceRuntimeId(workspace);
+    if (!runtimeId) return null;
+    return bindWorkspaceProviderCapability(workspaceId, runtimeId);
+  };
   const providerSnapshotManager = new ProviderSnapshotManager({
     logger: providerSnapshotLogger,
     refreshTimeoutMs: config.providerCatalogRefreshTimeoutMs,
@@ -875,17 +1112,18 @@ export async function createPaseoDaemon(
     managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
+    resolveProviderWorkspace,
   });
   daemonConfigStore.onFieldChange("catalogRefreshTimeoutMs", (value) => {
     providerSnapshotManager.setRefreshTimeoutMs(typeof value === "number" ? value : undefined);
   });
   daemonConfigStore.onFieldChange("git.maxProcessesPerSecond", () => {
     const git = daemonConfigStore.get().git;
-    if (git) configureGitProcessPolicy(git);
+    if (git) configureGitProcessPolicy(resolveGitProcessPolicy({ env: {}, persisted: git }));
   });
   daemonConfigStore.onFieldChange("git.maxProcessConcurrency", () => {
     const git = daemonConfigStore.get().git;
-    if (git) configureGitProcessPolicy(git);
+    if (git) configureGitProcessPolicy(resolveGitProcessPolicy({ env: {}, persisted: git }));
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
@@ -897,6 +1135,7 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    resolveProviderWorkspace,
     logger,
   });
 
@@ -907,6 +1146,19 @@ export async function createPaseoDaemon(
   );
   await agentStorage.initialize();
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
+  await Promise.all([projectRegistry.initialize(), workspaceRegistry.initialize()]);
+  try {
+    await providerProbe.reconcile();
+    logger.info({ elapsed: elapsed() }, "Provider probes reconciled");
+  } catch (error) {
+    logger.warn({ err: error }, "Provider probe reconciliation failed");
+  }
+  try {
+    await workspaceRuntime.reconcile();
+    logger.info({ elapsed: elapsed() }, "Workspace runtimes reconciled");
+  } catch (error) {
+    logger.warn({ err: error }, "Workspace runtime reconciliation failed");
+  }
   await bootstrapWorkspaceRegistries({
     serverId,
     paseoHome: config.paseoHome,
@@ -948,8 +1200,23 @@ export async function createPaseoDaemon(
   });
   const archiveWorkspaceRecordExternal = async (
     workspaceId: string,
-    context?: WorkspaceArchiveContext,
+    context?: WorkspaceArchiveContext & { releaseBacking?: boolean },
   ) => {
+    const workspace = await workspaceRegistry.get(workspaceId);
+    if (workspace?.runtime) {
+      if (!workspaceRuntime) throw new Error(`Workspace runtime is not available: ${workspaceId}`);
+      await workspaceRuntime.archive(workspaceId, {
+        releaseBacking: context?.releaseBacking,
+      });
+      if (context?.autoArchivedChangeRequestUrl) {
+        await workspaceRegistry.update(workspaceId, (archived) => ({
+          ...archived,
+          autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl ?? null,
+        }));
+      }
+      teardownArchivedWorkspaceRuntime(workspaceId);
+      return;
+    }
     const existingWorkspace = await archivePersistedWorkspaceRecord({
       workspaceId,
       workspaceRegistry,
@@ -991,8 +1258,10 @@ export async function createPaseoDaemon(
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        runtimeId: workspace.runtime?.runtimeId ?? null,
       }));
   };
+  const listWorkspaceRecordsExternal = () => workspaceRegistry.list();
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
     const workspaceIdList = Array.from(workspaceIds);
     for (const session of wsServer?.listTrustedSessions() ?? []) {
@@ -1057,6 +1326,7 @@ export async function createPaseoDaemon(
     logger,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    listWorkspaceRecords: listWorkspaceRecordsExternal,
     getAutoArchivedChangeRequestUrl: async (workspaceId) =>
       (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
@@ -1083,6 +1353,8 @@ export async function createPaseoDaemon(
               : {}),
             workspaceGitService,
             workspaceProvisioning,
+            workspaceRuntime,
+            workspaceRegistry,
           });
         },
         warmWorkspaceGitData: async (workspace) => {
@@ -1110,6 +1382,7 @@ export async function createPaseoDaemon(
         getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
         serviceProxyPublicBaseUrl,
         onScriptsChanged: null,
+        bindWorkspaceRuntime: (workspaceId) => workspaceRuntime.bind(workspaceId),
       },
       input,
       serviceOptions,
@@ -1140,6 +1413,7 @@ export async function createPaseoDaemon(
         agentStorage,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
+        listWorkspaceRecords: listWorkspaceRecordsExternal,
         getWorkspace: (workspaceIdToGet) => workspaceRegistry.get(workspaceIdToGet),
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
@@ -1164,7 +1438,9 @@ export async function createPaseoDaemon(
       archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    listWorkspaceRecords: listWorkspaceRecordsExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+    destroyWorkspace: (workspaceId) => workspaceRuntime.destroy(workspaceId),
     emit: emitExternalSessionMessage,
     emitAgentRemove: async () => undefined,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
@@ -1239,6 +1515,7 @@ export async function createPaseoDaemon(
         agentStorage,
         findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
         listActiveWorkspaces: listActiveWorkspacesExternal,
+        listWorkspaceRecords: listWorkspaceRecordsExternal,
         getWorkspace: (workspaceIdToGet) => workspaceRegistry.get(workspaceIdToGet),
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
@@ -1258,6 +1535,7 @@ export async function createPaseoDaemon(
       {
         scope: { kind: "workspace", workspaceId },
         requestId: "schedule-run-finish",
+        releaseBacking: true,
       },
     );
   };
@@ -1305,6 +1583,7 @@ export async function createPaseoDaemon(
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
+    listWorkspaceRecords: listWorkspaceRecordsExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
     workspaceRegistry,
@@ -1324,7 +1603,8 @@ export async function createPaseoDaemon(
       terminalManager,
       workspaceRegistry,
       projectRegistry,
-      workspaceGitService,
+      workspaceGitDirectory,
+      workspaceRuntime,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
       serviceProxyPublicBaseUrl,
@@ -1630,6 +1910,8 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              workspaceRuntime,
+              providerProbe,
               pluginRuntime,
             );
             relayRuntime = createRelayRuntime({
@@ -1688,6 +1970,7 @@ export async function createPaseoDaemon(
     await pluginRuntime.stopAllPlugins();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
+    detachProviderProbeInvalidation();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
@@ -1697,13 +1980,17 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
-    terminalManager.killAll();
+    await providerProbe?.close().catch((error) => {
+      logger.warn({ err: error }, "Failed to pause provider probes during shutdown");
+    });
+    await terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();
     }
+    await workspaceRuntime.close();
     await serviceProxy.stopStandalone();
     // Force-drop remaining sockets so httpServer.close() resolves promptly.
     // We've already closed wsServer (which sent ws-layer close frames) and

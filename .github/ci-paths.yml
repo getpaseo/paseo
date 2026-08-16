@@ -35,6 +35,9 @@ hub:
 
 server:
   - "packages/server/**"
+  - "runtimes/fixture/**"
+  - "packages/workspace-helper/**"
+  - "packages/workspace-runtime-contract/**"
   - "packages/app/e2e/support/fixtures/recording.*"
 
 desktop:

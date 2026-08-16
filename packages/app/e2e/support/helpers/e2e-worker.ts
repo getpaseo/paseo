@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./paseo-home-fork";
@@ -139,6 +140,74 @@ async function applyMetadataFork(targetHome: string, providerIds: string[]): Pro
   );
 }
 
+async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> {
+  if (process.env.E2E_DESKTOP_RUNTIME !== "1") return;
+  const configPath = path.join(paseoHome, "config.json");
+  const existing = existsSync(configPath) ? JSON.parse(await readFile(configPath, "utf8")) : {};
+  const stateDirectory = path.join(paseoHome, "fixture-runtime");
+  const materializeRoot = path.join(paseoHome, "fixture-workspaces");
+  const fixtureProviderSource = path.resolve(
+    __dirname,
+    "../../../../../runtimes/fixture/test/fixtures/workspace-runtime-acp-agent.mjs",
+  );
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(
+    configPath,
+    `${JSON.stringify({
+      ...existing,
+      version: 1,
+      agents: {
+        ...existing.agents,
+        providers: {
+          ...existing.agents?.providers,
+          claude: { ...existing.agents?.providers?.claude, enabled: false },
+          codex: { ...existing.agents?.providers?.codex, enabled: false },
+          copilot: { ...existing.agents?.providers?.copilot, enabled: false },
+          opencode: { ...existing.agents?.providers?.opencode, enabled: false },
+          pi: { ...existing.agents?.providers?.pi, enabled: false },
+          "fixture-agent": {
+            extends: "acp",
+            label: "Fixture Agent",
+            command: [process.execPath, "./.paseo-fixture-agent.mjs"],
+            models: [{ id: "fixture-model", label: "Fixture Model", isDefault: true }],
+            enabled: true,
+          },
+        },
+      },
+      workspaceRuntimes: {
+        ...existing.workspaceRuntimes,
+        fixture: {
+          type: "command",
+          label: "Fixture",
+          command: [
+            process.execPath,
+            path.resolve(__dirname, "../../../../../runtimes/fixture/src/index.mjs"),
+          ],
+          options: {
+            stateDirectory,
+            materializeRoot,
+            fixtureProviderSource,
+            preserveSourceDisplayCwd: true,
+          },
+        },
+        "fixture-failure": {
+          type: "command",
+          label: "Fixture Failure",
+          command: [
+            process.execPath,
+            path.resolve(__dirname, "../../../../../runtimes/fixture/src/index.mjs"),
+          ],
+          options: {
+            stateDirectory: path.join(paseoHome, "fixture-failure-runtime"),
+            failCreate: true,
+            createError: "Fixture probe creation failed",
+          },
+        },
+      },
+    })}\n`,
+  );
+}
+
 export async function startE2EWorker(
   workerIndex: number,
   options: { forkProviders?: string[] } = {},
@@ -154,6 +223,7 @@ export async function startE2EWorker(
 
   try {
     await applyMetadataFork(paseoHome, options.forkProviders ?? []);
+    await configureDesktopFixtureRuntime(paseoHome);
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,

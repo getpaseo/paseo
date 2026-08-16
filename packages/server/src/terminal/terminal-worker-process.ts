@@ -1,17 +1,33 @@
 import { createTerminalManager } from "./terminal-manager.js";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:os";
 import { captureTerminalLines } from "./terminal-capture.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
-import type { TerminalSession, TerminalStateSnapshotOptions } from "./terminal.js";
+import type {
+  TerminalPtyProcess,
+  TerminalPtyLaunchInput,
+  TerminalSession,
+  TerminalStateSnapshotOptions,
+} from "./terminal.js";
 import type {
   TerminalWorkerRequest,
+  TerminalWorkerParentMessage,
+  TerminalWorkerPtyEvent,
+  TerminalWorkerMessage,
   TerminalWorkerStateResult,
-  TerminalWorkerToParentMessage,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
 type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTerminal" }>;
 
-const manager = createTerminalManager();
+const ptyProcesses = new Map<string, RuntimePtyProxy>();
+const pendingPtySpawns = new Map<
+  string,
+  { resolve: (process: TerminalPtyProcess | null) => void; reject: (error: Error) => void }
+>();
+const manager = createTerminalManager({
+  resolvePtyLauncher: () => launchRuntimePty,
+});
 const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
 const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
 let ipcClosing = false;
@@ -36,19 +52,131 @@ process.on("uncaughtException", (error) => {
   reportInFlightTerminalCreateFailure(error);
 });
 
-function sendToParent(message: TerminalWorkerToParentMessage): void {
+function sendToParent(message: TerminalWorkerMessage): void {
   if (ipcClosing || !process.connected || !process.send) {
+    closePtyBridge(new Error("Terminal parent IPC is not connected"));
     return;
   }
   try {
     process.send(message, (error) => {
-      if (error) {
-        ipcClosing = true;
-      }
+      if (error) closePtyBridge(error);
     });
-  } catch {
-    ipcClosing = true;
+  } catch (error) {
+    closePtyBridge(error);
   }
+}
+
+function closePtyBridge(error: unknown): void {
+  ipcClosing = true;
+  const failure = error instanceof Error ? error : new Error(String(error));
+  for (const pending of pendingPtySpawns.values()) pending.reject(failure);
+  pendingPtySpawns.clear();
+  for (const proxy of ptyProcesses.values()) {
+    proxy.emitExit({ code: 1, signal: null });
+  }
+  ptyProcesses.clear();
+}
+
+interface RuntimePtyProxy extends TerminalPtyProcess {
+  emitData(data: string): void;
+  emitExit(exit: { code: number | null; signal: NodeJS.Signals | null }): void;
+}
+
+function launchRuntimePty(
+  input: TerminalPtyLaunchInput,
+): TerminalPtyProcess | null | Promise<TerminalPtyProcess | null> {
+  return new Promise<TerminalPtyProcess | null>((resolve, reject) => {
+    const processId = randomUUID();
+    pendingPtySpawns.set(processId, { resolve, reject });
+    sendToParent({ type: "ptySpawn", processId, input });
+  });
+}
+
+function createRuntimePtyProxy(processId: string): RuntimePtyProxy {
+  const dataListeners = new Set<(data: string) => void>();
+  const exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
+  let pendingData = "";
+  let pendingExit: { exitCode: number; signal?: number } | null = null;
+  return {
+    pid: -1,
+    write(data) {
+      sendToParent({ type: "ptyWrite", processId, data });
+    },
+    resize(cols, rows) {
+      sendToParent({ type: "ptyResize", processId, cols, rows });
+    },
+    kill(signal) {
+      sendToParent({ type: "ptyKill", processId, signal });
+    },
+    onData(listener) {
+      dataListeners.add(listener);
+      if (pendingData) {
+        const data = pendingData;
+        pendingData = "";
+        listener(data);
+      }
+      return { dispose: () => dataListeners.delete(listener) };
+    },
+    onExit(listener) {
+      exitListeners.add(listener);
+      const exit = pendingExit;
+      if (exit) queueMicrotask(() => listener(exit));
+      return { dispose: () => exitListeners.delete(listener) };
+    },
+    emitData(data) {
+      if (dataListeners.size === 0) {
+        pendingData += data;
+        return;
+      }
+      for (const listener of dataListeners) listener(data);
+    },
+    emitExit(exit) {
+      const signal = exit.signal ? constants.signals[exit.signal] : undefined;
+      const event = { exitCode: exit.code ?? 0, signal };
+      if (exitListeners.size === 0) pendingExit = event;
+      else for (const listener of exitListeners) listener(event);
+      dataListeners.clear();
+      if (exitListeners.size > 0) exitListeners.clear();
+    },
+  };
+}
+
+function handlePtyEvent(message: TerminalWorkerPtyEvent): void {
+  if (message.type === "ptySpawnResult") {
+    const pending = pendingPtySpawns.get(message.processId);
+    if (!pending) return;
+    pendingPtySpawns.delete(message.processId);
+    if (message.mode === "legacy") {
+      pending.resolve(null);
+      return;
+    }
+    const proxy = createRuntimePtyProxy(message.processId);
+    ptyProcesses.set(message.processId, proxy);
+    pending.resolve(proxy);
+    return;
+  }
+  if (message.type === "ptySpawnError") {
+    const pending = pendingPtySpawns.get(message.processId);
+    pendingPtySpawns.delete(message.processId);
+    pending?.reject(new Error(message.error));
+    return;
+  }
+  const proxy = ptyProcesses.get(message.processId);
+  if (!proxy) return;
+  if (message.type === "ptyData") proxy.emitData(message.data);
+  else {
+    ptyProcesses.delete(message.processId);
+    setImmediate(() => proxy.emitExit(message.exit));
+  }
+}
+
+function isPtyEvent(message: TerminalWorkerParentMessage): message is TerminalWorkerPtyEvent {
+  return (
+    message.type === "ptySpawnResult" ||
+    message.type === "ptySpawnError" ||
+    message.type === "ptyData" ||
+    message.type === "ptyExit"
+  );
 }
 
 function buildTerminalStateResult(
@@ -316,7 +444,7 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "killAll": {
-      manager.killAll();
+      await manager.killAll();
       for (const terminalId of Array.from(unsubscribeByTerminalId.keys())) {
         clearTerminalSubscriptions(terminalId);
       }
@@ -333,7 +461,11 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
   }
 }
 
-process.on("message", (message: TerminalWorkerRequest) => {
+process.on("message", (message: TerminalWorkerParentMessage) => {
+  if (isPtyEvent(message)) {
+    handlePtyEvent(message);
+    return;
+  }
   void handleRequest(message).catch((error: unknown) => {
     sendToParent({
       type: "response",
@@ -345,6 +477,6 @@ process.on("message", (message: TerminalWorkerRequest) => {
 });
 
 process.once("disconnect", () => {
-  ipcClosing = true;
-  manager.killAll();
+  closePtyBridge(new Error("Terminal parent IPC disconnected"));
+  void manager.killAll();
 });

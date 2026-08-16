@@ -45,6 +45,7 @@ import {
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
+  type ProviderWorkspace,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -131,6 +132,7 @@ interface PreparedSessionConfig {
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
   env?: Record<string, string>;
+  validateHostCwd?: boolean;
 }
 
 interface TimeoutOptions {
@@ -205,6 +207,7 @@ interface HydrateTimelineOptions {
 }
 
 export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions & {
+  workspaceId?: string;
   /**
    * When set, only providers in this set are scanned, in addition to the
    * built-in importable allowlist + enabled + non-derived rules.
@@ -279,6 +282,10 @@ export interface AgentManagerOptions {
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
+  resolveProviderWorkspace?: (
+    workspaceId: string,
+    cwd: string,
+  ) => Promise<AgentLaunchContext["workspace"] | null>;
 }
 
 export interface WaitForAgentOptions {
@@ -666,6 +673,7 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly resolveProviderWorkspace?: AgentManagerOptions["resolveProviderWorkspace"];
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -679,6 +687,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.resolveProviderWorkspace = options.resolveProviderWorkspace;
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -886,6 +895,20 @@ export class AgentManager {
   async listImportableSessions(
     options?: ImportablePersistedAgentQueryOptions,
   ): Promise<ManagedImportableProviderSession[]> {
+    let workspace: ProviderWorkspace | undefined;
+    if (options?.workspaceId) {
+      if (!this.resolveProviderWorkspace) {
+        throw new Error(`workspace runtime capability is unavailable: ${options.workspaceId}`);
+      }
+      const resolved = await this.resolveProviderWorkspace(
+        options.workspaceId,
+        options.cwd ?? process.cwd(),
+      );
+      if (resolved === undefined) {
+        throw new Error(`workspace runtime capability is unavailable: ${options.workspaceId}`);
+      }
+      workspace = resolved ?? undefined;
+    }
     const providerEntries = Array.from(this.clients.entries()).filter(
       ([provider, client]) =>
         client.capabilities.supportsSessionListing &&
@@ -899,6 +922,7 @@ export class AgentManager {
             await client.listImportableSessions!({
               limit: options?.limit,
               cwd: options?.cwd,
+              workspace,
             })
           ).map((session) => Object.assign(session, { provider }));
         } catch (error) {
@@ -1114,16 +1138,23 @@ export class AgentManager {
       config,
       resolvedAgentId,
       options?.env,
+      options.workspaceId,
     );
     this.requireEnabledProvider(storedConfig.provider);
-    const client = await this.requireAvailableClient({
-      provider: storedConfig.provider,
-    });
+    const client = this.requireClient(storedConfig.provider);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
       storedConfig.cwd,
       options?.env,
+      options.workspaceId,
+    );
+    await this.requireProviderAvailableForLaunch(
+      client,
+      storedConfig.provider,
+      storedConfig.cwd,
+      options.workspaceId,
+      launchContext,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1194,16 +1225,25 @@ export class AgentManager {
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
+      undefined,
+      options?.workspaceId,
     );
 
     const client = this.requireClient(handle.provider);
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      options?.workspaceId,
+    );
+    await this.requireProviderAvailableForLaunch(
+      client,
+      storedConfig.provider,
+      storedConfig.cwd,
+      options?.workspaceId,
+      launchContext,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
       handle,
@@ -1239,7 +1279,7 @@ export class AgentManager {
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
 
-    const client = await this.requireAvailableClient({ provider: input.provider });
+    const client = this.requireClient(input.provider);
     if (!client.importSession) {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
     }
@@ -1250,8 +1290,23 @@ export class AgentManager {
         cwd: input.cwd,
       },
       resolvedAgentId,
+      undefined,
+      input.workspaceId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      input.workspaceId,
+    );
+    await this.requireProviderAvailableForLaunch(
+      client,
+      input.provider,
+      storedConfig.cwd,
+      input.workspaceId,
+      launchContext,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
@@ -1264,6 +1319,7 @@ export class AgentManager {
     try {
       const importedConfig = await this.normalizeConfig(
         stripInternalPaseoMcpServer(imported.config),
+        { validateHostCwd: false },
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
@@ -1331,8 +1387,19 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      refreshConfig,
+      agentId,
+      undefined,
+      existing.workspaceId,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      existing.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
@@ -1597,7 +1664,7 @@ export class AgentManager {
 
     await registry.upsert(archivedRecord);
 
-    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+    await this.archiveNativeSessionBestEffort(record);
 
     if (this.agents.has(record.id)) {
       this.notifyAgentState(record.id);
@@ -1884,7 +1951,7 @@ export class AgentManager {
     const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
     await registry.upsert(nextRecord);
 
-    await this.archiveNativeSessionBestEffort(record.provider, record.persistence);
+    await this.archiveNativeSessionBestEffort(record);
 
     if (this.agents.has(agentId)) {
       this.notifyAgentState(agentId);
@@ -1911,7 +1978,7 @@ export class AgentManager {
       return false;
     }
 
-    await this.unarchiveNativeSession(record.provider, record.persistence);
+    await this.unarchiveNativeSession(record);
 
     await registry.upsert({
       ...record,
@@ -4449,7 +4516,7 @@ export class AgentManager {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
-    if (normalized.cwd) {
+    if (normalized.cwd && options.validateHostCwd !== false) {
       normalized.cwd = resolve(normalized.cwd);
       try {
         const cwdStats = await stat(normalized.cwd);
@@ -4541,8 +4608,12 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     env?: Record<string, string>,
+    workspaceId?: string,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), {
+      env,
+      validateHostCwd: !workspaceId,
+    });
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
@@ -4572,6 +4643,7 @@ export class AgentManager {
     client: AgentClient,
     cwd: string,
     env?: Record<string, string>,
+    workspaceId?: string,
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4581,6 +4653,16 @@ export class AgentManager {
         PASEO_AGENT_CWD: cwd,
       },
     };
+    if (workspaceId) {
+      if (!this.resolveProviderWorkspace) {
+        throw new Error(`workspace runtime capability is unavailable: ${workspaceId}`);
+      }
+      const workspace = await this.resolveProviderWorkspace(workspaceId, cwd);
+      if (workspace === undefined) {
+        throw new Error(`workspace runtime capability is unavailable: ${workspaceId}`);
+      }
+      if (workspace) context.workspace = workspace;
+    }
     if (
       this.paseoToolsEnabled &&
       client.capabilities.supportsNativePaseoTools &&
@@ -4598,16 +4680,34 @@ export class AgentManager {
     return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
   }
 
-  private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
-    const client = this.clients.get(options.provider);
-    if (!client) {
-      const configuredProviders = this.getConfiguredProviderIds();
-      throw new Error(
-        `Unknown provider '${options.provider}'. Configured providers: ${formatProviderList(
-          configuredProviders,
-        )}.`,
-      );
+  private async requireProviderAvailableForLaunch(
+    client: AgentClient,
+    provider: AgentProvider,
+    cwd: string,
+    workspaceId: string | undefined,
+    launchContext: AgentLaunchContext,
+  ): Promise<void> {
+    if (!launchContext.workspace) {
+      await this.requireAvailableClient({ provider });
+      return;
     }
+    if (!workspaceId) {
+      throw new Error(`Workspace-scoped provider '${provider}' is missing a workspace ID.`);
+    }
+    const available = await client.isAvailable({
+      scope: "workspace",
+      cwd,
+      workspaceId,
+      workspace: launchContext.workspace,
+      force: false,
+    });
+    if (!available) {
+      throw new Error(`Provider '${provider}' is not available in the selected workspace runtime.`);
+    }
+  }
+
+  private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
+    const client = this.requireClient(options.provider);
 
     let unavailableReason: string | null = null;
     try {
@@ -4642,20 +4742,30 @@ export class AgentManager {
   private requireClient(provider: AgentProvider): AgentClient {
     const client = this.clients.get(provider);
     if (!client) {
-      throw new Error(`No client registered for provider '${provider}'`);
+      const configuredProviders = this.getConfiguredProviderIds();
+      throw new Error(
+        `Unknown provider '${provider}'. Configured providers: ${formatProviderList(
+          configuredProviders,
+        )}.`,
+      );
     }
     return client;
   }
 
-  async archiveNativeSessionBestEffort(
-    provider: AgentProvider,
-    persistence: AgentPersistenceHandle | null | undefined,
-  ): Promise<void> {
+  async archiveNativeSessionBestEffort(record: StoredAgentRecord): Promise<void> {
+    const { provider, persistence } = record;
     if (!persistence) return;
     const client = this.clients.get(provider);
     if (!client?.archiveNativeSession) return;
     try {
-      await client.archiveNativeSession(persistence);
+      const launchContext = await this.buildLaunchContext(
+        record.id,
+        client,
+        record.cwd,
+        undefined,
+        record.workspaceId,
+      );
+      await client.archiveNativeSession(persistence, launchContext);
     } catch (error) {
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
@@ -4664,14 +4774,19 @@ export class AgentManager {
     }
   }
 
-  private async unarchiveNativeSession(
-    provider: AgentProvider,
-    persistence: AgentPersistenceHandle | null | undefined,
-  ): Promise<void> {
+  private async unarchiveNativeSession(record: StoredAgentRecord): Promise<void> {
+    const { provider, persistence } = record;
     if (!persistence) return;
     const client = this.clients.get(provider);
     if (!client?.unarchiveNativeSession) return;
-    await client.unarchiveNativeSession(persistence);
+    const launchContext = await this.buildLaunchContext(
+      record.id,
+      client,
+      record.cwd,
+      undefined,
+      record.workspaceId,
+    );
+    await client.unarchiveNativeSession(persistence, launchContext);
   }
 
   private requireAgent(id: string): LiveManagedAgent {

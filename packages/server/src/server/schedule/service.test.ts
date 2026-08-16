@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { AgentManager } from "../agent/agent-manager.js";
+import {
+  AgentManager as BaseAgentManager,
+  type AgentManagerOptions,
+} from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
 import type {
@@ -28,6 +31,7 @@ import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 import { resolveWorkspaceIdForPath } from "../resolve-workspace-id-for-path.js";
 import { createNoopWorkspaceGitService } from "../test-utils/workspace-git-service-stub.js";
+import { resolveHostProviderWorkspace } from "../test-utils/provider-workspace-stub.js";
 import {
   type PersistedWorkspaceRecord,
   FileBackedProjectRegistry,
@@ -63,6 +67,15 @@ const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreat
     };
   },
 };
+
+class AgentManager extends BaseAgentManager {
+  constructor(options: AgentManagerOptions) {
+    super({
+      ...options,
+      resolveProviderWorkspace: options.resolveProviderWorkspace ?? resolveHostProviderWorkspace,
+    });
+  }
+}
 
 const TEST_CLAUDE_PROVIDER_DEFINITION = {
   enabled: true,

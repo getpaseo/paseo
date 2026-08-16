@@ -9,8 +9,8 @@ export interface StringCommandShellInvocation {
   args: string[];
 }
 
-export function createStringCommandShellEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const sanitized = { ...env };
+export function createStringCommandShellEnv<T extends NodeJS.ProcessEnv>(env: T): T {
+  const sanitized = { ...env } as T;
   delete sanitized.BASH_ENV;
   return sanitized;
 }

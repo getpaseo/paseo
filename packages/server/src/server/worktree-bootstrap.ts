@@ -30,7 +30,11 @@ import {
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
-import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type {
+  PaseoConfig,
+  PaseoServicePortAllocation,
+} from "@getpaseo/protocol/paseo-config-schema";
+import type { BoundWorkspaceRuntime } from "./workspace-runtime/index.js";
 
 export interface WorktreeBootstrapTerminalResult {
   name: string | null;
@@ -701,6 +705,9 @@ export interface WorktreeScriptResult {
 
 export interface SpawnWorkspaceScriptOptions {
   repoRoot: string;
+  runtimeCwd?: string;
+  runtime?: Pick<BoundWorkspaceRuntime, "run" | "resolveCommand" | "scriptTerminal">;
+  paseoConfig?: PaseoConfig;
   workspaceId: string;
   projectSlug: string;
   branchName: string | null;
@@ -736,6 +743,7 @@ async function setupServiceScriptRoute(params: {
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
   serviceProxy: ServiceProxySubsystem;
   servicePortAllocation: PaseoServicePortAllocation | undefined;
+  runtime: Pick<BoundWorkspaceRuntime, "run" | "resolveCommand"> | undefined;
 }): Promise<ServiceScriptSetupResult> {
   const {
     scriptConfigs,
@@ -751,6 +759,7 @@ async function setupServiceScriptRoute(params: {
     existingRuntimeEntry,
     serviceProxy,
     servicePortAllocation,
+    runtime,
   } = params;
 
   const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
@@ -777,6 +786,7 @@ async function setupServiceScriptRoute(params: {
         workspaceId,
         branchName,
         reservedPorts,
+        runtime,
       }),
   });
   const port =
@@ -792,6 +802,7 @@ async function setupServiceScriptRoute(params: {
               workspaceId,
               branchName,
               reservedPorts,
+              runtime,
             }),
         })
       : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
@@ -830,6 +841,9 @@ async function acquireWorkspaceScriptTerminal(params: {
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
   terminalManager: TerminalManager;
   repoRoot: string;
+  runtimeCwd?: string;
+  scriptTerminal?: BoundWorkspaceRuntime["scriptTerminal"];
+  scriptCommand: string;
   workspaceId: string;
   scriptName: string;
   env: Record<string, string> | undefined;
@@ -839,24 +853,51 @@ async function acquireWorkspaceScriptTerminal(params: {
     existingRuntimeEntry,
     terminalManager,
     repoRoot,
+    runtimeCwd,
+    scriptTerminal,
+    scriptCommand,
     workspaceId,
     scriptName,
     env,
   } = params;
   let reusableTerminal: TerminalSession | null = null;
-  if (!serviceScript && existingRuntimeEntry?.terminalId) {
+  if (
+    !serviceScript &&
+    scriptTerminal?.kind !== "direct-command" &&
+    existingRuntimeEntry?.terminalId
+  ) {
     reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
   }
   const terminal =
     reusableTerminal ??
     (await terminalManager.createTerminal({
       cwd: repoRoot,
+      ...(runtimeCwd ? { cwd: runtimeCwd } : {}),
       workspaceId,
       name: scriptName,
       title: scriptName,
       env,
+      ...(scriptTerminal?.kind === "direct-command"
+        ? {
+            command: scriptTerminal.command,
+            args: [...scriptTerminal.argsPrefix, scriptCommand],
+          }
+        : {}),
     }));
   return { terminal, reusableTerminal };
+}
+
+async function launchWorkspaceScriptCommand(params: {
+  terminal: TerminalSession;
+  reusableTerminal: TerminalSession | null;
+  directCommand: boolean;
+  command: string;
+}): Promise<void> {
+  if (params.directCommand) return;
+  if (!params.reusableTerminal) {
+    await waitForTerminalBootstrapReadiness(params.terminal);
+  }
+  params.terminal.send({ type: "input", data: `${params.command}\r` });
 }
 
 export async function spawnWorkspaceScript(
@@ -864,6 +905,8 @@ export async function spawnWorkspaceScript(
 ): Promise<WorktreeScriptResult> {
   const {
     repoRoot,
+    runtimeCwd,
+    paseoConfig,
     workspaceId,
     projectSlug,
     branchName,
@@ -878,11 +921,8 @@ export async function spawnWorkspaceScript(
     logger,
     onLifecycleChanged,
   } = options;
-  const configResult = readPaseoConfig(repoRoot);
-  if (!configResult.ok) {
-    throw paseoConfigParseError(configResult);
-  }
-  const scriptConfigs = getScriptConfigs(configResult.config);
+  const resolvedPaseoConfig = resolveWorkspaceScriptConfig(repoRoot, paseoConfig);
+  const scriptConfigs = getScriptConfigs(resolvedPaseoConfig);
   const config = scriptConfigs.get(scriptName);
   if (!config) {
     throw new Error(`Script '${scriptName}' is not configured in paseo.json`);
@@ -917,7 +957,8 @@ export async function spawnWorkspaceScript(
         serviceProxyPublicBaseUrl,
         existingRuntimeEntry,
         serviceProxy,
-        servicePortAllocation: configResult.config?.worktree?.servicePorts ?? globalServicePorts,
+        servicePortAllocation: resolvedPaseoConfig?.worktree?.servicePorts ?? globalServicePorts,
+        runtime: options.runtime,
       });
       hostname = serviceSetup.hostname;
       port = serviceSetup.port;
@@ -930,6 +971,9 @@ export async function spawnWorkspaceScript(
       existingRuntimeEntry,
       terminalManager,
       repoRoot,
+      runtimeCwd,
+      scriptTerminal: options.runtime?.scriptTerminal,
+      scriptCommand: config.command,
       workspaceId,
       scriptName,
       env,
@@ -995,10 +1039,12 @@ export async function spawnWorkspaceScript(
       unsubscribeCommandFinished?.();
     };
 
-    if (!reusableTerminal) {
-      await waitForTerminalBootstrapReadiness(terminal);
-    }
-    terminal.send({ type: "input", data: `${config.command}\r` });
+    await launchWorkspaceScriptCommand({
+      terminal,
+      reusableTerminal,
+      directCommand: options.runtime?.scriptTerminal.kind === "direct-command",
+      command: config.command,
+    });
 
     logger?.info(
       {
@@ -1042,6 +1088,16 @@ export async function spawnWorkspaceScript(
     );
     throw error;
   }
+}
+
+function resolveWorkspaceScriptConfig(
+  repoRoot: string,
+  suppliedConfig: PaseoConfig | undefined,
+): PaseoConfig | null {
+  if (suppliedConfig) return suppliedConfig;
+  const result = readPaseoConfig(repoRoot);
+  if (!result.ok) throw paseoConfigParseError(result);
+  return result.config;
 }
 
 export function teardownWorktreeScripts(options: {

@@ -4,6 +4,7 @@ import type pino from "pino";
 import type { ForgeService } from "../../services/forge-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "../workspace-archive-service.js";
+import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -28,7 +29,12 @@ interface CreateAgentLifecycleDispatchDependencies {
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  listWorkspaceRecords: () => Promise<PersistedWorkspaceRecord[]>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    options?: { releaseBacking?: boolean },
+  ) => Promise<void>;
+  destroyWorkspace: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -198,6 +204,14 @@ export class CreateAgentLifecycleDispatch {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
+    if (options.agentId === null) {
+      await this.dependencies.destroyWorkspace(createdWorktree.workspace.workspaceId);
+      await this.dependencies.emitWorkspaceUpdatesForWorkspaceIds([
+        createdWorktree.workspace.workspaceId,
+      ]);
+      return;
+    }
+
     await archiveByScope(
       {
         paseoHome: this.dependencies.paseoHome,
@@ -208,6 +222,7 @@ export class CreateAgentLifecycleDispatch {
         agentStorage: this.dependencies.agentStorage,
         findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
         listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
+        listWorkspaceRecords: this.dependencies.listWorkspaceRecords,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
@@ -218,6 +233,7 @@ export class CreateAgentLifecycleDispatch {
       {
         scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
         requestId: randomUUID(),
+        releaseBacking: true,
       },
     );
 

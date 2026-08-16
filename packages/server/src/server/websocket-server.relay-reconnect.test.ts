@@ -17,6 +17,7 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -294,6 +295,12 @@ function createServer(options?: {
     undefined,
     undefined,
     createProviderSnapshotManagerStub().manager,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    createStub<WorkspaceRuntimeService>({}),
   );
 }
 

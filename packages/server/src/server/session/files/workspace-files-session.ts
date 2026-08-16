@@ -1,4 +1,5 @@
 import type pino from "pino";
+import { areEquivalentPaths } from "../../../utils/path.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
   encodeFileTransferFrame,
@@ -19,6 +20,9 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "../../messages.js";
+import type { WorkspaceFileKind, WorkspaceFiles } from "@getpaseo/workspace-helper";
+import type { WorkspaceRuntimeService } from "../../workspace-runtime/index.js";
+import type { WorkspaceRegistry } from "../../workspace-registry.js";
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
@@ -33,7 +37,14 @@ import {
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
-import { getProjectIcon } from "../../../utils/project-icon.js";
+import {
+  getProjectIcon,
+  ICON_PATTERNS,
+  IGNORED_DIRS,
+  MONOREPO_PACKAGE_DIRS,
+  PRIORITY_DIRS,
+  projectIconFromBytes,
+} from "../../../utils/project-icon.js";
 
 /**
  * What a workspace file-access request reaches outside its own domain: the
@@ -53,6 +64,8 @@ export interface WorkspaceFilesSessionOptions {
   paseoHome: string;
   logger: pino.Logger;
   fileObserver?: FileObserver;
+  workspaceRuntime?: WorkspaceRuntimeService;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list">;
 }
 
 /**
@@ -68,7 +81,9 @@ export class WorkspaceFilesSession {
   private readonly logger: pino.Logger;
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
-  private readonly fileSubscriptions = new Map<string, () => void>();
+  private readonly workspaceRuntime: WorkspaceRuntimeService | null;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list"> | null;
+  private readonly fileSubscriptions = new Map<string, () => Promise<void>>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
@@ -76,11 +91,68 @@ export class WorkspaceFilesSession {
     this.logger = options.logger;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
+    this.workspaceRuntime = options.workspaceRuntime ?? null;
+    this.workspaceRegistry = options.workspaceRegistry ?? null;
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
-    this.fileSubscriptions.get(request.subscriptionId)?.();
+    await this.fileSubscriptions.get(request.subscriptionId)?.();
     try {
+      const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+      if (selectedFiles) {
+        const subscription = await selectedFiles.subscribe({ paths: [request.path] }, (event) => {
+          if (event.type === "overflow") return;
+          if (event.type === "error") {
+            this.host.emit({
+              type: "fs.file.update",
+              payload: {
+                subscriptionId: request.subscriptionId,
+                version: {
+                  status: "error",
+                  cwd: request.cwd,
+                  path: request.path,
+                  error: event.error,
+                },
+              },
+            });
+            return;
+          }
+          void selectedFiles.stat(request.path).then(
+            (version) =>
+              this.host.emit({
+                type: "fs.file.update",
+                payload: {
+                  subscriptionId: request.subscriptionId,
+                  version: toProtocolVersion(request.cwd, version),
+                },
+              }),
+            (error) =>
+              this.host.emit({
+                type: "fs.file.update",
+                payload: {
+                  subscriptionId: request.subscriptionId,
+                  version: {
+                    status: "error",
+                    cwd: request.cwd,
+                    path: request.path,
+                    error: getErrorMessage(error),
+                  },
+                },
+              }),
+          );
+        });
+        const initial = toProtocolVersion(request.cwd, await selectedFiles.stat(request.path));
+        this.fileSubscriptions.set(request.subscriptionId, () => subscription.unsubscribe());
+        this.host.emit({
+          type: "fs.file.subscribe.response",
+          payload: {
+            subscriptionId: request.subscriptionId,
+            initial,
+            requestId: request.requestId,
+          },
+        });
+        return;
+      }
       const subscription = await this.fileObserver.subscribe(
         { cwd: request.cwd, path: request.path },
         (version) => {
@@ -90,7 +162,7 @@ export class WorkspaceFilesSession {
           });
         },
       );
-      this.fileSubscriptions.set(request.subscriptionId, subscription.unsubscribe);
+      this.fileSubscriptions.set(request.subscriptionId, async () => subscription.unsubscribe());
       this.host.emit({
         type: "fs.file.subscribe.response",
         payload: {
@@ -116,8 +188,8 @@ export class WorkspaceFilesSession {
     }
   }
 
-  handleFileUnsubscribeRequest(request: FileUnsubscribeRequest): void {
-    this.fileSubscriptions.get(request.subscriptionId)?.();
+  async handleFileUnsubscribeRequest(request: FileUnsubscribeRequest): Promise<void> {
+    await this.fileSubscriptions.get(request.subscriptionId)?.();
     this.fileSubscriptions.delete(request.subscriptionId);
     this.host.emit({
       type: "fs.file.unsubscribe.response",
@@ -126,13 +198,24 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileWriteRequest(request: FileWriteRequest): Promise<void> {
-    const result = await writeExplorerFile({
-      root: request.cwd,
-      relativePath: request.path,
-      content: request.content,
-      expectedModifiedAt: request.expectedModifiedAt,
-      expectedRevision: request.expectedRevision,
-    });
+    const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+    const result = selectedFiles
+      ? toProtocolWriteResult(
+          request.cwd,
+          await selectedFiles.write({
+            path: request.path,
+            contents: Buffer.from(request.content, "utf8"),
+            expectedModifiedAt: request.expectedModifiedAt,
+            expectedRevision: request.expectedRevision,
+          }),
+        )
+      : await writeExplorerFile({
+          root: request.cwd,
+          relativePath: request.path,
+          content: request.content,
+          expectedModifiedAt: request.expectedModifiedAt,
+          expectedRevision: request.expectedRevision,
+        });
     this.host.emit({
       type: "fs.file.write.response",
       payload: { result, requestId: request.requestId },
@@ -213,8 +296,8 @@ export class WorkspaceFilesSession {
     });
   }
 
-  dispose(): void {
-    for (const unsubscribe of this.fileSubscriptions.values()) unsubscribe();
+  async dispose(): Promise<void> {
+    await Promise.all([...this.fileSubscriptions.values()].map((unsubscribe) => unsubscribe()));
     this.fileSubscriptions.clear();
   }
 
@@ -241,11 +324,11 @@ export class WorkspaceFilesSession {
     }
 
     try {
+      const selectedFiles = await this.resolveSelectedFiles(cwd, request.workspaceId);
       if (mode === "list") {
-        const directory = await listDirectoryEntries({
-          root: cwd,
-          relativePath: requestedPath,
-        });
+        const directory = selectedFiles
+          ? await selectedFiles.list(requestedPath)
+          : await listDirectoryEntries({ root: cwd, relativePath: requestedPath });
 
         this.host.emit(
           {
@@ -263,6 +346,39 @@ export class WorkspaceFilesSession {
           source,
         );
       } else {
+        if (selectedFiles) {
+          const file = await selectedFiles.read(requestedPath);
+          if (request.acceptBinary && this.host.hasBinaryChannel()) {
+            await this.emitStream(requestId, file, source);
+          } else {
+            const bytes = await collectBytes(file.chunks);
+            this.host.emit(
+              {
+                type: "file_explorer_response",
+                payload: {
+                  cwd,
+                  path: file.path,
+                  mode,
+                  directory: null,
+                  file: {
+                    path: file.path,
+                    kind: file.kind,
+                    encoding: explorerEncoding(file.kind),
+                    ...explorerContent(file.kind, bytes),
+                    mimeType: file.mimeType,
+                    size: file.size,
+                    modifiedAt: file.modifiedAt,
+                    revision: file.revision,
+                  },
+                  error: null,
+                  requestId,
+                },
+              },
+              source,
+            );
+          }
+          return;
+        }
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
           await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
             await this.host.emitBinary(
@@ -360,7 +476,10 @@ export class WorkspaceFilesSession {
     const { cwd, requestId } = request;
 
     try {
-      const icon = await getProjectIcon(cwd);
+      const selectedFiles = await this.resolveSelectedFiles(cwd, request.workspaceId);
+      const icon = selectedFiles
+        ? await getWorkspaceProjectIcon(selectedFiles)
+        : await getProjectIcon(cwd);
       this.host.emit({
         type: "project_icon_response",
         payload: {
@@ -409,6 +528,37 @@ export class WorkspaceFilesSession {
     );
 
     try {
+      const selectedFiles = await this.resolveSelectedFiles(cwd, request.workspaceId);
+      if (selectedFiles) {
+        const info = await selectedFiles.stat(requestedPath);
+        if (info.status !== "ready") {
+          throw new Error(info.status === "error" ? info.error : "File not found");
+        }
+        const entry = this.downloadTokenStore.issueToken({
+          path: info.path,
+          fileName: info.path.split("/").at(-1) ?? "download",
+          mimeType: info.mimeType,
+          size: info.size,
+          open: async () => {
+            const file = await selectedFiles.read(requestedPath);
+            return { chunks: file.chunks, size: file.size };
+          },
+        });
+        this.host.emit({
+          type: "file_download_token_response",
+          payload: {
+            cwd,
+            path: info.path,
+            token: entry.token,
+            fileName: entry.fileName,
+            mimeType: entry.mimeType,
+            size: entry.size,
+            error: null,
+            requestId,
+          },
+        });
+        return;
+      }
       const info = await getDownloadableFileInfo({
         root: cwd,
         relativePath: requestedPath,
@@ -455,4 +605,131 @@ export class WorkspaceFilesSession {
       });
     }
   }
+
+  private async resolveSelectedFiles(
+    cwd: string,
+    workspaceId: string | undefined,
+  ): Promise<WorkspaceFiles | null> {
+    if (!this.workspaceRuntime || !this.workspaceRegistry) return null;
+    if (workspaceId) {
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      return workspace.runtime ? this.workspaceRuntime.files(workspaceId) : null;
+    }
+    if (
+      (await this.workspaceRegistry.list()).some(
+        (workspace) =>
+          workspace.archivedAt === null &&
+          workspace.runtime &&
+          areEquivalentPaths(workspace.cwd, cwd),
+      )
+    ) {
+      throw new Error("workspaceId is required for a selected workspace file operation");
+    }
+    return null;
+  }
+
+  private async emitStream(
+    requestId: string,
+    file: Awaited<ReturnType<WorkspaceFiles["read"]>>,
+    source?: object,
+  ): Promise<void> {
+    await this.host.emitBinary(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId,
+        metadata: {
+          mime: file.mimeType,
+          size: file.size,
+          encoding: file.encoding,
+          modifiedAt: file.modifiedAt,
+          revision: file.revision,
+        },
+      }),
+      source,
+    );
+    for await (const chunk of file.chunks) {
+      await this.host.emitBinary(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId,
+          payload: chunk,
+        }),
+        source,
+      );
+    }
+    await this.host.emitBinary(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }),
+      source,
+    );
+  }
+}
+
+function explorerEncoding(kind: WorkspaceFileKind): "base64" | "none" | "utf-8" {
+  if (kind === "image") return "base64";
+  if (kind === "binary") return "none";
+  return "utf-8";
+}
+
+function explorerContent(kind: WorkspaceFileKind, bytes: Uint8Array): { content?: string } {
+  if (kind === "image") return { content: Buffer.from(bytes).toString("base64") };
+  if (kind === "text") return { content: Buffer.from(bytes).toString("utf8") };
+  return {};
+}
+
+function toProtocolVersion(cwd: string, version: Awaited<ReturnType<WorkspaceFiles["stat"]>>) {
+  return { ...version, cwd };
+}
+
+function toProtocolWriteResult(cwd: string, result: Awaited<ReturnType<WorkspaceFiles["write"]>>) {
+  return result.status === "conflict"
+    ? { ...result, version: toProtocolVersion(cwd, result.version) }
+    : result;
+}
+
+async function collectBytes(chunks: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const buffers: Buffer[] = [];
+  for await (const chunk of chunks) buffers.push(Buffer.from(chunk));
+  return Buffer.concat(buffers);
+}
+
+async function getWorkspaceProjectIcon(files: WorkspaceFiles) {
+  const candidates = [...PRIORITY_DIRS, ...MONOREPO_PACKAGE_DIRS, "."];
+  const ignored = new Set(IGNORED_DIRS);
+  for (const root of candidates) {
+    const icon = await findWorkspaceIcon(files, root, ignored, root === "." ? 0 : 2);
+    if (!icon) continue;
+    const read = await files.read(icon);
+    if (read.size > 32 * 1024) continue;
+    return projectIconFromBytes(icon, await collectBytes(read.chunks));
+  }
+  return null;
+}
+
+async function findWorkspaceIcon(
+  files: WorkspaceFiles,
+  directory: string,
+  ignored: ReadonlySet<string>,
+  depth: number,
+): Promise<string | null> {
+  let listing: Awaited<ReturnType<WorkspaceFiles["list"]>>;
+  try {
+    listing = await files.list(directory);
+  } catch {
+    return null;
+  }
+  for (const pattern of ICON_PATTERNS) {
+    const expression = new RegExp(`^${pattern.replace(/\./g, "\\.").replace(/\*/g, ".*")}$`);
+    const match = listing.entries.find(
+      (entry) => entry.kind === "file" && expression.test(entry.name),
+    );
+    if (match) return match.path;
+  }
+  if (depth === 0) return null;
+  for (const entry of listing.entries) {
+    if (entry.kind !== "directory" || ignored.has(entry.name)) continue;
+    const nested = await findWorkspaceIcon(files, entry.path, ignored, depth - 1);
+    if (nested) return nested;
+  }
+  return null;
 }

@@ -1,0 +1,34 @@
+{
+  "name": "@getpaseo/workspace-runtime-contract",
+  "version": "0.4.0",
+  "description": "Versioned command workspace runtime author contract for Paseo",
+  "files": [
+    "dist",
+    "examples",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
+    "build": "tsc -p tsconfig.json --incremental false",
+    "build:clean": "npm run clean && npm run build",
+    "prepack": "npm run build:clean",
+    "test": "npm run build && tsc -p tsconfig.test.json && node --test test/*.test.mjs",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

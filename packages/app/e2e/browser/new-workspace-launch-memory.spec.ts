@@ -21,13 +21,13 @@ import {
   type TerminalProfileSeed,
 } from "../support/helpers/new-workspace-launch";
 
-// `sleep` keeps the terminal alive long enough for the UI to attach and
-// render output before the process exits — see new-workspace-launch-terminal.spec.ts.
+// Loaded CI workers can take several seconds to materialize the runtime and attach the UI.
+// Keep the fixture bounded but alive through that assertion window.
 const PROMPT_PROFILE: TerminalProfile = {
   id: "e2e-memory-profile",
   name: "Memory Profile",
   command: "/bin/sh",
-  args: ["-c", 'echo remembered: "$0"; sleep 10', "{{{prompt}}}"],
+  args: ["-c", 'echo remembered: "$0"; sleep 60', "{{{prompt}}}"],
 };
 
 function hasLeftNewWorkspaceRoute(url: URL): boolean {

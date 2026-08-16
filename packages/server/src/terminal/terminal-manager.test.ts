@@ -36,7 +36,7 @@ afterEach(async () => {
     for (const terminal of terminalsByCwd.flat()) {
       await manager.killTerminalAndWait(terminal.id);
     }
-    manager.killAll();
+    await manager.killAll();
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
   while (temporaryDirs.length > 0) {
@@ -344,7 +344,7 @@ it("kills all terminals and clears state", async () => {
   const tmpId = tmpSession.id;
   const homeId = homeSession.id;
 
-  manager.killAll();
+  await manager.killAll();
 
   expect(manager.listDirectories()).toEqual([]);
   expect(manager.getTerminal(tmpId)).toBeUndefined();

@@ -1,0 +1,39 @@
+{
+  "name": "@getpaseo/workspace-helper",
+  "version": "0.4.0",
+  "description": "Official confined workspace filesystem helper and typed binding for Paseo runtimes",
+  "bin": {
+    "paseo-workspace-helper": "./dist/executable.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
+    "build": "tsc -p tsconfig.json --incremental false && node -e \"const fs=require('node:fs');fs.copyFileSync('src/executable.mjs','dist/executable.mjs');fs.chmodSync('dist/executable.mjs',0o755)\"",
+    "build:clean": "npm run clean && npm run build",
+    "prepack": "npm run build:clean",
+    "test": "npm run build && vitest run test/command-resolution.test.mjs test/workspace-helper.posix.test.ts --bail=1",
+    "test:standalone": "node --test test/standalone.test.mjs",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
+  }
+}

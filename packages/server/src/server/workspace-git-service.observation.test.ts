@@ -24,7 +24,10 @@ interface WatchRecord {
   unsubscribe: ReturnType<typeof vi.fn>;
 }
 
-function createWatcherHarness(harnessOptions?: { failDirectories?: Set<string> }) {
+function createWatcherHarness(harnessOptions?: {
+  failDirectories?: Set<string>;
+  unsubscribe?: () => Promise<void>;
+}) {
   const records: WatchRecord[] = [];
   const subscribe = vi.fn(
     async (
@@ -39,7 +42,7 @@ function createWatcherHarness(harnessOptions?: { failDirectories?: Set<string> }
         const record = records.find((candidate) => candidate.updateIgnore === updateIgnore);
         if (record) record.ignore = paths;
       });
-      const unsubscribe = vi.fn(async () => {});
+      const unsubscribe = vi.fn(harnessOptions?.unsubscribe ?? (async () => {}));
       records.push({
         directory,
         callback,
@@ -245,6 +248,42 @@ describe("WorkspaceGitService checkout observation", () => {
     expect(status).toBe("pending");
 
     closeFinished.resolve();
+    await disposal;
+  });
+
+  test("dispose waits for checkout and repository watchers to finish closing", async () => {
+    const watcherCloseFinished = createDeferred<void>();
+    const watcher = createWatcherHarness({
+      unsubscribe: () => watcherCloseFinished.promise,
+    });
+    const fileObserver: FileObserver = {
+      subscribe: watcher.subscribe as FileObserver["subscribe"],
+      getDiagnostics: () => {
+        throw new Error("Diagnostics are not used by this lifecycle test");
+      },
+      close: async () => {},
+    };
+    const service = createService(watcher, undefined, createLogger(), fileObserver);
+    service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, REPO_CWD)).toHaveLength(1);
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+    });
+
+    const disposal = service.dispose();
+    await vi.waitFor(() => {
+      for (const { unsubscribe } of watcher.records) {
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+      }
+    });
+    expect(
+      await Promise.race([
+        disposal.then(() => "disposed" as const),
+        Promise.resolve("pending" as const),
+      ]),
+    ).toBe("pending");
+
+    watcherCloseFinished.resolve();
     await disposal;
   });
 

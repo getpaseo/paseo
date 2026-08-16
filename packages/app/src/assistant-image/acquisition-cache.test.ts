@@ -94,6 +94,25 @@ describe("assistant image acquisition cache", () => {
     expect(laterMessage).not.toBe(first);
   });
 
+  it("scopes same-cwd file acquisitions to the selected workspace", () => {
+    const first = createAssistantImageFileAcquisitionKey({
+      serverId: "server",
+      workspaceId: "workspace-1",
+      occurrenceKey: "message:image",
+      cwd: "/workspace",
+      path: "screenshot.png",
+    });
+    const second = createAssistantImageFileAcquisitionKey({
+      serverId: "server",
+      workspaceId: "workspace-2",
+      occurrenceKey: "message:image",
+      cwd: "/workspace",
+      path: "screenshot.png",
+    });
+
+    expect(second).not.toBe(first);
+  });
+
   it("scopes persisted file previews to the rendered message occurrence", () => {
     const first = createAssistantImageFilePreviewAttachmentId({
       serverId: "server-1",

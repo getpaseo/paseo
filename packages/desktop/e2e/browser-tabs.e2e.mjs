@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -10,6 +10,7 @@ import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { experimental_createMCPClient } from "ai";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
@@ -180,7 +181,13 @@ async function waitForDesktopStatus(page) {
         if (typeof window.paseoDesktop?.invoke !== "function") return null;
         return await window.paseoDesktop.invoke("desktop_daemon_status");
       });
-      if (typeof status?.serverId === "string") return status;
+      if (
+        status?.status === "running" &&
+        status.desktopManaged === true &&
+        typeof status.serverId === "string"
+      ) {
+        return status;
+      }
     } catch (error) {
       // Metro may replace the renderer execution context during its initial load.
       lastError = error;
@@ -190,6 +197,68 @@ async function waitForDesktopStatus(page) {
   throw new Error(
     `Timed out waiting for the Electron desktop bridge${lastError ? `: ${String(lastError)}` : ""}`,
   );
+}
+
+function processDescendants(parentPid) {
+  const rows = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" })
+    .stdout.trim()
+    .split("\n")
+    .map((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      return match
+        ? { pid: Number(match[1]), parentPid: Number(match[2]), command: match[3] }
+        : null;
+    })
+    .filter(Boolean);
+  const descendants = [];
+  const pending = [parentPid];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const row of rows) {
+      if (row.parentPid !== current) continue;
+      descendants.push(row);
+      pending.push(row.pid);
+    }
+  }
+  return descendants;
+}
+
+async function proveManagedLocalProbe(status, daemonPort) {
+  assert(status.desktopManaged === true, "Electron did not start its managed daemon");
+  assert(Number.isInteger(status.pid), "Desktop daemon status did not expose its PID");
+  const daemonClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemonPort}/ws`,
+    clientId: "desktop-managed-local-probe-e2e",
+    appVersion: "0.3.1",
+    reconnect: { enabled: false },
+  });
+  try {
+    await daemonClient.connect();
+    const ensured = await Promise.race([
+      daemonClient.ensureWorkspaceRuntimeProbe({
+        projectId: `project-${workspaceIds[0]}`,
+        runtimeId: "local",
+      }),
+      delay(10_000).then(() => {
+        throw new Error("Electron-managed explicit Local provider probe exceeded 10 seconds");
+      }),
+    ]);
+    assert(
+      ensured.status === "ready" && typeof ensured.workspaceId === "string",
+      `Explicit Local provider probe failed: ${ensured.error ?? ensured.status}`,
+    );
+    await delay(250);
+    const helpers = processDescendants(status.pid).filter((processInfo) =>
+      processInfo.command.includes("workspace-helper/executable.mjs"),
+    );
+    assert(
+      helpers.length === 0,
+      `Explicit Local provider probe left Electron helper children: ${helpers.map(({ pid }) => pid).join(", ")}`,
+    );
+    return ensured.workspaceId;
+  } finally {
+    await daemonClient.close().catch(() => undefined);
+  }
 }
 
 async function startTargetPage() {
@@ -813,6 +882,7 @@ async function main() {
   const children = [];
   let browser = null;
   let client = null;
+  let page = null;
 
   try {
     const commonEnv = {
@@ -827,16 +897,6 @@ async function main() {
       FORCE_COLOR: "0",
       NO_COLOR: "1",
     };
-    const daemon = spawnLogged(
-      "daemon",
-      process.execPath,
-      ["--import", "tsx", path.join(rootDir, "packages/server/scripts/dev-runner.ts")],
-      { cwd: rootDir, env: { ...commonEnv, PASEO_NODE_ENV: "development" } },
-      artifactDir,
-    );
-    children.push(daemon.child);
-    await waitForPort(daemonPort, "daemon", daemon);
-
     const desktopArgs = [
       process.execPath,
       devRunner,
@@ -868,8 +928,10 @@ async function main() {
     await waitForPort(cdpPort, "Electron CDP", desktop);
 
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const page = await waitForAppPage(browser, expoPort);
+    page = await waitForAppPage(browser, expoPort);
     const status = await waitForDesktopStatus(page);
+    await waitForPort(daemonPort, "Desktop-managed daemon");
+    const localProbeWorkspaceId = await proveManagedLocalProbe(status, daemonPort);
 
     await runAppearanceFontSizeRegression(page);
 
@@ -888,7 +950,7 @@ async function main() {
       callerAgentId,
       artifactDir,
     });
-    writeJson(path.join(artifactDir, "result.json"), report);
+    writeJson(path.join(artifactDir, "result.json"), { ...report, localProbeWorkspaceId });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
@@ -898,6 +960,9 @@ async function main() {
     throw error;
   } finally {
     await client?.close().catch(() => undefined);
+    await page
+      ?.evaluate(() => window.paseoDesktop?.invoke("stop_desktop_daemon", { reason: "quit" }))
+      .catch(() => undefined);
     await browser?.close().catch(() => undefined);
     for (const child of children.toReversed()) stopProcess(child);
     await closeServer(target.server);

@@ -8,6 +8,7 @@ import type {
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
+import type { TerminalPtyLaunchInput } from "./terminal.js";
 
 export interface WorkerTerminalInfo {
   id: string;
@@ -97,6 +98,18 @@ export type TerminalWorkerRequest =
       message: ClientMessage;
     };
 
+export type TerminalWorkerPtyEvent =
+  | { type: "ptySpawnResult"; processId: string; mode: "runtime" | "legacy" }
+  | { type: "ptySpawnError"; processId: string; error: string }
+  | { type: "ptyData"; processId: string; data: string }
+  | {
+      type: "ptyExit";
+      processId: string;
+      exit: { code: number | null; signal: NodeJS.Signals | null };
+    };
+
+export type TerminalWorkerParentMessage = TerminalWorkerRequest | TerminalWorkerPtyEvent;
+
 export type TerminalWorkerResponse =
   | {
       type: "response";
@@ -147,6 +160,14 @@ export type TerminalWorkerEvent =
     };
 
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
+
+export type TerminalWorkerPtyCommand =
+  | { type: "ptySpawn"; processId: string; input: TerminalPtyLaunchInput }
+  | { type: "ptyWrite"; processId: string; data: string }
+  | { type: "ptyResize"; processId: string; cols: number; rows: number }
+  | { type: "ptyKill"; processId: string; signal?: NodeJS.Signals };
+
+export type TerminalWorkerMessage = TerminalWorkerToParentMessage | TerminalWorkerPtyCommand;
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
 // The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so

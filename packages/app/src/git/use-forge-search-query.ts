@@ -11,6 +11,8 @@ import {
 import { i18n } from "@/i18n/i18next";
 import { useFetchQuery } from "@/data/query";
 import { parseForgeAuthState } from "@/git/forge";
+import type { WorkspaceGitClient, WorkspaceGitReadClient } from "@/git/workspace-git";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
 export const FORGE_SEARCH_STALE_TIME = 30_000;
 
@@ -22,36 +24,27 @@ export interface ForgeSearchPayload {
 }
 
 interface ForgeSearchOptions {
-  cwd: string;
   query: string;
   limit?: number;
   kinds?: ForgeSearchKind[];
 }
 
 interface LegacyGitHubSearchOptions {
-  cwd: string;
   query: string;
   limit?: number;
   kinds?: LegacyGitHubSearchKind[];
 }
 
-export interface ForgeSearchClient {
-  searchForge: (
-    options: ForgeSearchOptions,
-    requestId?: string,
-  ) => Promise<ForgeSearchResponse["payload"]>;
-  searchGitHub?: (
-    options: LegacyGitHubSearchOptions,
-    requestId?: string,
-  ) => Promise<GitHubSearchResponse["payload"]>;
-}
+type ForgeSearchTarget = Pick<WorkspaceGitReadClient, "cwd" | "queryIdentity">;
+export type ForgeSearchClient = ForgeSearchTarget &
+  Pick<WorkspaceGitClient, "searchForge"> &
+  Partial<Pick<WorkspaceGitClient, "searchGitHub">>;
 
 type LegacyGitHubSearchKind = "github-issue" | "github-pr";
 
 interface ForgeSearchQueryInput {
   client: ForgeSearchClient | null;
   serverId: string;
-  cwd: string;
   query: string;
   kinds?: ForgeSearchKind[];
   enabled: boolean;
@@ -59,25 +52,36 @@ interface ForgeSearchQueryInput {
   hostDisconnectedMessage?: string;
 }
 
+interface LegacyForgeSearchQueryInput extends Omit<ForgeSearchQueryInput, "client"> {
+  client: Pick<DaemonClient, "searchForge" | "searchGitHub"> | null;
+  cwd: string;
+}
+
 export function forgeSearchQueryKey(
   serverId: string,
-  cwd: string,
+  target: ForgeSearchTarget,
   query: string,
   kinds?: ForgeSearchKind[],
   transport: "forge" | "github" = "forge",
 ) {
   const trimmedQuery = query.trim();
+  const queryIdentity = forgeSearchClientIdentity(target);
   if (!kinds) {
-    return ["forge-search", serverId, cwd, transport, trimmedQuery] as const;
+    return ["forge-search", serverId, queryIdentity, target.cwd, transport, trimmedQuery] as const;
   }
   return [
     "forge-search",
     serverId,
-    cwd,
+    queryIdentity,
+    target.cwd,
     transport,
     trimmedQuery,
     [...kinds].sort().join(","),
   ] as const;
+}
+
+export function forgeSearchClientIdentity(client: ForgeSearchTarget) {
+  return client.queryIdentity;
 }
 
 export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
@@ -85,16 +89,16 @@ export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
   const transport = input.supportsForgeSearch === true ? "forge" : "github";
 
   return {
-    queryKey: forgeSearchQueryKey(input.serverId, input.cwd, query, input.kinds, transport),
+    queryKey: input.client
+      ? forgeSearchQueryKey(input.serverId, input.client, query, input.kinds, transport)
+      : (["forge-search", input.serverId, "unbound", transport, query] as const),
     queryFn: async (): Promise<ForgeSearchPayload> => {
       if (!input.client) {
         throw new Error(
           input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"),
         );
       }
-      const request = input.kinds
-        ? { cwd: input.cwd, query, limit: 20, kinds: input.kinds }
-        : { cwd: input.cwd, query, limit: 20 };
+      const request = input.kinds ? { query, limit: 20, kinds: input.kinds } : { query, limit: 20 };
       // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
       // clients use forge.search.*.
       if (transport === "github" && input.client.searchGitHub) {
@@ -153,12 +157,54 @@ function toLegacyGitHubSearchKind(kind: ForgeSearchKind): LegacyGitHubSearchKind
 
 function toLegacyGitHubSearchRequest(request: ForgeSearchOptions): LegacyGitHubSearchOptions {
   if (!request.kinds) {
-    return { cwd: request.cwd, query: request.query, limit: request.limit };
+    return { query: request.query, limit: request.limit };
   }
   return {
     ...request,
     kinds: request.kinds.map(toLegacyGitHubSearchKind),
   };
+}
+
+export function buildLegacyForgeSearchQueryOptions(input: LegacyForgeSearchQueryInput) {
+  const query = input.query.trim();
+  const transport = input.supportsForgeSearch === true ? "forge" : "github";
+  return {
+    queryKey: ["legacy-forge-search", input.serverId, input.cwd, transport, query] as const,
+    queryFn: async (): Promise<ForgeSearchPayload> => {
+      if (!input.client) {
+        throw new Error(
+          input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"),
+        );
+      }
+      const request = input.kinds
+        ? { cwd: input.cwd, query, limit: 20, kinds: input.kinds }
+        : { cwd: input.cwd, query, limit: 20 };
+      if (transport === "github") {
+        return normalizeLegacyGitHubSearchPayload(
+          await input.client.searchGitHub({
+            cwd: input.cwd,
+            query,
+            limit: 20,
+            kinds: input.kinds?.map(toLegacyGitHubSearchKind),
+          }),
+        );
+      }
+      return normalizeForgeSearchPayload(await input.client.searchForge(request));
+    },
+    enabled: input.enabled && Boolean(input.client),
+    dataShape: "list" as const,
+    staleTimeMs: FORGE_SEARCH_STALE_TIME,
+  };
+}
+
+export function useLegacyForgeSearchQuery(input: LegacyForgeSearchQueryInput) {
+  const { t } = useTranslation();
+  return useFetchQuery(
+    buildLegacyForgeSearchQueryOptions({
+      ...input,
+      hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
+    }),
+  );
 }
 
 export function useForgeSearchQuery(input: ForgeSearchQueryInput) {

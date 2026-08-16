@@ -11,6 +11,7 @@ class FakeDirectoryClient {
   fetchAgentsCalls = 0;
   lastAgentOptions: unknown;
   fetchWorkspacesCalls = 0;
+  lastWorkspaceOptions: unknown;
   listProjectsCalls = 0;
   lastProjectOptions: unknown;
   projectResult: ProjectListResult | null = null;
@@ -55,8 +56,9 @@ class FakeDirectoryClient {
     };
   }
 
-  async fetchWorkspaces(): Promise<WorkspaceFetchResult> {
+  async fetchWorkspaces(options?: unknown): Promise<WorkspaceFetchResult> {
     this.fetchWorkspacesCalls += 1;
+    this.lastWorkspaceOptions = options;
     if (this.pendingWorkspaceFetch) {
       const pending = this.pendingWorkspaceFetch;
       this.pendingWorkspaceFetch = null;
@@ -147,6 +149,7 @@ describe("DirectorySync session readiness", () => {
       version: "test",
       features: { directorySync: true, workspaceMultiplicity: true },
     });
+    store.setHasHydratedAgents(serverId, true);
 
     await directory.refreshAgents({
       subscribe: { subscriptionId: `app:${serverId}` },
@@ -250,6 +253,7 @@ describe("DirectorySync session readiness", () => {
         projectKind: "git",
       }),
     ]);
+    store.setHasHydratedWorkspaces(serverId, true);
     store.updateSessionServerInfo(serverId, {
       serverId,
       hostname: null,
@@ -284,6 +288,49 @@ describe("DirectorySync session readiness", () => {
     expect(Array.from(projects?.keys() ?? [])).toEqual(["project-1"]);
     expect(projects?.get("project-1")?.projectDisplayName).toBe("New name");
     expect(writes).toContainEqual({ projects: { generation: "generation", afterSeq: 6 } });
+    directory.dispose();
+  });
+
+  it("requests snapshots when persisted cursors outlive the in-memory replicas", async () => {
+    const serverId = "fresh-replica-stale-cursors";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readDirectoryCheckpoint: () => ({
+          agents: { generation: "agents-generation", afterSeq: 3 },
+          projects: { generation: "projects-generation", afterSeq: 4 },
+          workspaces: { generation: "workspaces-generation", afterSeq: 5 },
+        }),
+        writeDirectoryCheckpoint: () => undefined,
+      },
+    );
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { directorySync: true, workspaceMultiplicity: true, projectList: true },
+    });
+
+    await directory.refreshAll();
+
+    expect(client.lastAgentOptions).toMatchObject({ sync: {} });
+    expect(client.lastProjectOptions).toEqual({ sync: {} });
+    expect(client.lastWorkspaceOptions).toMatchObject({ sync: {} });
     directory.dispose();
   });
 

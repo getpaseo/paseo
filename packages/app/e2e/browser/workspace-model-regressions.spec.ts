@@ -11,7 +11,7 @@ import {
   connectNewWorkspaceDaemonClient,
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
-  selectWorkspaceIsolation,
+  selectWorkspaceRuntime,
   submitNewWorkspaceEmpty,
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
@@ -271,7 +271,7 @@ test.describe("Workspace model regressions", () => {
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
-      await selectWorkspaceIsolation(page, "local");
+      await selectWorkspaceRuntime(page, "local");
       await submitNewWorkspacePrompt(page, "Fix login bug");
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
@@ -356,7 +356,7 @@ test.describe("Workspace model regressions", () => {
 
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
-      await selectWorkspaceIsolation(page, "local");
+      await selectWorkspaceRuntime(page, "local");
       await submitNewWorkspaceEmpty(page);
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
@@ -472,7 +472,7 @@ test.describe("Workspace model regressions", () => {
 
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
-      await selectWorkspaceIsolation(page, "local");
+      await selectWorkspaceRuntime(page, "local");
       await submitNewWorkspaceEmpty(page);
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {

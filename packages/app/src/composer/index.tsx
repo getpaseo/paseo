@@ -121,6 +121,7 @@ import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
+import { useWorkspaceGit } from "@/git/workspace-git";
 import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
@@ -855,6 +856,8 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  /** Disables submission without locking draft editing or attachments. */
+  isSubmitDisabled?: boolean;
   /** When true, waits for pasted GitHub links to resolve before enabling submit. */
   waitForGithubAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
@@ -1066,6 +1069,7 @@ export function Composer({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
+  isSubmitDisabled = false,
   waitForGithubAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
@@ -1149,7 +1153,8 @@ export function Composer({
     onOpenWorkspaceAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;
-  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
+  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId });
+  const workspaceGitClient = useWorkspaceGit();
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
@@ -1157,10 +1162,9 @@ export function Composer({
     text: userInput,
     remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
     attachments,
-    client,
+    client: workspaceGitClient,
     isConnected,
     serverId,
-    cwd,
     supportsForgeSearch,
     setAttachments: setSelectedAttachments,
     onPullRequestDetected: onGithubPrDetected,
@@ -1918,16 +1922,14 @@ export function Composer({
   // until the forge-specific picker or attachment presentation is visible.
   const { forge } = useCheckoutPrStatusQuery({
     serverId,
-    cwd,
     enabled: isConnected && cwd.trim().length > 0 && (isGithubPickerOpen || hasGithubAttachment),
   });
   const forgePresentation = useMemo(() => getForgePresentation(forge), [forge]);
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
   const githubSearchResultsQuery = useForgeSearchQuery({
-    client,
+    client: workspaceGitClient,
     serverId,
-    cwd,
     query: githubSearchQueryTrimmed,
     supportsForgeSearch,
     enabled: resolveGithubSearchEnabled(isGithubPickerOpen, isConnected, cwd),
@@ -2145,8 +2147,10 @@ export function Composer({
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
-  const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
+  const isSubmitActionDisabled =
+    isSubmitDisabled ||
+    isSubmitLoadingVisible ||
+    (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2205,7 +2209,7 @@ export function Composer({
                 submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
                 submitButtonTestID={submitButtonTestID}
                 submitIcon={submitIcon}
-                isSubmitDisabled={isSubmitDisabled}
+                isSubmitDisabled={isSubmitActionDisabled}
                 isSubmitLoading={isSubmitLoadingVisible}
                 preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
                 attachments={selectedAttachments}

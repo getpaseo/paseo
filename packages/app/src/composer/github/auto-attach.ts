@@ -10,7 +10,12 @@ import {
   type SetStateAction,
 } from "react";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
-import { buildForgeSearchQueryOptions, type ForgeSearchClient } from "@/git/use-forge-search-query";
+import {
+  buildForgeSearchQueryOptions,
+  forgeSearchClientIdentity,
+  type ForgeSearchClient,
+} from "@/git/use-forge-search-query";
+import { workspaceGitQueryIdentitiesEqual } from "@/git/workspace-git";
 import { extractGithubRefs, type GithubRef } from "@/utils/github-refs";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import { isAttachmentSelectedForGithubItem, toggleGithubAttachment } from "../actions";
@@ -24,7 +29,6 @@ interface ComposerGithubAutoAttachInput {
   client: ForgeSearchClient | null;
   isConnected: boolean;
   serverId: string;
-  cwd: string;
   supportsForgeSearch?: boolean;
   setAttachments: Dispatch<SetStateAction<UserComposerAttachment[]>>;
   onPullRequestDetected?: () => void;
@@ -50,7 +54,7 @@ export function useComposerGithubAutoAttach(
   const removedRefKeysRef = useRef(new Set<string>());
   const presentPullRequestKeysRef = useRef(new Set<string>());
   const activeLookupsRef = useRef(new Set<ActiveGithubLookup>());
-  const previousTargetRef = useRef({ serverId: params.serverId, cwd: params.cwd });
+  const previousTargetRef = useRef({ serverId: params.serverId, client: params.client });
   const [resolvingRefCounts, setResolvingRefCounts] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
@@ -79,7 +83,7 @@ export function useComposerGithubAutoAttach(
     hasClient,
     params.isConnected,
     params.serverId,
-    params.cwd,
+    params.client,
   ]);
 
   useEffect(() => {
@@ -143,7 +147,7 @@ export function useComposerGithubAutoAttach(
     hasClient,
     params.isConnected,
     params.serverId,
-    params.cwd,
+    params.client,
     queryClient,
   ]);
 
@@ -236,15 +240,25 @@ function suppressRefsCarriedAcrossTargets({
   removedRefKeys,
 }: {
   params: ComposerGithubAutoAttachInput;
-  previousTargetRef: RefObject<{ serverId: string; cwd: string }>;
+  previousTargetRef: RefObject<{
+    serverId: string;
+    client: ForgeSearchClient | null;
+  }>;
   removedRefKeys: Set<string>;
 }): void {
   const previous = previousTargetRef.current;
   const targetChanged =
-    previous.cwd.trim().length > 0 &&
-    params.cwd.trim().length > 0 &&
-    (previous.serverId !== params.serverId || previous.cwd !== params.cwd);
-  previousTargetRef.current = { serverId: params.serverId, cwd: params.cwd };
+    previous.client !== null &&
+    params.client !== null &&
+    previous.client.cwd.trim().length > 0 &&
+    params.client.cwd.trim().length > 0 &&
+    (previous.serverId !== params.serverId ||
+      !workspaceGitQueryIdentitiesEqual(
+        forgeSearchClientIdentity(previous.client),
+        forgeSearchClientIdentity(params.client),
+      ) ||
+      previous.client.cwd !== params.client.cwd);
+  previousTargetRef.current = { serverId: params.serverId, client: params.client };
   if (!targetChanged) return;
 
   for (const ref of extractGithubRefs(params.text, params.remoteUrl)) {
@@ -444,7 +458,7 @@ function refsReadyForLookup({
   removedRefKeys: Set<string>;
   activeLookups: ReadonlySet<ActiveGithubLookup>;
 }): GithubRef[] {
-  if (!params.client || !params.isConnected || params.cwd.trim().length === 0) {
+  if (!params.client || !params.isConnected || params.client.cwd.trim().length === 0) {
     return [];
   }
 
@@ -476,7 +490,6 @@ async function fetchGithubRefSearch({
       buildForgeSearchQueryOptions({
         client: snapshot.client,
         serverId: snapshot.serverId,
-        cwd: snapshot.cwd,
         query: String(ref.number),
         supportsForgeSearch: snapshot.supportsForgeSearch,
         enabled: true,
@@ -499,7 +512,13 @@ function isSameLookupTarget(
 ): boolean {
   return (
     initial.serverId === current.serverId &&
-    initial.cwd === current.cwd &&
+    (initial.client === null || current.client === null
+      ? initial.client === current.client
+      : workspaceGitQueryIdentitiesEqual(
+          forgeSearchClientIdentity(initial.client),
+          forgeSearchClientIdentity(current.client),
+        )) &&
+    initial.client?.cwd === current.client?.cwd &&
     initial.remoteUrl === current.remoteUrl
   );
 }

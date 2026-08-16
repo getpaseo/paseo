@@ -38,11 +38,11 @@ import {
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -67,6 +67,7 @@ import {
   canAddPullRequestCheckLogsToChat,
 } from "./context-attachment";
 import { getActivityVerb, getStateLabel } from "./data";
+import { fetchBoundPullRequestCheckDetails } from "./check-details";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
 import {
@@ -205,12 +206,14 @@ function removeLoadingCheck(current: ReadonlySet<string>, checkKey: string): Rea
 
 export function PullRequestPane({
   serverId,
+  workspaceId,
   cwd,
   data,
   activityLoading,
   workspaceAttachmentScopeKey,
 }: {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   data: PrPaneData;
   activityLoading: boolean;
@@ -218,7 +221,7 @@ export function PullRequestPane({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const daemonClient = useHostRuntimeClient(serverId);
+  const workspaceGit = useRequiredWorkspaceGit();
   // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
   // all supported clients use checkout.forge.get_check_details.*.
   const canFetchGitHubCheckDetails = useSessionStore(
@@ -248,17 +251,17 @@ export function PullRequestPane({
   const runRefresh = useCheckoutGitActionsStore((state) => state.refresh);
   const isRefreshing =
     useCheckoutGitActionsStore((state) =>
-      state.getStatus({ serverId, cwd, actionId: "refresh" }),
+      state.getStatus({ serverId, target: workspaceGit, actionId: "refresh" }),
     ) === "pending";
 
   const handleRefresh = useCallback(() => {
     if (isRefreshing) {
       return;
     }
-    void runRefresh({ serverId, cwd }).catch((error) => {
+    void runRefresh({ serverId, target: workspaceGit }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
+  }, [isRefreshing, runRefresh, serverId, t, toast, workspaceGit]);
 
   const handleToggleChecks = useCallback(() => {
     setChecksOpen((open) => !open);
@@ -399,29 +402,21 @@ export function PullRequestPane({
           canFetchForgeCheckDetails || (check.provider === "github" && canFetchGitHubCheckDetails);
         if (
           canFetchDetail &&
-          daemonClient &&
           (ref?.checkRunId !== undefined || ref?.workflowRunId !== undefined) &&
           data.repoOwner &&
           data.repoName
         ) {
-          try {
-            const request = {
-              cwd,
-              repoOwner: data.repoOwner,
-              repoName: data.repoName,
-              checkRunId: ref.checkRunId,
-              workflowRunId: ref.workflowRunId,
-              changeRequestNumber: data.number,
-            };
-            // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-            // all supported clients use checkout.forge.get_check_details.*.
-            const payload = canFetchForgeCheckDetails
-              ? await daemonClient.checkoutForgeGetCheckDetails(request)
-              : await daemonClient.checkoutGithubGetCheckDetails(request);
-            details = payload.success ? payload.details : null;
-          } catch {
-            details = null;
-          }
+          // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
+          // all supported clients use checkout.forge.get_check_details.*.
+          details = await fetchBoundPullRequestCheckDetails({
+            workspaceGit,
+            transport: canFetchForgeCheckDetails ? "forge" : "github",
+            repoOwner: data.repoOwner,
+            repoName: data.repoName,
+            checkRunId: ref.checkRunId,
+            workflowRunId: ref.workflowRunId,
+            changeRequestNumber: data.number,
+          });
         }
         const attachment = buildPullRequestCheckContextAttachment({
           provider: data.provider,
@@ -444,8 +439,6 @@ export function PullRequestPane({
       addWorkspaceAttachment,
       canFetchForgeCheckDetails,
       canFetchGitHubCheckDetails,
-      cwd,
-      daemonClient,
       data.forge,
       data.number,
       data.provider,
@@ -454,6 +447,7 @@ export function PullRequestPane({
       data.title,
       data.url,
       workspaceAttachmentScopeKey,
+      workspaceGit,
     ],
   );
 
@@ -483,6 +477,7 @@ export function PullRequestPane({
   const nativeChecksSection = data.forgeSpecific
     ? nativeContribution?.renderChecksSection(data.forgeSpecific, {
         serverId,
+        workspaceId,
         cwd,
         changeRequestNumber: data.number,
         open: checksOpen,

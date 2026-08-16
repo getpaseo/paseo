@@ -28,8 +28,9 @@ describe("workspace file editing messages", () => {
         path: "file.ts",
         subscriptionId: "subscription-1",
         requestId: "request-1",
-      }).subscriptionId,
-    ).toBe("subscription-1");
+        workspaceId: "workspace-1",
+      }),
+    ).toMatchObject({ subscriptionId: "subscription-1", workspaceId: "workspace-1" });
     expect(
       FileSubscribeResponseSchema.parse({
         type: "fs.file.subscribe.response",

@@ -4,7 +4,8 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFetchQueries } from "@/data/query";
 import { checkoutCommitFileDiffQueryKey, COMMIT_FILE_DIFF_STALE_TIME } from "@/git/query-keys";
 import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 
 /**
  * Context needed to resolve a commit diff against a host: which daemon
@@ -13,7 +14,6 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
  */
 export interface CommitDiffFilesContext {
   serverId: string;
-  cwd: string;
   sha: string;
   enabled?: boolean;
 }
@@ -57,12 +57,12 @@ export function resolveCommitDiffFiles(
 }
 
 export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFilesResult {
-  const { serverId, cwd, sha, enabled = true } = ctx;
+  const { serverId, sha, enabled = true } = ctx;
+  const workspaceGit = useRequiredWorkspaceGit();
   const retainedPanelActive = useRetainedPanelActive();
   const queryEnabled = enabled && retainedPanelActive;
-  const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled: queryEnabled });
+  const commitsQuery = useCheckoutCommitsQuery({ serverId, enabled: queryEnabled });
   const commitsData = commitsQuery.status === "loaded" ? commitsQuery.data : null;
   const commitFiles = useMemo(() => {
     if (!sha || !commitsData) {
@@ -74,18 +74,17 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
   const fileDiffsEnabled =
     queryEnabled &&
     commitsQuery.status === "loaded" &&
-    Boolean(cwd) &&
+    Boolean(workspaceGit) &&
     Boolean(sha) &&
-    Boolean(client) &&
     isConnected;
   const fileDiffResults = useFetchQueries(
     commitFiles.map((file) => ({
-      queryKey: checkoutCommitFileDiffQueryKey(serverId, cwd, sha, file.path),
+      queryKey: checkoutCommitFileDiffQueryKey(serverId, workspaceGit, sha, file.path),
       queryFn: async (): Promise<{ file: ParsedDiffFile | null }> => {
-        if (!client) {
+        if (!workspaceGit) {
           throw new Error("Host disconnected");
         }
-        return client.getCommitFileDiff(cwd, sha, file.path);
+        return workspaceGit.getCommitFileDiff(sha, file.path);
       },
       enabled: fileDiffsEnabled,
       staleTimeMs: COMMIT_FILE_DIFF_STALE_TIME,

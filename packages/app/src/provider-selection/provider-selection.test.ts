@@ -137,7 +137,7 @@ describe("combined model selector data", () => {
           provider: "error-provider",
           status: "error",
           error: "boom",
-          models: [],
+          models: [codexModel],
         }),
         snapshotEntry({
           provider: "unavailable-provider",

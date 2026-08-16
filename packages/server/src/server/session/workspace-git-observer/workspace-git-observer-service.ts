@@ -3,9 +3,10 @@ import type pino from "pino";
 import type { WorkspaceDescriptorPayload } from "../../messages.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
-  WorkspaceGitService,
+  WorkspaceGitWorkspace,
 } from "../../workspace-git-service.js";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
+import type { WorkspaceGitAddress } from "../../workspace-git-directory.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
@@ -15,6 +16,8 @@ interface WorkspaceGitWatchTarget {
 
 interface WorkspaceGitWatchState {
   cwd: string;
+  address: WorkspaceGitAddress;
+  workspaceGit: WorkspaceGitWorkspace;
   latestDescriptorStateKey: string | null;
   lastBranchName: string | null;
 }
@@ -29,9 +32,8 @@ export interface WorkspaceGitObserverMetrics {
  * Observes a workspace's git state on disk (via WorkspaceGitService) and drives the
  * live update fan-out: branch-change notifications, workspace-card refreshes, and
  * checkout status updates. It owns the per-cwd watch targets and the WorkspaceGitService
- * subscription handles. Filesystem subscriptions are keyed by cwd while descriptor and
- * branch state remain keyed by workspace id, so same-directory workspace records share one
- * watch without sharing identity or teardown lifetime.
+ * subscription handles. Selected subscriptions are keyed by their bound capability; only
+ * explicitly legacy bindings may share cwd fan-out.
  *
  * Branch changes reach `onBranchChanged` from two paths that share `lastBranchName`: the
  * on-disk snapshot listener (handleBranchSnapshot) and the workspace-emit loop's Git runtime
@@ -45,20 +47,26 @@ export interface WorkspaceGitObserverService {
   // for this workspace, and otherwise advances the recorded state key as a side effect.
   shouldSkipUpdate(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): boolean;
   recordDescriptorState(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): void;
-  handleBranchSnapshot(cwd: string, branchName: string | null): void;
+  handleBranchSnapshot(address: WorkspaceGitAddress, branchName: string | null): void;
   getMetrics(): WorkspaceGitObserverMetrics;
   removeForWorkspaceId(workspaceId: string): void;
   dispose(): void;
 }
 
 export function createWorkspaceGitObserverService(deps: {
-  workspaceGitService: Pick<WorkspaceGitService, "registerWorkspace">;
+  resolveWorkspaceGit: (
+    workspaceId: string,
+    cwd: string,
+  ) => { address: WorkspaceGitAddress; workspaceGit: WorkspaceGitWorkspace };
   describeWorkspaceRecordWithGitData: (
     workspace: PersistedWorkspaceRecord,
   ) => Promise<WorkspaceDescriptorPayload>;
-  emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
   emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
-  emitStatusUpdate: (cwd: string, snapshot: WorkspaceGitRuntimeSnapshot) => void;
+  emitStatusUpdate: (
+    workspaceId: string,
+    cwd: string,
+    snapshot: WorkspaceGitRuntimeSnapshot,
+  ) => void;
   onBranchChanged?: (
     workspaceId: string,
     oldBranch: string | null,
@@ -67,18 +75,17 @@ export function createWorkspaceGitObserverService(deps: {
   logger: pino.Logger;
 }): WorkspaceGitObserverService {
   const {
-    workspaceGitService,
+    resolveWorkspaceGit,
     describeWorkspaceRecordWithGitData,
-    emitWorkspaceUpdateForCwd,
     emitWorkspaceUpdateForWorkspaceId,
     emitStatusUpdate,
     onBranchChanged,
     logger,
   } = deps;
 
-  const watchTargets = new Map<string, WorkspaceGitWatchTarget>();
+  const watchTargets = new Map<WorkspaceGitWorkspace, WorkspaceGitWatchTarget>();
   const workspaceStates = new Map<string, WorkspaceGitWatchState>();
-  const subscriptions = new Map<string, () => void>();
+  const subscriptions = new Map<WorkspaceGitWorkspace, () => void>();
 
   function descriptorStateKey(workspace: WorkspaceDescriptorPayload | null): string {
     if (!workspace) {
@@ -105,15 +112,14 @@ export function createWorkspaceGitObserverService(deps: {
     }
   }
 
-  function removeForCwd(cwd: string): void {
-    const normalizedCwd = resolve(cwd);
-    const target = watchTargets.get(normalizedCwd);
+  function removeForWorkspaceGit(workspaceGit: WorkspaceGitWorkspace): void {
+    const target = watchTargets.get(workspaceGit);
     for (const workspaceId of target?.workspaceIds ?? []) {
       workspaceStates.delete(workspaceId);
     }
-    watchTargets.delete(normalizedCwd);
-    subscriptions.get(normalizedCwd)?.();
-    subscriptions.delete(normalizedCwd);
+    watchTargets.delete(workspaceGit);
+    subscriptions.get(workspaceGit)?.();
+    subscriptions.delete(workspaceGit);
   }
 
   function removeForWorkspaceId(workspaceId: string): void {
@@ -122,20 +128,26 @@ export function createWorkspaceGitObserverService(deps: {
       return;
     }
     workspaceStates.delete(workspaceId);
-    const target = watchTargets.get(state.cwd);
+    const target = watchTargets.get(state.workspaceGit);
     target?.workspaceIds.delete(workspaceId);
     if (target?.workspaceIds.size === 0) {
-      removeForCwd(state.cwd);
+      removeForWorkspaceGit(state.workspaceGit);
     }
   }
 
-  function handleBranchSnapshot(cwd: string, branchName: string | null): void {
-    const target = watchTargets.get(resolve(cwd));
-    if (!target) {
-      return;
-    }
-
-    for (const workspaceId of target.workspaceIds) {
+  function handleBranchSnapshot(address: WorkspaceGitAddress, branchName: string | null): void {
+    const addressedState =
+      address.kind === "selected" ? workspaceStates.get(address.workspaceId) : null;
+    const target = addressedState ? watchTargets.get(addressedState.workspaceGit) : null;
+    const workspaceIds = target
+      ? [...target.workspaceIds]
+      : [...workspaceStates]
+          .filter(
+            ([, candidate]) =>
+              candidate.address.kind === "legacy" && candidate.cwd === resolve(address.cwd),
+          )
+          .map(([workspaceId]) => workspaceId);
+    for (const workspaceId of workspaceIds) {
       const state = workspaceStates.get(workspaceId);
       if (!state) {
         continue;
@@ -151,8 +163,12 @@ export function createWorkspaceGitObserverService(deps: {
 
   function syncObserver(cwd: string, options: { isGit: boolean; workspaceId: string }): void {
     const normalizedCwd = resolve(cwd);
+    const { address, workspaceGit } = resolveWorkspaceGit(options.workspaceId, normalizedCwd);
     const currentState = workspaceStates.get(options.workspaceId);
-    if (currentState && currentState.cwd !== normalizedCwd) {
+    if (
+      currentState &&
+      (currentState.cwd !== normalizedCwd || currentState.workspaceGit !== workspaceGit)
+    ) {
       removeForWorkspaceId(options.workspaceId);
     }
     if (!options.isGit) {
@@ -160,40 +176,44 @@ export function createWorkspaceGitObserverService(deps: {
       return;
     }
 
-    const target = watchTargets.get(normalizedCwd) ?? {
+    const target = watchTargets.get(workspaceGit) ?? {
       workspaceIds: new Set<string>(),
     };
-    watchTargets.set(normalizedCwd, target);
+    watchTargets.set(workspaceGit, target);
     target.workspaceIds.add(options.workspaceId);
     if (!workspaceStates.has(options.workspaceId)) {
       workspaceStates.set(options.workspaceId, {
         cwd: normalizedCwd,
+        address,
+        workspaceGit,
         latestDescriptorStateKey: null,
         lastBranchName: null,
       });
     }
 
-    if (subscriptions.has(normalizedCwd)) {
+    if (subscriptions.has(workspaceGit)) {
       return;
     }
 
-    let subscription: ReturnType<WorkspaceGitService["registerWorkspace"]>;
+    let subscription: ReturnType<WorkspaceGitWorkspace["register"]>;
     try {
-      subscription = workspaceGitService.registerWorkspace({ cwd: normalizedCwd }, (snapshot) => {
-        handleBranchSnapshot(normalizedCwd, snapshot.git.currentBranch ?? null);
-        void emitWorkspaceUpdateForCwd(normalizedCwd).catch((error) => {
-          logger.warn(
-            { err: error, cwd: normalizedCwd },
-            "Failed to emit workspace update after git branch snapshot",
-          );
-        });
-        emitStatusUpdate(normalizedCwd, snapshot);
+      subscription = workspaceGit.register((snapshot) => {
+        handleBranchSnapshot(address, snapshot.git.currentBranch ?? null);
+        for (const workspaceId of target.workspaceIds) {
+          void emitWorkspaceUpdateForWorkspaceId(workspaceId).catch((error) => {
+            logger.warn(
+              { err: error, cwd: normalizedCwd, workspaceId },
+              "Failed to emit workspace update after git branch snapshot",
+            );
+          });
+          emitStatusUpdate(workspaceId, normalizedCwd, snapshot);
+        }
       });
     } catch (error) {
       removeForWorkspaceId(options.workspaceId);
       throw error;
     }
-    subscriptions.set(normalizedCwd, subscription.unsubscribe);
+    subscriptions.set(workspaceGit, subscription.unsubscribe);
   }
 
   function syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {

@@ -1,21 +1,25 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type pino from "pino";
+import pino, { type Logger } from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { createFileObserver } from "./file-observer/index.js";
-import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import {
+  WorkspaceGitServiceImpl,
+  type WorkspaceGitRuntimeSnapshot,
+} from "./workspace-git-service.js";
 import type { FileChange, SubscribeToFileChanges } from "./file-observer/index.js";
 
-function createLogger(): pino.Logger {
+function createLogger(): Logger {
   const logger = {
     child: () => logger,
     debug: vi.fn(),
     warn: vi.fn(),
   };
-  return logger as unknown as pino.Logger;
+  return logger as unknown as Logger;
 }
 
 function createFacts(cwd: string): CheckoutSnapshotFacts {
@@ -412,4 +416,78 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
   expect(getCheckoutDiff).not.toHaveBeenCalled();
   expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
+}, 30_000);
+
+test("sibling worktrees share one common-repository observer with one observer per checkout", async () => {
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-shared-git-observation-")));
+  const repoDir = path.join(tempDir, "repo");
+  const paseoHome = path.join(tempDir, "paseo-home");
+  const worktrees = Array.from({ length: 4 }, (_, index) =>
+    path.join(tempDir, `worktree-${index}`),
+  );
+
+  execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  writeFileSync(path.join(repoDir, "tracked.txt"), "base\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  for (const [index, worktree] of worktrees.entries()) {
+    execFileSync("git", ["worktree", "add", "-b", `fixture-${index}`, worktree, "main"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+  }
+
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ level: "silent" }),
+    paseoHome,
+  });
+  const updates = new Map(
+    worktrees.map((worktree) => [worktree, [] as WorkspaceGitRuntimeSnapshot["git"][]]),
+  );
+  const subscriptions = worktrees.map((cwd) =>
+    service.registerWorkspace({ cwd }, (snapshot) => {
+      updates.get(cwd)?.push(snapshot.git);
+    }),
+  );
+
+  try {
+    await vi.waitFor(
+      () => {
+        expect(service.getMetrics()).toMatchObject({
+          workspaceTargetCount: 4,
+          repositoryTargetCount: 1,
+          repositoryWorkspaceLinkCount: 4,
+          workingTreeWatchTargetCount: 4,
+          workspaceObservationSetupInFlightCount: 0,
+          workingTreeWatchSetupInFlightCount: 0,
+          fileObserver: { activeObservationCount: 5 },
+        });
+        for (const worktree of worktrees) expect(service.peekSnapshot(worktree)).not.toBeNull();
+      },
+      { timeout: 15_000 },
+    );
+
+    writeFileSync(path.join(worktrees[2]!, "tracked.txt"), "changed\n");
+    await vi.waitFor(
+      () => {
+        expect(updates.get(worktrees[2]!)?.at(-1)).toMatchObject({
+          isDirty: true,
+          diffStat: { additions: 1, deletions: 1 },
+        });
+      },
+      { timeout: 15_000 },
+    );
+  } finally {
+    for (const subscription of subscriptions) subscription.unsubscribe();
+    await service.dispose();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }, 30_000);

@@ -16,6 +16,7 @@ import type {
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import { resolveHostProviderWorkspace } from "../test-utils/provider-workspace-stub.js";
 
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));
@@ -50,6 +51,7 @@ test("loads archived records for history and active records with the interactive
     clients: { codex: client },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
 
   const archivedId = "00000000-0000-4000-8000-000000000301";

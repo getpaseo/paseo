@@ -4,6 +4,7 @@ import { LiveFileModel, type LiveFileSession } from "./model";
 
 export function useLiveFile(input: {
   client: DaemonClient | null;
+  workspaceId: string;
   cwd: string | null;
   path: string | null;
   enabled: boolean;
@@ -15,13 +16,13 @@ export function useLiveFile(input: {
     const client = input.client;
     return {
       subscribe(target, onVersion) {
-        return client.subscribeFile(target, onVersion);
+        return client.subscribeFile({ ...target, workspaceId: input.workspaceId }, onVersion);
       },
       read(target) {
-        return client.readFile(target.cwd, target.path);
+        return client.readFile(target.cwd, target.path, undefined, input.workspaceId);
       },
     };
-  }, [input.client]);
+  }, [input.client, input.workspaceId]);
 
   useEffect(() => {
     if (!input.enabled || !session || !input.cwd || !input.path) {

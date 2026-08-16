@@ -5,6 +5,7 @@ import { getIsElectron } from "@/constants/platform";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { useGitActionRunner, useGitActions } from "@/git/use-actions";
+import { useBoundWorkspaceGit, WorkspaceGitBoundary } from "@/git/workspace-git";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
   resolveShortcutKeysForAction,
@@ -13,6 +14,7 @@ import {
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getCommandCenterIcon } from "./icon";
@@ -107,6 +109,26 @@ export function useWorkspaceCommandCenterActions(): void {
 }
 
 export function CommandCenterWorkspaceActions() {
+  const selection = useActiveWorkspaceSelection();
+  const serverId = selection?.serverId ?? "";
+  const workspaceId = selection?.workspaceId ?? "";
+  const cwd = useWorkspaceDirectory(serverId, workspaceId);
+  const client = useHostRuntimeClient(serverId);
+  const address = useMemo(
+    () => (workspaceId && cwd ? ({ kind: "selected", workspaceId, cwd } as const) : null),
+    [cwd, workspaceId],
+  );
+  const workspaceGit = useBoundWorkspaceGit(client, address);
+  if (!workspaceGit) return null;
+
+  return (
+    <WorkspaceGitBoundary workspaceGit={workspaceGit}>
+      <CommandCenterWorkspaceActionRegistration />
+    </WorkspaceGitBoundary>
+  );
+}
+
+function CommandCenterWorkspaceActionRegistration() {
   useWorkspaceCommandCenterActions();
   return null;
 }

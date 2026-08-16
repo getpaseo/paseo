@@ -32,6 +32,7 @@ import {
 } from "./task-notification-tool-call.js";
 import {
   findClaudeModel,
+  getClaudeModels,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
   resolveConfiguredClaudeModel,
@@ -121,6 +122,7 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ProviderWorkspace,
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../../agent-sdk-types.js";
@@ -138,6 +140,12 @@ import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
+import {
+  isProviderStateNotFoundError,
+  providerWorkspaceEnvironment,
+  providerWorkspaceFromCatalogOptions,
+  runWorkspaceProviderCommand,
+} from "../workspace/index.js";
 
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
@@ -388,6 +396,16 @@ export interface ClaudeContentChunk {
   [key: string]: unknown;
 }
 
+function renderClaudeToolResultImage(
+  image: ProviderImageOutput,
+  selectedWorkspace: boolean,
+): AgentTimelineItem | null {
+  return renderProviderImageOutputAsAssistantMarkdown(
+    image,
+    selectedWorkspace ? {} : { materialize: materializeProviderImage },
+  );
+}
+
 interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
@@ -408,6 +426,7 @@ interface ClaudeAgentSessionOptions {
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
+  workspace?: ProviderWorkspace;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1511,7 +1530,8 @@ export class ClaudeAgentClient implements AgentClient {
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
-      resolveBinary: this.resolveBinary,
+      resolveBinary: launchContext?.workspace ? async () => "claude" : this.resolveBinary,
+      workspace: launchContext?.workspace,
     });
   }
 
@@ -1539,28 +1559,35 @@ export class ClaudeAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
-      resolveBinary: this.resolveBinary,
+      resolveBinary: launchContext?.workspace ? async () => "claude" : this.resolveBinary,
+      workspace: launchContext?.workspace,
     });
   }
 
   async fetchCatalog(
-    _options: FetchCatalogOptions,
+    options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
+    const workspace = providerWorkspaceFromCatalogOptions(options);
     let claudeCodeVersion: string | undefined;
     try {
       claudeCodeVersion = await runProviderRefreshActivity(context, "version", () =>
-        this.resolveVersion(context?.signal),
+        workspace
+          ? resolveWorkspaceClaudeCodeVersion(workspace, this.runtimeSettings)
+          : this.resolveVersion(context?.signal),
       );
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to resolve Claude Code version for model catalog");
     }
-    const models = await runProviderRefreshActivity(context, "settings", () =>
-      getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
-    );
+    const models = workspace
+      ? getClaudeModels(claudeCodeVersion)
+      : await runProviderRefreshActivity(context, "settings", () =>
+          getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
+        );
     const modes = detectIneligibleAutoModeTransport(
-      createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
+      workspace
+        ? providerWorkspaceEnvironment([this.runtimeSettings?.env])
+        : createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
     )
       ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
       : DEFAULT_MODES;
@@ -1591,6 +1618,7 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    if (options?.workspace) return [];
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
@@ -1619,11 +1647,22 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "claude",
     });
+    if (options) {
+      try {
+        const workspace = providerWorkspaceFromCatalogOptions(options);
+        if (workspace) {
+          await workspace.resolveExecutable(launch.command);
+          return true;
+        }
+      } catch {
+        return false;
+      }
+    }
     const availability = await checkProviderLaunchAvailable(launch);
     return availability.available;
   }
@@ -1706,6 +1745,26 @@ export async function resolveClaudeCodeVersion(
   if (!version) {
     throw new Error("Unable to parse Claude Code version from --version output");
   }
+  return version.join(".");
+}
+
+async function resolveWorkspaceClaudeCodeVersion(
+  workspace: ProviderWorkspace,
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<string> {
+  const launch = await resolveProviderLaunch({
+    commandConfig: runtimeSettings?.command,
+    defaultBinary: "claude",
+  });
+  const executable = await workspace.resolveExecutable(launch.command);
+  const { stdout, stderr } = await runWorkspaceProviderCommand({
+    workspace,
+    argv: [executable, ...launch.args, "--version"],
+    env: runtimeSettings?.env,
+    provider: "claude",
+  });
+  const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
+  if (!version) throw new Error("Unable to parse Claude Code version from --version output");
   return version.join(".");
 }
 
@@ -2018,6 +2077,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
+  private readonly workspace?: ProviderWorkspace;
   private query: Query | null = null;
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
@@ -2037,7 +2097,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly taskState = new ClaudeTaskState();
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
-    readWorkflowResult: readClaudeWorkflowResultFile,
+    readWorkflowResult: (outputFile) =>
+      this.workspace ? undefined : readClaudeWorkflowResultFile(outputFile),
   });
   private readonly sidechainTracker = new ClaudeSidechainTracker({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
@@ -2054,6 +2115,7 @@ class ClaudeAgentSession implements AgentSession {
     { type: "provider_subagent" }
   >[] = [];
   private historyPending = false;
+  private historyLoadPromise: Promise<void> = Promise.resolve();
   private turnState: TurnState = "idle";
   private nextTurnOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
@@ -2085,6 +2147,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
+    this.workspace = options.workspace;
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -2096,7 +2159,7 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
-      this.loadPersistedHistory(handle.sessionId);
+      this.historyLoadPromise = this.loadPersistedHistory(handle.sessionId);
     } else {
       this.claudeSessionId = null;
       this.persistence = null;
@@ -2274,6 +2337,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    await this.historyLoadPromise;
     if (
       !this.historyPending ||
       (this.persistedHistory.length === 0 && this.persistedProviderSubagentEvents.length === 0)
@@ -2559,10 +2623,11 @@ class ClaudeAgentSession implements AgentSession {
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
       // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
       // (metadata generator, branch-name generator) don't show up as resumable.
-      const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+      const historyPath = await this.resolveHistoryPath(this.claudeSessionId);
       if (historyPath) {
         try {
-          await promises.rm(historyPath, { force: true });
+          if (this.workspace) await this.workspace.removeStateFile(historyPath);
+          else await promises.rm(historyPath, { force: true });
         } catch (error) {
           this.logger.warn(
             { err: error, historyPath, claudeSessionId: this.claudeSessionId },
@@ -2805,7 +2870,7 @@ class ClaudeAgentSession implements AgentSession {
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
     this.taskState.reset();
-    this.loadPersistedHistory(sessionId);
+    this.historyLoadPromise = this.loadPersistedHistory(sessionId);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
         {
@@ -2988,6 +3053,8 @@ class ClaudeAgentSession implements AgentSession {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
         queryFactory: this.queryFactory,
+        workspace: this.workspace,
+        agentId: this.agentId,
         onChildProcess: (child) => {
           this.childProcess = child;
           child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
@@ -4568,21 +4635,25 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private loadPersistedHistory(sessionId: string): void {
+  private async loadPersistedHistory(sessionId: string): Promise<void> {
     try {
       this.taskState.reset();
-      const historyPath = this.resolveHistoryPath(sessionId);
-      if (!historyPath || !fs.existsSync(historyPath)) {
-        return;
-      }
-      const content = fs.readFileSync(historyPath, "utf8");
+      const historyPath = await this.resolveHistoryPath(sessionId);
+      if (!historyPath) return;
+      const content = this.workspace
+        ? await this.workspace.readStateText(historyPath)
+        : fs.readFileSync(historyPath, "utf8");
       const restoredProviderSubagentIds = this.ingestPersistedSidechains(
         content,
-        readClaudeSidechainHistory(historyPath),
+        this.workspace
+          ? await readClaudeSidechainHistoryFromWorkspace(historyPath, this.workspace)
+          : readClaudeSidechainHistory(historyPath),
       );
       this.ingestPersistedHistory(content, restoredProviderSubagentIds);
-    } catch {
-      // ignore history load failures
+    } catch (error) {
+      if (!this.workspace || isProviderStateNotFoundError(error)) return;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to load selected Claude history: ${message}`, { cause: error });
     }
   }
 
@@ -4720,7 +4791,10 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private resolveHistoryPath(sessionId: string): string | null {
+  private async resolveHistoryPath(sessionId: string): Promise<string | null> {
+    if (this.workspace) {
+      return this.workspace.findStateFile(".claude/projects", `${sessionId}.jsonl`);
+    }
     const cwd = this.config.cwd;
     if (!cwd) return null;
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -4940,9 +5014,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     for (const image of images) {
-      const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
-        materialize: materializeProviderImage,
-      });
+      const imageItem = renderClaudeToolResultImage(image, Boolean(this.workspace));
       if (imageItem) {
         items.push(imageItem);
       }
@@ -5340,6 +5412,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private detectFileKind(filePath: string): string {
+    if (this.workspace) return "update";
     try {
       return fs.existsSync(filePath) ? "update" : "add";
     } catch {
@@ -5492,11 +5565,11 @@ interface ClaudeSidechainHistory {
 const CLAUDE_SUBAGENT_META_FILE = /^agent-(.+)\.meta\.json$/;
 
 function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory {
-  const sessionDirectory = path.join(
-    path.dirname(historyPath),
-    path.basename(historyPath, ".jsonl"),
+  const sessionDirectory = path.posix.join(
+    path.posix.dirname(historyPath),
+    path.posix.basename(historyPath, ".jsonl"),
   );
-  const sidechainDirectory = path.join(sessionDirectory, "subagents");
+  const sidechainDirectory = path.posix.join(sessionDirectory, "subagents");
   const history: ClaudeSidechainHistory = {
     contents: [],
     workflowContents: [],
@@ -5548,12 +5621,83 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
   return history;
 }
 
+async function readClaudeSidechainHistoryFromWorkspace(
+  historyPath: string,
+  workspace: ProviderWorkspace,
+): Promise<ClaudeSidechainHistory> {
+  const sessionDirectory = path.posix.join(
+    path.posix.dirname(historyPath),
+    path.posix.basename(historyPath, ".jsonl"),
+  );
+  const sidechainDirectory = path.posix.join(sessionDirectory, "subagents");
+  const history: ClaudeSidechainHistory = {
+    contents: [],
+    workflowContents: [],
+    workflowSidechainContentsByRunId: new Map(),
+    metaByAgentId: new Map(),
+  };
+  try {
+    const workflows = await workspace.listState(path.posix.join(sessionDirectory, "workflows"));
+    for (const entry of workflows.entries) {
+      if (entry.kind !== "file" || !entry.name.endsWith(".json")) continue;
+      try {
+        history.workflowContents.push(await workspace.readStateText(entry.path));
+      } catch (error) {
+        if (!isProviderStateNotFoundError(error)) throw error;
+      }
+    }
+  } catch (error) {
+    if (!isProviderStateNotFoundError(error)) throw error;
+  }
+
+  const directories = [sidechainDirectory];
+  while (directories.length > 0) {
+    const directory = directories.pop()!;
+    let entries;
+    try {
+      entries = (await workspace.listState(directory)).entries;
+    } catch (error) {
+      if (!isProviderStateNotFoundError(error)) throw error;
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.kind === "directory") {
+        directories.push(entry.path);
+        continue;
+      }
+      if (entry.name.endsWith(".jsonl")) {
+        const contents = await workspace.readStateText(entry.path);
+        recordClaudeSidechainContent(history, sidechainDirectory, entry.path, contents);
+        continue;
+      }
+      const metaMatch = CLAUDE_SUBAGENT_META_FILE.exec(entry.name);
+      if (!metaMatch?.[1]) continue;
+      try {
+        const meta = parseClaudeSubagentMeta(await workspace.readStateText(entry.path));
+        if (meta) history.metaByAgentId.set(metaMatch[1], meta);
+      } catch (error) {
+        if (!isProviderStateNotFoundError(error)) throw error;
+      }
+    }
+  }
+  return history;
+}
+
 function recordClaudeSidechainContents(
   history: ClaudeSidechainHistory,
   sidechainDirectory: string,
   entryPath: string,
 ): void {
   const contents = fs.readFileSync(entryPath, "utf8");
+  recordClaudeSidechainContent(history, sidechainDirectory, entryPath, contents);
+}
+
+function recordClaudeSidechainContent(
+  history: ClaudeSidechainHistory,
+  sidechainDirectory: string,
+  entryPath: string,
+  contents: string,
+): void {
   const relativeParts = path.relative(sidechainDirectory, entryPath).split(path.sep);
   const workflowRunId =
     relativeParts[0] === "workflows" && relativeParts.length >= 3 ? relativeParts[1] : undefined;

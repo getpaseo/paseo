@@ -34,6 +34,7 @@ import type {
   ProviderCatalog,
 } from "../../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
+import { resolveHostProviderWorkspace } from "../../test-utils/provider-workspace-stub.js";
 import { DaemonClient } from "../../test-utils/daemon-client.js";
 import { AgentStorage } from "../../agent/agent-storage.js";
 import { AgentManager } from "../../agent/agent-manager.js";
@@ -826,7 +827,6 @@ export class HubRelationshipHarness {
       { provider: "codex", cwd: this.root },
       undefined,
       {
-        workspaceId: "foreign-workspace",
         owner: { kind: "daemon", daemonId: "another-daemon", executionId },
       },
     );
@@ -1082,7 +1082,7 @@ export class HubRelationshipHarness {
     const agent = await this.daemon!.agentManager.createAgent(
       { provider: "codex", cwd: this.root },
       undefined,
-      { workspaceId: "local-workspace" },
+      {},
     );
     return agent.id;
   }
@@ -1186,6 +1186,7 @@ export class HubRelationshipHarness {
       clients: createTestAgentClients(),
       registry: storage,
       logger: pino({ level: "silent" }),
+      resolveProviderWorkspace: resolveHostProviderWorkspace,
     });
     const executions = this.executionsForReconstruction(manager, storage);
     const replay = await executions.create(this.ownedCreateInput(executionId));

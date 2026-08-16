@@ -4,11 +4,12 @@ import {
   constants as fsConstants,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
 } from "fs";
-import { copyFile, rm, stat } from "fs/promises";
+import { copyFile, readFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -17,7 +18,7 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
 } from "./string-command-shell.js";
-import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file.js";
+import { resolvePaseoConfigPath } from "./paseo-config-file.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -44,7 +45,7 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
-import { terminateWithTreeKill } from "./tree-kill.js";
+import { signalProcessTree } from "./tree-kill.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -104,6 +105,29 @@ export type WorktreeSetupCommandProgressEvent =
       stdout: string;
       stderr: string;
     };
+
+export interface WorktreeSetupExecution {
+  readFile(path: string): Promise<Uint8Array | null>;
+  resolveCommand(command: string): Promise<string | null>;
+  run(input: {
+    argv: readonly [string, ...string[]];
+    cwd: string;
+    env: Readonly<Record<string, string>>;
+  }): Promise<{
+    stdin: NodeJS.WritableStream;
+    stdout: NodeJS.ReadableStream;
+    stderr: NodeJS.ReadableStream;
+    exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+    kill(signal?: NodeJS.Signals): void;
+  }>;
+}
+
+interface SetupCommandProcess {
+  stdout: NodeJS.ReadableStream;
+  stderr: NodeJS.ReadableStream;
+  exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  signal(signal: NodeJS.Signals): Promise<void>;
+}
 
 export interface WorktreeTerminalConfig {
   name?: string;
@@ -251,14 +275,29 @@ export type ReadPaseoConfigResult =
   | { ok: false; configPath: string; error: unknown };
 
 export function readPaseoConfig(repoRoot: string): ReadPaseoConfigResult {
+  const configPath = resolvePaseoConfigPath(repoRoot);
+  if (!existsSync(configPath)) {
+    return { ok: true, config: null };
+  }
   try {
-    const json = readPaseoConfigJson(repoRoot);
-    if (json === null) {
-      return { ok: true, config: null };
-    }
-    return { ok: true, config: PaseoConfigSchema.parse(json) };
+    return { ok: true, config: parsePaseoConfigContents(readFileSync(configPath)) };
   } catch (error) {
-    return { ok: false, configPath: resolvePaseoConfigPath(repoRoot), error };
+    return { ok: false, configPath, error };
+  }
+}
+
+export function parsePaseoConfigContents(contents: string | Uint8Array): PaseoConfig {
+  return PaseoConfigSchema.parse(JSON.parse(Buffer.from(contents).toString("utf8")));
+}
+
+export function parsePaseoConfigContentsOrThrow(
+  contents: string | Uint8Array,
+  configPath: string,
+): PaseoConfig {
+  try {
+    return parsePaseoConfigContents(contents);
+  } catch (error) {
+    throw paseoConfigParseError({ configPath, error });
   }
 }
 
@@ -278,7 +317,7 @@ function readPaseoConfigOrThrow(repoRoot: string): PaseoConfig | null {
 }
 
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  return readPaseoConfigOrThrow(repoRoot)?.worktree?.setup ?? [];
+  return [...worktreeSetupCommands(readPaseoConfigOrThrow(repoRoot))];
 }
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
@@ -412,7 +451,7 @@ export function processCarriageReturns(text: string): string {
   return output.join("");
 }
 
-async function execSetupCommand(
+async function execLifecycleCommand(
   command: string,
   options: { cwd: string; env: NodeJS.ProcessEnv },
 ): Promise<WorktreeSetupCommandResult> {
@@ -452,13 +491,15 @@ async function execSetupCommandStreamed(options: {
   total: number;
   signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+  launch(): Promise<SetupCommandProcess>;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     let settled = false;
-    let termination: Promise<unknown> | null = null;
+    let termination: Promise<void> | null = null;
+    let child: SetupCommandProcess | null = null;
 
     const emitOutput = (stream: "stdout" | "stderr", chunk: string) => {
       const text = stripAnsi(chunk);
@@ -518,43 +559,44 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const shellInvocation = buildStringCommandShellInvocation({ command: options.command });
-    const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
     const abort = () => {
-      termination ??= terminateWithTreeKill(child, {
-        gracefulTimeoutMs: 1000,
-        forceTimeoutMs: 1000,
-      });
+      if (!child) return;
+      termination ??= terminateSetupProcess(child);
     };
-    if (options.signal?.aborted) {
-      abort();
-    } else {
-      options.signal?.addEventListener("abort", abort, { once: true });
-    }
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      emitOutput("stdout", chunk.toString());
-    });
-
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      emitOutput("stderr", chunk.toString());
-    });
-
-    child.on("error", (error) => {
-      emitOutput("stderr", error instanceof Error ? error.message : String(error));
-      void finish(null);
-    });
-
-    child.on("close", (code) => {
-      void finish(typeof code === "number" ? code : null);
-    });
+    void options
+      .launch()
+      .then(async (launched) => {
+        child = launched;
+        options.signal?.addEventListener("abort", abort, { once: true });
+        if (options.signal?.aborted) abort();
+        const collect = async (stream: NodeJS.ReadableStream, name: "stdout" | "stderr") => {
+          for await (const chunk of stream) emitOutput(name, Buffer.from(chunk).toString("utf8"));
+        };
+        const [, , exit] = await Promise.all([
+          collect(launched.stdout, "stdout"),
+          collect(launched.stderr, "stderr"),
+          launched.exited,
+        ]);
+        return finish(exit.code);
+      })
+      .catch(async (error) => {
+        emitOutput("stderr", error instanceof Error ? error.message : String(error));
+        return finish(null);
+      });
   });
+}
+
+async function terminateSetupProcess(child: SetupCommandProcess): Promise<void> {
+  await child.signal("SIGTERM");
+  const exited = await Promise.race([
+    child.exited.then(() => true),
+    new Promise<false>((resolvePromise) => {
+      const timer = setTimeout(() => resolvePromise(false), 1_000);
+      timer.unref();
+    }),
+  ]);
+  if (!exited) await child.signal("SIGKILL");
+  await child.exited;
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -640,38 +682,47 @@ export async function runWorktreeSetupCommands(options: {
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+  execution?: WorktreeSetupExecution;
 }): Promise<WorktreeSetupCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
-  const setupCommands = getWorktreeSetupCommands(options.worktreePath);
+  const setupCommands = await readSetupCommands(options.worktreePath, options.execution);
   if (setupCommands.length === 0) {
     return [];
   }
 
   const runtimeEnv =
     options.runtimeEnv ??
-    (await resolveWorktreeRuntimeEnv({
-      worktreePath: options.worktreePath,
-      branchName: options.branchName,
-      ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
-    }));
-  const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
+    (options.execution
+      ? {}
+      : await resolveWorktreeRuntimeEnv({
+          worktreePath: options.worktreePath,
+          branchName: options.branchName,
+          ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
+        }));
+  const setupEnv = options.execution
+    ? {}
+    : createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
-    const result = options.onEvent
-      ? await execSetupCommandStreamed({
+    const commandInput = {
+      command: cmd,
+      cwd: options.worktreePath,
+      env: setupEnv,
+      index: index + 1,
+      total: setupCommands.length,
+      signal: options.signal,
+      onEvent: options.onEvent,
+    };
+    const result = await execSetupCommandStreamed({
+      ...commandInput,
+      launch: () =>
+        launchSetupCommand({
           command: cmd,
           cwd: options.worktreePath,
           env: setupEnv,
-          index: index + 1,
-          total: setupCommands.length,
-          signal: options.signal,
-          onEvent: options.onEvent,
-        })
-      : await execSetupCommand(cmd, {
-          cwd: options.worktreePath,
-          env: setupEnv,
-        });
+          execution: options.execution,
+        }),
+    });
     results.push(result);
 
     if (result.exitCode !== 0) {
@@ -693,6 +744,97 @@ export async function runWorktreeSetupCommands(options: {
   }
 
   return results;
+}
+
+async function launchSetupCommand(options: {
+  command: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  execution?: WorktreeSetupExecution;
+}): Promise<SetupCommandProcess> {
+  const env = Object.fromEntries(
+    Object.entries(options.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  if (options.execution) {
+    const shell = await resolveRuntimeSetupShell(options.execution, options.command);
+    const child = await options.execution.run({ argv: shell, cwd: options.cwd, env });
+    child.stdin.end();
+    return {
+      stdout: child.stdout,
+      stderr: child.stderr,
+      exited: child.exited,
+      async signal(signal) {
+        child.kill(signal);
+      },
+    };
+  }
+
+  const shell = buildStringCommandShellInvocation({ command: options.command });
+  const child = spawnProcess(shell.shell, shell.args, {
+    cwd: options.cwd,
+    env,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolveExit) => {
+      child.once("error", () => resolveExit({ code: null, signal: null }));
+      child.once("close", (code, signal) => resolveExit({ code, signal }));
+    },
+  );
+  return {
+    stdout: child.stdout!,
+    stderr: child.stderr!,
+    exited,
+    signal: (signal) => signalProcessTree(child, signal),
+  };
+}
+
+async function resolveRuntimeSetupShell(
+  execution: WorktreeSetupExecution,
+  command: string,
+): Promise<readonly [string, ...string[]]> {
+  const cmd = await execution.resolveCommand("cmd.exe");
+  if (cmd) {
+    const powershell =
+      (await execution.resolveCommand("powershell")) ??
+      (await execution.resolveCommand("powershell.exe"));
+    const invocation = buildStringCommandShellInvocation({
+      command,
+      platform: "win32",
+      ...(powershell ? {} : { windowsShell: "cmd" as const }),
+    });
+    return [powershell ?? cmd, ...invocation.args];
+  }
+
+  const bash = await execution.resolveCommand("bash");
+  if (bash) {
+    const invocation = buildStringCommandShellInvocation({ command, platform: "linux" });
+    return [bash, ...invocation.args];
+  }
+  throw new Error("Setup runtime has no supported command shell");
+}
+
+async function readSetupCommands(
+  worktreePath: string,
+  execution?: WorktreeSetupExecution,
+): Promise<readonly string[]> {
+  const contents = execution
+    ? await execution.readFile("paseo.json")
+    : await readFile(resolvePaseoConfigPath(worktreePath)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+  if (!contents) return [];
+  return worktreeSetupCommands(
+    parsePaseoConfigContentsOrThrow(contents, resolvePaseoConfigPath(worktreePath)),
+  );
+}
+
+function worktreeSetupCommands(config: PaseoConfig | null): readonly string[] {
+  return config?.worktree?.setup ?? [];
 }
 
 async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<string> {
@@ -783,7 +925,7 @@ export async function runWorktreeTeardownCommands(options: {
 
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
+    const result = await execLifecycleCommand(cmd, {
       cwd: teardownCwd,
       env: teardownEnv,
     });

@@ -25,6 +25,7 @@ export interface SidebarWorkspacePlacement {
   projectName: string;
   projectRootPath?: string;
   workspaceDirectory?: string;
+  hostVisiblePath?: string;
   projectKind: WorkspaceStructureProject["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
@@ -159,6 +160,7 @@ export function createSidebarWorkspaceEntry(input: {
     projectName: projectNameForWorkspace(input.workspace),
     projectRootPath: input.workspace.projectRootPath,
     workspaceDirectory: input.workspace.workspaceDirectory,
+    hostVisiblePath: input.workspace.hostVisiblePath,
     workspaceDirectoryLabel:
       input.workspace.worktreeSlug ?? shortenPath(input.workspace.workspaceDirectory),
     projectKind: input.workspace.projectKind,

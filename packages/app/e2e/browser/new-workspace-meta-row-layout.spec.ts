@@ -1,16 +1,17 @@
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
-  openNewWorkspaceComposer,
   openStartingRefPicker,
   selectBranchInPicker,
-  selectWorkspaceIsolation,
+  selectWorkspaceRuntime,
 } from "../support/helpers/new-workspace";
-import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import {
+  gotoNewWorkspaceForRuntime,
+  seedGitProjectForRuntime,
+  type SeededRuntimeProject,
+} from "../support/helpers/new-workspace-runtime";
 import { getServerId } from "../support/helpers/server-id";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
-import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const LONG_HOST_NAME =
   "development-macbook-pro.local-connected-through-a-very-long-private-hostname";
@@ -27,17 +28,14 @@ function measureControlRightEdges(controls: HTMLElement[]) {
 }
 
 test.describe("New workspace metadata row layout", () => {
-  let workspace: SeededWorkspace;
+  let project: SeededRuntimeProject;
 
   test.beforeEach(async () => {
-    workspace = await seedWorkspace({
-      repoPrefix: "new-workspace-layout-",
-      repo: { branches: [LONG_BRANCH_NAME] },
-    });
+    project = await seedGitProjectForRuntime({ branches: [LONG_BRANCH_NAME] });
   });
 
   test.afterEach(async () => {
-    await workspace?.cleanup();
+    await project?.cleanup();
   });
 
   test("long host and branch names stay inside the composer's right rail", async ({ page }) => {
@@ -55,13 +53,8 @@ test.describe("New workspace metadata row layout", () => {
       },
     ]);
 
-    await gotoAppShell(page);
-    await waitForSidebarHydration(page);
-    await openNewWorkspaceComposer(page, {
-      projectKey: workspace.projectKey,
-      projectDisplayName: workspace.projectDisplayName,
-    });
-    await selectWorkspaceIsolation(page, "worktree");
+    await gotoNewWorkspaceForRuntime(page, project);
+    await selectWorkspaceRuntime(page, "worktree");
     await openStartingRefPicker(page);
     await selectBranchInPicker(page, LONG_BRANCH_NAME);
 

@@ -809,6 +809,7 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
       );
     });
     const gate = await installDaemonWebSocketGate(page);
+    gate.setAgentStreamItemSuppressed("assistant_message", true);
     await gotoWorkspace(page, workspace.workspaceId);
     await clickNewChat(page);
     await expectComposerVisible(page);
@@ -816,14 +817,20 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     const prompt = "Delay synthetic user message by 300ms.";
     await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
     await expectAttachmentPill(page, "composer-image-attachment-pill");
+    gate.holdNextServerMessage("fetch_agent_timeline_response");
     await recordTurnFrames(page, prompt);
     await submitMessage(page, prompt);
 
     const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
     await expect(submittedRow).toBeVisible();
-    await gate.waitForServerMessage("fetch_agent_timeline_response");
+    await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+    gate.truncateHeldTimelineAfterLast("user_message");
+    gate.setServerMessageSuppressed("fetch_agent_timeline_response", true);
+    gate.releaseHeldServerMessage("fetch_agent_timeline_response");
     await recordPaintsFor(page, 80);
     expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
+    gate.setServerMessageSuppressed("fetch_agent_timeline_response", false);
+    gate.setAgentStreamItemSuppressed("assistant_message", false);
   } finally {
     await workspace.cleanup();
   }

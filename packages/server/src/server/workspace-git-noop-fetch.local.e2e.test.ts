@@ -174,6 +174,7 @@ async function measureFetchScenario(
   snapshotUpdates: number;
 }> {
   const fetchStarted = createDeferred<void>();
+  const fetchCompleted = createDeferred<void>();
   const releaseFetch = createDeferred<void>();
   let fetchCount = 0;
   let fetchChangedNonRemoteRefs: boolean | undefined;
@@ -188,6 +189,7 @@ async function measureFetchScenario(
         const result = await fetchWorkspaceGitRemote(cwd, observer);
         fetchChangedNonRemoteRefs = result.nonRemoteRefsChanged;
         fetchCount += 1;
+        fetchCompleted.resolve();
         return result;
       },
     },
@@ -217,6 +219,7 @@ async function measureFetchScenario(
     startGitCommandMetrics();
     releaseFetch.resolve();
     await duringFetch?.();
+    await fetchCompleted.promise;
     await waitForGitCommandMetricsIdle({ quietMs, timeoutMs: 120_000 });
     const postFetch = stopGitCommandMetrics();
     const snapshotUpdatesAfterFetch = [...snapshotCounts].reduce(

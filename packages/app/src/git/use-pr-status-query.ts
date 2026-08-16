@@ -1,14 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { checkoutPrStatusQueryKey } from "@/git/query-keys";
 import { normalizeForge } from "@/git/forge";
 import { selectPrHintFromStatus, type PrHint } from "@/git/pr-hint";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
+import { useWorkspaceGit } from "@/git/workspace-git";
 
 interface UseCheckoutPrStatusQueryOptions {
   serverId: string;
-  cwd: string;
   enabled?: boolean;
 }
 
@@ -21,22 +21,23 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
 
 export function useCheckoutPrStatusQuery({
   serverId,
-  cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
   const { t } = useTranslation();
-  const client = useHostRuntimeClient(serverId);
+  const workspaceGit = useWorkspaceGit();
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const query = useQuery({
-    queryKey: checkoutPrStatusQueryKey(serverId, cwd),
+    queryKey: workspaceGit
+      ? checkoutPrStatusQueryKey(serverId, workspaceGit)
+      : (["checkoutPrStatus", serverId, "unavailable"] as const),
     queryFn: async () => {
-      if (!client) {
+      if (!workspaceGit) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
-      return normalizeCheckoutPrStatusPayload(await client.checkoutPrStatus(cwd));
+      return normalizeCheckoutPrStatusPayload(await workspaceGit.getPrStatus());
     },
-    enabled: !!client && isConnected && !!cwd && enabled,
+    enabled: isConnected && enabled && workspaceGit !== null,
     staleTime: Infinity,
     // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
     // useCheckoutStatusQuery for the rationale.
@@ -63,22 +64,23 @@ export function useCheckoutPrStatusQuery({
 
 export function useWorkspacePrHint({
   serverId,
-  cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions): PrHint | null {
   const { t } = useTranslation();
-  const client = useHostRuntimeClient(serverId);
+  const workspaceGit = useWorkspaceGit();
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const query = useQuery<CheckoutPrStatusPayload, Error, PrHint | null>({
-    queryKey: checkoutPrStatusQueryKey(serverId, cwd),
+    queryKey: workspaceGit
+      ? checkoutPrStatusQueryKey(serverId, workspaceGit)
+      : (["checkoutPrStatus", serverId, "unavailable"] as const),
     queryFn: async () => {
-      if (!client) {
+      if (!workspaceGit) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
-      return normalizeCheckoutPrStatusPayload(await client.checkoutPrStatus(cwd));
+      return normalizeCheckoutPrStatusPayload(await workspaceGit.getPrStatus());
     },
-    enabled: !!client && isConnected && !!cwd && enabled,
+    enabled: isConnected && enabled && workspaceGit !== null,
     staleTime: Infinity,
     // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
     // useCheckoutStatusQuery for the rationale.

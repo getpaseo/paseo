@@ -1,18 +1,15 @@
 import { useState, useCallback, useMemo } from "react";
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { ToastApi } from "@/components/toast-host";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { createBranchSwitcherOperations } from "@/git/branch-switcher-operations";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 
 interface UseBranchSwitcherInput {
-  client: DaemonClient | null;
   normalizedServerId: string;
-  normalizedWorkspaceId: string;
-  workspaceDirectory: string | null;
   currentBranchName: string | null;
   isGitCheckout: boolean;
   isConnected: boolean;
@@ -29,10 +26,7 @@ interface UseBranchSwitcherResult {
 }
 
 export function useBranchSwitcher({
-  client,
   normalizedServerId,
-  normalizedWorkspaceId,
-  workspaceDirectory,
   currentBranchName,
   isGitCheckout,
   isConnected,
@@ -40,20 +34,15 @@ export function useBranchSwitcher({
   queryClient,
 }: UseBranchSwitcherInput): UseBranchSwitcherResult {
   const { t } = useTranslation();
+  const workspaceGit = useRequiredWorkspaceGit();
   const [isOpen, setIsOpen] = useState(false);
 
   // Git operations are bound to the workspace directory; the opaque workspace id is
   // used only for query cache identity below, never as a cwd.
-  const operations = useMemo(
-    () =>
-      client && workspaceDirectory
-        ? createBranchSwitcherOperations(client, workspaceDirectory)
-        : null,
-    [client, workspaceDirectory],
-  );
+  const operations = useMemo(() => createBranchSwitcherOperations(workspaceGit), [workspaceGit]);
 
   const branchSuggestionsQuery = useQuery({
-    queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
+    queryKey: ["branchSuggestions", normalizedServerId, workspaceGit.workspaceId],
     queryFn: async () => {
       if (!operations) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
@@ -75,20 +64,19 @@ export function useBranchSwitcher({
   }, [branchSuggestionsQuery.data]);
 
   const stashListQueryKey = useMemo(
-    () => ["stashList", normalizedServerId, normalizedWorkspaceId] as const,
-    [normalizedServerId, normalizedWorkspaceId],
+    () => ["stashList", normalizedServerId, workspaceGit.workspaceId] as const,
+    [normalizedServerId, workspaceGit.workspaceId],
   );
 
   const invalidateStashAndCheckout = useCallback(async () => {
-    if (!workspaceDirectory) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: stashListQueryKey }),
       invalidateCheckoutGitQueriesForClient(queryClient, {
         serverId: normalizedServerId,
-        cwd: workspaceDirectory,
+        target: workspaceGit,
       }),
     ]);
-  }, [queryClient, stashListQueryKey, normalizedServerId, workspaceDirectory]);
+  }, [queryClient, stashListQueryKey, normalizedServerId, workspaceGit]);
 
   const maybeRestoreStashForBranch = useCallback(
     async (branchId: string) => {

@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const roots: string[] = [];
 
@@ -25,6 +26,124 @@ describe("server config", () => {
 
     expect(desktopConfig.desktopManaged).toBe(true);
     expect(standaloneConfig.desktopManaged).toBe(false);
+  });
+
+  test("loads trusted external workspace runtime registrations", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-runtime-"));
+    roots.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        workspaceRuntimes: {
+          fixture: {
+            type: "command",
+            command: ["/trusted/runtime", "--mode", "fixture"],
+            options: { image: "fixture:test" },
+          },
+        },
+      }),
+    );
+    await chmod(configPath, 0o600);
+
+    expect(loadConfig(paseoHome, { env: {} }).workspaceRuntimes).toEqual({
+      fixture: {
+        type: "command",
+        command: ["/trusted/runtime", "--mode", "fixture"],
+        options: { image: "fixture:test" },
+      },
+    });
+  });
+
+  test("lets persisted registrations override or remove distribution registrations", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-runtime-merge-"));
+    roots.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        workspaceRuntimes: {
+          removed: null,
+          replaced: { type: "command", label: "User", command: ["user-runtime"] },
+        },
+      }),
+    );
+    await chmod(configPath, 0o600);
+
+    expect(
+      loadConfig(paseoHome, {
+        env: {
+          PASEO_DISTRIBUTION_WORKSPACE_RUNTIMES: JSON.stringify({
+            removed: { type: "command", command: ["bundled-removed"] },
+            replaced: { type: "command", command: ["bundled-replaced"] },
+            retained: { type: "command", label: "Retained", command: ["bundled-retained"] },
+          }),
+        },
+      }).workspaceRuntimes,
+    ).toEqual({
+      replaced: { type: "command", label: "User", command: ["user-runtime"] },
+      retained: { type: "command", label: "Retained", command: ["bundled-retained"] },
+    });
+  });
+
+  test("composes a configured executable for runtimeId selection and rejects others", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-runtime-compose-"));
+    roots.push(paseoHome);
+    const source = path.join(paseoHome, "source");
+    const stateDirectory = path.join(paseoHome, "runtime-state");
+    await Promise.all([mkdir(source), mkdir(stateDirectory)]);
+    const fixtureExecutable = fileURLToPath(
+      new URL("../../../../runtimes/fixture/src/index.mjs", import.meta.url),
+    );
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        workspaceRuntimes: {
+          fixture: {
+            type: "command",
+            command: [process.execPath, fixtureExecutable],
+            options: { stateDirectory },
+          },
+        },
+      }),
+    );
+    await chmod(configPath, 0o600);
+    const config = loadConfig(paseoHome, { env: {} });
+    const runtimeIds = new Map<string, string>();
+    const service = createWorkspaceRuntimeService({
+      paseoHome,
+      externalRuntimes: config.workspaceRuntimes,
+      resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId) => {
+        runtimeIds.set(workspaceId, runtimeId);
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
+    });
+    const createInput = {
+      workspaceId: "configured-runtime",
+      runtimeId: "fixture",
+      project: { id: "fixture", source: { kind: "host-directory" as const, path: source } },
+      placement: { kind: "existing" as const },
+    };
+
+    await expect(service.create(createInput)).resolves.toEqual({
+      workspaceId: "configured-runtime",
+      runtimeId: "fixture",
+      cwd: source,
+      materializedFreshContent: true,
+    });
+    await expect(
+      service.create({ ...createInput, workspaceId: "unknown-runtime", runtimeId: "unknown" }),
+    ).rejects.toThrow("Workspace runtime is not registered: unknown");
+    await service.destroy("configured-runtime");
+    expect(runtimeIds.has("configured-runtime")).toBe(false);
   });
 
   test("loads the provider catalog refresh timeout", async () => {

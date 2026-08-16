@@ -4,6 +4,8 @@ import {
   connectNewWorkspaceDaemonClient,
   expectNewWorkspaceControlsEnabled,
   expectNewWorkspaceProjectSelected,
+  expectWorkspaceRuntimeChoices,
+  expectWorkspaceRuntimeSelected,
   expectNewWorkspaceTriggerLabelsAligned,
   openGlobalNewWorkspaceComposer,
   openMissingProjectNewWorkspaceComposer,
@@ -29,7 +31,7 @@ import {
 // (preselects that project) — shown for git projects and for non-git projects on
 // a multiplicity-capable host. These specs prove the global entry opens the
 // screen, the project icon preselects the right project across the reused 'new'
-// screen, and non-git projects never offer the worktree Isolation control.
+// screen, and non-git projects offer only the Local runtime.
 
 function projectRow(page: import("@playwright/test").Page, projectKey: string) {
   return page.getByTestId(`sidebar-project-row-${projectEquivalenceViewKey(projectKey)}`);
@@ -134,10 +136,11 @@ test.describe("New workspace entry points", () => {
       sourceDirectory: "/tmp/missing-project",
     });
 
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 30_000 });
     await expectNewWorkspaceControlsEnabled(page);
   });
 
-  test("Ctrl+P opens the project picker with search focused", async ({ page }) => {
+  test("the project shortcut opens the project picker with search focused", async ({ page }) => {
     const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-shortcut-" });
 
     try {
@@ -246,9 +249,7 @@ test.describe("New workspace entry points", () => {
     }
   });
 
-  test("the Isolation control is hidden for a non-git project and shown for a git project", async ({
-    page,
-  }) => {
+  test("the Runtime control hides Git runtimes for a non-git project", async ({ page }) => {
     const gitProject: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-iso-git-" });
     const nonGitProject: SeededWorkspace = await seedWorkspace({
       repoPrefix: "entry-iso-nongit-",
@@ -274,11 +275,10 @@ test.describe("New workspace entry points", () => {
       await nonGitOption.click();
       await expectNewWorkspaceProjectSelected(page, nonGitProject.projectDisplayName);
 
-      // No git checkout means no worktree isolation choice: the Isolation row is
-      // absent entirely.
-      await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveCount(0);
+      await expectWorkspaceRuntimeSelected(page, "local");
+      await expectWorkspaceRuntimeChoices(page, ["local"]);
 
-      // Switching to the git project on the same screen reveals the Isolation row.
+      // Switching to the git project on the same screen adds Worktree.
       await trigger.click();
       const gitOption = page.getByTestId(
         `new-workspace-project-picker-option-${projectEquivalenceViewKey(gitProject.projectKey)}`,
@@ -287,9 +287,8 @@ test.describe("New workspace entry points", () => {
       await gitOption.click();
       await expectNewWorkspaceProjectSelected(page, gitProject.projectDisplayName);
 
-      await expect(page.getByTestId("workspace-create-isolation-trigger")).toBeVisible({
-        timeout: 30_000,
-      });
+      await expectWorkspaceRuntimeSelected(page, "local");
+      await expectWorkspaceRuntimeChoices(page, ["local", "worktree"]);
     } finally {
       await gitProject.cleanup();
       await nonGitProject.cleanup();

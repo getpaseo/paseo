@@ -198,7 +198,12 @@ export class WorkspaceReconciliationService {
     ]);
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     for (const workspace of workspaces) {
-      if (workspace.archivedAt || this.inspectDirectory(workspace.cwd) !== "directory") continue;
+      if (
+        workspace.archivedAt ||
+        workspace.runtime ||
+        this.inspectDirectory(workspace.cwd) !== "directory"
+      )
+        continue;
       const siblings = workspacesByProject.get(workspace.projectId) ?? [];
       siblings.push(workspace);
       workspacesByProject.set(workspace.projectId, siblings);
@@ -222,7 +227,9 @@ export class WorkspaceReconciliationService {
     const allWorkspaces = await this.workspaceRegistry.list();
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
-    const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt);
+    // Runtime-selected workspace placement is recovered by driver inspect. Its
+    // compatibility cwd may be runtime-local and must never be statted on the host.
+    const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt && !w.runtime);
     const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
       workspace,
       state: this.inspectDirectory(workspace.cwd),

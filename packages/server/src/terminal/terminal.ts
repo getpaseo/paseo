@@ -128,6 +128,74 @@ export interface CreateTerminalOptions {
   title?: string;
   command?: string;
   args?: string[];
+  launchPty?: TerminalPtyLauncher;
+}
+
+export interface TerminalPtyProcess {
+  pid: number;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: NodeJS.Signals): void;
+  onData(listener: (data: string) => void): { dispose(): void };
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): { dispose(): void };
+}
+
+export interface TerminalPtyLaunchInput {
+  terminalId: string;
+  workspaceId: string;
+  cwd: string;
+  argv: readonly [string, ...string[]];
+  env: Record<string, string>;
+  rows: number;
+  cols: number;
+  term: string;
+}
+
+export type TerminalPtyLauncher = (
+  input: TerminalPtyLaunchInput,
+) => TerminalPtyProcess | null | Promise<TerminalPtyProcess | null>;
+
+async function launchTerminalPty(input: {
+  launchPty: TerminalPtyLauncher;
+  terminalId: string;
+  workspaceId: string;
+  cwd: string;
+  command: string;
+  args: string[] | string;
+  env: Record<string, string>;
+  rows: number;
+  cols: number;
+}): Promise<TerminalPtyProcess> {
+  const runtimePty = await input.launchPty({
+    terminalId: input.terminalId,
+    workspaceId: input.workspaceId,
+    cwd: input.cwd,
+    argv: [input.command, ...(Array.isArray(input.args) ? input.args : [input.args])],
+    env: input.env,
+    rows: input.rows,
+    cols: input.cols,
+    term: "xterm-256color",
+  });
+  if (runtimePty) return runtimePty;
+  return launchLegacyTerminalPty(input);
+}
+
+function launchLegacyTerminalPty(input: {
+  cwd: string;
+  command: string;
+  args: string[] | string;
+  env: Record<string, string>;
+  rows: number;
+  cols: number;
+}): TerminalPtyProcess {
+  ensureNodePtySpawnHelperExecutableForCurrentPlatform();
+  return pty.spawn(input.command, input.args, {
+    name: "xterm-256color",
+    cols: input.cols,
+    rows: input.rows,
+    cwd: input.cwd,
+    env: input.env,
+  });
 }
 
 function toTerminalActivity(snapshot: {
@@ -935,26 +1003,38 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     allowProposedApi: true,
   });
 
-  ensureNodePtySpawnHelperExecutableForCurrentPlatform();
-
   // Create PTY
   const { command: spawnCommand, args: spawnArgs } = command
     ? await resolveTerminalSpawnCommand(command, args)
     : { command: resolvedShell, args: [] as string[] };
-  const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd,
-    env: buildTerminalEnvironment({
-      shell: spawnCommand,
-      env: {
-        ...env,
-        ...activityEnv,
-        PASEO_WORKSPACE_ID: workspaceId,
-      },
-    }),
+  const terminalEnv = buildTerminalEnvironment({
+    shell: spawnCommand,
+    env: {
+      ...env,
+      ...activityEnv,
+      PASEO_WORKSPACE_ID: workspaceId,
+    },
   });
+  const ptyProcess = options.launchPty
+    ? await launchTerminalPty({
+        launchPty: options.launchPty,
+        terminalId: id,
+        workspaceId,
+        cwd,
+        command: spawnCommand,
+        args: spawnArgs,
+        env: terminalEnv,
+        rows,
+        cols,
+      })
+    : launchLegacyTerminalPty({
+        cwd,
+        command: spawnCommand,
+        args: spawnArgs,
+        env: terminalEnv,
+        rows,
+        cols,
+      });
 
   function emitTitleChange(nextTitle: string | undefined): void {
     if (title === nextTitle) {
@@ -1285,11 +1365,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       clearImmediate(inputFlushImmediate);
       inputFlushImmediate = null;
     }
-    const data = pendingInput;
-    pendingInput = "";
-    if (!data || killed || disposed) {
+    if (killed || disposed) {
       return;
     }
+    const data = pendingInput;
+    pendingInput = "";
+    if (!data) return;
     writeInputToPty(data);
   }
 

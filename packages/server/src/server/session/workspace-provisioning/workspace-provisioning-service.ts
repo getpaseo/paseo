@@ -13,6 +13,7 @@ import {
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import { createWorkspaceGitDirectory } from "../../workspace-git-directory.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
@@ -46,6 +47,16 @@ export interface CreateWorktreeWorkspaceInput {
   expectsInitialAgent?: boolean;
 }
 
+export interface ReserveRuntimeWorktreeWorkspaceInput {
+  sourceCwd: string;
+  projectId?: string;
+  repoRoot: string;
+  branch: string | null;
+  baseBranch: string | null;
+  title: string | null;
+  expectsInitialAgent?: boolean;
+}
+
 export interface WorkspaceProvisioningService {
   runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -57,10 +68,13 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; runtimeId?: string },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord>;
+  reserveRuntimeWorktreeWorkspace(
+    input: ReserveRuntimeWorktreeWorkspaceInput,
   ): Promise<PersistedWorkspaceRecord>;
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
@@ -88,10 +102,17 @@ export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    "bindLegacy" | "bindWorkspace" | "getCheckout" | "getSnapshot" | "peekSnapshot"
+  >;
   logger: Logger;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const workspaceGitDirectory = createWorkspaceGitDirectory({
+    workspaceRegistry,
+    workspaceGitService,
+  });
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -186,7 +207,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; runtimeId?: string },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -200,10 +221,14 @@ export function createWorkspaceProvisioningService(deps: {
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
       title: title?.trim() || null,
+      ...(context?.runtimeId ? { runtime: { runtimeId: context.runtimeId } } : {}),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    await workspaceRegistry.upsert(workspace, context);
+    await workspaceRegistry.upsert(workspace, {
+      ...context,
+      provisional: context?.runtimeId !== undefined,
+    });
     return workspace;
   }
 
@@ -237,6 +262,39 @@ export function createWorkspaceProvisioningService(deps: {
     });
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
+    });
+    return workspace;
+  }
+
+  async function reserveRuntimeWorktreeWorkspace(
+    input: ReserveRuntimeWorktreeWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord> {
+    const sourceCwd = resolve(input.sourceCwd);
+    const repoRoot = resolve(input.repoRoot);
+    const project = await resolveSourceProjectForWorktree({
+      sourceCwd,
+      projectId: input.projectId,
+      repoRoot,
+    });
+    const timestamp = new Date().toISOString();
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: generateWorkspaceId(),
+      projectId: project.projectId,
+      ...initialWorkspacePlacement({
+        source: "runtime_worktree",
+        cwd: sourceCwd,
+        branch: input.branch,
+        baseBranch: input.baseBranch,
+        mainRepoRoot: repoRoot,
+      }),
+      title: input.title,
+      runtime: { runtimeId: "worktree" },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await workspaceRegistry.upsert(workspace, {
+      expectsInitialAgent: input.expectsInitialAgent,
+      provisional: true,
     });
     return workspace;
   }
@@ -329,7 +387,8 @@ export function createWorkspaceProvisioningService(deps: {
     if (!workspace.archivedAt) {
       return workspace.autoArchivedChangeRequestUrl;
     }
-    const snapshot = await workspaceGitService.getSnapshot(workspace.cwd, {
+    if (workspace.runtime?.runtimeId) return workspace.autoArchivedChangeRequestUrl;
+    const snapshot = await workspaceGitDirectory.bindRecord(workspace).getSnapshot({
       force: true,
       includeForge: true,
       reason: "workspace-restore-auto-archive-latch",
@@ -347,7 +406,7 @@ export function createWorkspaceProvisioningService(deps: {
     const timestamp = new Date().toISOString();
     const checkout =
       workspace.archivedAt || project.archivedAt
-        ? await workspaceGitService.getCheckout(workspace.cwd)
+        ? await workspaceGitDirectory.bindRecord(workspace).getCheckout()
         : null;
     const autoArchivedChangeRequestUrl =
       await resolveRestoredAutoArchiveChangeRequestUrl(workspace);
@@ -369,7 +428,7 @@ export function createWorkspaceProvisioningService(deps: {
       const projectCheckout = areEquivalentPaths(project.rootPath, workspace.cwd)
         ? checkout
         : await workspaceGitService.getCheckout(project.rootPath);
-      const kind = projectCheckout.isGit ? "git" : "non_git";
+      const kind = project.source || projectCheckout.isGit ? "git" : "non_git";
       const projectKey = deriveProjectKey({
         rootPath: project.rootPath,
         remoteUrl: projectCheckout.remoteUrl,
@@ -395,7 +454,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function refreshWorkspaceRecord(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
-    const checkout = await workspaceGitService.getCheckout(workspace.cwd);
+    const checkout = await workspaceGitDirectory.bindRecord(workspace).getCheckout();
     const project = await projectRegistry.get(workspace.projectId);
     if (project && !project.archivedAt) {
       await refreshProjectKind(project, workspace.cwd, checkout);
@@ -419,7 +478,8 @@ export function createWorkspaceProvisioningService(deps: {
       workspaceCwd && workspaceCheckout && areEquivalentPaths(project.rootPath, workspaceCwd)
         ? workspaceCheckout
         : await workspaceGitService.getCheckout(project.rootPath);
-    const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
+    const kind: PersistedProjectRecord["kind"] =
+      project.source || projectCheckout.isGit ? "git" : "non_git";
     const projectKey = deriveProjectKey({
       rootPath: project.rootPath,
       remoteUrl: projectCheckout.remoteUrl,
@@ -444,6 +504,7 @@ export function createWorkspaceProvisioningService(deps: {
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,
     createWorkspaceForWorktree,
+    reserveRuntimeWorktreeWorkspace,
     findOrCreateProjectForDirectory,
     ensureWorkspaceRecordUnarchived,
   };

@@ -502,13 +502,18 @@ export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | 
   }
 
   try {
-    const stats = await stat(iconPath);
-    if (stats.size > MAX_ICON_SIZE) {
-      return null;
-    }
-
     const fileBuffer = await readFile(iconPath);
-    let mimeType = sniffMimeType(fileBuffer) ?? getMimeType(iconPath);
+    return projectIconFromBytes(iconPath, fileBuffer);
+  } catch {
+    return null;
+  }
+}
+
+export function projectIconFromBytes(fileName: string, bytes: Uint8Array): ProjectIcon | null {
+  try {
+    if (bytes.byteLength > MAX_ICON_SIZE) return null;
+    const fileBuffer = Buffer.from(bytes);
+    let mimeType = sniffMimeType(fileBuffer) ?? getMimeType(fileName);
     let buffer: Buffer = fileBuffer;
     if (mimeType === "image/x-icon") {
       const pngFrame = extractIcoPngFrame(fileBuffer);
@@ -523,8 +528,7 @@ export async function getProjectIcon(projectDir: string): Promise<ProjectIcon | 
       return null;
     }
 
-    const data = buffer.toString("base64");
-    return { data, mimeType };
+    return { data: buffer.toString("base64"), mimeType };
   } catch {
     return null;
   }

@@ -3,11 +3,16 @@ import { randomUUID } from "node:crypto";
 export interface DownloadTokenEntry {
   token: string;
   path: string;
-  absolutePath: string;
+  absolutePath?: string;
+  open?: () => Promise<{ chunks: DownloadContent; size: number }>;
   fileName: string;
   mimeType: string;
   size: number;
   expiresAt: number;
+}
+
+export interface DownloadContent extends AsyncIterable<Uint8Array> {
+  cancel(): Promise<void>;
 }
 
 interface DownloadTokenStoreOptions {

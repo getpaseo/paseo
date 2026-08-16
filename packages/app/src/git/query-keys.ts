@@ -1,14 +1,20 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
+import {
+  workspaceGitQueryIdentitiesEqual,
+  type WorkspaceGitQueryIdentity,
+  type WorkspaceGitStatusTarget,
+  type WorkspaceGitTarget,
+} from "./workspace-git";
 import { prPanePipelineQueryKind, prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {
   serverId: string;
-  cwd: string;
+  target: WorkspaceGitTarget;
 }
 
 interface CheckoutQueryScope {
   serverId: string;
-  cwd?: string;
+  target?: WorkspaceGitTarget;
 }
 
 type CheckoutQueryKey = readonly unknown[];
@@ -17,35 +23,47 @@ type CheckoutQueryKey = readonly unknown[];
 // can share the same long-lived cache policy.
 export const COMMIT_FILE_DIFF_STALE_TIME = 5 * 60_000;
 
-export function checkoutStatusQueryKey(serverId: string, cwd: string) {
-  return ["checkoutStatus", serverId, cwd] as const;
+export function checkoutStatusQueryKey(serverId: string, target: WorkspaceGitStatusTarget) {
+  return ["checkoutStatus", serverId, target.queryIdentity, target.cwd] as const;
+}
+
+export function legacyCheckoutStatusQueryKey(serverId: string, cwd: string) {
+  return ["legacyCheckoutStatus", serverId, cwd] as const;
 }
 
 export function checkoutDiffQueryKey(
   serverId: string,
-  cwd: string,
+  target: WorkspaceGitTarget,
   mode: "uncommitted" | "base",
   baseRef?: string,
   ignoreWhitespace?: boolean,
 ) {
-  return ["checkoutDiff", serverId, cwd, mode, baseRef ?? "", ignoreWhitespace === true] as const;
+  return [
+    "checkoutDiff",
+    serverId,
+    target.queryIdentity,
+    target.cwd,
+    mode,
+    baseRef ?? "",
+    ignoreWhitespace === true,
+  ] as const;
 }
 
-export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
-  return ["checkoutPrStatus", serverId, cwd] as const;
+export function checkoutPrStatusQueryKey(serverId: string, target: WorkspaceGitStatusTarget) {
+  return ["checkoutPrStatus", serverId, target.queryIdentity, target.cwd] as const;
 }
 
-export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
-  return ["checkoutCommits", serverId, cwd] as const;
+export function checkoutCommitsQueryKey(serverId: string, target: WorkspaceGitTarget) {
+  return ["checkoutCommits", serverId, target.queryIdentity, target.cwd] as const;
 }
 
 export function checkoutCommitFileDiffQueryKey(
   serverId: string,
-  cwd: string,
+  target: WorkspaceGitTarget,
   sha: string,
   path: string,
 ) {
-  return ["checkoutCommitFileDiff", serverId, cwd, sha, path] as const;
+  return ["checkoutCommitFileDiff", serverId, target.queryIdentity, target.cwd, sha, path] as const;
 }
 
 export async function invalidateCheckoutGitQueriesForClient(
@@ -54,7 +72,7 @@ export async function invalidateCheckoutGitQueriesForClient(
 ) {
   await Promise.all([
     queryClient.invalidateQueries({
-      queryKey: checkoutStatusQueryKey(identity.serverId, identity.cwd),
+      queryKey: checkoutStatusQueryKey(identity.serverId, identity.target),
     }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate("checkoutDiff", identity),
@@ -63,7 +81,7 @@ export async function invalidateCheckoutGitQueriesForClient(
       predicate: checkoutQueryPredicate("checkoutPrStatus", identity),
     }),
     queryClient.invalidateQueries({
-      queryKey: checkoutCommitsQueryKey(identity.serverId, identity.cwd),
+      queryKey: checkoutCommitsQueryKey(identity.serverId, identity.target),
     }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
@@ -119,16 +137,28 @@ function checkoutQueryPredicate(
       isCheckoutQueryKey(key) &&
       key[0] === queryKind &&
       key[1] === scope.serverId &&
-      (scope.cwd === undefined || key[2] === scope.cwd)
+      (scope.target === undefined ||
+        (isWorkspaceGitQueryIdentity(key[2]) &&
+          workspaceGitQueryIdentitiesEqual(key[2], scope.target.queryIdentity) &&
+          key[3] === scope.target.cwd))
     );
   };
 }
 
 function isCheckoutQueryKey(key: readonly unknown[]): key is CheckoutQueryKey {
   return (
-    key.length >= 3 &&
+    key.length >= 4 &&
     typeof key[0] === "string" &&
     typeof key[1] === "string" &&
-    typeof key[2] === "string"
+    isWorkspaceGitQueryIdentity(key[2]) &&
+    typeof key[3] === "string"
+  );
+}
+
+function isWorkspaceGitQueryIdentity(value: unknown): value is WorkspaceGitQueryIdentity {
+  return (
+    Array.isArray(value) &&
+    (value[0] === "selected" || value[0] === "legacy") &&
+    typeof value[1] === "string"
   );
 }

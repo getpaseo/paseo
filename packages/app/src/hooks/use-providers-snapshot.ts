@@ -21,6 +21,7 @@ import {
   providersSnapshotQueryRoot,
   providersSnapshotRequestOptions,
 } from "@/data/providers-snapshot";
+import type { ProviderSnapshotCacheScope } from "@/data/provider-snapshot-cache";
 
 type GetProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["getProvidersSnapshot"]>>;
 type RefreshProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["refreshProvidersSnapshot"]>>;
@@ -32,16 +33,29 @@ export type ProvidersSnapshotClient = Pick<
   "getProvidersSnapshot" | "refreshProvidersSnapshot"
 >;
 
+function providerSnapshotCacheScope(
+  cwd: string | null,
+  workspaceId?: string | null,
+): ProviderSnapshotCacheScope {
+  return workspaceId ? { type: "workspace", workspaceId } : { type: "legacy-cwd", cwd };
+}
+
 export async function fetchProvidersSnapshot(input: {
   client: ProvidersSnapshotClient;
   serverId: string;
   cwd: string | null;
+  workspaceId?: string | null;
   cache?: ProviderSnapshotCache;
 }): Promise<GetProvidersSnapshotResult> {
   const cache = input.cache ?? providerSnapshotCache;
-  const cached = await cache.read(input.serverId, input.cwd);
+  const scope = providerSnapshotCacheScope(input.cwd, input.workspaceId);
+  const cached = await cache.read(input.serverId, scope);
   const snapshot = await input.client.getProvidersSnapshot(
-    providersSnapshotRequestOptions({ cwd: input.cwd, ifNoneMatch: cached?.hash }),
+    providersSnapshotRequestOptions({
+      cwd: input.cwd,
+      workspaceId: input.workspaceId,
+      ifNoneMatch: cached?.hash,
+    }),
   );
   if (snapshot.notModified) {
     if (!cached) {
@@ -52,7 +66,7 @@ export async function fetchProvidersSnapshot(input: {
   if (snapshot.compactSnapshot && snapshot.snapshotHash) {
     await cache.write({
       serverId: input.serverId,
-      cwd: input.cwd,
+      scope,
       hash: snapshot.snapshotHash,
       generatedAt: snapshot.generatedAt,
       compactSnapshot: snapshot.compactSnapshot,
@@ -66,19 +80,28 @@ export async function refreshAndApplyProvidersSnapshot(input: {
   queryClient: QueryClient;
   serverId: string;
   cwd: string | null;
+  workspaceId?: string | null;
   providers?: AgentProvider[];
   cache?: ProviderSnapshotCache;
 }): Promise<RefreshProvidersSnapshotResult> {
   const refreshResult = await input.client.refreshProvidersSnapshot(
-    providersSnapshotRequestOptions({ cwd: input.cwd, providers: input.providers }),
+    providersSnapshotRequestOptions({
+      cwd: input.cwd,
+      workspaceId: input.workspaceId,
+      providers: input.providers,
+    }),
   );
   const snapshot = await fetchProvidersSnapshot({
     client: input.client,
     serverId: input.serverId,
     cwd: input.cwd,
+    workspaceId: input.workspaceId,
     cache: input.cache,
   });
-  input.queryClient.setQueryData(providersSnapshotQueryKey(input.serverId, input.cwd), snapshot);
+  input.queryClient.setQueryData(
+    providersSnapshotQueryKey(input.serverId, input.cwd, input.workspaceId),
+    snapshot,
+  );
   void input.queryClient.invalidateQueries({
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,
@@ -122,6 +145,7 @@ interface UseProvidersSnapshotResult {
 interface UseProvidersSnapshotOptions {
   enabled?: boolean;
   cwd?: string | null;
+  workspaceId?: string | null;
 }
 
 export function useProvidersSnapshot(
@@ -132,14 +156,18 @@ export function useProvidersSnapshot(
   const retainedPanelActive = useRetainedPanelActive();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
-  const enabled = (options.enabled ?? true) && retainedPanelActive;
+  const targetEnabled = options.enabled ?? true;
+  const enabled = targetEnabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
   const supportsSnapshot = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providersSnapshot === true,
   );
 
-  const queryKey = useMemo(() => providersSnapshotQueryKey(serverId, cwd), [cwd, serverId]);
+  const queryKey = useMemo(
+    () => providersSnapshotQueryKey(serverId, cwd, options.workspaceId),
+    [cwd, options.workspaceId, serverId],
+  );
 
   const snapshotQuery = useReplicaQuery({
     queryKey,
@@ -149,7 +177,12 @@ export function useProvidersSnapshot(
       if (!client || !serverId) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return fetchProvidersSnapshot({ client, serverId, cwd });
+      return fetchProvidersSnapshot({
+        client,
+        serverId,
+        cwd,
+        workspaceId: options.workspaceId,
+      });
     },
   });
 
@@ -163,6 +196,7 @@ export function useProvidersSnapshot(
         queryClient,
         serverId,
         cwd,
+        workspaceId: options.workspaceId,
         providers,
       });
     },
@@ -192,11 +226,12 @@ export function useProvidersSnapshot(
   );
 
   return {
-    entries: snapshotQuery.data?.entries ?? undefined,
-    isLoading: snapshotQuery.isLoading,
-    isFetching: snapshotQuery.isFetching,
-    isRefreshing,
-    error: snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
+    entries: targetEnabled ? (snapshotQuery.data?.entries ?? undefined) : undefined,
+    isLoading: targetEnabled && snapshotQuery.isLoading,
+    isFetching: targetEnabled && snapshotQuery.isFetching,
+    isRefreshing: targetEnabled && isRefreshing,
+    error:
+      targetEnabled && snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
     supportsSnapshot,
     refresh,
     refetchIfStale,
@@ -206,13 +241,14 @@ export function useProvidersSnapshot(
 export function prefetchProvidersSnapshot(
   serverId: string,
   client: DaemonClient,
-  options: { cwd?: string | null } = {},
+  options: { cwd?: string | null; workspaceId?: string | null } = {},
 ): void {
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
-  const queryKey = providersSnapshotQueryKey(serverId, cwd);
+  const queryKey = providersSnapshotQueryKey(serverId, cwd, options.workspaceId);
   void singletonQueryClient.prefetchQuery({
     queryKey,
     staleTime: Infinity,
-    queryFn: () => fetchProvidersSnapshot({ client, serverId, cwd }),
+    queryFn: () =>
+      fetchProvidersSnapshot({ client, serverId, cwd, workspaceId: options.workspaceId }),
   });
 }

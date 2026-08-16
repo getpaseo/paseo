@@ -1,12 +1,12 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type {
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
 } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { type WorkspaceGitClient, useRequiredWorkspaceGit } from "@/git/workspace-git";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import type { Forge } from "@/git/forge";
 import { i18n } from "@/i18n/i18next";
@@ -19,7 +19,6 @@ type PullRequestTimeline = PullRequestTimelineResponse["payload"];
 
 export interface UsePrPaneDataOptions {
   serverId: string;
-  cwd: string;
   enabled?: boolean;
   timelineEnabled?: boolean;
 }
@@ -80,7 +79,7 @@ export function shouldFetchTimelineFrom({
   );
 }
 
-export type PrPaneTimelineClient = Pick<DaemonClient, "pullRequestTimeline">;
+export type PrPaneTimelineClient = Pick<WorkspaceGitClient, "getPullRequestTimeline">;
 
 export interface UnsupportedTimelineRegistry {
   has(key: string): boolean;
@@ -89,14 +88,16 @@ export interface UnsupportedTimelineRegistry {
 
 export function unsupportedTimelineKey({
   serverId,
+  workspaceId,
   cwd,
   prNumber,
 }: {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   prNumber: number;
 }): string {
-  return `${serverId}\0${cwd}\0${prNumber}`;
+  return `${serverId}\0${workspaceId}\0${cwd}\0${prNumber}`;
 }
 
 export function createInMemoryUnsupportedTimelineRegistry(): UnsupportedTimelineRegistry {
@@ -115,6 +116,7 @@ export interface FetchPrPaneTimelinePageInput {
   client: PrPaneTimelineClient;
   registry: UnsupportedTimelineRegistry;
   serverId: string;
+  workspaceId: string;
   cwd: string;
   prNumber: number;
   repoOwner: string;
@@ -125,8 +127,7 @@ export async function fetchPrPaneTimelinePage(
   input: FetchPrPaneTimelinePageInput,
 ): Promise<PullRequestTimeline> {
   try {
-    return await input.client.pullRequestTimeline({
-      cwd: input.cwd,
+    return await input.client.getPullRequestTimeline({
       prNumber: input.prNumber,
       repoOwner: input.repoOwner,
       repoName: input.repoName,
@@ -136,6 +137,7 @@ export async function fetchPrPaneTimelinePage(
       input.registry.add(
         unsupportedTimelineKey({
           serverId: input.serverId,
+          workspaceId: input.workspaceId,
           cwd: input.cwd,
           prNumber: input.prNumber,
         }),
@@ -197,14 +199,13 @@ export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataR
 
 export function usePrPaneData({
   serverId,
-  cwd,
   enabled = true,
   timelineEnabled = enabled,
 }: UsePrPaneDataOptions): UsePrPaneDataResult {
   const { t } = useTranslation();
-  const daemonClient = useHostRuntimeClient(serverId);
+  const workspaceGit = useRequiredWorkspaceGit();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
+  const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, enabled });
   const status = checkoutPrStatus.status;
   const identity = extractPrRepoIdentity(status);
   const githubFeaturesEnabled = checkoutPrStatus.githubFeaturesEnabled;
@@ -212,26 +213,37 @@ export function usePrPaneData({
   const unsupportedKey =
     identity.prNumber === null
       ? null
-      : unsupportedTimelineKey({ serverId, cwd, prNumber: identity.prNumber });
+      : unsupportedTimelineKey({
+          serverId,
+          workspaceId: workspaceGit.workspaceId,
+          cwd: workspaceGit.cwd,
+          prNumber: identity.prNumber,
+        });
   const timelineUnsupported = unsupportedKey ? registry.has(unsupportedKey) : false;
   const shouldFetchTimeline = shouldFetchTimelineFrom({
-    hasClient: !!daemonClient,
+    hasClient: !!workspaceGit,
     isConnected,
     timelineEnabled,
     githubFeaturesEnabled,
-    cwd,
+    cwd: workspaceGit.cwd,
     identity,
     timelineUnsupported,
   });
 
   const timelineQuery = useQuery<PullRequestTimeline>({
     queryKey: useMemo(
-      () => prPaneTimelineQueryKey({ serverId, cwd, prNumber: identity.prNumber }),
-      [serverId, cwd, identity.prNumber],
+      () =>
+        prPaneTimelineQueryKey({
+          serverId,
+          queryIdentity: workspaceGit.queryIdentity,
+          cwd: workspaceGit.cwd,
+          prNumber: identity.prNumber,
+        }),
+      [serverId, workspaceGit, identity.prNumber],
     ),
     queryFn: async () => {
       if (
-        !daemonClient ||
+        !workspaceGit ||
         identity.prNumber === null ||
         identity.repoOwner === null ||
         identity.repoName === null
@@ -239,10 +251,11 @@ export function usePrPaneData({
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return fetchPrPaneTimelinePage({
-        client: daemonClient,
+        client: workspaceGit,
         registry,
         serverId,
-        cwd,
+        workspaceId: workspaceGit.workspaceId,
+        cwd: workspaceGit.cwd,
         prNumber: identity.prNumber,
         repoOwner: identity.repoOwner,
         repoName: identity.repoName,

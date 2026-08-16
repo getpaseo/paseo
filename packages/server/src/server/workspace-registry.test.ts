@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
@@ -12,6 +12,7 @@ import {
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
+  resolveSelectedWorkspaceRuntimeId,
 } from "./workspace-registry.js";
 
 describe("resolveWorkspaceName", () => {
@@ -43,6 +44,71 @@ describe("resolveWorkspaceName", () => {
   });
 });
 
+describe("workspace runtime selection compatibility", () => {
+  test.each(["local_checkout", "directory", "worktree"] as const)(
+    "keeps an existing %s record on its legacy path until explicit cutover",
+    (kind) => {
+      const existing = createPersistedWorkspaceRecord({
+        workspaceId: `legacy-${kind}`,
+        projectId: "legacy-project",
+        cwd: "/tmp/legacy",
+        kind,
+        displayName: "legacy",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      });
+      expect(resolveSelectedWorkspaceRuntimeId(existing)).toBeNull();
+      expect(
+        resolveSelectedWorkspaceRuntimeId({ ...existing, runtime: { runtimeId: "selected" } }),
+      ).toBe("selected");
+    },
+  );
+});
+
+describe("persisted project source validation", () => {
+  const input = {
+    projectId: "project-source",
+    rootPath: "/host/project",
+    kind: "git" as const,
+    displayName: "project",
+    createdAt: "2026-08-12T00:00:00.000Z",
+    updatedAt: "2026-08-12T00:00:00.000Z",
+  };
+
+  test("accepts optional git revision and subdirectory", () => {
+    expect(
+      createPersistedProjectRecord({
+        ...input,
+        source: {
+          kind: "git",
+          url: "https://example.test/acme/project.git",
+          revision: "main",
+          subdirectory: "packages/server",
+        },
+      }),
+    ).toMatchObject({ source: { kind: "git", revision: "main", subdirectory: "packages/server" } });
+  });
+
+  test("rejects a Git source on a non-Git project", () => {
+    expect(() =>
+      createPersistedProjectRecord({
+        ...input,
+        kind: "non_git",
+        source: { kind: "git", url: "https://example.test/acme/project.git" },
+      }),
+    ).toThrow("A persisted Git source requires project kind git");
+  });
+
+  test.each([
+    { kind: "git", url: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", revision: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", subdirectory: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", privateRoot: "/escape" },
+  ])("rejects malformed source at the persistence edge: %j", (source) => {
+    expect(() => createPersistedProjectRecord({ ...input, source })).toThrow();
+  });
+});
+
 describe("workspace registries", () => {
   let tmpDir: string;
   let projectRegistry: FileBackedProjectRegistry;
@@ -63,6 +129,32 @@ describe("workspace registries", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("rejects a contradictory project source while loading persisted records", async () => {
+    mkdirSync(path.join(tmpDir, "projects"), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, "projects", "projects.json"),
+      JSON.stringify([
+        {
+          projectId: "contradictory-project",
+          rootPath: "/host/project",
+          kind: "non_git",
+          displayName: "project",
+          source: { kind: "git", url: "https://example.test/acme/project.git" },
+          projectKey: null,
+          customName: null,
+          customIconRevision: null,
+          createdAt: "2026-08-12T00:00:00.000Z",
+          updatedAt: "2026-08-12T00:00:00.000Z",
+          archivedAt: null,
+        },
+      ]),
+    );
+
+    await projectRegistry.initialize();
+
+    expect(await projectRegistry.list()).toEqual([]);
   });
 
   test("creates, updates, archives, deletes, and lists project records", async () => {
@@ -182,6 +274,31 @@ describe("workspace registries", () => {
       "/tmp/legacy",
     );
     expect(opaque.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  });
+
+  test("does not downgrade a sourced Git project when its convenience root is non-Git", async () => {
+    await projectRegistry.initialize();
+    const rootPath = path.join(tmpDir, "decoy-root");
+    const project = createPersistedProjectRecord({
+      projectId: "prj_sourced_git",
+      rootPath,
+      kind: "git",
+      source: { kind: "git", url: "https://example.com/source.git" },
+      displayName: "source",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await projectRegistry.upsert(project);
+
+    const resolved = await projectRegistry.getOrCreateActiveByRoot({
+      rootPath,
+      kind: "non_git",
+      displayName: "decoy-root",
+      timestamp: "2026-03-02T00:00:00.000Z",
+    });
+
+    expect(resolved.kind).toBe("git");
+    expect(resolved.source).toEqual(project.source);
   });
 
   test("allocates a fresh opaque ID when only an archived exact root exists", async () => {
@@ -395,6 +512,136 @@ describe("workspace registries", () => {
     await workspaceRegistry.remove("/tmp/repo");
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
+  });
+
+  test("keeps a runtime reservation out of listings until its final placement is published", async () => {
+    await workspaceRegistry.initialize();
+    const reserved = createPersistedWorkspaceRecord({
+      workspaceId: "reserved-worktree",
+      projectId: "runtime-project",
+      cwd: "/tmp/source",
+      kind: "worktree",
+      displayName: "feature/runtime",
+      runtime: { runtimeId: "worktree" },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    const mutations: unknown[] = [];
+    workspaceRegistry.subscribeToMutations((mutation) => mutations.push(mutation));
+
+    await workspaceRegistry.upsert(reserved, { provisional: true });
+
+    expect(await workspaceRegistry.get(reserved.workspaceId)).toEqual({
+      ...reserved,
+      materializingAt: reserved.updatedAt,
+    });
+    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(mutations).toEqual([
+      expect.objectContaining({ workspaceId: reserved.workspaceId, provisional: true }),
+    ]);
+
+    const published = await workspaceRegistry.update(reserved.workspaceId, (workspace) => ({
+      ...workspace,
+      cwd: "/tmp/worktree",
+      updatedAt: "2026-03-02T00:00:00.000Z",
+    }));
+
+    expect(await workspaceRegistry.list()).toEqual([published]);
+    expect(mutations).toHaveLength(2);
+    expect(mutations[1]).toEqual(
+      expect.objectContaining({
+        workspaceId: reserved.workspaceId,
+        workspace: expect.objectContaining({ cwd: "/tmp/worktree" }),
+      }),
+    );
+  });
+
+  test("keeps a runtime reservation hidden after restart until final placement is published", async () => {
+    await workspaceRegistry.initialize();
+    const reserved = createPersistedWorkspaceRecord({
+      workspaceId: "interrupted-runtime-workspace",
+      projectId: "runtime-project",
+      cwd: "/tmp/source-must-stay-private",
+      kind: "worktree",
+      displayName: "interrupted runtime",
+      runtime: { runtimeId: "docker" },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+
+    await workspaceRegistry.upsert(reserved, { provisional: true });
+
+    const restarted = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await restarted.initialize();
+
+    expect(await restarted.get(reserved.workspaceId)).toMatchObject({
+      workspaceId: reserved.workspaceId,
+      cwd: "/tmp/source-must-stay-private",
+    });
+    expect(await restarted.list()).toEqual([]);
+  });
+
+  test("keeps the committed workspace snapshot when a removal cannot be persisted", async () => {
+    const registryPath = path.join(tmpDir, "projects", "workspaces.json");
+    const backupPath = `${registryPath}.backup`;
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "durable-workspace",
+      projectId: "durable-project",
+      cwd: "/tmp/durable",
+      kind: "local_checkout",
+      displayName: "durable",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await workspaceRegistry.upsert(workspace);
+    renameSync(registryPath, backupPath);
+    mkdirSync(registryPath);
+
+    await expect(workspaceRegistry.remove(workspace.workspaceId)).rejects.toThrow();
+    expect(await workspaceRegistry.get(workspace.workspaceId)).toEqual(workspace);
+
+    rmSync(registryPath, { recursive: true });
+    renameSync(backupPath, registryPath);
+    const reconstructed = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructed.get(workspace.workspaceId)).resolves.toEqual(workspace);
+    await expect(workspaceRegistry.remove(workspace.workspaceId)).resolves.toBeUndefined();
+    await expect(workspaceRegistry.get(workspace.workspaceId)).resolves.toBeNull();
+  });
+
+  test("does not expose deletion intent until it is durably persisted", async () => {
+    const registryPath = path.join(tmpDir, "projects", "workspaces.json");
+    const backupPath = `${registryPath}.backup`;
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "intent-workspace",
+      projectId: "intent-project",
+      cwd: "/tmp/intent",
+      kind: "local_checkout",
+      displayName: "intent",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await workspaceRegistry.upsert(workspace);
+    renameSync(registryPath, backupPath);
+    mkdirSync(registryPath);
+
+    await expect(
+      workspaceRegistry.requestDeletion(workspace.workspaceId, "2026-03-02T00:00:00.000Z"),
+    ).rejects.toThrow();
+    expect(await workspaceRegistry.get(workspace.workspaceId)).toEqual(workspace);
+
+    rmSync(registryPath, { recursive: true });
+    renameSync(backupPath, registryPath);
+    const reconstructedBeforeRetry = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructedBeforeRetry.get(workspace.workspaceId)).resolves.toEqual(workspace);
+
+    await workspaceRegistry.requestDeletion(workspace.workspaceId, "2026-03-02T00:00:00.000Z");
+    const reconstructedAfterRetry = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructedAfterRetry.get(workspace.workspaceId)).resolves.toMatchObject({
+      deletionRequestedAt: "2026-03-02T00:00:00.000Z",
+    });
   });
 
   test("refreshes workspace archive timestamps when an archive is repeated", async () => {

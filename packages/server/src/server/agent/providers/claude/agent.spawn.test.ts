@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
+import { PassThrough } from "node:stream";
 import type {
   Options,
   Query,
@@ -11,6 +12,8 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as spawnUtils from "../../../../utils/spawn.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
+import type { ProviderWorkspace } from "../../agent-sdk-types.js";
+import type { ProviderWorkspaceLaunchInput } from "../workspace/index.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -36,6 +39,8 @@ function createQueryMock(events: unknown[]): Query {
 
 function createChildProcessStub(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
   return child;
 }
@@ -101,5 +106,49 @@ describe("Claude spawn override", () => {
     expect(claudeSpawnCall).toBeDefined();
     const spawnOptions = claudeSpawnCall?.[2];
     expect(spawnOptions?.shell).toBe(false);
+  });
+
+  test("forwards the Claude SDK abort signal into selected workspace placement", async () => {
+    let capturedOptions: Options | undefined;
+    let resolveLaunch!: (launch: ProviderWorkspaceLaunchInput) => void;
+    const launched = new Promise<ProviderWorkspaceLaunchInput>((resolve) => {
+      resolveLaunch = resolve;
+    });
+    const child = createChildProcessStub() as ChildProcessWithoutNullStreams;
+    const workspace = {
+      cwd: ".",
+      async resolveExecutable(command: string) {
+        return command;
+      },
+      launchDeferred(input: ProviderWorkspaceLaunchInput | Promise<ProviderWorkspaceLaunchInput>) {
+        void Promise.resolve(input).then(resolveLaunch);
+        return child;
+      },
+    } as ProviderWorkspace;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock([]);
+    });
+    const client = new ClaudeAgentClient({ logger: createTestLogger(), queryFactory });
+    const session = await client.createSession(
+      { provider: "claude", cwd: process.cwd() },
+      { agentId: "selected-claude", workspace },
+    );
+    const controller = new AbortController();
+
+    try {
+      await session.listCommands?.();
+      capturedOptions?.spawnClaudeCodeProcess?.({
+        command: "node",
+        args: ["claude.js"],
+        cwd: process.cwd(),
+        env: {},
+        signal: controller.signal,
+      } satisfies ClaudeSpawnOptions);
+      await expect(launched).resolves.toMatchObject({ signal: controller.signal });
+    } finally {
+      child.emit("exit", 0, null);
+      await session.close();
+    }
   });
 });

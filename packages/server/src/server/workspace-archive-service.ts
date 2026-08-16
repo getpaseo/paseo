@@ -24,7 +24,7 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
->;
+> & { hostVisiblePath?: string | null; runtimeId?: string | null };
 
 export interface ArchiveDependencies {
   paseoHome?: string;
@@ -41,10 +41,16 @@ export interface ArchiveDependencies {
   getWorkspace?: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   // Active (non-archived) workspaces, used to decide whether the workspace being
   // archived is the last reference to its backing worktree directory, and to
-  // break a same-cwd tie in favor of the worktree-kind record when archiving by
-  // path (no explicit workspaceId).
+  // reject ambiguous same-cwd matches when archiving by path without an explicit
+  // workspaceId.
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  // Complete durable workspace set, including archived runtime owners whose
+  // backing may have been retained while another workspace referenced it.
+  listWorkspaceRecords?: () => Promise<PersistedWorkspaceRecord[]>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    options?: { releaseBacking?: boolean },
+  ) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -72,6 +78,7 @@ export interface ArchiveResult {
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  releaseBacking?: boolean;
 }
 
 export async function requireActiveWorkspaceForArchive(
@@ -96,6 +103,8 @@ interface BackingDirectory {
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
+  runtimeManaged: boolean;
+  runtimeReferencePath: string | null;
   teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
   setupWorkspaceIds: string[];
   workspaceIds: string[];
@@ -107,11 +116,19 @@ export async function resolveWorkspaceIdAtPath(
 ): Promise<string | null> {
   const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
-  const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
-  const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
-  if (worktreeMatch) {
-    return worktreeMatch.workspaceId;
+  const exactMatches = activeWorkspaces.filter((workspace) => {
+    const visiblePath = workspace.runtimeId ? workspace.hostVisiblePath : workspace.cwd;
+    return visiblePath ? matchesTarget(visiblePath) : false;
+  });
+  if (exactMatches.length > 1) {
+    throw new Error(
+      `Ambiguous workspace path '${targetPath}' matches: ${exactMatches
+        .map((workspace) => workspace.workspaceId)
+        .sort()
+        .join(", ")}`,
+    );
   }
+  if (exactMatches.length === 1) return exactMatches[0]!.workspaceId;
   return dependencies.findWorkspaceIdForCwd(targetPath);
 }
 
@@ -145,11 +162,37 @@ async function archiveByScopeWithPriority(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
-    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
+    const releaseBacking = request.releaseBacking ?? !target.runtimeManaged;
+    const releaseRuntimeBacking =
+      releaseBacking &&
+      (target.runtimeReferencePath === null ||
+        (await isDirectoryUnreferenced(
+          await dependencies.listActiveWorkspaces(),
+          target.runtimeReferencePath,
+          new Set(targetWorkspaceIds),
+          dependencies,
+        )));
+    const { archivedAgents, archivedWorkspaceIds, failures } = await archiveTargetRecords(
       dependencies,
       targetWorkspaceIds,
       request.requestId,
+      releaseRuntimeBacking,
     );
+
+    if (
+      releaseRuntimeBacking &&
+      target.runtimeReferencePath !== null &&
+      archivedWorkspaceIds.length > 0
+    ) {
+      failures.push(
+        ...(await releaseDeferredRuntimeBackings(
+          dependencies,
+          target.runtimeReferencePath,
+          new Set(archivedWorkspaceIds),
+          request.requestId,
+        )),
+      );
+    }
 
     if (target.backing?.mainRepoRoot) {
       try {
@@ -165,12 +208,19 @@ async function archiveByScopeWithPriority(
       }
     }
 
-    if (target.backing !== null) {
+    if (releaseBacking && target.backing !== null) {
       removedDirectory = await maybeRemoveDirectory(
         dependencies,
         request,
         target,
         archivedWorkspaceIds,
+      );
+    }
+
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `Failed to archive ${failures.length} workspace${failures.length === 1 ? "" : "s"}`,
       );
     }
 
@@ -185,6 +235,42 @@ async function archiveByScopeWithPriority(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
   }
+}
+
+async function releaseDeferredRuntimeBackings(
+  dependencies: ArchiveDependencies,
+  referencePath: string,
+  justArchivedWorkspaceIds: ReadonlySet<string>,
+  requestId: string,
+): Promise<unknown[]> {
+  const matchesReferencePath = createRealpathAwarePathMatcher(referencePath);
+  const deferredOwners = ((await dependencies.listWorkspaceRecords?.()) ?? []).filter(
+    (workspace) =>
+      workspace.archivedAt !== null &&
+      workspace.runtime !== undefined &&
+      !justArchivedWorkspaceIds.has(workspace.workspaceId) &&
+      workspace.hostVisiblePath !== null &&
+      matchesReferencePath(workspace.hostVisiblePath),
+  );
+  const results = await Promise.allSettled(
+    deferredOwners.map((workspace) =>
+      dependencies.archiveWorkspaceRecord(workspace.workspaceId, { releaseBacking: true }),
+    ),
+  );
+  const failures: unknown[] = [];
+  for (const [index, result] of results.entries()) {
+    if (result?.status !== "rejected") continue;
+    failures.push(result.reason);
+    dependencies.sessionLogger?.warn(
+      {
+        err: result.reason,
+        requestId,
+        workspaceId: deferredOwners[index]?.workspaceId,
+      },
+      "Deferred workspace runtime backing release failed",
+    );
+  }
+  return failures;
 }
 
 async function resolveArchiveTarget(
@@ -203,11 +289,20 @@ async function resolveArchiveTarget(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownTargets: [], setupWorkspaceIds: [], workspaceIds: [] };
+      return {
+        backing: null,
+        runtimeManaged: false,
+        runtimeReferencePath: null,
+        teardownTargets: [],
+        setupWorkspaceIds: [],
+        workspaceIds: [],
+      };
     }
     const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
     return {
       backing: await resolveWorkspaceBackingDirectory(record, dependencies),
+      runtimeManaged: hasSelectedRuntime(record),
+      runtimeReferencePath: hasSelectedRuntime(record) ? (record.hostVisiblePath ?? null) : null,
       teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
       setupWorkspaceIds: [workspaceId],
       workspaceIds: isArchived ? [] : [workspaceId],
@@ -232,6 +327,11 @@ async function resolveArchiveTarget(
       ...backing,
       mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
     },
+    runtimeManaged: targetWorkspaces.some(hasSelectedRuntime),
+    runtimeReferencePath:
+      targetWorkspaces.find(
+        (workspace) => hasSelectedRuntime(workspace) && workspace.hostVisiblePath,
+      )?.hostVisiblePath ?? null,
     teardownTargets:
       targetWorkspaces.length > 0
         ? targetWorkspaces.map((workspace) => ({
@@ -269,6 +369,14 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  if (hasSelectedRuntime(workspace)) {
+    return {
+      path: resolve(workspace.hostVisiblePath ?? workspace.cwd),
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: workspace.mainRepoRoot ?? null,
+      paseoWorktreesRoot: null,
+    };
+  }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
     return {
       path: resolve(workspace.worktreeRoot),
@@ -316,14 +424,20 @@ async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
   requestId: string,
-): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
+  releaseBacking: boolean,
+): Promise<{
+  archivedAgents: Set<string>;
+  archivedWorkspaceIds: string[];
+  failures: unknown[];
+}> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  const failures: unknown[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
       const agents = await archiveWorkspaceContents(dependencies, workspaceId);
-      await dependencies.archiveWorkspaceRecord(workspaceId);
+      await dependencies.archiveWorkspaceRecord(workspaceId, { releaseBacking });
       return { workspaceId, agents };
     }),
   );
@@ -335,14 +449,15 @@ async function archiveTargetRecords(
         archivedAgents.add(agentId);
       }
     } else {
+      failures.push(result.reason);
       dependencies.sessionLogger?.warn(
         { err: result.reason, requestId },
-        "archiveByScope workspace teardown failed; continuing",
+        "archiveByScope workspace teardown failed",
       );
     }
   }
 
-  return { archivedAgents, archivedWorkspaceIds };
+  return { archivedAgents, archivedWorkspaceIds, failures };
 }
 
 async function maybeRemoveDirectory(
@@ -416,6 +531,13 @@ async function maybeRemoveDirectory(
     );
     return false;
   }
+}
+
+function hasSelectedRuntime(workspace: ActiveWorkspaceRef): boolean {
+  return (
+    workspace.runtimeId != null ||
+    ("runtime" in workspace && Boolean((workspace as { runtime?: unknown }).runtime))
+  );
 }
 
 function uniqueFilesystemPaths(paths: string[]): string[] {

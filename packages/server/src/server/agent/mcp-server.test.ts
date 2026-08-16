@@ -58,6 +58,8 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { resolveHostProviderWorkspace } from "../test-utils/provider-workspace-stub.js";
+import { createWorkspaceRuntimeService } from "../workspace-runtime/index.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -178,7 +180,22 @@ async function waitForUnexpectedWorkspaceNamingSideEffects(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
+const mcpWorktreeRuntimes = new Map<
+  string,
+  {
+    service: ReturnType<typeof createWorkspaceRuntimeService>;
+    workspaces: Map<string, PersistedWorkspaceRecord>;
+  }
+>();
+
 async function removeTempDir(path: string): Promise<void> {
+  for (const [paseoHome, runtime] of mcpWorktreeRuntimes) {
+    if (!paseoHome.startsWith(`${path}/`)) continue;
+    for (const workspace of Array.from(runtime.workspaces.values())) {
+      if (workspace.runtime) await runtime.service.destroy(workspace.workspaceId);
+    }
+    mcpWorktreeRuntimes.delete(paseoHome);
+  }
   await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
@@ -739,6 +756,27 @@ function createPaseoWorktreeForMcpTest(options: {
     workspaceGitService,
     logger: createTestLogger(),
   });
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: options.paseoHome,
+    worktreesRoot: join(options.paseoHome, "worktrees"),
+    resolveRuntimeId: async (workspaceId) =>
+      workspaces.get(workspaceId)?.runtime?.runtimeId ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      workspaces.set(workspaceId, {
+        ...workspace,
+        cwd: placement.cwd,
+        hostVisiblePath: placement.hostVisiblePath ?? null,
+        runtime: { runtimeId },
+      });
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  });
+  mcpWorktreeRuntimes.set(options.paseoHome, { service: workspaceRuntime, workspaces });
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: buildAgentManagerSpies() as unknown as AgentManager,
     workspaceRegistry,
@@ -774,6 +812,8 @@ function createPaseoWorktreeForMcpTest(options: {
               : {}),
             workspaceGitService,
             workspaceProvisioning,
+            workspaceRuntime,
+            workspaceRegistry,
           }),
         warmWorkspaceGitData: async () => {},
         autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
@@ -791,6 +831,7 @@ function createPaseoWorktreeForMcpTest(options: {
         getDaemonTcpPort: null,
         getDaemonTcpHost: null,
         onScriptsChanged: null,
+        bindWorkspaceRuntime: (workspaceId) => workspaceRuntime.bind(workspaceId),
       },
       input,
       serviceOptions,
@@ -2754,7 +2795,9 @@ describe("create_agent MCP tool", () => {
         force: true,
         reason: "archive-worktree",
       });
-      expect(archiveWorkspaceRecord).toHaveBeenCalledWith("ws-archive-tool-worktree");
+      expect(archiveWorkspaceRecord).toHaveBeenCalledWith("ws-archive-tool-worktree", {
+        releaseBacking: true,
+      });
       expect(markWorkspaceArchiving).toHaveBeenCalledWith(
         ["ws-archive-tool-worktree"],
         expect.any(String),
@@ -3303,6 +3346,7 @@ describe("create_agent MCP tool", () => {
       clients: createTestAgentClients(),
       registry: storage,
       logger,
+      resolveProviderWorkspace: resolveHostProviderWorkspace,
     });
 
     try {

@@ -253,6 +253,7 @@ export function useLiveAgentModeControl(
       return {
         provider: agent.provider,
         cwd: agent.cwd,
+        workspaceId: agent.workspaceId,
         currentModeId: agent.currentModeId,
       };
     }),
@@ -265,7 +266,10 @@ export function useLiveAgentModeControl(
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const { updatePreferences } = useFormPreferences();
   const toast = useToast();
-  const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });
+  const { entries: snapshotEntries } = useProvidersSnapshot(serverId, {
+    cwd: slice?.cwd,
+    workspaceId: slice?.workspaceId,
+  });
 
   const providerDefinitions = useMemo<AgentProviderDefinition[]>(() => {
     if (!slice?.provider) return [];

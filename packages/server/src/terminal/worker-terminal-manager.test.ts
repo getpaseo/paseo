@@ -95,6 +95,11 @@ class FakeTerminalWorker extends EventEmitter {
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean {
     this.sentMessages.push(message);
     callback(null);
+    if (message.type === "killAll") {
+      queueMicrotask(() =>
+        this.emitWorkerMessage({ type: "response", requestId: message.requestId, ok: true }),
+      );
+    }
     return true;
   }
 
@@ -150,7 +155,7 @@ afterEach(async () => {
         .catch(() => {}),
     ),
   );
-  manager?.killAll();
+  await manager?.killAll();
   manager = null;
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
@@ -497,7 +502,11 @@ it("injects parent-minted terminal activity env through the worker", async () =>
 });
 
 it("starts the default shell through the worker and accepts quoted commands", async () => {
+  const originalShell = process.env.SHELL;
+  if (!isPlatform("win32")) process.env.SHELL = "/bin/sh";
   manager = createWorkerTerminalManager();
+  if (originalShell === undefined) delete process.env.SHELL;
+  else process.env.SHELL = originalShell;
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-shell-"));
   temporaryDirs.push(cwd);
   const markerPath = join(cwd, "shell quoted marker.txt");

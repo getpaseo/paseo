@@ -1122,6 +1122,8 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
+    runtime: { local: "Локально", worktree: "Worktree", label: "Среда" },
+    runtimeProbe: { preparing: "Подготовка среды" },
     isolation: {
       local: "Локально",
       worktree: "Новый worktree",
@@ -1143,6 +1145,7 @@ export const ru: TranslationResources = {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
+      runtime: "Choose where the workspace runs",
       startingRef: "Выберите, с чего начать",
       launch: "Choose what to launch",
     },

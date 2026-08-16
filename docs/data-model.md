@@ -16,19 +16,23 @@ names, and workspace foreign keys. Attached workspaces are independently refresh
 from their own cwd, so an explicit project root never implies a workspace checkout. Empty projects
 are observed too.
 
-The workspace registry model defines placement once: initial directory/worktree construction,
-mutable reconciliation fields, and the persisted-to-wire checkout projection. Its update policy
-preserves `displayName` and `baseBranch`. `WorkspaceProvisioningService` owns the corresponding
-registry writes, so directory opens, agent imports, and worktree creation all enter through that
-service instead of constructing records independently. The workspace record is then the durable
-placement authority: `cwd` is the exact execution directory, while `worktreeRoot` is the backing
-checkout root. They intentionally differ for an exact subproject inside a worktree. Archive,
-restore, branch auto-name, and descriptor flows consume those persisted facts rather than
-rediscovering ownership from a directory that may already be gone. Reconciliation may refresh
-mutable placement facts, but never changes `projectId`, `cwd`, `displayName`, or `baseBranch`.
-Workspace archive runs lifecycle teardown from the exact `cwd` but removes only the backing
-`worktreeRoot` after its last active reference disappears. Worktree recovery recreates that backing
-checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot` to `cwd`.
+The workspace registry model defines public placement once: initial directory/worktree
+construction, mutable reconciliation fields, and the persisted-to-wire projection.
+`WorkspaceProvisioningService` owns the corresponding registry writes, so directory opens, agent
+imports, and worktree creation do not construct records independently.
+
+For a runtime-selected workspace, `runtime.runtimeId` is the only persisted runtime identity. `cwd`
+is required compatibility and presentation data: an adopted local directory, the actual host
+worktree path, or a runtime-local path such as Docker's `/workspace`. It is not globally unique and
+never selects a runtime. `hostVisiblePath` is the separate optional capability used by editor and
+file-manager actions. Private roots, revisions, execution domains, container and volume IDs,
+labels, supervisor state, and ownership metadata are recovered from driver `inspect(workspaceId)`
+and are never written to the workspace record.
+
+Records without `runtime` remain the narrow legacy placement boundary. Their `cwd`, `worktreeRoot`,
+and `mainRepoRoot` continue to support old local/worktree behavior until classified. Selected
+worktree records retain user-visible worktree placement metadata, but lifecycle and deletion are
+owned by the runtime driver.
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
@@ -423,7 +427,8 @@ Array of workspace records. A workspace is a specific working directory within a
 | ------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId`                  | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access.         |
 | `projectId`                    | `string`                                        | FK to Project.projectId; the workspace's stable project membership                                                                                                                            |
-| `cwd`                          | `string`                                        | Exact execution directory selected for agents, files, scripts, and setup                                                                                                                      |
+| `cwd`                          | `string`                                        | Client compatibility projection. Runtime-selected server operations address the workspace by `workspaceId`; the driver owns its execution root.                                               |
+| `hostVisiblePath`              | `string \| null`                                | Explicit host-path capability for editor and file-manager integrations. Null for Docker and remote placement.                                                                                 |
 | `kind`                         | `"local_checkout" \| "worktree" \| "directory"` | Mutable checkout classification                                                                                                                                                               |
 | `displayName`                  | `string`                                        | The human name (the generated/derived title). Decoupled from `branch` by construction.                                                                                                        |
 | `title`                        | `string \| null`                                | User-set name override layered over `displayName`. Null means "use `displayName`".                                                                                                            |
@@ -432,13 +437,19 @@ Array of workspace records. A workspace is a specific working directory within a
 | `baseBranch`                   | `string \| null`                                | Normalized branch the Paseo worktree was created from; null for directories, local checkouts, and checkout-branch worktrees                                                                   |
 | `isPaseoOwnedWorktree`         | `boolean`                                       | Whether Paseo owns and may remove/recreate the backing `worktreeRoot`                                                                                                                         |
 | `mainRepoRoot`                 | `string \| null`                                | Main repository root for worktree checkouts, independent of both exact `cwd` and backing `worktreeRoot`                                                                                       |
+| `runtime`                      | `{ runtimeId: string } \| undefined`            | Immutable selected workspace runtime. Runtime roots, revisions, execution domains, and resource identifiers are never stored in the workspace record.                                         |
 | `createdAt`                    | `string` (ISO 8601)                             |                                                                                                                                                                                               |
 | `updatedAt`                    | `string` (ISO 8601)                             |                                                                                                                                                                                               |
 | `archivedAt`                   | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
 | `pinnedAt`                     | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 
-> **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+> **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Runtime-selected filesystem, Git, terminal, provider, and script operations use it as their server-side address. `cwd` remains on the wire for compatibility and display. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+For a runtime-selected workspace, archive pauses the runtime and sets `archivedAt`; it does not remove
+the runtime's files. Restore resumes the same runtime before clearing `archivedAt`. Permanent project
+removal destroys each selected runtime before removing its workspace record. Records without
+`runtime` remain on the legacy local/worktree lifecycle path until they are explicitly re-created.
 
 `projectId` is still a real FK: workspace records should have a matching project record. Read-only
 history surfaces tolerate transient orphaned workspaces by omitting those rows so one bad FK cannot

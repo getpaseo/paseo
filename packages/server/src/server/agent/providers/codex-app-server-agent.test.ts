@@ -14,6 +14,7 @@ import type {
   AgentSessionConfig,
   AgentSlashCommand,
   AgentStreamEvent,
+  ProviderWorkspace,
 } from "../agent-sdk-types.js";
 import {
   buildCodexAppServerEnv,
@@ -106,6 +107,66 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     modeId: "auto",
     model: "gpt-5.4",
     ...overrides,
+  };
+}
+
+function createCodexProviderWorkspace(
+  child: ChildProcessWithoutNullStreams,
+  options: { prompt?: string; onLaunch?: () => void } = {},
+): ProviderWorkspace {
+  return {
+    cwd: ".",
+    async resolveExecutable() {
+      return "codex";
+    },
+    async launch() {
+      options.onLaunch?.();
+      return child;
+    },
+    launchDeferred() {
+      throw new Error("not used");
+    },
+    async runProbe() {
+      return { stdout: "codex-cli 99.0.0", stderr: "" };
+    },
+    async readWorkspaceText() {
+      throw new Error("not used");
+    },
+    async writeWorkspaceText() {
+      throw new Error("not used");
+    },
+    async listState(statePath) {
+      return {
+        path: statePath,
+        entries: options.prompt
+          ? [
+              {
+                name: "selected.md",
+                path: ".codex/prompts/selected.md",
+                kind: "file" as const,
+                size: options.prompt.length,
+                modifiedAt: "2026-08-11T00:00:00.000Z",
+              },
+            ]
+          : [],
+      };
+    },
+    async readStateText() {
+      if (options.prompt !== undefined) return options.prompt;
+      throw new Error("not used");
+    },
+    async findStateFile() {
+      return null;
+    },
+    async materializeStateFile() {
+      throw new Error("not used");
+    },
+    async removeStateFile() {
+      throw new Error("not used");
+    },
+    allowsHostService() {
+      return false;
+    },
   };
 }
 
@@ -1200,6 +1261,27 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("unarchives a selected Codex thread through the bound launch capability", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/unarchive": () => ({ thread: { id: "selected-thread" } }),
+    });
+    let launchCalls = 0;
+    const workspace = createCodexProviderWorkspace(appServer.child, {
+      onLaunch: () => {
+        launchCalls += 1;
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+
+    await provider.unarchiveNativeSession(
+      { provider: "codex", sessionId: "selected-thread" },
+      { agentId: "selected-agent", workspace },
+    );
+
+    expect(launchCalls).toBe(1);
+    appServer.assertNoErrors();
+  });
+
   test("unarchives a persisted Codex thread using sessionId when nativeHandle is absent", async () => {
     const threadRequests: Array<{ method: string; params: unknown }> = [];
     const appServer = createFakeCodexAppServer({
@@ -1733,6 +1815,108 @@ describe("Codex app-server provider", () => {
       argumentHint: "",
       kind: "skill",
     });
+  });
+
+  test("lists selected-runtime custom prompts through provider state access", async () => {
+    const appServer = createFakeCodexAppServer();
+    const workspace = createCodexProviderWorkspace(appServer.child, {
+      prompt: "---\ndescription: Runtime prompt\nargument-hint: topic\n---\nExplain $ARGUMENTS",
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const session = await provider.createSession(createConfig({ cwd: "/host/not-selected" }), {
+      agentId: "selected-codex",
+      workspace,
+    });
+
+    await expect(session.listCommands?.()).resolves.toContainEqual({
+      name: "prompts:selected",
+      description: "Runtime prompt",
+      argumentHint: "topic",
+      kind: "command",
+    });
+
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("fails selected-runtime custom prompts closed when provider state access fails", async () => {
+    const appServer = createFakeCodexAppServer();
+    const workspace = createCodexProviderWorkspace(appServer.child);
+    workspace.listState = async () => {
+      throw new Error("runtime paused");
+    };
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const session = await provider.createSession(createConfig({ cwd: "/host/not-selected" }), {
+      agentId: "selected-codex-failure",
+      workspace,
+    });
+
+    await expect(session.listCommands?.()).rejects.toThrow("runtime paused");
+
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("rejects a selected-runtime image turn before turn/start when state materialization fails", async () => {
+    const turnStart = vi.fn(() => ({}));
+    const appServer = createFakeCodexAppServer({ "turn/start": turnStart });
+    const workspace = createCodexProviderWorkspace(appServer.child);
+    workspace.materializeStateFile = async () => {
+      throw new Error("runtime paused while materializing image");
+    };
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({ cwd: "/host/not-selected" }),
+      { agentId: "selected-codex-image-failure", workspace },
+    );
+
+    await expect(
+      session.startTurn([{ type: "image", mimeType: "image/png", data: ONE_BY_ONE_PNG_BASE64 }]),
+    ).rejects.toThrow("runtime paused while materializing image");
+    expect(turnStart).not.toHaveBeenCalled();
+
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("rejects a selected-runtime custom prompt turn before turn/start when listing fails", async () => {
+    const turnStart = vi.fn(() => ({}));
+    const appServer = createFakeCodexAppServer({ "turn/start": turnStart });
+    const workspace = createCodexProviderWorkspace(appServer.child);
+    workspace.listState = async () => {
+      throw new Error("runtime paused while listing prompts");
+    };
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({ cwd: "/host/not-selected" }),
+      { agentId: "selected-codex-prompt-failure", workspace },
+    );
+
+    await expect(session.startTurn("/prompts:selected")).rejects.toThrow(
+      "runtime paused while listing prompts",
+    );
+    expect(turnStart).not.toHaveBeenCalled();
+
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("keeps a genuinely unknown selected-runtime prompt as plain prompt text", async () => {
+    const turnStart = vi.fn(() => ({}));
+    const appServer = createFakeCodexAppServer({ "turn/start": turnStart });
+    const workspace = createCodexProviderWorkspace(appServer.child);
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({ cwd: "/host/not-selected" }),
+      { agentId: "selected-codex-unknown-prompt", workspace },
+    );
+
+    await session.startTurn("/prompts:missing keep literal");
+
+    expect(turnStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: [expect.objectContaining({ type: "text", text: "/prompts:missing keep literal" })],
+      }),
+    );
+    await session.close();
+    appServer.assertNoErrors();
   });
 
   test("deduplicates Codex skill slash commands returned from multiple skill roots", async () => {

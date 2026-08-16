@@ -102,6 +102,8 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  WorkspaceRuntimeListPayload,
+  WorkspaceRuntimeEnsureProbePayload,
   PluginListItem,
 } from "@getpaseo/protocol/messages";
 import type {
@@ -1058,12 +1060,13 @@ export class DaemonClient {
     {
       cwd: string;
       compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+      workspaceId?: string;
     }
   >();
   private terminalDirectorySubscriptions = new Map<string, { cwd: string; workspaceId?: string }>();
   private fileSubscriptions = new Map<
     string,
-    { cwd: string; path: string; onUpdate: (version: FileVersion) => void }
+    { cwd: string; path: string; workspaceId?: string; onUpdate: (version: FileVersion) => void }
   >();
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
@@ -2062,6 +2065,7 @@ export class DaemonClient {
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_recent_provider_sessions_request",
       requestId: resolvedRequestId,
+      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.cwd ? { cwd: options.cwd } : {}),
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
@@ -2127,6 +2131,25 @@ export class DaemonClient {
         if (msg.payload.requestId !== resolvedRequestId) return null;
         return msg.payload;
       },
+    });
+  }
+
+  async listWorkspaceRuntimes(requestId?: string): Promise<WorkspaceRuntimeListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.runtime.list.request" },
+      responseType: "workspace.runtime.list.response",
+    });
+  }
+
+  async ensureWorkspaceRuntimeProbe(
+    input: { projectId: string; runtimeId: string },
+    requestId?: string,
+  ): Promise<WorkspaceRuntimeEnsureProbePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.runtime.ensure_probe.request", ...input },
+      responseType: "workspace.runtime.ensure_probe.response",
     });
   }
 
@@ -2336,6 +2359,7 @@ export class DaemonClient {
         type: "subscribe_checkout_diff_request",
         subscriptionId,
         cwd: subscription.cwd,
+        ...(subscription.workspaceId ? { workspaceId: subscription.workspaceId } : {}),
         compare: subscription.compare,
         requestId: this.createRequestId(),
       });
@@ -2366,6 +2390,7 @@ export class DaemonClient {
           cwd: subscription.cwd,
           path: subscription.path,
           subscriptionId,
+          ...(subscription.workspaceId ? { workspaceId: subscription.workspaceId } : {}),
         },
         responseType: "fs.file.subscribe.response",
       })
@@ -3521,14 +3546,256 @@ export class DaemonClient {
   // Git Operations
   // ============================================================================
 
+  bindWorkspaceGit(target: { workspaceId: string; cwd: string }) {
+    const workspaceId = target.workspaceId.trim();
+    if (workspaceId.length === 0) {
+      throw new Error("workspaceId is required for selected workspace Git");
+    }
+    const cwd = target.cwd.trim();
+    if (cwd.length === 0) {
+      throw new Error("cwd is required for selected workspace Git");
+    }
+    const address = { workspaceId, cwd } as const;
+    return {
+      workspaceId,
+      cwd,
+      getStatus: (options?: { requestId?: string }) =>
+        this.requestCheckoutStatus(cwd, { ...options, workspaceId }),
+      getDiff: (
+        compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+        requestId?: string,
+      ) => this.getBoundCheckoutDiff({ workspaceId, cwd, compare, requestId }),
+      subscribeDiff: (
+        compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+        options?: { subscriptionId?: string; requestId?: string },
+      ) => this.subscribeCheckoutDiff(cwd, compare, { ...options, workspaceId }),
+      unsubscribeDiff: (subscriptionId: string) => this.unsubscribeCheckoutDiff(subscriptionId),
+      commit: (input: { message?: string; addAll?: boolean }, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_commit_request", workspaceId, cwd, ...input },
+          responseType: "checkout_commit_response",
+        }),
+      merge: (
+        input: { baseRef?: string; strategy?: "merge" | "squash"; requireCleanTarget?: boolean },
+        requestId?: string,
+      ) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_merge_request", ...address, ...input },
+          responseType: "checkout_merge_response",
+        }),
+      mergeFromBase: (
+        input: { baseRef?: string; requireCleanTarget?: boolean },
+        requestId?: string,
+      ) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_merge_from_base_request", ...address, ...input },
+          responseType: "checkout_merge_from_base_response",
+        }),
+      pull: (requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_pull_request", ...address },
+          responseType: "checkout_pull_response",
+        }),
+      push: (requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_push_request", ...address },
+          responseType: "checkout_push_response",
+        }),
+      refresh: (requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout.refresh.request", workspaceId, cwd },
+          responseType: "checkout.refresh.response",
+        }),
+      listCommits: async (requestId?: string) => {
+        const payload =
+          await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.list.response">({
+            requestId,
+            message: { type: "checkout.commits.list.request", ...address },
+            timeout: 60000,
+          });
+        if (payload.error) throw new Error(payload.error.message);
+        return { baseRef: payload.baseRef, commits: payload.commits };
+      },
+      getCommitFileDiff: async (sha: string, path: string, requestId?: string) => {
+        const payload =
+          await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.file_diff.response">({
+            requestId,
+            message: { type: "checkout.commits.file_diff.request", ...address, sha, path },
+            timeout: 60000,
+          });
+        if (payload.error) throw new Error(payload.error.message);
+        return { file: payload.file };
+      },
+      discardChanges: (input: { paths: string[] }) =>
+        this.checkoutDiscardChanges(cwd, { ...input, workspaceId }),
+      createPr: (input: { title?: string; body?: string; baseRef?: string }, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_pr_create_request", ...address, ...input },
+          responseType: "checkout_pr_create_response",
+        }),
+      mergePr: (method: CheckoutPrMergeMethod, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_pr_merge_request", ...address, mergeMethod: method },
+          responseType: "checkout_pr_merge_response",
+        }),
+      setForgeAutoMerge: (
+        input: { enabled: true; method: CheckoutPrMergeMethod } | { enabled: false },
+        requestId?: string,
+      ) =>
+        this.sendNamespacedCorrelatedSessionRequest<"checkout.forge.set_auto_merge.response">({
+          requestId,
+          message: {
+            type: "checkout.forge.set_auto_merge.request",
+            ...address,
+            enabled: input.enabled,
+            ...(input.enabled ? { mergeMethod: input.method } : {}),
+          },
+          timeout: 60000,
+        }),
+      setGithubAutoMerge: (
+        input: { enabled: true; method: CheckoutPrMergeMethod } | { enabled: false },
+        requestId?: string,
+      ) =>
+        this.sendNamespacedCorrelatedSessionRequest<"checkout.github.set_auto_merge.response">({
+          requestId,
+          message: {
+            type: "checkout.github.set_auto_merge.request",
+            ...address,
+            enabled: input.enabled,
+            ...(input.enabled ? { mergeMethod: input.method } : {}),
+          },
+        }),
+      getPrStatus: (requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_pr_status_request", ...address },
+          responseType: "checkout_pr_status_response",
+        }),
+      getPullRequestTimeline: (
+        input: { prNumber: number; repoOwner: string; repoName: string },
+        requestId?: string,
+      ) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "pull_request_timeline_request", ...address, ...input },
+          responseType: "pull_request_timeline_response",
+        }),
+      validateBranch: (branchName: string, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "validate_branch_request", ...address, branchName },
+          responseType: "validate_branch_response",
+        }),
+      switchBranch: (branch: string, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout_switch_branch_request", workspaceId, cwd, branch },
+          responseType: "checkout_switch_branch_response",
+        }),
+      renameBranch: (branch: string, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "checkout.rename_branch.request", ...address, branch },
+          responseType: "checkout.rename_branch.response",
+        }),
+      stashSave: (options?: { branch?: string }, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "stash_save_request", ...address, branch: options?.branch },
+          responseType: "stash_save_response",
+        }),
+      stashPop: (stashIndex: number, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "stash_pop_request", ...address, stashIndex },
+          responseType: "stash_pop_response",
+        }),
+      stashList: (options?: { paseoOnly?: boolean }, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "stash_list_request", ...address, paseoOnly: options?.paseoOnly },
+          responseType: "stash_list_response",
+        }),
+      getBranchSuggestions: (options?: { query?: string; limit?: number }, requestId?: string) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "branch_suggestions_request", ...address, ...options },
+          responseType: "branch_suggestions_response",
+        }),
+      searchForge: (
+        options: { query: string; limit?: number; kinds?: ForgeSearchRequest["kinds"] },
+        requestId?: string,
+      ) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "forge.search.request", ...address, ...options },
+          responseType: "forge.search.response",
+          timeout: 15000,
+        }),
+      searchGitHub: (
+        options: { query: string; limit?: number; kinds?: GitHubSearchRequest["kinds"] },
+        requestId?: string,
+      ) =>
+        this.sendCorrelatedSessionRequest({
+          requestId,
+          message: { type: "github_search_request", ...address, ...options },
+          responseType: "github_search_response",
+        }),
+      getForgeCheckDetails: (
+        input: {
+          repoOwner?: string;
+          repoName?: string;
+          checkRunId?: number;
+          workflowRunId?: number;
+          changeRequestNumber?: number;
+        },
+        requestId?: string,
+      ) =>
+        this.sendNamespacedCorrelatedSessionRequest<"checkout.forge.get_check_details.response">({
+          requestId,
+          message: { type: "checkout.forge.get_check_details.request", ...address, ...input },
+          timeout: 60000,
+        }),
+      getGithubCheckDetails: (
+        input: {
+          repoOwner?: string;
+          repoName?: string;
+          checkRunId?: number;
+          workflowRunId?: number;
+        },
+        requestId?: string,
+      ) =>
+        this.sendNamespacedCorrelatedSessionRequest<"checkout.github.get_check_details.response">({
+          requestId,
+          message: { type: "checkout.github.get_check_details.request", ...address, ...input },
+        }),
+    };
+  }
+
   async getCheckoutStatus(
     cwd: string,
     options?: { requestId?: string },
   ): Promise<CheckoutStatusPayload> {
-    const requestId = options?.requestId;
+    return this.requestCheckoutStatus(cwd, options);
+  }
+
+  private async requestCheckoutStatus(
+    cwd: string,
+    options?: { requestId?: string; workspaceId?: string },
+  ): Promise<CheckoutStatusPayload> {
+    const { requestId, workspaceId } = options ?? {};
+    const cacheKey = workspaceId ? `${workspaceId}\0${cwd}` : cwd;
 
     if (!requestId) {
-      const existing = this.checkoutStatusInFlight.get(cwd);
+      const existing = this.checkoutStatusInFlight.get(cacheKey);
       if (existing) {
         return existing;
       }
@@ -3538,6 +3805,7 @@ export class DaemonClient {
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_status_request",
       cwd,
+      ...(workspaceId ? { workspaceId } : {}),
       requestId: resolvedRequestId,
     });
 
@@ -3557,17 +3825,42 @@ export class DaemonClient {
     });
 
     if (!requestId) {
-      this.checkoutStatusInFlight.set(cwd, responsePromise);
+      this.checkoutStatusInFlight.set(cacheKey, responsePromise);
       void responsePromise
         .finally(() => {
-          if (this.checkoutStatusInFlight.get(cwd) === responsePromise) {
-            this.checkoutStatusInFlight.delete(cwd);
+          if (this.checkoutStatusInFlight.get(cacheKey) === responsePromise) {
+            this.checkoutStatusInFlight.delete(cacheKey);
           }
         })
         .catch(() => undefined);
     }
 
     return responsePromise;
+  }
+
+  private async getBoundCheckoutDiff(input: {
+    workspaceId: string;
+    cwd: string;
+    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    requestId?: string;
+  }): Promise<CheckoutDiffPayload> {
+    const subscriptionId = `oneshot-checkout-diff:${crypto.randomUUID()}`;
+    try {
+      const payload = await this.subscribeCheckoutDiff(input.cwd, input.compare, {
+        subscriptionId,
+        requestId: input.requestId,
+        workspaceId: input.workspaceId,
+      });
+      return {
+        cwd: payload.cwd,
+        files: payload.files,
+        error: payload.error,
+        diffTooLarge: payload.diffTooLarge,
+        requestId: payload.requestId,
+      };
+    } finally {
+      this.unsubscribeCheckoutDiff(subscriptionId);
+    }
   }
 
   private normalizeCheckoutDiffCompare(compare: {
@@ -3621,7 +3914,7 @@ export class DaemonClient {
   async subscribeCheckoutDiff(
     cwd: string,
     compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
-    options?: { subscriptionId?: string; requestId?: string },
+    options?: { subscriptionId?: string; requestId?: string; workspaceId?: string },
   ): Promise<SubscribeCheckoutDiffPayload> {
     const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
     const normalizedCompare = this.normalizeCheckoutDiffCompare(compare);
@@ -3629,6 +3922,7 @@ export class DaemonClient {
     this.checkoutDiffSubscriptions.set(subscriptionId, {
       cwd,
       compare: normalizedCompare,
+      workspaceId: options?.workspaceId,
     });
 
     const resolvedRequestId = this.createRequestId(options?.requestId);
@@ -3636,6 +3930,7 @@ export class DaemonClient {
       type: "subscribe_checkout_diff_request",
       subscriptionId,
       cwd,
+      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       compare: normalizedCompare,
       requestId: resolvedRequestId,
     });
@@ -4083,6 +4378,7 @@ export class DaemonClient {
   async createWorkspace(
     input: {
       source: WorkspaceCreateRequest["source"];
+      runtimeId?: string;
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
@@ -4093,6 +4389,7 @@ export class DaemonClient {
       message: {
         type: "workspace.create.request",
         source: input.source,
+        ...(input.runtimeId !== undefined ? { runtimeId: input.runtimeId } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
@@ -4206,6 +4503,7 @@ export class DaemonClient {
     mode: "list" | "file",
     requestId?: string,
     acceptBinary = false,
+    workspaceId?: string,
   ): Promise<FileExplorerPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4215,6 +4513,7 @@ export class DaemonClient {
         path,
         mode,
         ...(acceptBinary ? { acceptBinary: true } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "file_explorer_response",
     });
@@ -4224,8 +4523,16 @@ export class DaemonClient {
     cwd: string,
     path: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<FileExplorerDirectoryPayload> {
-    const payload = await this.requestFileExplorer(cwd, path, "list", requestId);
+    const payload = await this.requestFileExplorer(
+      cwd,
+      path,
+      "list",
+      requestId,
+      false,
+      workspaceId,
+    );
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -4235,11 +4542,23 @@ export class DaemonClient {
     return payload.directory;
   }
 
-  async readFile(cwd: string, path: string, requestId?: string): Promise<FileReadResult> {
+  async readFile(
+    cwd: string,
+    path: string,
+    requestId?: string,
+    workspaceId?: string,
+  ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
     this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path });
     try {
-      const payload = await this.requestFileExplorer(cwd, path, "file", resolvedRequestId, true);
+      const payload = await this.requestFileExplorer(
+        cwd,
+        path,
+        "file",
+        resolvedRequestId,
+        true,
+        workspaceId,
+      );
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -4259,7 +4578,7 @@ export class DaemonClient {
   }
 
   async subscribeFile(
-    input: { cwd: string; path: string },
+    input: { cwd: string; path: string; workspaceId?: string },
     onUpdate: (version: FileVersion) => void,
   ): Promise<{ initial: FileVersion; unsubscribe: () => void }> {
     const subscriptionId = this.createRequestId();
@@ -4271,6 +4590,7 @@ export class DaemonClient {
           cwd: input.cwd,
           path: input.path,
           subscriptionId,
+          ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         },
         responseType: "fs.file.subscribe.response",
       });
@@ -4296,6 +4616,7 @@ export class DaemonClient {
     content: string;
     expectedModifiedAt: string;
     expectedRevision?: string;
+    workspaceId?: string;
   }): Promise<FileWriteResult> {
     const payload = await this.sendCorrelatedSessionRequest({
       message: { type: "fs.file.write.request", ...input },
@@ -4345,10 +4666,15 @@ export class DaemonClient {
 
   async checkoutDiscardChanges(
     cwd: string,
-    input: { paths: string[] },
+    input: { paths: string[]; workspaceId?: string },
   ): Promise<CorrelatedResponsePayload<"checkout.discard_changes.response">> {
     return this.sendNamespacedCorrelatedSessionRequest<"checkout.discard_changes.response">({
-      message: { type: "checkout.discard_changes.request", cwd, paths: input.paths },
+      message: {
+        type: "checkout.discard_changes.request",
+        cwd,
+        workspaceId: input.workspaceId,
+        paths: input.paths,
+      },
     });
   }
 
@@ -4412,6 +4738,7 @@ export class DaemonClient {
     cwd: string,
     path: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<FileDownloadTokenPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4419,6 +4746,7 @@ export class DaemonClient {
         type: "file_download_token_request",
         cwd,
         path,
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "file_download_token_response",
     });
@@ -4427,12 +4755,14 @@ export class DaemonClient {
   async requestProjectIcon(
     cwd: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<ProjectIconResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "project_icon_request",
         cwd,
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "project_icon_response",
     });
@@ -4515,6 +4845,7 @@ export class DaemonClient {
 
   async getProvidersSnapshot(options?: {
     cwd?: string;
+    workspaceId?: string;
     ifNoneMatch?: string;
     requestId?: string;
   }): Promise<GetProvidersSnapshotPayload> {
@@ -4523,6 +4854,7 @@ export class DaemonClient {
       message: {
         type: "get_providers_snapshot_request",
         cwd: options?.cwd,
+        workspaceId: options?.workspaceId,
         ifNoneMatch: options?.ifNoneMatch,
       },
       responseType: "get_providers_snapshot_response",
@@ -4654,6 +4986,7 @@ export class DaemonClient {
 
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
+    workspaceId?: string;
     providers?: AgentProvider[];
     requestId?: string;
   }): Promise<RefreshProvidersSnapshotPayload> {
@@ -4662,6 +4995,7 @@ export class DaemonClient {
       message: {
         type: "refresh_providers_snapshot_request",
         cwd: options?.cwd,
+        workspaceId: options?.workspaceId,
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",

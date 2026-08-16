@@ -5,10 +5,10 @@ import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 
 interface UseCheckoutDiffQueryOptions {
   serverId: string;
-  cwd: string;
   mode: "uncommitted" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
@@ -41,13 +41,13 @@ function normalizeCheckoutDiffCompare(compare: {
 
 export function useCheckoutDiffQuery({
   serverId,
-  cwd,
   mode,
   baseRef,
   ignoreWhitespace,
   enabled = true,
   queryScope,
 }: UseCheckoutDiffQueryOptions) {
+  const workspaceGit = useRequiredWorkspaceGit();
   const retainedPanelActive = useRetainedPanelActive();
   const queryEnabled = enabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -61,16 +61,16 @@ export function useCheckoutDiffQuery({
   const queryKey = useMemo(() => {
     const comparisonKey = checkoutDiffQueryKey(
       serverId,
-      cwd,
+      workspaceGit,
       compareMode,
       compareBaseRef,
       compareIgnoreWhitespace,
     );
     const normalizedScope = queryScope?.trim();
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
-  }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
+  }, [serverId, workspaceGit, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(queryEnabled && isConnected && cwd);
+  const routeEnabled = Boolean(queryEnabled && isConnected && workspaceGit);
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -80,7 +80,7 @@ export function useCheckoutDiffQuery({
       enabled: routeEnabled,
       serverId,
       subscriptionId,
-      cwd,
+      workspaceGit,
       compare: {
         mode: compareMode,
         ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),

@@ -4,6 +4,7 @@ import {
   type TerminalSession,
   type TerminalStateSnapshot,
   type TerminalStateSnapshotOptions,
+  type TerminalPtyLauncher,
 } from "./terminal.js";
 import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -85,7 +86,7 @@ export interface TerminalManager {
     options?: { start?: number; end?: number; stripAnsi?: boolean },
   ): Promise<CaptureTerminalLinesResult>;
   listDirectories(): string[];
-  killAll(): void;
+  killAll(): Promise<void>;
   subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void;
   subscribeTerminalActivity(listener: TerminalActivityListener): () => void;
   subscribeTerminalWorkspaceContributionChanged(
@@ -95,6 +96,7 @@ export interface TerminalManager {
 
 export interface TerminalManagerOptions {
   getTerminalActivityUrl?: () => string | null;
+  resolvePtyLauncher?: (terminalId: string) => TerminalPtyLauncher | undefined;
 }
 
 function createActivityToken(): string {
@@ -341,6 +343,7 @@ export function createTerminalManager(
         ...(terminalActivityUrl ? { PASEO_TERMINAL_ACTIVITY_URL: terminalActivityUrl } : {}),
       };
       terminalActivityTokenById.set(terminalId, activityToken);
+      const launchPty = managerOptions.resolvePtyLauncher?.(terminalId);
       let session: TerminalSession;
       try {
         session = registerSession(
@@ -356,6 +359,7 @@ export function createTerminalManager(
             ...(options.cols !== undefined ? { cols: options.cols } : {}),
             ...(mergedEnv ? { env: mergedEnv } : {}),
             activityEnv,
+            ...(launchPty ? { launchPty } : {}),
           }),
         );
       } catch (error) {
@@ -463,10 +467,14 @@ export function createTerminalManager(
       return Array.from(terminalsByCwd.keys());
     },
 
-    killAll(): void {
-      for (const id of Array.from(terminalsById.keys())) {
-        removeSessionById(id, { kill: true });
-      }
+    async killAll(): Promise<void> {
+      const sessions = Array.from(terminalsById.values());
+      for (const session of sessions) removeSessionById(session.id, { kill: false });
+      await Promise.all(
+        sessions.map((session) =>
+          session.killAndWait({ gracefulTimeoutMs: 500, forceTimeoutMs: 500 }),
+        ),
+      );
     },
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {

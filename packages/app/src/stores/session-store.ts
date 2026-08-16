@@ -112,6 +112,7 @@ export interface WorkspaceDescriptor {
   projectCustomIconRevision?: string | null;
   projectRootPath: string;
   workspaceDirectory: string;
+  hostVisiblePath?: string;
   worktreeSlug?: WorkspaceDescriptorPayload["worktreeSlug"];
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
@@ -148,6 +149,7 @@ export function normalizeWorkspaceDescriptor(
     // consumer can read workspace.workspaceDirectory directly. Empty means "no
     // usable directory" (older daemons may omit it; the wire field is optional).
     workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
+    hostVisiblePath: normalizeWorkspacePath(payload.hostVisiblePath) ?? undefined,
     worktreeSlug: payload.worktreeSlug,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,

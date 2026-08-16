@@ -16,7 +16,7 @@ import type {
 import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import type { WorkspaceArchiveContext } from "../workspace-registry.js";
+import type { PersistedWorkspaceRecord, WorkspaceArchiveContext } from "../workspace-registry.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
@@ -29,6 +29,7 @@ export interface AutoArchiveArchiveOptions {
   terminalManager: TerminalManager;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
+  listWorkspaceRecords: () => Promise<PersistedWorkspaceRecord[]>;
   getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string, context?: WorkspaceArchiveContext) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -129,6 +130,7 @@ export async function archiveIfSafe(input: {
           agentStorage: options.agentStorage,
           findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
+          listWorkspaceRecords: options.listWorkspaceRecords,
           archiveWorkspaceRecord: (workspaceIdToArchive) =>
             options.archiveWorkspaceRecord(workspaceIdToArchive, {
               autoArchivedChangeRequestUrl: pullRequest.url,
@@ -149,6 +151,7 @@ export async function archiveIfSafe(input: {
         {
           scope: { kind: "workspace", workspaceId },
           requestId: "auto-archive-on-merge",
+          releaseBacking: true,
         },
       );
       log.info({ cwd }, "Auto-archived worktree after PR merge");

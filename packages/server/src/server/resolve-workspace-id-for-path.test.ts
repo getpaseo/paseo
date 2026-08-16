@@ -27,13 +27,26 @@ function createWorkspaceRecord(
 // The per-id status law is exercised in workspace-directory.test.ts.
 
 describe("resolveWorkspaceIdForPath", () => {
-  test("returns a single id when multiple workspaces share the exact cwd", () => {
-    const id = resolveWorkspaceIdForPath("/workspace/project", [
-      createWorkspaceRecord("/workspace/project", "ws-1"),
-      createWorkspaceRecord("/workspace/project", "ws-2"),
-      createWorkspaceRecord("/workspace/other", "ws-3"),
-    ]);
-    expect(["ws-1", "ws-2"]).toContain(id);
+  test("fails closed when multiple workspaces share the exact compatibility cwd", () => {
+    expect(
+      resolveWorkspaceIdForPath("/workspace/project", [
+        createWorkspaceRecord("/workspace/project", "ws-1"),
+        createWorkspaceRecord("/workspace/project", "ws-2"),
+        createWorkspaceRecord("/workspace/other", "ws-3"),
+      ]),
+    ).toBeNull();
+  });
+
+  test("uses only an explicit host-visible path for a selected workspace", () => {
+    const selected = createWorkspaceRecord("/workspace", "docker-workspace");
+    selected.runtime = { runtimeId: "docker" };
+    selected.hostVisiblePath = null;
+    expect(resolveWorkspaceIdForPath("/workspace", [selected])).toBeNull();
+
+    selected.hostVisiblePath = "/host/worktrees/selected";
+    expect(resolveWorkspaceIdForPath("/host/worktrees/selected", [selected])).toBe(
+      "docker-workspace",
+    );
   });
 
   test("resolves an exact archived workspace match for archive-by-path", () => {

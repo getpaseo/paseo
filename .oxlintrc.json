@@ -85,6 +85,144 @@
   },
   "overrides": [
     {
+      "files": ["packages/server/src/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/workspace-runtime/internal/**",
+                  "**/workspace-runtime/command/internal/**"
+                ],
+                "message": "Workspace runtime internals are owned by their public entry points."
+              },
+              {
+                "group": ["**/workspace-helper/internal/**"],
+                "message": "Normal callers consume WorkspaceFiles from workspace-helper/index. Only the workspace-runtime parent integration and workspace-helper tests may assemble helper clients."
+              },
+              {
+                "group": [
+                  "**/workspace-runtime/integration/**",
+                  "**/workspace-runtime/git-observation/internal/**"
+                ],
+                "message": "Git callers consume workspace-runtime/git-observation/index. Only runtime internals may assemble shared observation identity, placement, helpers, and lifecycle."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/server/src/server/workspace-runtime/index.ts",
+        "packages/server/src/server/workspace-runtime/command/index.ts",
+        "packages/server/src/server/workspace-runtime/command/internal/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-runtime/internal/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-helper/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-runtime/git-observation/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-runtime/internal/service.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": [
+        "packages/server/src/server/session/files/**/*.{ts,tsx}",
+        "packages/server/src/server/session/git-mutation/**/*.{ts,tsx}",
+        "packages/server/src/server/session/provider/**/*.{ts,tsx}",
+        "packages/server/src/server/session/workspace-git-observer/**/*.{ts,tsx}",
+        "packages/server/src/server/session/workspace-provisioning/**/*.{ts,tsx}",
+        "packages/server/src/server/session/workspace-scripts/**/*.{ts,tsx}"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              { "name": "child_process", "message": "Use the bound workspace runtime." },
+              { "name": "node:child_process", "message": "Use the bound workspace runtime." },
+              { "name": "fs", "message": "Use the bound workspace runtime." },
+              { "name": "node:fs", "message": "Use the bound workspace runtime." },
+              { "name": "fs/promises", "message": "Use the bound workspace runtime." },
+              { "name": "node:fs/promises", "message": "Use the bound workspace runtime." },
+              { "name": "module", "message": "Dynamic loaders bypass workspace ownership." },
+              {
+                "name": "node:module",
+                "message": "Dynamic loaders bypass workspace ownership."
+              },
+              { "name": "which", "message": "Use the bound workspace runtime." }
+            ],
+            "patterns": [
+              {
+                "group": ["**/utils/run-git-command.{js,ts}"],
+                "message": "Use the bound workspace runtime."
+              },
+              {
+                "group": [
+                  "**/workspace-runtime/internal/**",
+                  "**/workspace-runtime/command/internal/**",
+                  "**/workspace-runtime/git-observation/internal/**",
+                  "**/workspace-helper/internal/**"
+                ],
+                "message": "Use the owning public entry point."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/server/src/server/session/files/**/*.test.{ts,tsx}",
+        "packages/server/src/server/session/git-mutation/**/*.test.{ts,tsx}",
+        "packages/server/src/server/session/provider/**/*.test.{ts,tsx}",
+        "packages/server/src/server/session/workspace-git-observer/**/*.test.{ts,tsx}",
+        "packages/server/src/server/session/workspace-provisioning/**/*.test.{ts,tsx}",
+        "packages/server/src/server/session/workspace-scripts/**/*.test.{ts,tsx}"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["packages/fixture-workspace-runtime/**/*.{js,mjs,ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "module",
+                "message": "The external runtime may not construct dynamic module loaders."
+              },
+              {
+                "name": "node:module",
+                "message": "The external runtime may not construct dynamic module loaders."
+              },
+              {
+                "name": "@getpaseo/server",
+                "message": "The external runtime may consume only the published command contract."
+              }
+            ],
+            "patterns": [
+              {
+                "group": [
+                  "@getpaseo/server/**",
+                  "**/packages/server/**",
+                  "**/workspace-runtime/**/internal/**",
+                  "**/workspace-helper/**/internal/**"
+                ],
+                "message": "The external runtime may consume only the published command contract."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
         // React Native style arrays must read Unistyles proxies during render. Hoisting them to

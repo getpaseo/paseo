@@ -33,6 +33,7 @@ export type PlannedWorkspaceOpenTarget = PlannedDesktopOpenTarget | PlannedForge
 
 export interface PlanWorkspaceOpenTargetsInput {
   workspaceDirectory: string;
+  hostVisiblePath?: string | null;
   activeFile?: WorkspaceFileLocation | null;
   resolvedActiveFile?: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
@@ -60,16 +61,17 @@ function resolveActiveFileForOpenTargets(
 }
 
 function planDesktopOpenTargets(input: {
-  workspaceDirectory: string;
+  hostVisiblePath?: string | null;
   activeFile?: WorkspaceFileLocation | null;
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
   isLocalExecution: boolean;
 }): PlannedDesktopOpenTarget[] {
-  if (!input.canUseDesktopBridge || !input.isLocalExecution) {
+  if (!input.canUseDesktopBridge || !input.isLocalExecution || !input.hostVisiblePath) {
     return [];
   }
+  const hostVisiblePath = input.hostVisiblePath;
 
   return input.desktopTargets.map((target) => {
     if (!input.resolvedFile) {
@@ -79,7 +81,7 @@ function planDesktopOpenTargets(input: {
         label: target.label,
         editorId: target.id,
         icon: target.icon,
-        openInput: { editorId: target.id, workspacePath: input.workspaceDirectory },
+        openInput: { editorId: target.id, workspacePath: hostVisiblePath },
       };
     }
     return {
@@ -90,7 +92,7 @@ function planDesktopOpenTargets(input: {
       icon: target.icon,
       openInput: {
         editorId: target.id,
-        workspacePath: input.workspaceDirectory,
+        workspacePath: hostVisiblePath,
         filePath: input.resolvedFile.absolutePath,
         ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
       },

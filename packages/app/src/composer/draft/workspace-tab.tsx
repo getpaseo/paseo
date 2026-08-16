@@ -365,6 +365,7 @@ export function WorkspaceDraftAgentTab({
   const draftInput = useAgentInputDraft({
     draftKey: draftStoreKey,
     composer: {
+      workspaceId,
       initialServerId: serverId,
       initialValues: draftInitialValues,
       initialFeatureValues: draftSetup?.featureValues,

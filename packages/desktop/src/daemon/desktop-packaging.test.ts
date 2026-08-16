@@ -111,6 +111,8 @@ describe("desktop packaging", () => {
     for (const required of ["@getpaseo/cli", "@getpaseo/server"]) {
       expect(deps[required], `${required} must be declared in dependencies`).toBe("*");
     }
+    expect(deps).not.toHaveProperty("@getpaseo/docker-workspace-runtime");
+    expect(deps).not.toHaveProperty("@getpaseo/srt-workspace-runtime");
   });
 
   it("launches the packaged macOS CLI through Helper instead of the main app executable", () => {

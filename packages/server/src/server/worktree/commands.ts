@@ -142,6 +142,7 @@ export async function archiveCommand(
     const result = await archiveByScope(dependencies, {
       scope: { kind: "worktree", targetPath },
       requestId: input.requestId,
+      releaseBacking: true,
     });
 
     return {
@@ -167,6 +168,7 @@ export async function archiveCommand(
   const result = await archiveByScope(dependencies, {
     scope: { kind: "workspace", workspaceId },
     requestId: input.requestId,
+    releaseBacking: true,
   });
 
   return {

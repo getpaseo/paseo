@@ -69,6 +69,13 @@ export type InitialWorkspacePlacementInput =
       branch: string | null;
       baseBranch: string | null;
       mainRepoRoot: string;
+    }
+  | {
+      source: "runtime_worktree";
+      cwd: string;
+      branch: string | null;
+      baseBranch: string | null;
+      mainRepoRoot: string;
     };
 
 export interface WorkspacePlacementUpdate {
@@ -80,6 +87,18 @@ export interface WorkspacePlacementUpdate {
 export function initialWorkspacePlacement(
   input: InitialWorkspacePlacementInput,
 ): PersistedWorkspacePlacement {
+  if (input.source === "runtime_worktree") {
+    return {
+      cwd: input.cwd,
+      kind: "worktree",
+      displayName: input.branch || input.cwd,
+      branch: input.branch,
+      worktreeRoot: null,
+      baseBranch: input.baseBranch,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: input.mainRepoRoot,
+    };
+  }
   if (input.source === "created_worktree") {
     return {
       cwd: input.cwd,

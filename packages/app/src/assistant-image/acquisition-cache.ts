@@ -19,6 +19,7 @@ export function createAssistantImageOccurrenceKey(input: {
 
 export function createAssistantImageFilePreviewAttachmentId(input: {
   serverId?: string;
+  workspaceId?: string;
   occurrenceKey: string;
   mimeType: string;
   path: string;
@@ -32,17 +33,18 @@ export function createAssistantImageFilePreviewAttachmentId(input: {
     size: input.size,
     modifiedAt: input.modifiedAt,
     contentLength: input.contentLength,
-    contentKey: `${input.serverId ?? "unknown-server"}:${input.occurrenceKey}`,
+    contentKey: `${input.serverId ?? "unknown-server"}:${input.workspaceId ?? "legacy-workspace"}:${input.occurrenceKey}`,
   });
 }
 
 export function createAssistantImageFileAcquisitionKey(input: {
   serverId?: string;
+  workspaceId?: string;
   occurrenceKey: string;
   cwd: string;
   path: string;
 }): string {
-  return `file:${input.serverId ?? "unknown-server"}:${input.occurrenceKey}:${input.cwd}:${input.path}`;
+  return `file:${input.serverId ?? "unknown-server"}:${input.workspaceId ?? "legacy-workspace"}:${input.occurrenceKey}:${input.cwd}:${input.path}`;
 }
 
 export function createAssistantImageAcquisitionCache<T>(input: {

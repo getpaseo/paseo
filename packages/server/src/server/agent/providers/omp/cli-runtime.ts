@@ -42,6 +42,11 @@ import {
   type OmpSessionStats,
   type OmpSubagentSubscriptionLevel,
 } from "./rpc-types.js";
+import {
+  providerWorkspaceEnvironment,
+  resolveWorkspaceCommand,
+  spawnWorkspaceProviderProcess,
+} from "../workspace/index.js";
 
 const DEFAULT_OMP_COMMAND: [string, ...string[]] = [process.env.OMP_COMMAND ?? "omp"];
 const DEFAULT_COMMANDS_RPC_NAME = "get_available_commands";
@@ -74,6 +79,16 @@ export class OmpCliRuntime implements OmpRuntime {
       session: input,
     });
     const [command, ...args] = launch.argv;
+    const workspaceChild = input.workspace
+      ? await spawnWorkspaceProviderProcess({
+          workspace: input.workspace,
+          argv: [await resolveWorkspaceCommand(input.workspace, command), ...args],
+          env: providerWorkspaceEnvironment([this.options.runtimeSettings?.env, input.env]),
+          purpose: input.agentId
+            ? { kind: "agent", agentId: input.agentId, provider: "omp" }
+            : { kind: "provider-probe", provider: "omp" },
+        })
+      : null;
     const processLaunch: JsonlRpcLaunch = {
       command,
       args,
@@ -81,11 +96,14 @@ export class OmpCliRuntime implements OmpRuntime {
       env: launch.env,
     };
     const spawn = this.spawnProcess;
+    let runtimeSpawn;
+    if (workspaceChild) runtimeSpawn = () => workspaceChild;
+    else if (spawn) runtimeSpawn = () => spawn(launch);
     const processOptions = {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
-      ...(spawn ? { spawn: () => spawn(launch) } : {}),
+      ...(runtimeSpawn ? { spawn: runtimeSpawn } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);

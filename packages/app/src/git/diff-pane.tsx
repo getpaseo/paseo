@@ -100,6 +100,7 @@ import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -253,15 +254,14 @@ function noopStartComment(): void {}
 
 function useDiscardChangesAction({
   serverId,
-  cwd,
   diffMode,
 }: {
   serverId: string;
-  cwd: string;
   diffMode: "uncommitted" | "base";
 }): ((path: string, oldPath?: string) => void) | undefined {
   const { t } = useTranslation();
   const toast = useToast();
+  const workspaceGit = useRequiredWorkspaceGit();
   const discardChanges = useCheckoutGitActionsStore((state) => state.discardChanges);
   // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
   const discardSupported = useSessionStore(
@@ -282,7 +282,7 @@ function useDiscardChangesAction({
       try {
         await discardChanges({
           serverId,
-          cwd,
+          target: workspaceGit,
           paths: oldPath ? [path, oldPath] : [path],
         });
       } catch (cause) {
@@ -291,7 +291,7 @@ function useDiscardChangesAction({
         );
       }
     },
-    [cwd, discardChanges, serverId, t, toast],
+    [discardChanges, serverId, t, toast, workspaceGit],
   );
   const handleDiscardPath = useCallback(
     (path: string, oldPath?: string) => {
@@ -3003,6 +3003,7 @@ export function GitDiffPane({
   onOpenFile,
   onAddToChat,
 }: GitDiffPaneProps) {
+  const workspaceGit = useRequiredWorkspaceGit();
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -3064,17 +3065,22 @@ export function GitDiffPane({
   );
   const runRefresh = useCheckoutGitActionsStore((s) => s.refresh);
   const isRefreshing =
-    useCheckoutGitActionsStore((s) => s.getStatus({ serverId, cwd, actionId: "refresh" })) ===
-    "pending";
+    useCheckoutGitActionsStore((s) =>
+      s.getStatus({
+        serverId,
+        target: workspaceGit,
+        actionId: "refresh",
+      }),
+    ) === "pending";
 
   const handleRefresh = useCallback(() => {
     if (isRefreshing) {
       return;
     }
-    void runRefresh({ serverId, cwd }).catch((error) => {
+    void runRefresh({ serverId, target: workspaceGit }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
+  }, [isRefreshing, runRefresh, serverId, t, toast, workspaceGit]);
 
   const {
     status,
@@ -3095,7 +3101,7 @@ export function GitDiffPane({
     reviewAttachment,
   } = useWorkingDiff({
     serverId,
-    workspaceId: workspaceId ?? undefined,
+    workspaceId: workspaceGit.workspaceId,
     cwd,
     ignoreWhitespace: changesPreferences.hideWhitespace,
     enabled: enabled !== false,
@@ -3114,7 +3120,6 @@ export function GitDiffPane({
     payloadError: prPayloadError,
   } = useCheckoutPrStatusQuery({
     serverId,
-    cwd,
     enabled: isGit,
   });
   const forgeProvidersSupported = useSessionStore(
@@ -3142,7 +3147,7 @@ export function GitDiffPane({
     [updateChangesPreferences],
   );
   const changesTree = useChangesTreeState({
-    workspaceId,
+    workspaceId: workspaceGit.workspaceId,
     cwd,
     files,
     viewMode,
@@ -3211,7 +3216,7 @@ export function GitDiffPane({
     },
     [client, cwd, t, toast],
   );
-  const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
+  const onRevertPath = useDiscardChangesAction({ serverId, diffMode });
   const workingTreeMode = useMemo(
     () => ({
       kind: "working_tree" as const,
@@ -3316,8 +3321,6 @@ export function GitDiffPane({
           <BranchSwitcher
             currentBranchName={currentBranchName}
             serverId={serverId}
-            workspaceId={workspaceId ?? cwd}
-            workspaceDirectory={cwd}
             isGitCheckout={isGit}
             testID="changes-branch-switcher"
           />
@@ -3391,7 +3394,7 @@ export function GitDiffPane({
 
       <View style={styles.diffContainer}>{bodyContent}</View>
 
-      <CommitsSection serverId={serverId} cwd={cwd} onCommitPress={handleCommitPress} />
+      <CommitsSection serverId={serverId} onCommitPress={handleCommitPress} />
     </View>
   );
 }

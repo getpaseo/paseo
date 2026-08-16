@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import React, { type ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { ForgeSearchClient } from "@/git/use-forge-search-query";
@@ -49,10 +49,11 @@ const issue202: ForgeSearchItem = {
 };
 
 interface SearchCall {
-  cwd: string;
   query: string;
   limit?: number;
 }
+
+type TestSearchClient = Pick<ForgeSearchClient, "searchForge" | "searchGitHub">;
 
 interface HarnessInput {
   initialAttachments?: UserComposerAttachment[];
@@ -72,7 +73,7 @@ function githubPayload(items: ForgeSearchItem[], requestId: string): ForgeSearch
   };
 }
 
-function createSearchClient(items: ForgeSearchItem[]): ForgeSearchClient & { calls: SearchCall[] } {
+function createSearchClient(items: ForgeSearchItem[]): TestSearchClient & { calls: SearchCall[] } {
   const calls: SearchCall[] = [];
   return {
     calls,
@@ -104,21 +105,28 @@ function createWrapper() {
   };
 }
 
-function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
+function useHarness(client: TestSearchClient, input: HarnessInput = {}) {
   const [text, setText] = useState(input.initialText ?? "");
   const [searchClient, setSearchClient] = useState(client);
   const [workingDirectory, setWorkingDirectory] = useState(input.initialCwd ?? cwd);
   const [attachments, setAttachments] = useState<UserComposerAttachment[]>(
     input.initialAttachments ?? [],
   );
+  const boundSearchClient = useMemo(
+    () => ({
+      ...searchClient,
+      queryIdentity: ["selected", "workspace-1"] as const,
+      cwd: workingDirectory,
+    }),
+    [searchClient, workingDirectory],
+  );
   const autoAttach = useComposerGithubAutoAttach({
     text,
     remoteUrl: input.remote ?? remoteUrl,
     attachments,
-    client: searchClient,
+    client: boundSearchClient,
     isConnected: true,
     serverId: "server-1",
-    cwd: workingDirectory,
     setAttachments,
     onPullRequestDetected: input.onPullRequestDetected,
     onPullRequestAdded: input.onPullRequestAdded,
@@ -161,7 +169,7 @@ describe("useComposerGithubAutoAttach", () => {
 
     expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
     expect(result.current.isResolving).toBe(false);
-    expect(client.calls).toEqual([{ cwd, query: "101", limit: 20 }]);
+    expect(client.calls).toEqual([{ query: "101", limit: 20 }]);
     vi.useRealTimers();
   });
 
@@ -235,8 +243,8 @@ describe("useComposerGithubAutoAttach", () => {
       { kind: "forge_issue", item: issue202 },
     ]);
     expect(client.calls).toEqual([
-      { cwd, query: "101", limit: 20 },
-      { cwd, query: "202", limit: 20 },
+      { query: "101", limit: 20 },
+      { query: "202", limit: 20 },
     ]);
     vi.useRealTimers();
   });
@@ -245,7 +253,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi
         .fn()
         .mockReturnValueOnce(firstLookup.promise)
@@ -288,7 +296,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi
         .fn()
         .mockReturnValueOnce(firstLookup.promise)
@@ -357,8 +365,8 @@ describe("useComposerGithubAutoAttach", () => {
 
     expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
     expect(client.calls).toEqual([
-      { cwd, query: "202", limit: 20 },
-      { cwd, query: "101", limit: 20 },
+      { query: "202", limit: 20 },
+      { query: "101", limit: 20 },
     ]);
     vi.useRealTimers();
   });
@@ -367,7 +375,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi
         .fn()
         .mockReturnValueOnce(firstLookup.promise)
@@ -419,7 +427,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi
         .fn()
         .mockReturnValueOnce(firstLookup.promise)
@@ -459,7 +467,7 @@ describe("useComposerGithubAutoAttach", () => {
   it("keeps resolving when a pending pull request URL is removed and re-added", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
     const onPullRequestAdded = vi.fn();
@@ -500,7 +508,7 @@ describe("useComposerGithubAutoAttach", () => {
     vi.useFakeTimers();
     const firstLookup = deferred<ForgeSearchPayload>();
     const secondLookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi
         .fn()
         .mockReturnValueOnce(firstLookup.promise)
@@ -545,7 +553,7 @@ describe("useComposerGithubAutoAttach", () => {
   it("stays resolving when an unrelated attachment is added during lookup", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
     const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
@@ -578,7 +586,7 @@ describe("useComposerGithubAutoAttach", () => {
   it("stops resolving when an in-flight PR URL is removed", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
     const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
@@ -598,7 +606,7 @@ describe("useComposerGithubAutoAttach", () => {
   it("ignores a lookup that finishes after the target changes", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();
-    const client: ForgeSearchClient = {
+    const client: TestSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
     const { result } = renderHook(() => useHarness(client), { wrapper: createWrapper() });
@@ -625,7 +633,7 @@ describe("useComposerGithubAutoAttach", () => {
   it("accepts a lookup after the transport client is replaced for the same target", async () => {
     vi.useFakeTimers();
     const lookup = deferred<ForgeSearchPayload>();
-    const firstClient: ForgeSearchClient = {
+    const firstClient: TestSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
     const replacementClient = createSearchClient([pr101]);

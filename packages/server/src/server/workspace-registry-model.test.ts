@@ -9,7 +9,61 @@ import {
   initialWorkspacePlacement,
   reconcileWorkspacePlacement,
 } from "./workspace-registry-model.js";
-import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  projectRuntimeSource,
+} from "./workspace-registry.js";
+
+describe("project runtime source", () => {
+  const project = createPersistedProjectRecord({
+    projectId: "project-one",
+    rootPath: "/host/decoy",
+    kind: "git",
+    displayName: "project-one",
+    createdAt: "2026-08-12T00:00:00.000Z",
+    updatedAt: "2026-08-12T00:00:00.000Z",
+  });
+
+  test("uses the host project root only when no persisted source exists", () => {
+    expect(projectRuntimeSource(project)).toEqual({
+      kind: "host-directory",
+      path: "/host/decoy",
+    });
+  });
+
+  test("gives persisted git authority precedence over the host root", () => {
+    expect(
+      projectRuntimeSource({
+        ...project,
+        source: {
+          kind: "git",
+          url: "https://example.test/acme/project.git",
+          revision: "release",
+          subdirectory: "packages/app",
+        },
+      }),
+    ).toEqual({
+      kind: "git",
+      url: "https://example.test/acme/project.git",
+      revision: "release",
+      subdirectory: "packages/app",
+    });
+  });
+
+  test("uses the runtime contract default revision when persistence omits it", () => {
+    expect(
+      projectRuntimeSource({
+        ...project,
+        source: { kind: "git", url: "https://example.test/acme/project.git" },
+      }),
+    ).toEqual({
+      kind: "git",
+      url: "https://example.test/acme/project.git",
+      revision: "",
+    });
+  });
+});
 
 describe("opaque registry ids", () => {
   test("generates opaque project ids", () => {

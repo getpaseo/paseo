@@ -18,8 +18,12 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
-import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import {
+  bindWorkspaceGitService,
+  createNoopWorkspaceGitService,
+} from "./test-utils/workspace-git-service-stub.js";
 import type { WorkspaceGitObserverService } from "./session/workspace-git-observer/workspace-git-observer-service.js";
+import type { WorkspaceGitDirectory } from "./workspace-git-directory.js";
 
 interface SessionInternals {
   workspaceUpdatesSubscription: {
@@ -31,6 +35,7 @@ interface SessionInternals {
   };
   buildWorkspaceDescriptorMap: () => Promise<Map<string, unknown>>;
   workspaceGitObserver: WorkspaceGitObserverService;
+  workspaceGitDirectory: WorkspaceGitDirectory;
   listAgentPayloads: () => Promise<unknown[]>;
 }
 
@@ -38,7 +43,9 @@ interface SessionInternals {
 // integration tests drive it with a minimal git descriptor for one workspace, then push
 // snapshots through the captured WorkspaceGitService listener.
 function syncGitObserver(session: Session, cwd: string, workspaceId: string): void {
-  asInternals<SessionInternals>(session).workspaceGitObserver.syncObservers([
+  const internals = asInternals<SessionInternals>(session);
+  internals.workspaceGitDirectory.bindRecord({ workspaceId, cwd, runtime: undefined });
+  internals.workspaceGitObserver.syncObservers([
     {
       id: workspaceId,
       workspaceDirectory: cwd,
@@ -66,7 +73,7 @@ function getWorkspaceUpdates(
 }
 
 const REPO_CWD = path.resolve("/tmp/repo");
-const REPO_SUBSCRIPTION_REQUEST_ID = `subscription:${REPO_CWD}`;
+const REPO_SUBSCRIPTION_REQUEST_ID = "subscription:ws-10";
 
 function createWorkspaceRuntimeSnapshot(
   cwd: string,
@@ -188,6 +195,9 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     scheduleRefreshForCwd: vi.fn(),
     dispose: vi.fn(),
   };
+  workspaceGitService.bindWorkspace = ({ cwd }) =>
+    bindWorkspaceGitService(workspaceGitService, cwd);
+  workspaceGitService.bindLegacy = (cwd) => bindWorkspaceGitService(workspaceGitService, cwd);
 
   const session = new Session({
     clientId: "test-client",

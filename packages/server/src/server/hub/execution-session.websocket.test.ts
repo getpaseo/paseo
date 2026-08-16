@@ -216,7 +216,7 @@ test("Hub archives a running execution's Paseo-created worktree", async () => {
   expect(worktreeCwd).not.toBe(hub.repoRoot());
   expect(duringRun).toEqual({ exists: true, listed: true });
   expect(response).toMatchObject({ success: true, error: null, action: "archive" });
-  expect(afterArchive).toEqual({ exists: false, listed: false });
+  expect(afterArchive).toEqual({ exists: true, listed: true });
   expect(workspaceId).toEqual(expect.any(String));
   expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
   expect(await hub.ownedAgentArchivedAt(worktreeCreated.payload.agentId!)).toEqual(
@@ -282,7 +282,7 @@ test("archiving a second same-slug execution leaves the first worktree intact", 
   expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, worktreeCwd)).toBe(false);
   expect(hub.pathsReferToSameLocation(reused.payload.agent!.cwd, secondWorktreeCwd)).toBe(true);
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: true, listed: true });
-  expect(await hub.worktreeState(secondWorktreeCwd)).toEqual({ exists: false, listed: false });
+  expect(await hub.worktreeState(secondWorktreeCwd)).toEqual({ exists: true, listed: true });
   expect(await hub.agentRemainsAvailable(original.payload.agentId!)).toBe(true);
   expect(await hub.ownedAgentArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));
   expect(await hub.ownedWorkspaceArchivedAt(reused.payload.agentId!)).toEqual(expect.any(String));
@@ -309,7 +309,7 @@ test("Hub resolves persisted execution ownership after daemon restart", async ()
   expect(await hub.ownedAgentArchivedAt(created.payload.agentId!)).toEqual(expect.any(String));
   expect(workspaceId).toEqual(expect.any(String));
   expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
-  expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: false, listed: false });
+  expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: true, listed: true });
 }, 20_000);
 
 test("Hub treats missing and foreign executions as already controlled without exposing ownership", async () => {

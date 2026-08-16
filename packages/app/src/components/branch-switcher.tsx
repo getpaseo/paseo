@@ -6,15 +6,13 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
   serverId: string;
-  workspaceId: string;
-  workspaceDirectory: string | null;
   isGitCheckout: boolean;
   testID?: string;
 }
@@ -29,23 +27,17 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 export function BranchSwitcher({
   currentBranchName,
   serverId,
-  workspaceId,
-  workspaceDirectory,
   isGitCheckout,
   testID = "workspace-header-branch-switcher",
 }: BranchSwitcherProps) {
   const { t } = useTranslation();
   const anchorRef = useRef<View>(null);
-  const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
   const queryClient = useQueryClient();
 
   const { branchOptions, isOpen, setIsOpen, handleBranchSelect } = useBranchSwitcher({
-    client,
     normalizedServerId: serverId,
-    normalizedWorkspaceId: workspaceId,
-    workspaceDirectory,
     currentBranchName,
     isGitCheckout,
     isConnected,

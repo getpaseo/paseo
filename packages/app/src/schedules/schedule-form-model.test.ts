@@ -703,7 +703,7 @@ describe("schedule form model", () => {
           thinkingByModel: { "model-b": "high" },
         },
       },
-      isolation: "worktree",
+      runtimeId: "worktree",
     };
 
     const create = open({
@@ -750,7 +750,7 @@ describe("schedule form model", () => {
     });
     edit.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
 
-    applyPreferences(edit, { ...savedPreferences, isolation: "local" });
+    applyPreferences(edit, { ...savedPreferences, runtimeId: "local" });
 
     expect(edit.getState()).toMatchObject({
       selectedProvider: "mock",

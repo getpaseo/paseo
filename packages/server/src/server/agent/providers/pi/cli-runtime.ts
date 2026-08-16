@@ -24,6 +24,11 @@ import type {
   PiSessionState,
   PiSessionStats,
 } from "./rpc-types.js";
+import {
+  providerWorkspaceEnvironment,
+  resolveWorkspaceCommand,
+  spawnWorkspaceProviderProcess,
+} from "../workspace/index.js";
 
 const DEFAULT_PI_COMMAND: [string, ...string[]] = [
   process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
@@ -64,6 +69,16 @@ export class PiCliRuntime implements PiRuntime {
       session: input,
     });
     const [command, ...args] = launch.argv;
+    const workspaceChild = input.workspace
+      ? await spawnWorkspaceProviderProcess({
+          workspace: input.workspace,
+          argv: [await resolveWorkspaceCommand(input.workspace, command), ...args],
+          env: providerWorkspaceEnvironment([this.options.runtimeSettings?.env, input.env]),
+          purpose: input.agentId
+            ? { kind: "agent", agentId: input.agentId, provider: "pi" }
+            : { kind: "provider-probe", provider: "pi" },
+        })
+      : null;
     const processLaunch: JsonlRpcLaunch = {
       command,
       args,
@@ -71,11 +86,14 @@ export class PiCliRuntime implements PiRuntime {
       env: launch.env,
     };
     const spawn = this.spawnProcess;
+    let runtimeSpawn;
+    if (workspaceChild) runtimeSpawn = () => workspaceChild;
+    else if (spawn) runtimeSpawn = () => spawn(launch);
     const processOptions = {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "Pi RPC",
-      ...(spawn ? { spawn: () => spawn(launch) } : {}),
+      ...(runtimeSpawn ? { spawn: runtimeSpawn } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
     if (input.signal?.aborted) {

@@ -27,6 +27,16 @@ const DEFAULT_STDERR_LIMIT = 2048;
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
 let gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(gitProcessScheduler.policy);
 const gitCommandPriority = new AsyncLocalStorage<GitProcessPriority>();
+const gitCommandRunner = new AsyncLocalStorage<GitCommandRunner>();
+
+export type GitCommandRunner = (
+  args: string[],
+  options: GitCommandOptions,
+) => Promise<GitCommandResult>;
+
+export function runWithGitCommandRunner<T>(runner: GitCommandRunner, operation: () => T): T {
+  return gitCommandRunner.run(runner, operation);
+}
 
 export function runWithGitCommandPriority<T>(priority: GitProcessPriority, operation: () => T): T {
   return gitCommandPriority.run(priority, operation);
@@ -253,6 +263,8 @@ export function runGitCommand(
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
+  const selectedRunner = gitCommandRunner.getStore();
+  const priority = gitCommandPriority.getStore() ?? "normal";
   const metricsState = submitGitCommandMetric(args, options.cwd);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
@@ -260,6 +272,57 @@ export function runGitCommand(
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
   const startCommand = () => {
+    if (selectedRunner) {
+      const startedAt = Date.now();
+      beginGitCommandMetric(metricsState);
+      gitRuntimeMetrics.start(runtimeMetric);
+      startGitCommandTrace(commandTrace, {
+        active: gitProcessScheduler.activeCount,
+        pending: gitProcessScheduler.pendingCount,
+      });
+      const result = selectedRunner(args, options).then(
+        (commandResult) => {
+          const success =
+            commandResult.truncated ||
+            (options.acceptExitCodes ?? [0]).includes(commandResult.exitCode ?? -1);
+          finishMetricOnce(commandResult, success);
+          return commandResult;
+        },
+        (error) => {
+          finishMetricOnce(
+            { stdout: "", stderr: "", truncated: false, exitCode: null, signal: null },
+            false,
+          );
+          throw error;
+        },
+      );
+      return {
+        result,
+        exited: result.then(
+          () => undefined,
+          () => undefined,
+        ),
+      };
+
+      function finishMetricOnce(commandResult: GitCommandResult, success: boolean): void {
+        finishGitCommandMetric(metricsState, {
+          args,
+          cwd: options.cwd,
+          startedAtMs: startedAt,
+          durationMs: Date.now() - startedAt,
+          exitCode: commandResult.exitCode,
+          signal: commandResult.signal,
+          success,
+        });
+        gitRuntimeMetrics.finish(runtimeMetric, { success, timedOut: false });
+        settleGitCommandTrace(commandTrace, {
+          outcome: "closed",
+          exitCode: commandResult.exitCode,
+          signal: commandResult.signal,
+          truncated: commandResult.truncated,
+        });
+      }
+    }
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -516,9 +579,7 @@ export function runGitCommand(
     });
     return { result: resultPromise, exited };
   };
-  const promise = gitProcessScheduler.run(startCommand, {
-    priority: gitCommandPriority.getStore() ?? "normal",
-  });
+  const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,
     gitProcessScheduler.pendingCount,

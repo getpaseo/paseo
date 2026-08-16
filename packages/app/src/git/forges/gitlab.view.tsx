@@ -54,7 +54,6 @@ function renderGitlabChecksSection(facts: GitlabMergeFacts, ctx: PaneChecksSlotC
   return (
     <GitLabPipelineSection
       serverId={ctx.serverId}
-      cwd={ctx.cwd}
       changeRequestNumber={ctx.changeRequestNumber}
       summary={summary}
       open={ctx.open}
@@ -118,7 +117,6 @@ function countPipelineJobs(jobs: CheckoutPipelineJob[]): PipelineJobCounts {
 
 function GitLabPipelineSection({
   serverId,
-  cwd,
   changeRequestNumber,
   summary,
   open,
@@ -126,7 +124,6 @@ function GitLabPipelineSection({
   canFetchCheckDetails,
 }: {
   serverId: string;
-  cwd: string;
   changeRequestNumber: number;
   summary: GitlabPipelineSummary;
   open: boolean;
@@ -136,7 +133,6 @@ function GitLabPipelineSection({
   const { t } = useTranslation();
   const { pipeline, isLoading, isPlaceholderData, error } = useGitLabPipeline({
     serverId,
-    cwd,
     pipelineId: summary.id,
     changeRequestNumber,
     enabled: open && canFetchCheckDetails,

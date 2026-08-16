@@ -2,332 +2,129 @@
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusUpdate } from "@getpaseo/protocol/messages";
-import {
-  checkoutCommitsQueryKey,
-  checkoutPrStatusQueryKey,
-  checkoutStatusQueryKey,
-} from "@/git/query-keys";
-import {
-  prPanePipelineQueryKey,
-  prPaneTimelineQueryKey,
-} from "@/git/pull-request-panel/query-keys";
+import { checkoutCommitsQueryKey, checkoutStatusQueryKey } from "@/git/query-keys";
 import { resetReviewDraftStore, useReviewDraftStore } from "@/review/store";
 import {
   applyCheckoutStatusUpdateFromEvent,
   ensureCheckoutStatus,
-  type CheckoutPrStatusPayload,
-  type CheckoutStatusPayload,
   fetchCheckoutStatus,
+  type CheckoutStatusPayload,
 } from "./checkout-status-cache";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn(async () => null),
-    setItem: vi.fn(async () => undefined),
-    removeItem: vi.fn(async () => undefined),
-  },
+  default: { getItem: vi.fn(async () => null), setItem: vi.fn(), removeItem: vi.fn() },
 }));
 
 const serverId = "server-1";
-const cwd = "/repo";
+const targetA = {
+  workspaceId: "workspace-a",
+  cwd: "/workspace",
+  queryIdentity: ["selected", "workspace-a"] as const,
+};
+const targetB = {
+  workspaceId: "workspace-b",
+  cwd: "/workspace",
+  queryIdentity: ["selected", "workspace-b"] as const,
+};
 
-function checkoutStatus(overrides: Partial<CheckoutStatusPayload> = {}): CheckoutStatusPayload {
+function status(
+  target: { workspaceId: string; cwd: string } = targetA,
+  branch = "main",
+  isDirty = false,
+): CheckoutStatusPayload {
   return {
-    cwd,
+    workspaceId: target.workspaceId,
+    cwd: target.cwd,
     error: null,
-    requestId: "checkout-status-1",
+    requestId: `status-${target.workspaceId}`,
     isGit: true,
     isPaseoOwnedWorktree: false,
-    repoRoot: cwd,
-    currentBranch: "main",
-    isDirty: false,
+    repoRoot: target.cwd,
+    mainRepoRoot: null,
+    currentBranch: branch,
+    isDirty,
     baseRef: "origin/main",
     aheadBehind: { ahead: 0, behind: 0 },
     aheadOfOrigin: 0,
     behindOfOrigin: 0,
     hasRemote: true,
-    remoteUrl: "git@github.com:getpaseo/paseo.git",
-    ...overrides,
-  } as CheckoutStatusPayload;
-}
-
-function prStatus(overrides: Partial<CheckoutPrStatusPayload> = {}): CheckoutPrStatusPayload {
-  return {
-    cwd,
-    status: {
-      forge: "github",
-      url: "https://github.com/getpaseo/paseo/pull/42",
-      title: "My PR",
-      state: "open",
-      baseRefName: "main",
-      headRefName: "feature",
-      isMerged: false,
-      isDraft: false,
-      mergeable: "MERGEABLE",
-      checks: [],
-      checksStatus: "success",
-      reviewDecision: null,
-    },
-    githubFeaturesEnabled: true,
-    authState: "authenticated",
-    forge: "github",
-    error: null,
-    requestId: "pr-status-1",
-    ...overrides,
+    remoteUrl: null,
   };
 }
 
-function checkoutStatusUpdate(
-  payload: CheckoutStatusPayload,
-  extraPrStatus?: NonNullable<CheckoutStatusUpdate["payload"]["prStatus"]>,
-): CheckoutStatusUpdate {
-  return {
-    type: "checkout_status_update",
-    payload: extraPrStatus ? { ...payload, prStatus: extraPrStatus } : payload,
-  };
+function update(payload: CheckoutStatusPayload): CheckoutStatusUpdate {
+  return { type: "checkout_status_update", payload };
 }
 
-function setDiffModeOverride(isDirtyAtSelection: boolean): void {
-  useReviewDraftStore.getState().setDiffModeOverride({
-    scopeKey: "review:scope",
-    override: { serverId, cwd, mode: "base", isDirtyAtSelection },
-  });
-}
+beforeEach(resetReviewDraftStore);
 
-function createQueryClient(): QueryClient {
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
-}
-
-beforeEach(() => {
-  resetReviewDraftStore();
-});
-
-describe("fetchCheckoutStatus", () => {
-  it("fetches from the client and returns the payload", async () => {
-    const fetched = checkoutStatus({ requestId: "fetch-1" });
-    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
-
-    const result = await fetchCheckoutStatus({ client, serverId, cwd });
-
-    expect(result).toEqual(fetched);
-    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
+describe("selected checkout status cache", () => {
+  it("fetches through the bound workspace capability", async () => {
+    const getStatus = vi.fn(async () => status());
+    await expect(
+      fetchCheckoutStatus({ client: { getStatus }, serverId, target: targetA }),
+    ).resolves.toEqual(status());
+    expect(getStatus).toHaveBeenCalledWith();
   });
 
-  it("expires a manual diff-mode override when the fetched dirty state flipped", async () => {
-    setDiffModeOverride(true);
-    const client = { getCheckoutStatus: vi.fn(async () => checkoutStatus({ isDirty: false })) };
-
-    await fetchCheckoutStatus({ client, serverId, cwd });
-
-    expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeUndefined();
-  });
-});
-
-describe("ensureCheckoutStatus", () => {
-  it("awaits the canonical checkout-status query and reuses its cached result", async () => {
-    const queryClient = createQueryClient();
-    const fetched = checkoutStatus({ currentBranch: "feature/current" });
-    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
-
-    const first = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
-    const second = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
-
-    expect(first).toEqual(fetched);
-    expect(second).toEqual(fetched);
-    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
-  });
-
-  it("awaits a refetch when the canonical cached status was invalidated", async () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      checkoutStatusQueryKey(serverId, cwd),
-      checkoutStatus({ currentBranch: "feature/stale" }),
-    );
-    await queryClient.invalidateQueries({
-      queryKey: checkoutStatusQueryKey(serverId, cwd),
-      refetchType: "none",
+  it("deduplicates a bound status fetch by workspace identity", async () => {
+    const client = new QueryClient();
+    const getStatus = vi.fn(async () => status());
+    const first = ensureCheckoutStatus({
+      queryClient: client,
+      client: { getStatus },
+      serverId,
+      target: targetA,
     });
-    const fetched = checkoutStatus({ currentBranch: "feature/current" });
-    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
-
-    const result = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
-
-    expect(result.currentBranch).toBe("feature/current");
-    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
+    const second = ensureCheckoutStatus({
+      queryClient: client,
+      client: { getStatus },
+      serverId,
+      target: targetA,
+    });
+    await Promise.all([first, second]);
+    expect(getStatus).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("applyCheckoutStatusUpdateFromEvent", () => {
-  it("writes the checkout status to the cache using the cwd from the payload", () => {
-    const queryClient = createQueryClient();
-    const pushed = checkoutStatus({ requestId: "push-1", isDirty: true });
+  it("keeps same-cwd selected status and invalidation isolated", () => {
+    const client = new QueryClient();
+    client.setQueryData(checkoutStatusQueryKey(serverId, targetA), status(targetA, "a"));
+    client.setQueryData(checkoutStatusQueryKey(serverId, targetB), status(targetB, "b"));
+    client.setQueryData(checkoutCommitsQueryKey(serverId, targetA), { commits: [] });
+    client.setQueryData(checkoutCommitsQueryKey(serverId, targetB), { commits: [] });
 
     applyCheckoutStatusUpdateFromEvent({
-      queryClient,
+      queryClient: client,
       serverId,
-      message: checkoutStatusUpdate(pushed),
+      message: update(status(targetA, "a-next", true)),
     });
 
-    expect(queryClient.getQueryData(checkoutStatusQueryKey(serverId, cwd))).toEqual(pushed);
-  });
-
-  it("invalidates recent commits when checkout status is pushed", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, cwd), { commits: [] });
-    queryClient.setQueryData(checkoutCommitsQueryKey(serverId, "/repo2"), { commits: [] });
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus()),
-    });
-
-    expect(queryClient.getQueryState(checkoutCommitsQueryKey(serverId, cwd))?.isInvalidated).toBe(
+    expect(
+      client.getQueryData<CheckoutStatusPayload>(checkoutStatusQueryKey(serverId, targetA))
+        ?.currentBranch,
+    ).toBe("a-next");
+    expect(
+      client.getQueryData<CheckoutStatusPayload>(checkoutStatusQueryKey(serverId, targetB))
+        ?.currentBranch,
+    ).toBe("b");
+    expect(client.getQueryState(checkoutCommitsQueryKey(serverId, targetA))?.isInvalidated).toBe(
       true,
     );
-    expect(
-      queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/repo2"))?.isInvalidated,
-    ).toBe(false);
-  });
-
-  it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {
-    const queryClient = createQueryClient();
-    const pushedPr = prStatus({ requestId: "pr-1" });
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus(), pushedPr),
-    });
-    expect(queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, cwd))).toEqual(pushedPr);
-
-    const otherCwd = "/repo2";
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ cwd: otherCwd, repoRoot: otherCwd })),
-    });
-    expect(queryClient.getQueryData(checkoutPrStatusQueryKey(serverId, otherCwd))).toBeUndefined();
-  });
-
-  it("normalizes legacy PR auth state at the pushed-cache boundary", () => {
-    const queryClient = createQueryClient();
-    const { authState: _authState, ...legacyPrStatus } = prStatus({
-      githubFeaturesEnabled: false,
-    });
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus(), legacyPrStatus),
-    });
-
-    expect(
-      queryClient.getQueryData<CheckoutPrStatusPayload>(checkoutPrStatusQueryKey(serverId, cwd))
-        ?.authState,
-    ).toBe("unauthenticated");
-    expect(
-      queryClient.getQueryData<CheckoutStatusUpdate["payload"]>(
-        checkoutStatusQueryKey(serverId, cwd),
-      )?.prStatus?.authState,
-    ).toBe("unauthenticated");
-  });
-
-  it("expires a manual diff-mode override when the pushed dirty state flipped", () => {
-    const queryClient = createQueryClient();
-    setDiffModeOverride(false);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeUndefined();
-  });
-
-  it("keeps a manual diff-mode override while the pushed dirty state still matches", () => {
-    const queryClient = createQueryClient();
-    setDiffModeOverride(true);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeDefined();
-  });
-
-  it("invalidates PR detail queries when the prStatus changes, ignoring the volatile requestId", () => {
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(
-      checkoutPrStatusQueryKey(serverId, cwd),
-      prStatus({ requestId: "pr-v1" }),
+    expect(client.getQueryState(checkoutCommitsQueryKey(serverId, targetB))?.isInvalidated).toBe(
+      false,
     );
-    const timelineKey = prPaneTimelineQueryKey({ serverId, cwd, prNumber: 42 });
-    const pipelineKey = prPanePipelineQueryKey({
-      serverId,
-      cwd,
-      pipelineId: 9001,
-      changeRequestNumber: 1,
-    });
-    queryClient.setQueryData(timelineKey, { items: [] });
-    queryClient.setQueryData(pipelineKey, { stages: [] });
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus(), prStatus({ requestId: "pr-v2" })),
-    });
-    expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(false);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(
-        checkoutStatus(),
-        prStatus({
-          requestId: "pr-v3",
-          status: { ...prStatus().status!, state: "closed" },
-        }),
-      ),
-    });
-    expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(true);
   });
 
-  it("invalidates PR detail queries on the first prStatus emission, scoped to its cwd", () => {
-    const queryClient = createQueryClient();
-    const timelineKey = prPaneTimelineQueryKey({ serverId, cwd, prNumber: 42 });
-    const otherTimelineKey = prPaneTimelineQueryKey({ serverId, cwd: "/repo2", prNumber: 42 });
-    const pipelineKey = prPanePipelineQueryKey({
-      serverId,
-      cwd,
-      pipelineId: 9001,
-      changeRequestNumber: 1,
+  it("expires a diff-mode override when a bound update changes dirty state", () => {
+    useReviewDraftStore.getState().setDiffModeOverride({
+      scopeKey: "review:scope",
+      override: { serverId, cwd: targetA.cwd, mode: "base", isDirtyAtSelection: false },
     });
-    const otherPipelineKey = prPanePipelineQueryKey({
-      serverId,
-      cwd: "/repo2",
-      pipelineId: 9001,
-      changeRequestNumber: 1,
-    });
-    queryClient.setQueryData(timelineKey, { items: [] });
-    queryClient.setQueryData(otherTimelineKey, { items: [] });
-    queryClient.setQueryData(pipelineKey, { stages: [] });
-    queryClient.setQueryData(otherPipelineKey, { stages: [] });
-
     applyCheckoutStatusUpdateFromEvent({
-      queryClient,
+      queryClient: new QueryClient(),
       serverId,
-      message: checkoutStatusUpdate(checkoutStatus(), prStatus()),
+      message: update(status(targetA, "main", true)),
     });
-
-    expect(queryClient.getQueryState(timelineKey)?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(otherTimelineKey)?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(pipelineKey)?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(otherPipelineKey)?.isInvalidated).toBe(false);
+    expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeUndefined();
   });
 });

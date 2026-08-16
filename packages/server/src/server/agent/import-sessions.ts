@@ -132,6 +132,7 @@ export async function listImportableProviderSessions(
     limit: limit + importedSessions.count,
     providerFilter,
     cwd: request.cwd,
+    workspaceId: request.workspaceId,
   });
   let filteredAlreadyImportedCount = 0;
   const candidates: ManagedImportableProviderSession[] = [];

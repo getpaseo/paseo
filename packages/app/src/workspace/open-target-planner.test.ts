@@ -26,6 +26,7 @@ describe("planWorkspaceOpenTargets", () => {
   it("plans editor targets with active-file absolute path and cwd", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
+      hostVisiblePath: "/repo",
       activeFile: { path: "src/app.ts", lineStart: 3, lineEnd: 5 },
       desktopTargets,
       canUseDesktopBridge: true,
@@ -47,6 +48,7 @@ describe("planWorkspaceOpenTargets", () => {
   it("plans file-manager targets with active-file absolute path and reveal mode", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
+      hostVisiblePath: "/repo",
       activeFile: { path: "src/app.ts" },
       desktopTargets,
       canUseDesktopBridge: true,
@@ -67,6 +69,7 @@ describe("planWorkspaceOpenTargets", () => {
   it("plans no active file as opening the workspace folder", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
+      hostVisiblePath: "/repo",
       desktopTargets,
       canUseDesktopBridge: true,
       isLocalExecution: true,
@@ -87,6 +90,7 @@ describe("planWorkspaceOpenTargets", () => {
   it("passes custom target ids through as strings", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
+      hostVisiblePath: "/repo",
       activeFile: { path: "src/app.ts" },
       desktopTargets: [
         {
@@ -197,6 +201,19 @@ describe("planWorkspaceOpenTargets", () => {
       desktopTargets,
       canUseDesktopBridge: true,
       isLocalExecution: false,
+      checkoutStatus,
+    });
+
+    expect(targets.map((target) => target.id)).toEqual(["github"]);
+  });
+
+  it("does not treat a runtime-local compatibility cwd as a host-visible path", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/workspace",
+      hostVisiblePath: null,
+      desktopTargets,
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
       checkoutStatus,
     });
 

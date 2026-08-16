@@ -8,6 +8,8 @@ import {
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
+import type { ProviderWorkspace } from "../../agent-sdk-types.js";
+import { providerWorkspaceEnvironment, resolveWorkspaceCommand } from "../workspace/index.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -23,6 +25,8 @@ export interface ClaudeQueryContext {
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
+  workspace?: ProviderWorkspace;
+  agentId?: string;
 }
 
 function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWithoutNullStreams {
@@ -58,7 +62,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, onChildProcess, workspace } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -84,6 +88,29 @@ function applyRuntimeSettingsToClaudeOptions(
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
+      if (workspace) {
+        const workspaceArgs = isDefaultRuntime ? resolved.args.slice(1) : args;
+        const child = workspace.launchDeferred(
+          (async () => ({
+            argv: [
+              await resolveWorkspaceCommand(workspace, isDefaultRuntime ? "claude" : command),
+              ...workspaceArgs,
+            ],
+            environment: [providerWorkspaceEnvironment([runtimeSettings?.env, launchEnv])],
+            purpose: {
+              kind: "agent" as const,
+              agentId: context.agentId ?? "unidentified-agent",
+              provider: "claude",
+            },
+            signal: spawnOptions.signal,
+          }))(),
+        );
+        onChildProcess?.(child);
+        if (typeof options.stderr === "function") {
+          child.stderr.on("data", (chunk: Buffer | string) => options.stderr?.(chunk.toString()));
+        }
+        return child;
+      }
       const child = spawnProcess(command, args, {
         cwd: spawnOptions.cwd,
         ...(selfNodeCommand

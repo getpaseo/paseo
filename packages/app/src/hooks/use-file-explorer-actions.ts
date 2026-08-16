@@ -138,7 +138,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
 
       try {
-        const directory = await client.listDirectory(normalizedWorkspaceRoot, normalizedPath);
+        const directory = await client.listDirectory(
+          normalizedWorkspaceRoot,
+          normalizedPath,
+          undefined,
+          workspaceId ?? undefined,
+        );
         updateExplorerState((state) => {
           const nextState: AgentFileExplorerState = {
             ...state,
@@ -169,7 +174,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         return null;
       }
     },
-    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
+    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceId, workspaceStateKey],
   );
 
   const requestFilePreview = useCallback(
@@ -206,7 +211,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
 
       try {
-        const file = await client.readFile(normalizedWorkspaceRoot, normalizedPath);
+        const file = await client.readFile(
+          normalizedWorkspaceRoot,
+          normalizedPath,
+          undefined,
+          workspaceId ?? undefined,
+        );
         updateExplorerState((state) => {
           const nextState: AgentFileExplorerState = {
             ...state,
@@ -233,7 +243,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         }));
       }
     },
-    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
+    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceId, workspaceStateKey],
   );
 
   const requestFileDownloadToken = useCallback(
@@ -244,13 +254,18 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = await client.requestDownloadToken(normalizedWorkspaceRoot, path);
+      const payload = await client.requestDownloadToken(
+        normalizedWorkspaceRoot,
+        path,
+        undefined,
+        workspaceId ?? undefined,
+      );
       if (payload.error) {
         throw new Error(payload.error);
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, t],
+    [client, normalizedWorkspaceRoot, t, workspaceId],
   );
 
   const createEntry = useCallback(

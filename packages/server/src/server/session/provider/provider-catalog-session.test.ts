@@ -12,6 +12,13 @@ import {
   type ProviderSnapshotManager,
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
+import type {
+  AgentClient,
+  AgentSessionConfig,
+  FetchCatalogOptions,
+} from "../../agent/agent-sdk-types.js";
+import { ProviderSnapshotManager as RealProviderSnapshotManager } from "../../agent/provider-snapshot-manager.js";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 
@@ -56,12 +63,19 @@ function makeSubsystem(options: MakeOptions = {}) {
     listDraftFeatures: async () => [],
     ...options.host,
   };
+  const snapshot = options.snapshot ?? {};
   const providerSnapshotManager = createStub<ProviderSnapshotManager>({
+    readSnapshot: async ({ cwd, workspaceId }) => {
+      const getSnapshot = snapshot.getSnapshot as
+        | ((snapshotCwd?: string, selectedWorkspaceId?: string) => ProviderSnapshotEntry[])
+        | undefined;
+      return getSnapshot?.(cwd ?? undefined, workspaceId) ?? [];
+    },
     on: (_event: string, handler: SnapshotChangeHandler) => {
       changeHandler = handler;
     },
     off: () => {},
-    ...options.snapshot,
+    ...snapshot,
   });
   const subsystem = new ProviderCatalogSession({
     host,
@@ -80,6 +94,65 @@ function makeSubsystem(options: MakeOptions = {}) {
 }
 
 describe("ProviderCatalogSession", () => {
+  it("fails a fresh selected snapshot closed when its runtime capability cannot bind", async () => {
+    const hostAvailabilityCalls: Array<FetchCatalogOptions | undefined> = [];
+    const codex = {
+      provider: "codex",
+      capabilities: {},
+      async isAvailable(options?: FetchCatalogOptions) {
+        hostAvailabilityCalls.push(options);
+        return true;
+      },
+      async fetchCatalog() {
+        return { models: [], modes: [] };
+      },
+    } as unknown as AgentClient;
+    const manager = new RealProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: { codex },
+      resolveProviderWorkspace: async () => {
+        throw new Error("selected runtime is unavailable");
+      },
+    });
+    const emitted: SessionOutboundMessage[] = [];
+    const subsystem = new ProviderCatalogSession({
+      host: {
+        emit: (message) => emitted.push(message),
+        isProviderVisibleToClient: () => true,
+        supportsCustomModeIcons: () => true,
+        supportsCompactProviderSnapshots: () => false,
+        listProviderAvailability: async () => [],
+        listDraftFeatures: async (_config: AgentSessionConfig) => [],
+      },
+      providerSnapshotManager: manager,
+      providerUsageService: createStub<ProviderUsageService>({}),
+      logger: createTestLogger(),
+    });
+
+    try {
+      await subsystem.handleGetProvidersSnapshotRequest({
+        type: "get_providers_snapshot_request",
+        requestId: "selected-first-get",
+        cwd: "/same-host-cwd",
+        workspaceId: "selected-docker",
+      });
+
+      expect(
+        findByType(emitted, "get_providers_snapshot_response")?.payload.entries.find(
+          (entry) => entry.provider === "codex",
+        ),
+      ).toMatchObject({ provider: "codex", status: "error" });
+      expect(hostAvailabilityCalls).toEqual([]);
+    } finally {
+      manager.destroy();
+    }
+  });
   it("PUSH gates invisible providers and downgrades unknown mode icons for legacy clients", () => {
     const { subsystem, emitted, pushSnapshotChange } = makeSubsystem({
       visibleProviders: new Set(["codex"]),

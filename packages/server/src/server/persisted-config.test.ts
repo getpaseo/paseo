@@ -137,6 +137,51 @@ describe("PersistedConfigSchema worktrees config", () => {
   });
 });
 
+describe("PersistedConfigSchema workspace runtime config", () => {
+  test("accepts generic command registrations and rejects Docker as a public type", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          fixture: {
+            type: "command",
+            label: "Fixture",
+            command: ["/trusted/runtime", "--fixture"],
+            options: { arbitrary: { nested: [true, 3, null] } },
+          },
+        },
+      }).workspaceRuntimes,
+    ).toEqual({
+      fixture: {
+        type: "command",
+        label: "Fixture",
+        command: ["/trusted/runtime", "--fixture"],
+        options: { arbitrary: { nested: [true, 3, null] } },
+      },
+    });
+    expect(() =>
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: { invalid: { type: "command", command: [] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          docker: {
+            type: "docker",
+            image: "paseo-workspace:test",
+          },
+        },
+      }),
+    ).toThrow();
+  });
+
+  test("uses null as the generic removal marker for a distribution registration", () => {
+    expect(
+      PersistedConfigSchema.parse({ workspaceRuntimes: { bundled: null } }).workspaceRuntimes,
+    ).toEqual({ bundled: null });
+  });
+});
+
 describe("PersistedConfigSchema provider credentials", () => {
   test("accepts separate OpenAI STT and TTS credentials", () => {
     const parsed = PersistedConfigSchema.parse({

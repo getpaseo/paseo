@@ -23,6 +23,7 @@ import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
@@ -331,6 +332,9 @@ function createVoiceAssistantWebSocketServer(params: {
     undefined,
     undefined,
     broker,
+    undefined,
+    undefined,
+    createStub<WorkspaceRuntimeService>({}),
   );
 }
 

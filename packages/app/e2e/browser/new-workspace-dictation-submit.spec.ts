@@ -1,10 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
-import {
-  openNewWorkspaceComposer,
-  selectWorkspaceIsolation,
-} from "../support/helpers/new-workspace";
+import { openNewWorkspaceComposer, selectWorkspaceRuntime } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
@@ -177,7 +174,7 @@ test.describe("New Workspace dictation submit", () => {
         projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
-      await selectWorkspaceIsolation(page, "local");
+      await selectWorkspaceRuntime(page, "local");
 
       await dictateAndSend(page, harness.waitForAudio);
       await harness.waitForCreateRequest();

@@ -3,8 +3,9 @@ import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFetchQuery } from "@/data/query";
 import { checkoutCommitsQueryKey } from "@/git/query-keys";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 
 // Commits ahead of base change rarely while the section is open; this keeps a
 // collapse/re-expand cycle warm without leaving the fetch result stale for long.
@@ -12,7 +13,6 @@ const CHECKOUT_COMMITS_STALE_TIME = 30_000;
 
 interface UseCheckoutCommitsQueryOptions {
   serverId: string;
-  cwd: string;
   enabled?: boolean;
 }
 
@@ -70,12 +70,11 @@ export function resolveCheckoutCommitsQueryResult({
 
 export function useCheckoutCommitsQuery({
   serverId,
-  cwd,
   enabled = true,
 }: UseCheckoutCommitsQueryOptions): CheckoutCommitsQueryResult {
   const retainedPanelActive = useRetainedPanelActive();
   const queryEnabledByCaller = enabled && retainedPanelActive;
-  const client = useHostRuntimeClient(serverId);
+  const workspaceGit = useRequiredWorkspaceGit();
   const isConnected = useHostRuntimeIsConnected(serverId);
   // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
   // COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
@@ -86,16 +85,16 @@ export function useCheckoutCommitsQuery({
       state.sessions[serverId]?.serverInfo?.features?.commitBaseClassification === true,
   );
 
-  const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
+  const canFetch = Boolean(workspaceGit) && isConnected;
   const queryEnabled = queryEnabledByCaller && capabilityPresent && canFetch;
 
   const query = useFetchQuery<CheckoutCommitsData>({
-    queryKey: checkoutCommitsQueryKey(serverId, cwd),
+    queryKey: checkoutCommitsQueryKey(serverId, workspaceGit),
     queryFn: async () => {
-      if (!client) {
+      if (!workspaceGit) {
         throw new Error("Host disconnected");
       }
-      const data = await client.listCheckoutCommits(cwd);
+      const data = await workspaceGit.listCommits();
       const commits = data.commits.map((commit) => {
         invariant(commit.isOnBase !== undefined, "Host omitted commit base classification");
         return { ...commit, isOnBase: commit.isOnBase };

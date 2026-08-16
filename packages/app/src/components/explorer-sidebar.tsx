@@ -22,6 +22,7 @@ import {
   usePrPaneData,
 } from "@/git/pull-request-panel";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
 import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/stores/panel-store";
 import { useToast } from "@/contexts/toast-context";
@@ -320,10 +321,10 @@ function ExplorerSidebarContent({
   const { t } = useTranslation();
   const toast = useToast();
   const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
+  const workspaceGit = useRequiredWorkspaceGit();
   const canQueryPullRequest = isGit && Boolean(workspaceRoot);
   const prPane = usePrPaneData({
     serverId,
-    cwd: workspaceRoot,
     enabled: canQueryPullRequest && isOpen,
     timelineEnabled: activeTab === "pr" && canQueryPullRequest && isOpen,
   });
@@ -335,10 +336,13 @@ function ExplorerSidebarContent({
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
   const handlePrRetry = useCallback(() => {
-    refreshGitActions({ serverId, cwd: workspaceRoot }).catch((error) => {
+    refreshGitActions({
+      serverId,
+      target: workspaceGit,
+    }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [refreshGitActions, serverId, t, toast, workspaceRoot]);
+  }, [refreshGitActions, serverId, t, toast, workspaceGit]);
   const workspaceAttachmentScopeKey = useMemo(
     () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd: workspaceRoot }),
     [serverId, workspaceId, workspaceRoot],
@@ -419,7 +423,7 @@ function ExplorerSidebarContent({
         {resolvedTab === "changes" && (
           <ChangedFilesPane
             serverId={serverId}
-            workspaceId={workspaceId}
+            workspaceId={workspaceGit.workspaceId}
             workspaceRoot={workspaceRoot}
             isOpen={isOpen}
             onOpenFile={onOpenFile}
@@ -428,7 +432,7 @@ function ExplorerSidebarContent({
         {resolvedTab === "files" && (
           <FilesPane
             serverId={serverId}
-            workspaceId={workspaceId}
+            workspaceId={workspaceGit.workspaceId}
             workspaceRoot={workspaceRoot}
             onOpenFile={onOpenFile}
           />
@@ -436,6 +440,7 @@ function ExplorerSidebarContent({
         {resolvedTab === "pr" && (
           <PrTabContent
             serverId={serverId}
+            workspaceId={workspaceGit.workspaceId}
             cwd={workspaceRoot}
             prPane={prPane}
             workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
@@ -526,6 +531,7 @@ function FilesPane({
 
 interface PrTabContentProps {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   prPane: UsePrPaneDataResult;
   workspaceAttachmentScopeKey: string;
@@ -534,6 +540,7 @@ interface PrTabContentProps {
 
 function PrTabContent({
   serverId,
+  workspaceId,
   cwd,
   prPane,
   workspaceAttachmentScopeKey,
@@ -543,6 +550,7 @@ function PrTabContent({
     return (
       <PullRequestPane
         serverId={serverId}
+        workspaceId={workspaceId}
         cwd={cwd}
         data={prPane.data}
         activityLoading={prPane.activityLoading}

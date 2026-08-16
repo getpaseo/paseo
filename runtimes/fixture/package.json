@@ -1,0 +1,23 @@
+{
+  "name": "@getpaseo/fixture-workspace-runtime",
+  "version": "0.4.0",
+  "private": true,
+  "description": "External command-runtime contract fixture",
+  "bin": {
+    "paseo-fixture-workspace-runtime": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix ../.. run build:workspace-runtime-contract && npm --prefix ../.. run build:workspace-helper && node --check src/index.mjs && node -e \"import('@getpaseo/workspace-helper').then(({workspaceHelperExecutable})=>{const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync(workspaceHelperExecutable,'dist/paseo-workspace-helper');fs.chmodSync('dist/paseo-workspace-helper',0o755)})\"",
+    "typecheck": "node --check src/index.mjs"
+  },
+  "dependencies": {
+    "@getpaseo/workspace-helper": "0.4.0",
+    "@getpaseo/workspace-runtime-contract": "0.4.0",
+    "node-pty": "1.2.0-beta.15"
+  }
+}

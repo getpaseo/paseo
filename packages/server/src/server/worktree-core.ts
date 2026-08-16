@@ -47,6 +47,12 @@ export interface CreateWorktreeCoreResult {
   created: boolean;
 }
 
+export interface WorktreeCorePlan {
+  repoRoot: string;
+  intent: WorktreeCreationIntent;
+  worktreeSlug: string;
+}
+
 export async function createWorktreeCore(
   input: CreateWorktreeCoreInput,
   deps: CreateWorktreeCoreDeps,
@@ -58,6 +64,27 @@ async function createWorktreeCoreWithPriority(
   input: CreateWorktreeCoreInput,
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
+  const plan = await planWorktreeCore(input, deps);
+  const { repoRoot, intent, worktreeSlug: normalizedSlug } = plan;
+  return {
+    worktree: await createWorktree({
+      cwd: repoRoot,
+      worktreeSlug: normalizedSlug,
+      source: intent,
+      runSetup: input.runSetup ?? true,
+      paseoHome: input.paseoHome,
+      worktreesRoot: input.worktreesRoot,
+    }),
+    intent,
+    repoRoot,
+    created: true,
+  };
+}
+
+export async function planWorktreeCore(
+  input: CreateWorktreeCoreInput,
+  deps: CreateWorktreeCoreDeps,
+): Promise<WorktreeCorePlan> {
   const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
   const requestedWorktreeSlug = input.worktreeSlug
     ? normalizeWorktreeSlug(input.worktreeSlug)
@@ -117,19 +144,7 @@ async function createWorktreeCoreWithPriority(
     }
   }
 
-  return {
-    worktree: await createWorktree({
-      cwd: repoRoot,
-      worktreeSlug: normalizedSlug,
-      source: intent,
-      runSetup: input.runSetup ?? true,
-      paseoHome: input.paseoHome,
-      worktreesRoot: input.worktreesRoot,
-    }),
-    intent,
-    repoRoot,
-    created: true,
-  };
+  return { repoRoot, intent, worktreeSlug: normalizedSlug };
 }
 
 async function resolveForge(

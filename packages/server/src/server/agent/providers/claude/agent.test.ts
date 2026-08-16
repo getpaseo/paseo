@@ -17,11 +17,59 @@ import {
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type {
+  AgentSession,
+  AgentTimelineItem,
+  AgentStreamEvent,
+  ProviderWorkspace,
+} from "../../agent-sdk-types.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
   close(): Promise<void>;
+}
+
+function createStateWorkspace(overrides: Partial<ProviderWorkspace> = {}): ProviderWorkspace {
+  return {
+    cwd: ".",
+    async resolveExecutable(command) {
+      return command;
+    },
+    async launch() {
+      throw new Error("not used");
+    },
+    launchDeferred() {
+      throw new Error("not used");
+    },
+    async runProbe() {
+      throw new Error("not used");
+    },
+    async readWorkspaceText() {
+      throw new Error("not used");
+    },
+    async writeWorkspaceText() {
+      throw new Error("not used");
+    },
+    async listState(statePath) {
+      return { path: statePath, entries: [] };
+    },
+    async readStateText() {
+      throw new Error("not used");
+    },
+    async findStateFile() {
+      return null;
+    },
+    async materializeStateFile() {
+      throw new Error("not used");
+    },
+    async removeStateFile() {
+      throw new Error("not used");
+    },
+    allowsHostService() {
+      return false;
+    },
+    ...overrides,
+  };
 }
 
 afterEach(() => {
@@ -1860,6 +1908,143 @@ describe("ClaudeAgentSession context window usage", () => {
       }
       await fs.rm(tmpConfigDir, { recursive: true, force: true });
     }
+  });
+
+  test("deletes an ephemeral selected-runtime transcript through provider state access", async () => {
+    const sessionId = "selected-ephemeral";
+    const transcript = `.claude/projects/project/${sessionId}.jsonl`;
+    const removeStateFile = vi.fn(async () => undefined);
+    const workspace = createStateWorkspace({
+      findStateFile: async () => transcript,
+      removeStateFile,
+    });
+    const queryFactory = createQueryFactoryForTurns([
+      [
+        { type: "system", subtype: "init", session_id: sessionId, permissionMode: "default" },
+        {
+          type: "result",
+          subtype: "success",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          is_error: false,
+          num_turns: 1,
+          result: "done",
+          stop_reason: null,
+          total_cost_usd: 0,
+          usage: {},
+          permission_denials: [],
+          uuid: `${sessionId}-result`,
+          session_id: sessionId,
+        },
+      ],
+    ]);
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => {
+        throw new Error("selected runtime must resolve the executable");
+      },
+    });
+    const session = await client.createSession(
+      { provider: "claude", cwd: "/host/path-that-must-not-be-read" },
+      { agentId: "selected-agent", workspace },
+      { persistSession: false },
+    );
+
+    await session.run("turn");
+    await session.close();
+
+    expect(removeStateFile).toHaveBeenCalledWith(transcript);
+  });
+
+  test("loads selected-runtime resume and sidechain files through provider state access", async () => {
+    const sessionId = "selected-resume";
+    const transcript = `.claude/projects/project/${sessionId}.jsonl`;
+    const sidechainDirectory = `.claude/projects/project/${sessionId}/subagents`;
+    const sidechain = `${sidechainDirectory}/agent-child.jsonl`;
+    const readStateText = vi.fn(async (statePath: string) => {
+      if (statePath === transcript) return "";
+      if (statePath === sidechain) return "";
+      throw new Error(`Unexpected state read: ${statePath}`);
+    });
+    const workspace = createStateWorkspace({
+      findStateFile: async () => transcript,
+      readStateText,
+      async listState(statePath) {
+        if (statePath.endsWith("/workflows")) return { path: statePath, entries: [] };
+        if (statePath === sidechainDirectory) {
+          return {
+            path: statePath,
+            entries: [
+              {
+                name: "agent-child.jsonl",
+                path: sidechain,
+                kind: "file",
+                size: 0,
+                modifiedAt: "2026-08-11T00:00:00.000Z",
+              },
+            ],
+          };
+        }
+        throw new Error(`Unexpected state listing: ${statePath}`);
+      },
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      resolveBinary: async () => {
+        throw new Error("selected runtime must resolve the executable");
+      },
+    });
+    const session = await client.resumeSession(
+      { provider: "claude", sessionId, metadata: { cwd: "/host/path-that-must-not-be-read" } },
+      undefined,
+      { agentId: "selected-agent", workspace },
+    );
+
+    await Array.fromAsync(session.streamHistory());
+
+    expect(readStateText).toHaveBeenCalledWith(transcript);
+    expect(readStateText).toHaveBeenCalledWith(sidechain);
+    await session.close();
+  });
+
+  test("treats a proven missing selected-runtime transcript as empty history", async () => {
+    const workspace = createStateWorkspace({
+      findStateFile: async () => null,
+    });
+    const client = new ClaudeAgentClient({ logger });
+    const session = await client.resumeSession(
+      { provider: "claude", sessionId: "missing-transcript", metadata: { cwd: "/host/cwd" } },
+      undefined,
+      { agentId: "selected-agent", workspace },
+    );
+
+    await expect(Array.fromAsync(session.streamHistory())).resolves.toEqual([]);
+    await session.close();
+  });
+
+  test.each([
+    ["runtime listing", { findStateFile: async () => Promise.reject(new Error("runtime paused")) }],
+    [
+      "transcript read",
+      {
+        findStateFile: async () => ".claude/projects/project/selected-failure.jsonl",
+        readStateText: async () => Promise.reject(new Error("permission denied")),
+      },
+    ],
+  ])("fails selected-runtime resume history closed on %s failure", async (_name, overrides) => {
+    const workspace = createStateWorkspace(overrides);
+    const client = new ClaudeAgentClient({ logger });
+    const session = await client.resumeSession(
+      { provider: "claude", sessionId: "selected-failure", metadata: { cwd: "/host/cwd" } },
+      undefined,
+      { agentId: "selected-agent", workspace },
+    );
+
+    await expect(Array.fromAsync(session.streamHistory())).rejects.toThrow(
+      /runtime paused|permission denied/,
+    );
+    await session.close();
   });
 
   test("preserves the persisted session jsonl on close when persistSession is undefined", async () => {

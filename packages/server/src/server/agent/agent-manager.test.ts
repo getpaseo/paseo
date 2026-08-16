@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { resolveHostProviderWorkspace } from "../test-utils/provider-workspace-stub.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
@@ -34,9 +35,11 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  FetchCatalogOptions,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
+  ProviderWorkspace,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -48,6 +51,49 @@ interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
+}
+
+function createTestProviderWorkspace(commandAvailable: boolean): ProviderWorkspace {
+  return {
+    cwd: ".",
+    async resolveExecutable(command) {
+      if (!commandAvailable) throw new Error(`Provider command '${command}' was not found`);
+      return "/provider";
+    },
+    async launch() {
+      throw new Error("not used");
+    },
+    launchDeferred() {
+      throw new Error("not used");
+    },
+    async runProbe() {
+      throw new Error("not used");
+    },
+    async readWorkspaceText() {
+      throw new Error("not used");
+    },
+    async writeWorkspaceText() {
+      throw new Error("not used");
+    },
+    async listState() {
+      return { entries: [] };
+    },
+    async readStateText() {
+      throw new Error("not used");
+    },
+    async findStateFile() {
+      return null;
+    },
+    async materializeStateFile() {
+      throw new Error("not used");
+    },
+    async removeStateFile() {
+      throw new Error("not used");
+    },
+    allowsHostService() {
+      return false;
+    },
+  };
 }
 
 function deferred<T>(): Deferred<T> {
@@ -1807,6 +1853,135 @@ test("createAgent passes daemon launch env through the provider launch context",
   });
 });
 
+test("selected workspace availability fails closed without probing or launching on the host", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-provider-"));
+  const availabilityScopes: Array<FetchCatalogOptions | undefined> = [];
+  let createCalls = 0;
+  class RuntimeScopedClient extends TestAgentClient {
+    override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+      availabilityScopes.push(options);
+      return false;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      createCalls += 1;
+      return new TestAgentSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RuntimeScopedClient() },
+    logger,
+    resolveProviderWorkspace: async () => createTestProviderWorkspace(false),
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "selected-workspace",
+      }),
+    ).rejects.toThrow("not available in the selected workspace runtime");
+    expect(availabilityScopes).toEqual([
+      expect.objectContaining({
+        scope: "workspace",
+        workspaceId: "selected-workspace",
+      }),
+    ]);
+    expect(createCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("host-placed workspaces require host provider availability before create and resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-host-workspace-provider-"));
+  const availabilityScopes: Array<FetchCatalogOptions | undefined> = [];
+  let createCalls = 0;
+  let resumeCalls = 0;
+  class UnavailableHostClient extends TestAgentClient {
+    override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+      availabilityScopes.push(options);
+      return false;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      createCalls += 1;
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeCalls += 1;
+      return await super.resumeSession(handle, overrides);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new UnavailableHostClient() },
+    logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
+  });
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "host-workspace-session",
+    metadata: { cwd: workdir },
+  };
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "local-workspace",
+      }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+    await expect(
+      manager.resumeAgentFromPersistence(handle, undefined, undefined, {
+        workspaceId: "local-workspace",
+      }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+
+    expect(availabilityScopes.length).toBeGreaterThanOrEqual(2);
+    expect(availabilityScopes.every((scope) => scope === undefined)).toBe(true);
+    expect(createCalls).toBe(0);
+    expect(resumeCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("selected workspace without a bound capability never checks host availability", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-missing-workspace-capability-"));
+  let hostAvailabilityCalls = 0;
+  let createCalls = 0;
+  class HostAvailableClient extends TestAgentClient {
+    override async isAvailable(): Promise<boolean> {
+      hostAvailabilityCalls += 1;
+      return true;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      createCalls += 1;
+      return new TestAgentSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new HostAvailableClient() },
+    logger,
+    resolveProviderWorkspace: async () => undefined,
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "selected-without-capability",
+      }),
+    ).rejects.toThrow("workspace runtime capability is unavailable");
+    expect(hostAvailabilityCalls).toBe(0);
+    expect(createCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -1859,6 +2034,7 @@ test("createAgent persists workspaceId on the stored record and emits it in the 
     },
     registry: storage,
     logger,
+    resolveProviderWorkspace: async () => createTestProviderWorkspace(true),
     idFactory: () => "00000000-0000-4000-8000-0000000000a1",
   });
 
@@ -2855,12 +3031,14 @@ test("importProviderSession imports the selected session without listing and pub
   }
 
   const client = new ImportClient();
+  const workspace = createTestProviderWorkspace(true);
   const manager = new AgentManager({
     clients: {
       codex: client,
     },
     registry: storage,
     logger,
+    resolveProviderWorkspace: async () => workspace,
   });
   manager.subscribe((event) => events.push(event), { replayState: false });
 
@@ -2879,6 +3057,7 @@ test("importProviderSession imports the selected session without listing and pub
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,
     },
+    workspace,
   });
   expect(imported.lifecycle).toBe("idle");
   expect(imported.historyPrimed).toBe(true);
@@ -6738,6 +6917,7 @@ test("archiveAgent detaches an open same-workspace child instead of cascading", 
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -6774,6 +6954,7 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -6827,6 +7008,7 @@ test("archiveAgent re-reads a child before deciding whether to cascade", async (
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -6878,6 +7060,7 @@ test("archiveAgent cannot overtake a received child open-tab update", async () =
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -9003,6 +9186,20 @@ class RecordingPersistedAgentsClient implements AgentClient {
     ];
   }
 }
+
+test("selected import discovery without a bound capability never reads host provider state", async () => {
+  const client = new RecordingPersistedAgentsClient("claude");
+  const manager = new AgentManager({
+    clients: { claude: client },
+    logger,
+    resolveProviderWorkspace: async () => undefined,
+  });
+
+  await expect(
+    manager.listImportableSessions({ workspaceId: "selected-without-capability" }),
+  ).rejects.toThrow("workspace runtime capability is unavailable");
+  expect(client.calls).toBe(0);
+});
 
 test.each([
   [

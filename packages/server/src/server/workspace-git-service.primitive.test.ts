@@ -623,10 +623,12 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("non-forced getSnapshot returns the current snapshot during an in-flight refresh", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const refreshStatus = createDeferred<CheckoutStatusGit>();
+    const refreshStarted = createDeferred<void>();
     const getCheckoutStatus = vi
       .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
       .mockImplementationOnce(async (cwd: string) => createCheckoutStatus(cwd))
       .mockImplementationOnce(async () => {
+        refreshStarted.resolve();
         const status = await refreshStatus.promise;
         return { ...status, currentBranch: "feature" };
       });
@@ -649,7 +651,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     nowMs += 3_000;
     const refresh = service.refresh(REPO_CWD);
-    await flushPromises();
+    await refreshStarted.promise;
     const directRead = service.getSnapshot(REPO_CWD);
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);

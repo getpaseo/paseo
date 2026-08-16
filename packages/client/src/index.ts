@@ -18,6 +18,7 @@ import type {
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
+  WorkspaceRuntimeListPayload,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
 import type {
@@ -150,6 +151,7 @@ export interface PaseoWorkspaceActions {
     requestId?: string,
   ): Promise<PaseoWorkspaceHandle>;
   create(options: PaseoWorkspaceCreateOptions): Promise<PaseoWorkspaceHandle>;
+  listRuntimes(requestId?: string): Promise<WorkspaceRuntimeListPayload>;
   archive(
     workspace: string | PaseoWorkspaceHandle,
     requestId?: string,
@@ -410,6 +412,7 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
         }
         return createWorkspaceHandle(result.workspace);
       },
+      listRuntimes: (requestId) => daemonClient.listWorkspaceRuntimes(requestId),
       archive: (workspace, requestId) =>
         daemonClient.archiveWorkspace(resolveWorkspaceId(workspace), requestId),
       subscribe: (handler) =>
