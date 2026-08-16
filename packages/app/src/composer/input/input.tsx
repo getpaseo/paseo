@@ -18,6 +18,7 @@ import {
   useImperativeHandle,
   useMemo,
   forwardRef,
+  type MutableRefObject,
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -76,6 +77,7 @@ import {
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
+import { applyComposerTabKeyDownResult, resolveComposerTabKeyDown } from "./tab-indent";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
@@ -203,8 +205,10 @@ interface TextAreaHandle {
   clientHeight?: number;
   offsetHeight?: number;
   scrollTop?: number;
+  value?: string;
   selectionStart?: number | null;
   selectionEnd?: number | null;
+  setSelectionRange?: (selectionStart: number, selectionEnd: number) => void;
   style?: {
     height?: string;
     overflowY?: string;
@@ -493,6 +497,97 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     isDictating,
     isRealtimeVoiceForCurrentAgent,
     onAddImages,
+  ]);
+}
+
+interface WebTabIndentEffectArgs {
+  getWebTextArea: () => TextAreaHandle | null;
+  valueRef: MutableRefObject<string>;
+  onChangeText: (nextValue: string) => void;
+  onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
+  getInputSnapshot: () => ComposerInputSnapshot;
+  disabled: boolean;
+  isDictating: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+}
+
+/**
+ * Web/Electron: plain Tab inserts indentation instead of moving focus.
+ * Autocomplete (via onKeyPressCallback) still wins when suggestions are visible.
+ * Shift+Tab is ignored so agent mode-cycle shortcuts keep working.
+ */
+function useWebTabIndentEffect(args: WebTabIndentEffectArgs): void {
+  const {
+    getWebTextArea,
+    valueRef,
+    onChangeText,
+    onKeyPressCallback,
+    getInputSnapshot,
+    disabled,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+  } = args;
+
+  useEffect(() => {
+    if (!isWeb) return;
+
+    const textarea = getWebTextArea() as
+      | (TextAreaHandle & {
+          addEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+          removeEventListener?: (type: string, listener: (event: KeyboardEvent) => void) => void;
+        })
+      | null;
+    if (
+      !textarea ||
+      typeof textarea.addEventListener !== "function" ||
+      typeof textarea.removeEventListener !== "function"
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isImeComposingKeyboardEvent(event)) return;
+
+      const snapshot = getInputSnapshot();
+      const result = resolveComposerTabKeyDown({
+        event,
+        value: valueRef.current,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+        disabled,
+        isDictating,
+        isRealtimeVoiceForCurrentAgent,
+        onKeyPressCallback: onKeyPressCallback
+          ? (tabEvent) =>
+              onKeyPressCallback({
+                key: tabEvent.key,
+                preventDefault: tabEvent.preventDefault,
+                input: snapshot,
+              })
+          : undefined,
+      });
+      applyComposerTabKeyDownResult({
+        result,
+        valueRef,
+        textarea,
+        onChangeText,
+        preventDefault: () => event.preventDefault(),
+      });
+    };
+
+    textarea.addEventListener("keydown", handleKeyDown);
+    return () => {
+      textarea.removeEventListener?.("keydown", handleKeyDown);
+    };
+  }, [
+    disabled,
+    getInputSnapshot,
+    getWebTextArea,
+    isDictating,
+    isRealtimeVoiceForCurrentAgent,
+    onChangeText,
+    onKeyPressCallback,
+    valueRef,
   ]);
 }
 
@@ -1694,6 +1789,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
       [onChangeText, updateLiveTextPresence],
     );
+
+    const getTabIndentInputSnapshot = useCallback(
+      (): ComposerInputSnapshot =>
+        getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
+      [],
+    );
+
+    useWebTabIndentEffect({
+      getWebTextArea,
+      valueRef,
+      onChangeText: handleInputChange,
+      onKeyPressCallback,
+      getInputSnapshot: getTabIndentInputSnapshot,
+      disabled,
+      isDictating,
+      isRealtimeVoiceForCurrentAgent,
+    });
 
     const handleInputFocus = useCallback(() => {
       isInputFocusedRef.current = true;
