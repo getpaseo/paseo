@@ -790,11 +790,11 @@ function SendButtonTooltip({
 type PrimaryActionKind = "send" | "active" | "none";
 
 function hasSendableComposerContent(input: {
-  value: string;
+  hasText: boolean;
   attachments: readonly ComposerAttachment[];
   hasExternalContent: boolean;
 }): boolean {
-  return input.value.trim().length > 0 || input.attachments.length > 0 || input.hasExternalContent;
+  return input.hasText || input.attachments.length > 0 || input.hasExternalContent;
 }
 
 function resolvePrimaryActionKind(input: {
@@ -1208,6 +1208,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
+    // Web text is DOM-owned between deferred draft publications. The action button only needs
+    // this boundary, so publish empty/non-empty transitions without rerendering for every key.
+    const initialHasLiveText = value.trim().length > 0;
+    const [hasLiveText, setHasLiveText] = useState(initialHasLiveText);
+    const hasLiveTextRef = useRef(initialHasLiveText);
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
     const textInputRef = useRef<ComposerTextInputHandle | null>(null);
@@ -1216,14 +1221,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const selectionRef = useRef({ start: value.length, end: value.length });
     const appliedTextReplacementKeyRef = useRef(textReplacementKey);
 
+    const updateLiveTextPresence = useCallback((text: string) => {
+      const nextHasLiveText = text.trim().length > 0;
+      if (hasLiveTextRef.current === nextHasLiveText) return;
+      hasLiveTextRef.current = nextHasLiveText;
+      setHasLiveText(nextHasLiveText);
+    }, []);
+
     const replaceText = useCallback(
       (nextText: string, selection?: { start: number; end: number }) => {
         valueRef.current = nextText;
+        updateLiveTextPresence(nextText);
         selectionRef.current = selection ?? { start: nextText.length, end: nextText.length };
         textInputRef.current?.replaceText(nextText, selection);
         onChangeText(nextText);
       },
-      [onChangeText],
+      [onChangeText, updateLiveTextPresence],
     );
 
     useImperativeHandle(ref, () => ({
@@ -1271,8 +1284,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       if (appliedTextReplacementKeyRef.current === textReplacementKey) return;
       appliedTextReplacementKeyRef.current = textReplacementKey;
       valueRef.current = value;
+      updateLiveTextPresence(value);
       textInputRef.current?.replaceText(value);
-    }, [textReplacementKey, value]);
+    }, [textReplacementKey, updateLiveTextPresence, value]);
 
     useEffect(() => {
       return () => {
@@ -1474,30 +1488,33 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       onHeightChange?.(MIN_INPUT_HEIGHT);
     }, [onHeightChange]);
 
-    const handleSendMessage = useCallback(
-      () =>
-        sendMessageImpl({
-          value: textInputRef.current?.getText() ?? valueRef.current,
-          attachments,
-          hasExternalContent,
-          allowEmptySubmit,
-          cwd,
-          isAgentRunning,
-          onSubmit,
-          onMinimizeHeight: minimizeInputHeight,
-          preserveHeightOnSubmit,
-        }),
-      [
-        allowEmptySubmit,
+    const handleSendMessage = useCallback(() => {
+      const liveValue = textInputRef.current?.getText() ?? valueRef.current;
+      if (!preserveHeightOnSubmit) {
+        updateLiveTextPresence("");
+      }
+      sendMessageImpl({
+        value: liveValue,
         attachments,
-        cwd,
-        onSubmit,
-        isAgentRunning,
         hasExternalContent,
-        minimizeInputHeight,
+        allowEmptySubmit,
+        cwd,
+        isAgentRunning,
+        onSubmit,
+        onMinimizeHeight: minimizeInputHeight,
         preserveHeightOnSubmit,
-      ],
-    );
+      });
+    }, [
+      allowEmptySubmit,
+      attachments,
+      cwd,
+      onSubmit,
+      isAgentRunning,
+      hasExternalContent,
+      minimizeInputHeight,
+      preserveHeightOnSubmit,
+      updateLiveTextPresence,
+    ]);
 
     const handleQueueMessage = useCallback(
       () =>
@@ -1620,7 +1637,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const primaryActionKind = resolvePrimaryActionKind({
       hasSendableContent: hasSendableComposerContent({
-        value,
+        hasText: hasLiveText,
         attachments,
         hasExternalContent,
       }),
@@ -1671,9 +1688,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const handleInputChange = useCallback(
       (nextValue: string) => {
         valueRef.current = nextValue;
+        updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [onChangeText],
+      [onChangeText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {
