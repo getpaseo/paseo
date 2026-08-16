@@ -16,6 +16,10 @@ describe("desktop dev process ownership", () => {
     expect(paseoConfig.scripts.desktop.command).toContain("exec ./packages/desktop/scripts/dev.sh");
     expect(devScript).toContain('npm --prefix "$DESKTOP_DIR" run build:main');
     expect(devScript).toContain('exec node "$SCRIPT_DIR/dev-runner.mjs"');
+
+    const windowsDevScript = readFileSync(new URL("./dev.ps1", import.meta.url), "utf8");
+    expect(windowsDevScript).toContain('node "$ScriptDir\\dev-runner.mjs"');
+    expect(windowsDevScript).not.toContain("concurrently");
   });
 
   test("keeps Electron in the runner process group", () => {
