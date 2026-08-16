@@ -121,6 +121,9 @@ describe("Pi todo mapper", () => {
     expect(canMapPiTodoToolResult({})).toBe(false);
     expect(canMapPiTodoToolResult({ details: { tasks: "not an array" } })).toBe(false);
     expect(canMapPiTodoToolResult({ details: {} })).toBe(false);
+    expect(
+      canMapPiTodoToolResult({ details: { tasks: [{ id: "not a number", subject: 123 }] } }),
+    ).toBe(false);
 
     expect(
       canMapPiTodoToolResult({
@@ -141,13 +144,13 @@ describe("Pi todo mapper", () => {
     expect(mapPiTodoToolResult({ details: { tasks: "not an array" } })).toBeNull();
   });
 
-  test("treats an array of malformed tasks as an empty list", () => {
+  test("treats an array of malformed tasks as unrenderable (fallback, not a clear)", () => {
     expect(
       mapPiTodoToolResult({ details: { tasks: [{ id: "not a number", subject: 123 }] } }),
-    ).toEqual({
-      type: "todo",
-      items: [],
-    });
+    ).toBeNull();
+    expect(
+      mapPiTodoToolResult({ details: { tasks: [{ id: 1 }, { subject: "no id" }] } }),
+    ).toBeNull();
   });
 
   test("drops tasks with missing required fields", () => {

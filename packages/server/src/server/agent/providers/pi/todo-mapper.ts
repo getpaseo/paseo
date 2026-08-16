@@ -34,13 +34,18 @@ function readTodoTasks(details: unknown): PiTodoTask[] {
  *
  * rpiv-todo stores the full task list in `details.tasks` on every operation.
  * A result is renderable only when `details` is a record and `details.tasks`
- * is an array (possibly empty — an empty list is a valid state that clears
- * the previous TodoListCard). Anything else is malformed and can't produce
- * a TodoListCard.
+ * is an array. An empty array is a valid state that clears the previous
+ * TodoListCard. A non-empty array must contain at least one valid task —
+ * if every entry is malformed the snapshot is broken, and rendering it as
+ * an authoritative empty list would erase previously shown tasks. Callers
+ * fall back to an unknown tool-call card for such results.
  */
 export function canMapPiTodoToolResult(result: PiToolResult): boolean {
   const details = typeof result === "object" && result !== null ? result.details : undefined;
-  return isRecord(details) && Array.isArray(details.tasks);
+  if (!isRecord(details) || !Array.isArray(details.tasks)) {
+    return false;
+  }
+  return details.tasks.length === 0 || details.tasks.some(isTodoTask);
 }
 
 /**
