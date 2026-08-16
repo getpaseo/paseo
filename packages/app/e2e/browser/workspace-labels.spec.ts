@@ -105,34 +105,6 @@ async function settled(locator: import("@playwright/test").Locator) {
     .toBe(true);
 }
 
-/**
- * Whether a filter control's glyph is showing.
- *
- * The reveal is opacity over a box that is laid out in every state, so this is the only thing
- * that changes — `toBeVisible` and `boundingBox` answer the same way lit or not, by design.
- */
-async function expectInk(control: import("@playwright/test").Locator, opacity: "0" | "1") {
-  await expect
-    .poll(() => control.evaluate((node) => window.getComputedStyle(node).opacity))
-    .toBe(opacity);
-}
-
-/** Where a control sits inside its row, which is the thing that must not move. */
-async function railOffset(
-  row: import("@playwright/test").Locator,
-  control: import("@playwright/test").Locator,
-) {
-  await settled(row);
-  const rowBox = await box(row);
-  const controlBox = await box(control);
-  return {
-    left: controlBox.x - rowBox.x,
-    top: controlBox.y - rowBox.y,
-    width: controlBox.width,
-    height: controlBox.height,
-  };
-}
-
 async function expectAssigned(
   page: import("@playwright/test").Page,
   name: string,
@@ -190,7 +162,7 @@ test.describe("Workspace labels", () => {
 
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await page.getByTestId("sidebar-display-label-filter").click();
-      // Clear only exists once something is filtered, so the row has to be included first.
+      // Clear only exists once something is filtered, so the row has to be selected first.
       await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
       await page.getByTestId("sidebar-label-filter-option-Unused").click();
 
@@ -253,7 +225,7 @@ test.describe("Workspace labels", () => {
         await page.keyboard.press("Escape");
       });
 
-      await test.step("include and exclude are two controls that never move", async () => {
+      await test.step("a label row filters on one press and clears on the next", async () => {
         const labelledRow = page.getByTestId(
           `sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`,
         );
@@ -264,128 +236,58 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("sidebar-display-label-filter").click();
 
         const urgent = page.getByTestId("sidebar-label-filter-option-Urgent");
-        const includeUrgent = page.getByTestId("sidebar-label-filter-include-Urgent");
-        const excludeUrgent = page.getByTestId("sidebar-label-filter-exclude-Urgent");
+        const frontend = page.getByTestId("sidebar-label-filter-option-Frontend");
         const unlabelledLabel = page.getByTestId("sidebar-label-filter-option-unlabelled");
-        const excludeUnlabelled = page.getByTestId("sidebar-label-filter-exclude-unlabelled");
-        // Somewhere on the page that is not a label row, for reading a row at rest.
-        const offTheRows = page.getByTestId("sidebar-label-manage");
-        // Both rails, measured before anything is filtered. Nothing on the row is allowed to move
-        // through any of the transitions below, so every state re-measures against these —
-        // including the reveal, which is opacity over boxes that are laid out either way.
-        //
-        // Relative to the row, not to the page: filtering changes what the sidebar holds, and the
-        // menu is anchored to a trigger that can shift with it.
-        const rails = async () => ({
-          include: await railOffset(urgent, includeUrgent),
-          exclude: await railOffset(urgent, excludeUrgent),
-          row: await size(urgent),
-        });
-        const atRest = await rails();
+        // A row is one control, so the only thing on it that could move is the check the engine
+        // draws — measured before anything is filtered, and again once a row carries one.
+        const atRest = await size(urgent);
 
-        // An untouched row at rest carries neither glyph; hovering it offers both.
-        await offTheRows.hover();
-        await expectInk(includeUrgent, "0");
-        await expectInk(excludeUrgent, "0");
-        await urgent.hover();
-        await expectInk(includeUrgent, "1");
-        await expectInk(excludeUrgent, "1");
-        expect(await rails()).toEqual(atRest);
-
-        // Both tooltips, and resting on either is not the pointer leaving the flyout — the page
-        // they belong to is still up underneath.
-        await includeUrgent.hover();
-        await expect(page.getByTestId("sidebar-label-filter-include-Urgent-tooltip")).toContainText(
-          "Include",
-        );
-        await excludeUrgent.hover();
-        await expect(page.getByTestId("sidebar-label-filter-exclude-Urgent-tooltip")).toContainText(
-          "Exclude",
-        );
-        await expect(offTheRows).toBeVisible();
-
-        // The row includes, and one more press clears it — never through exclude.
+        // One press in, one press out, and the row is the whole target either way.
         await urgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeHidden();
-        expect(await rails()).toEqual(atRest);
-
-        // A marked row keeps its own mark once the pointer leaves, and only that one.
-        await offTheRows.hover();
-        await expectInk(includeUrgent, "1");
-        await expectInk(excludeUrgent, "0");
-        expect(await rails()).toEqual(atRest);
+        expect(await size(urgent)).toEqual(atRest);
 
         await urgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "false");
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();
+        expect(await size(urgent)).toEqual(atRest);
 
-        // The check is the row's action made explicit, so it answers the same way.
-        await urgent.hover();
-        await includeUrgent.click();
-        await expect(urgent).toHaveAttribute("aria-checked", "true");
-        await includeUrgent.click();
-        await expect(urgent).toHaveAttribute("aria-checked", "false");
-
-        // The ban excludes and does not also fire the row it sits in: one press from off lands on
-        // exclude, not on include.
-        await excludeUrgent.click();
-        await expect(urgent).toHaveAttribute("aria-checked", "mixed");
-        await expect(labelledRow).toBeHidden();
-        await expect(unlabelledRow).toBeVisible();
-        expect(await rails()).toEqual(atRest);
-
-        await offTheRows.hover();
-        await expectInk(excludeUrgent, "1");
-        await expectInk(includeUrgent, "0");
-
-        // Excluding the rest empties the sidebar. That swaps the list's body and nothing above
-        // it, so the header the flyout is anchored to survives and the page stays up — this is
-        // the transition that used to close the menu you were pressing.
-        await unlabelledLabel.hover();
-        await excludeUnlabelled.click();
-        await expect(labelledRow).toBeHidden();
-        await expect(unlabelledRow).toBeHidden();
-        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeVisible();
-        await expect(page.getByTestId("sidebar-label-filter-clear")).toBeVisible();
-        expect(await rails()).toEqual(atRest);
-
-        // And back out of it, which is the same swap in reverse.
-        await page.getByTestId("sidebar-label-filter-clear").click();
-        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeHidden();
-        await expect(labelledRow).toBeVisible();
-        await expect(unlabelledRow).toBeVisible();
-        await expect(offTheRows).toBeVisible();
-        await expect(urgent).toHaveAttribute("aria-checked", "false");
-
-        // A row is never both, and because hovering brings up both controls each crossing is one
-        // press rather than a clear and a set.
-        await urgent.hover();
-        await includeUrgent.click();
-        await excludeUrgent.click();
-        await expect(urgent).toHaveAttribute("aria-checked", "mixed");
-        await includeUrgent.click();
-        await expect(urgent).toHaveAttribute("aria-checked", "true");
-        expect(await rails()).toEqual(atRest);
-
-        await urgent.click();
+        // Selecting every label there is empties nothing; selecting one that nothing carries
+        // together with Unlabelled under "all" is what empties the sidebar, below.
         await unlabelledLabel.click();
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeVisible();
 
-        // Two included labels are what the match toggle is for, and only then.
+        // Two selected labels are what the match toggle is for, and only then.
         await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeHidden();
         await urgent.click();
         await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeVisible();
+        await expect(labelledRow).toBeVisible();
+        await expect(unlabelledRow).toBeVisible();
+
+        // Labelled and unlabelled at once is unsatisfiable, so this empties the sidebar. That
+        // swaps the list's body and nothing above it, so the header the flyout is anchored to
+        // survives and the page stays up — this is the transition that used to close the menu.
         await page.getByTestId("sidebar-label-filter-match-all").click();
-        // Labelled and unlabelled at once is unsatisfiable, so this empties the sidebar too.
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeHidden();
+        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeVisible();
+        await expect(page.getByTestId("sidebar-label-filter-clear")).toBeVisible();
 
+        // And back out of it from that same still-open page, which is the swap in reverse.
         await page.getByTestId("sidebar-label-filter-clear").click();
+        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeHidden();
         await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
+        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeHidden();
+        await expect(labelledRow).toBeVisible();
+        await expect(unlabelledRow).toBeVisible();
+        await expect(urgent).toHaveAttribute("aria-checked", "false");
+        await expect(frontend).toHaveAttribute("aria-checked", "false");
+        await expect(unlabelledLabel).toHaveAttribute("aria-checked", "false");
+
         await page.keyboard.press("Escape");
         await page.getByTestId("sidebar-display-preferences-menu").click();
         await page.getByTestId("sidebar-display-grouping").click();

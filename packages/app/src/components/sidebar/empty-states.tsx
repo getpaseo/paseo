@@ -11,7 +11,7 @@ import { useSidebarViewStore } from "@/stores/sidebar-view-store";
  * Both are bodies, not screens: a list mode renders one where its groups would go, inside its own
  * scroll and below the section header it already owns. The header carries the display menu's
  * trigger, and an empty state that replaces the list rather than its body takes the header with
- * it — which is how pressing Exclude used to close the menu it was pressed in.
+ * it — which is how filtering the last row away used to close the menu you were filtering from.
  */
 export function SidebarLabelFilterEmptyState() {
   const { t } = useTranslation();

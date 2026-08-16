@@ -7,11 +7,10 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 export type SidebarGroupMode = "project" | "status" | "label";
 export type SidebarLabelMatch = "any" | "all";
-export type SidebarLabelState = "include" | "exclude";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 3;
+const SIDEBAR_VIEW_STORE_VERSION = 4;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -25,17 +24,17 @@ export const SIDEBAR_UNLABELLED_LABEL_KEY = "";
 /**
  * What the sidebar's Labels page currently says.
  *
- * One entry per label the user has an opinion about, keyed by `workspaceLabelKey`. A label holds
- * one value, so include and exclude cannot both be true for the same label by construction.
- * Absent means the label is neither.
+ * The labels pinned to, keyed by `workspaceLabelKey`, exactly as `hostFilters` holds server ids:
+ * empty means "every label", non-empty pins the sidebar to those. `match` is the one thing hosts
+ * do not need, because a workspace lives on one host and can carry several labels.
  */
 export interface SidebarLabelFilter {
-  labels: Record<string, SidebarLabelState>;
+  labels: string[];
   match: SidebarLabelMatch;
 }
 
 export function hasActiveSidebarLabelFilter(filter: SidebarLabelFilter): boolean {
-  return Object.keys(filter.labels).length > 0;
+  return filter.labels.length > 0;
 }
 
 interface SidebarViewStoreState {
@@ -46,10 +45,7 @@ interface SidebarViewStoreState {
   setGroupMode: (mode: SidebarGroupMode) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
-  /** The label row itself: included, or not. One press each way. */
-  toggleLabelInclude: (name: string) => void;
-  /** The label row's own exclude control: excluded, or not. One press each way. */
-  toggleLabelExclude: (name: string) => void;
+  toggleLabelFilter: (name: string) => void;
   setLabelMatch: (match: SidebarLabelMatch) => void;
   clearLabelFilter: () => void;
   reconcileHostFilters: (serverIds: readonly string[]) => void;
@@ -63,7 +59,7 @@ interface SidebarViewPersistedState {
 
 const SidebarGroupModeSchema = z.enum(["project", "status", "label"]);
 const SidebarLabelFilterSchema = z.object({
-  labels: z.record(z.string(), z.enum(["include", "exclude"])),
+  labels: z.array(z.string()),
   match: z.enum(["any", "all"]),
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
@@ -126,11 +122,8 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
  * state that was written by an older build of this page rather than by the current one.
  */
 function normalizeSidebarLabelFilter(filter: SidebarLabelFilter): SidebarLabelFilter {
-  const labels: Record<string, SidebarLabelState> = {};
-  for (const [name, state] of Object.entries(filter.labels)) {
-    labels[workspaceLabelKey(name)] = state;
-  }
-  return { labels, match: filter.match };
+  const labels = new Set(filter.labels.map(workspaceLabelKey));
+  return { labels: [...labels], match: filter.match };
 }
 
 export function createSidebarViewStorage(
@@ -163,10 +156,14 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
             : [...state.hostFilters, serverId],
         })),
       clearHostFilters: () => set({ hostFilters: [] }),
-      toggleLabelInclude: (name) =>
-        set((state) => ({ labelFilter: toggleLabelState(state.labelFilter, name, "include") })),
-      toggleLabelExclude: (name) =>
-        set((state) => ({ labelFilter: toggleLabelState(state.labelFilter, name, "exclude") })),
+      toggleLabelFilter: (name) =>
+        set((state) => {
+          const key = workspaceLabelKey(name);
+          const labels = state.labelFilter.labels.includes(key)
+            ? state.labelFilter.labels.filter((label) => label !== key)
+            : [...state.labelFilter.labels, key];
+          return { labelFilter: { ...state.labelFilter, labels } };
+        }),
       setLabelMatch: (match) => set((state) => ({ labelFilter: { ...state.labelFilter, match } })),
       clearLabelFilter: () => set({ labelFilter: emptyLabelFilter() }),
       reconcileHostFilters: (serverIds) =>
@@ -200,25 +197,5 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
 );
 
 function emptyLabelFilter(): SidebarLabelFilter {
-  return { labels: {}, match: "any" };
-}
-
-/**
- * Sets one label to `state`, or clears it if it already says that.
- *
- * Include and exclude are two independent controls over one value, so each is a plain toggle and
- * setting either drops the other for that label. Neither transition passes through the other
- * state: clearing an include never briefly excludes, which is what made the old rotation re-filter
- * the sidebar on the way out.
- */
-function toggleLabelState(
-  filter: SidebarLabelFilter,
-  name: string,
-  state: SidebarLabelState,
-): SidebarLabelFilter {
-  const key = workspaceLabelKey(name);
-  const labels = { ...filter.labels };
-  if (labels[key] === state) delete labels[key];
-  else labels[key] = state;
-  return { ...filter, labels };
+  return { labels: [], match: "any" };
 }

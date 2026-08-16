@@ -32,8 +32,7 @@ export interface SidebarDisplayPreferences {
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   labelFilter: SidebarLabelFilter;
-  toggleLabelInclude: (name: string) => void;
-  toggleLabelExclude: (name: string) => void;
+  toggleLabelFilter: (name: string) => void;
   setLabelMatch: (match: SidebarLabelMatch) => void;
   clearLabelFilter: () => void;
 }
@@ -53,8 +52,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
-  const toggleLabelInclude = useSidebarViewStore((state) => state.toggleLabelInclude);
-  const toggleLabelExclude = useSidebarViewStore((state) => state.toggleLabelExclude);
+  const toggleLabelFilter = useSidebarViewStore((state) => state.toggleLabelFilter);
   const setLabelMatch = useSidebarViewStore((state) => state.setLabelMatch);
   const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
 
@@ -116,8 +114,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleHostFilter,
       clearHostFilters,
       labelFilter,
-      toggleLabelInclude,
-      toggleLabelExclude,
+      toggleLabelFilter,
       setLabelMatch,
       clearLabelFilter,
     }),
@@ -136,8 +133,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleHostFilter,
       clearHostFilters,
       labelFilter,
-      toggleLabelInclude,
-      toggleLabelExclude,
+      toggleLabelFilter,
       setLabelMatch,
       clearLabelFilter,
     ],

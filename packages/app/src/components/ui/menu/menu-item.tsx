@@ -230,12 +230,8 @@ export interface MenuItemProps {
   /**
    * This row's value is the chosen one. Draws a check and nothing else — a checked row that is
    * also filled in reads as two different claims about the same state.
-   *
-   * `"mixed"` is the third state of a row that has one: marked, but not by the check. The row
-   * draws whatever `trailing` it was given and announces ARIA's own `mixed`, so a page holding
-   * more than on/off is audible without the engine knowing what its states mean.
    */
-  selected?: boolean | "mixed";
+  selected?: boolean;
   /** Reserves a leading check column so a group of items stays aligned whether ticked or not. */
   showSelectedCheck?: boolean;
   /**
@@ -292,9 +288,7 @@ export function MenuItem({
 
   const trailingContent =
     trailing ??
-    (!showSelectedCheck && selected === true ? (
-      <ThemedCheck size={16} uniProps={mutedMapping} />
-    ) : null);
+    (!showSelectedCheck && selected ? <ThemedCheck size={16} uniProps={mutedMapping} /> : null);
 
   const handleItemPress = useCallback(() => {
     if (isDisabled) return;
@@ -354,7 +348,7 @@ export function MenuItem({
     >
       {showSelectedCheck ? (
         <View style={styles.checkSlot}>
-          {selected === true ? <ThemedCheck size={16} uniProps={foregroundMapping} /> : null}
+          {selected ? <ThemedCheck size={16} uniProps={foregroundMapping} /> : null}
         </View>
       ) : null}
       {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}

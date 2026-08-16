@@ -1997,7 +1997,7 @@ export function SidebarWorkspaceList({
 
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
   // this whole subtree, which unmounted the header — and the header is where the display menu's
-  // trigger lives, so pressing Exclude closed the menu you pressed it in.
+  // trigger lives, so filtering the last row away closed the menu you were filtering from.
   const labelFilterEmpty =
     hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0;
 

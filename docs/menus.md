@@ -115,26 +115,13 @@ opens on press.
 
 `selected` and `active` are different questions and must not be merged.
 
-| Prop               | Means                        | Draws                     |
-| ------------------ | ---------------------------- | ------------------------- |
-| `selected`         | This is the chosen value     | A check, and nothing else |
-| `selected="mixed"` | Marked, but not by the check | Only the `trailing` given |
-| `active`           | This row's submenu is open   | The fill, and no check    |
+| Prop       | Means                      | Draws                     |
+| ---------- | -------------------------- | ------------------------- |
+| `selected` | This is the chosen value   | A check, and nothing else |
+| `active`   | This row's submenu is open | The fill, and no check    |
 
-`selected` also announces itself: `true` and `false` are `aria-checked`, and `"mixed"` is ARIA's own
-third state. Use it for a row that holds more than on and off — the labels filter's
-include / exclude / neither — so the state a screen reader gets is the one the row is in. Give that
-row its own `trailing` mark; the engine draws the check for `true` and nothing else.
-
-A row whose `trailing` is itself pressable keeps the state on the row and gives the controls plain
-button names. The labels filter row is the case: it announces include as checked and exclude as
-mixed, and its two buttons are "Include X" and "Exclude X" with no checked state of their own, so
-one label's state is claimed once rather than by three controls at the same time.
-
-To reveal such a control on hover, wrap the `MenuItem` in a plain `View` and track the pointer
-there — `MenuItem` is a `Pressable`, so hover on it fights the buttons inside it
-([hover.md](hover.md)). Hide with opacity, never by unmounting: the trailing slot sizes to its
-content, so a control that appears would move the rail it is on.
+`selected` also announces itself as `aria-checked`, so a multi-select page is audible as the list
+of on/off things it is.
 
 A selected row does **not** get a background. A check and a fill are two separate claims about the
 same state, and showing both makes a chosen row compete with the row the pointer is actually on.
