@@ -28,6 +28,7 @@ export interface AssistantFileLinkActions {
   open(source: AssistantFileLinkSource, disposition: OpenFileDisposition): void;
   canOpen(source: AssistantFileLinkSource): boolean;
   canResolveFile(source: AssistantFileLinkSource): boolean;
+  isSlashCommand(name: string): boolean;
 }
 
 type AssistantFileLinkQueryKey = readonly [
@@ -156,8 +157,19 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
       canResolveAssistantFileLinkToFile(source, context.configRef.current.workspaceRoot),
     [context.configRef],
   );
+  // Read off the context value, not configRef: this feeds a render decision, so
+  // its identity has to change when the command list loads (see the note on
+  // AssistantFileLinkResolverContextValue.isSlashCommand).
+  const contextIsSlashCommand = context.isSlashCommand;
+  const isSlashCommand = useCallback(
+    (name: string) => contextIsSlashCommand?.(name) ?? false,
+    [contextIsSlashCommand],
+  );
 
-  return useMemo(() => ({ open, canOpen, canResolveFile }), [open, canOpen, canResolveFile]);
+  return useMemo(
+    () => ({ open, canOpen, canResolveFile, isSlashCommand }),
+    [open, canOpen, canResolveFile, isSlashCommand],
+  );
 }
 
 function openAssistantFileLink(input: {

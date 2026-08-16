@@ -7,6 +7,7 @@ import { agentCommandsQueryKey, type AgentCommandsDraftConfig } from "@/hooks/ag
 
 const DRAFT_COMMANDS_STALE_TIME = Number.POSITIVE_INFINITY;
 const SESSION_COMMANDS_STALE_TIME = 60_000;
+const NO_COMMANDS: AgentSlashCommand[] = [];
 
 export interface AgentSlashCommand {
   name: string;
@@ -76,7 +77,9 @@ export function useAgentCommandsQuery({
   const isLoading = query.isPending || query.isLoading;
 
   return {
-    commands: query.data ?? [],
+    // Stable reference while the query has no data, so callers can memoize on
+    // `commands` without recomputing on every render during loading.
+    commands: query.data ?? NO_COMMANDS,
     isLoading,
     isError: query.isError,
     error: query.error,

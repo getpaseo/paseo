@@ -9,7 +9,7 @@ import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
-import { useFileLink } from "./use-file-link";
+import { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
 vi.mock("@/utils/open-external-url", () => ({
@@ -327,3 +327,78 @@ describe("useFileLink", () => {
 });
 
 const WorkspaceSwitchContext = React.createContext<(workspaceRoot: string) => void>(() => {});
+
+describe("useAssistantFileLinkActions slash commands", () => {
+  function createActionsWrapper(input: { isSlashCommand?: (name: string) => boolean }) {
+    const queryClient = createQueryClient();
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <AssistantFileLinkResolverProvider
+            serverId="server-1"
+            workspaceRoot="/Users/test/project"
+            isSlashCommand={input.isSlashCommand}
+          >
+            {children}
+          </AssistantFileLinkResolverProvider>
+        </QueryClientProvider>
+      );
+    };
+  }
+
+  it("matches known command names and defaults to false", () => {
+    const { result } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createActionsWrapper({ isSlashCommand: (name) => name === "autoplan" }),
+    });
+
+    expect(result.current.isSlashCommand("autoplan")).toBe(true);
+    expect(result.current.isSlashCommand("nope")).toBe(false);
+  });
+
+  it("returns false when no matcher is configured", () => {
+    const { result } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createActionsWrapper({}),
+    });
+
+    expect(result.current.isSlashCommand("autoplan")).toBe(false);
+  });
+
+  // The per-agent command list arrives from the network after the transcript has
+  // already rendered. AssistantMessage is memoized and its markdown rules are
+  // memoized on the actions object, so the late matcher only reaches an existing
+  // message if the actions identity changes with it. When isSlashCommand was read
+  // through configRef the identity was permanently stable, and history messages
+  // kept rendering `/command` tokens as file links forever.
+  it("changes actions identity when the command matcher loads late", () => {
+    const queryClient = createQueryClient();
+    // The matcher lives outside the tree so the test can swap it between renders,
+    // standing in for the commands query resolving after the first paint.
+    let matcher: ((name: string) => boolean) | undefined;
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <AssistantFileLinkResolverProvider
+            serverId="server-1"
+            workspaceRoot="/Users/test/project"
+            isSlashCommand={matcher}
+          >
+            {children}
+          </AssistantFileLinkResolverProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result, rerender } = renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: Wrapper,
+    });
+
+    const beforeLoad = result.current;
+    expect(beforeLoad.isSlashCommand("autoplan")).toBe(false);
+
+    matcher = (name: string) => name === "autoplan";
+    rerender();
+
+    expect(result.current).not.toBe(beforeLoad);
+    expect(result.current.isSlashCommand("autoplan")).toBe(true);
+  });
+});

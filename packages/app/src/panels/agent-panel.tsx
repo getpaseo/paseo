@@ -26,6 +26,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
+import { ComposerInsertProvider, useComposerInsert } from "@/components/composer-insert";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -1306,37 +1307,41 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       text={agentInputDraft.text}
       setText={agentInputDraft.replaceText}
     >
-      <View style={styles.root}>
-        <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
-          {contentContainer}
+      <ComposerInsertProvider text={agentInputDraft.text} setText={agentInputDraft.replaceText}>
+        <View style={styles.root}>
+          <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
+            {contentContainer}
 
-          {showHistorySyncError ? (
-            <SidebarCallout
-              title={t("agentPanel.states.timelineSyncFailed")}
-              variant="error"
-              testID="agent-timeline-sync-error"
-            />
-          ) : null}
+            {showHistorySyncError ? (
+              <SidebarCallout
+                title={t("agentPanel.states.timelineSyncFailed")}
+                variant="error"
+                testID="agent-timeline-sync-error"
+              />
+            ) : null}
 
-          {composerSection}
+            {composerSection}
 
-          {showHistorySyncOverlay ? (
-            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
-              <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
+            {showHistorySyncOverlay ? (
+              <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+                <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
+              </View>
+            ) : null}
+
+            <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
+          </FileDropZone>
+
+          {isArchivingCurrentAgent ? (
+            <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
+              <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
+              <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
+              <Text style={styles.archivingSubtitle}>
+                {t("agentPanel.states.archivingSubtitle")}
+              </Text>
             </View>
           ) : null}
-
-          <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
-        </FileDropZone>
-
-        {isArchivingCurrentAgent ? (
-          <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
-            <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
-            <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
-            <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
-          </View>
-        ) : null}
-      </View>
+        </View>
+      </ComposerInsertProvider>
     </RewindComposerRestoreProvider>
   );
 });
@@ -1608,6 +1613,16 @@ function ActiveAgentComposer({
     ],
   );
 
+  // Let a slash-command chip in the transcript focus this composer after it
+  // appends the command. ComposerInsertProvider wraps both the transcript and
+  // this composer, so registering here reaches the chip's insert path. Clear the
+  // handler on unmount so a stale focus fn doesn't linger past this composer.
+  const composerInsert = useComposerInsert();
+  const registerComposerFocus = composerInsert?.registerFocusHandler;
+  useEffect(() => {
+    return () => registerComposerFocus?.(null);
+  }, [registerComposerFocus]);
+
   const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
   });
@@ -1656,6 +1671,7 @@ function ActiveAgentComposer({
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
+        onFocusInput={registerComposerFocus}
         isCompactLayout={isCompactComposerLayout}
       />
     </ReanimatedAnimated.View>

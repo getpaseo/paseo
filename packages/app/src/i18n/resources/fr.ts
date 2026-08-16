@@ -298,6 +298,7 @@ export const fr: TranslationResources = {
       forkMissingWorkspace: "Cet agent n'est pas dans un espace de travail.",
       forkFailed: "Impossible de dupliquer le chat",
       openFile: "Ouvrir le fichier",
+      insertIntoComposer: "Insérer dans le message",
       copied: "Copié",
     },
     attachments: {

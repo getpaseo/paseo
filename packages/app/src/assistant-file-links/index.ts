@@ -1,8 +1,10 @@
 export {
   AssistantInlineCodePathLink,
+  AssistantInlineSlashCommandLink,
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
 } from "./link";
+export { appendSlashCommandToken, parseSlashCommandToken } from "./slash-command";
 export { type AssistantLinkPress, useAssistantLinkPress } from "./link-press-context";
 export {
   classifyAssistantFileLink,

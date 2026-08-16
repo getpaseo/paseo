@@ -52,6 +52,8 @@ import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
+import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
+import { useComposerInsert } from "@/components/composer-insert";
 import { useSettings } from "@/hooks/use-settings";
 import type { ToastApi } from "@/components/toast-host";
 import { returnToTimelineTail } from "./timeline-tail-navigation";
@@ -448,6 +450,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
 
+    // A `/command` token in agent output is treated as a known slash command
+    // (append to composer) only when there is a live composer to insert into.
+    // In read-only/preview streams there is no composer, so tokens keep their
+    // file-path behavior. The commands list is shared (TanStack cache) with the
+    // composer's own query, so this adds no extra network.
+    const composerInsert = useComposerInsert();
+    const commandInsertionEnabled =
+      !readOnly && composerInsert != null && !!resolvedServerId && !!agentId;
+    const { commands: agentCommands } = useAgentCommandsQuery({
+      serverId: resolvedServerId,
+      agentId,
+      enabled: commandInsertionEnabled,
+    });
+    const commandNames = useMemo(
+      () => new Set(agentCommands.map((command) => command.name)),
+      [agentCommands],
+    );
+    const isSlashCommand = useCallback(
+      (name: string) => commandInsertionEnabled && commandNames.has(name),
+      [commandInsertionEnabled, commandNames],
+    );
+
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundary }) => {
         await forkAgent({
@@ -644,6 +668,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
             toast={toast}
+            isSlashCommand={isSlashCommand}
           >
             <AssistantMessage
               occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
@@ -658,7 +683,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        handleInlinePathPress,
+        isSlashCommand,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(

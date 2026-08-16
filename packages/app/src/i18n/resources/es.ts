@@ -297,6 +297,7 @@ export const es: TranslationResources = {
       forkMissingWorkspace: "Este agente no está en un espacio de trabajo.",
       forkFailed: "No se pudo bifurcar el chat",
       openFile: "Abrir archivo",
+      insertIntoComposer: "Insertar en el mensaje",
       copied: "Copiado",
     },
     attachments: {

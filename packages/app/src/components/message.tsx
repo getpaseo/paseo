@@ -87,10 +87,12 @@ import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
   AssistantInlineCodePathLink,
+  AssistantInlineSlashCommandLink,
   type AssistantFileLinkSource,
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
   type InlinePathTarget,
+  parseSlashCommandToken,
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
@@ -1715,6 +1717,27 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => {
         const content = node.content ?? "";
         const isLinkedInlineCode = nodeHasParentType(parent, "link");
+
+        // A leading-slash token like `/autoplan` looks like an absolute path but
+        // may be a slash command / skill the agent is referring to. When it
+        // matches a known command for this agent, render it as a command chip
+        // (append to composer on press) instead of a file link. This runs before
+        // the path branch so a known command wins over the path interpretation.
+        if (!isLinkedInlineCode) {
+          const commandName = parseSlashCommandToken(content);
+          if (commandName && fileLinkActions.isSlashCommand(commandName)) {
+            return (
+              <AssistantInlineSlashCommandLink
+                key={node.key}
+                token={`/${commandName}`}
+                inheritedStyles={inheritedStyles}
+                codeInlineStyle={styles.code_inline}
+                linkStyle={styles.link}
+              />
+            );
+          }
+        }
+
         const inlineCodeSource: AssistantFileLinkSource = {
           href: content,
           text: content,

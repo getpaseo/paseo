@@ -1,6 +1,15 @@
-import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import { useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import {
+  Platform,
+  Pressable,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
@@ -13,6 +22,7 @@ import { markdownCopyDataSet } from "@/assistant-selection-copy/markup";
 import { useAssistantFileLinkResolverContext } from "./provider";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
+import { useComposerInsert } from "@/components/composer-insert";
 
 interface AssistantMarkdownLinkProps {
   source: AssistantFileLinkSource;
@@ -203,6 +213,83 @@ export function AssistantInlineCodePathLink({
   );
 }
 
+interface AssistantInlineSlashCommandLinkProps {
+  token: string;
+  inheritedStyles: TextStyle;
+  codeInlineStyle: TextStyle;
+  linkStyle: TextStyle;
+}
+
+// A leading-slash inline-code token that matches a known slash command / skill
+// for the current agent. Unlike AssistantInlineCodePathLink this is an *action*
+// (append the command to the composer), not navigation — so there is no <a>
+// href on web and no side-pane aux press.
+export function AssistantInlineSlashCommandLink({
+  token,
+  inheritedStyles,
+  codeInlineStyle,
+  linkStyle,
+}: AssistantInlineSlashCommandLinkProps) {
+  const { t } = useTranslation();
+  const [hovered, setHovered] = useState(false);
+  const composerInsert = useComposerInsert();
+  const style = useMemo(
+    () => [inheritedStyles, codeInlineStyle, linkStyle],
+    [inheritedStyles, codeInlineStyle, linkStyle],
+  );
+  const onPress = useStableEvent(() => composerInsert?.insertSlashCommand(token));
+  const handleHoverIn = useStableEvent(() => setHovered(true));
+  const handleHoverOut = useStableEvent(() => setHovered(false));
+  const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
+    () => [style, hovered && { textDecorationLine: "underline" as const }],
+    [style, hovered],
+  );
+  const linkPress = useMemo<AssistantLinkPress>(
+    () => ({ onPress, accessibilityRole: "button" }),
+    [onPress],
+  );
+  const tooltipBody = useMemo(
+    () => (
+      <View style={styles.tooltipBody}>
+        <Text selectable={false} style={styles.tooltipPath}>
+          {t("message.actions.insertIntoComposer")}
+        </Text>
+      </View>
+    ),
+    [t],
+  );
+
+  if (isNative) {
+    // Same UITextView constraint as AssistantMarkdownLink: use MarkdownTextSpan
+    // and thread onPress down through AssistantLinkPressProvider on iOS.
+    const span = (
+      <MarkdownTextSpan accessibilityRole="button" monoSurface onPress={onPress} style={style}>
+        {token}
+      </MarkdownTextSpan>
+    );
+    return Platform.OS === "ios" ? (
+      <AssistantLinkPressProvider value={linkPress}>{span}</AssistantLinkPressProvider>
+    ) : (
+      span
+    );
+  }
+
+  const trigger = (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+    >
+      <Text dataSet={CODE_SURFACE_DATASET} style={hoveredTextStyle}>
+        {token}
+      </Text>
+    </Pressable>
+  );
+
+  return <InlineLinkTooltip body={tooltipBody}>{trigger}</InlineLinkTooltip>;
+}
+
 const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
   // RN doesn't type "inline-flex" but RN-web honors it at runtime, which keeps
   // the tooltip wrapper from breaking inline link flow.
@@ -211,13 +298,9 @@ const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
 
 const FILE_LINK_TOOLTIP_MOD_KEYS = ["mod"];
 
-function FileLinkHoverTooltip({
-  filePath,
-  children,
-}: {
-  filePath: string | null;
-  children: ReactNode;
-}) {
+// Shared hover-tooltip shell for inline links (web only). Callers supply the
+// tooltip body; a null body renders the trigger with no tooltip content.
+function InlineLinkTooltip({ body, children }: { body: ReactNode; children: ReactNode }) {
   if (!isWeb) {
     return children;
   }
@@ -226,23 +309,41 @@ function FileLinkHoverTooltip({
       <TooltipTrigger asChild>
         <View style={FILE_LINK_TOOLTIP_TRIGGER_STYLE}>{children}</View>
       </TooltipTrigger>
-      {filePath ? (
+      {body ? (
         <TooltipContent side="top" align="start" maxWidth={520}>
-          <View style={styles.tooltipBody}>
-            <Text selectable={false} style={styles.tooltipPath}>
-              {filePath}
-            </Text>
-            <View style={styles.tooltipHintRow}>
-              <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
-              <Text selectable={false} style={styles.tooltipHintText}>
-                click for side pane
-              </Text>
-            </View>
-          </View>
+          {body}
         </TooltipContent>
       ) : null}
     </Tooltip>
   );
+}
+
+function FileLinkHoverTooltip({
+  filePath,
+  children,
+}: {
+  filePath: string | null;
+  children: ReactNode;
+}) {
+  const body = useMemo(
+    () =>
+      filePath ? (
+        <View style={styles.tooltipBody}>
+          <Text selectable={false} style={styles.tooltipPath}>
+            {filePath}
+          </Text>
+          <View style={styles.tooltipHintRow}>
+            <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
+            <Text selectable={false} style={styles.tooltipHintText}>
+              click for side pane
+            </Text>
+          </View>
+        </View>
+      ) : null,
+    [filePath],
+  );
+
+  return <InlineLinkTooltip body={body}>{children}</InlineLinkTooltip>;
 }
 
 const LINK_ANCHOR_STYLE: CSSProperties = {

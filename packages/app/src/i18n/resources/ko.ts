@@ -295,6 +295,7 @@ export const ko: TranslationResources = {
       forkMissingWorkspace: "이 에이전트는 워크스페이스에 속해 있지 않습니다.",
       forkFailed: "채팅을 분기하지 못했습니다.",
       openFile: "파일 열기",
+      insertIntoComposer: "메시지에 삽입",
       copied: "복사됨",
     },
     attachments: {

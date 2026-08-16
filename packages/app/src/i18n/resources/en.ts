@@ -292,6 +292,7 @@ export const en = {
       forkMissingWorkspace: "This agent is not in a workspace.",
       forkFailed: "Failed to fork chat",
       openFile: "Open file",
+      insertIntoComposer: "Insert into composer",
       copied: "Copied",
     },
     attachments: {
