@@ -17,13 +17,13 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { createPluginClientStateSource } from "../client-state/source";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
-import { createPluginClientStateSource } from "./source";
 
 const EMPTY_THEME_DTO: Record<string, unknown> = {};
 const pluginThemeMapping = (theme: Theme) => ({

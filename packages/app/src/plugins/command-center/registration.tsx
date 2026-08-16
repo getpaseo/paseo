@@ -11,10 +11,10 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { createPluginClientStateSource } from "../client-state/source";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
-import { createPluginClientStateSource } from "../workspace-panels/source";
 import { buildPluginCommandCenterContributions } from "./contributions";
 import { getFocusedAgentId } from "./context";
 
