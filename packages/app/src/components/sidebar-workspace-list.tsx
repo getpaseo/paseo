@@ -71,7 +71,11 @@ import {
   type SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { hasActiveSidebarLabelFilter, useSidebarViewStore } from "@/stores/sidebar-view-store";
+import {
+  hasActiveSidebarLabelFilter,
+  useSidebarViewStore,
+  type SidebarGroupMode,
+} from "@/stores/sidebar-view-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import {
   ContextMenu,
@@ -132,9 +136,9 @@ import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attentio
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
-  resolveSidebarProjectIconTargets,
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
+  type SidebarProjectIconTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -237,6 +241,8 @@ function selectionForSelectedWorkspace(
 
 interface SidebarWorkspaceListProps {
   workspaceGroups: SidebarWorkspaceGroup[];
+  /** What `useProjectIcons` is asked for, straight from the projection. See `SidebarProjection`. */
+  projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
   hasProjectsBeforeLabelFilter: boolean;
@@ -244,7 +250,7 @@ interface SidebarWorkspaceListProps {
   collapsedProjectKeys: ReadonlySet<string>;
   onToggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutIndexByWorkspaceKey: Map<string, number>;
-  groupMode: "project" | "status" | "label";
+  groupMode: SidebarGroupMode;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   onWorkspacePress?: () => void;
@@ -1926,6 +1932,7 @@ const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
 export function SidebarWorkspaceList({
   workspaceGroups,
+  projectIconTargets,
   pinnedGroups,
   projects,
   hasProjectsBeforeLabelFilter,
@@ -1984,16 +1991,14 @@ export function SidebarWorkspaceList({
     },
     [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
   );
-  // Status mode drops the project grouping, so its rows carry their own project
-  // icon. Project mode fetches the same icons inside ProjectModeList for its
-  // project headers, so only the active mode requests them.
-  const statusProjectIconTargets = useMemo(
-    () => (groupMode === "status" ? resolveSidebarProjectIconTargets(projects) : []),
-    [groupMode, projects],
-  );
-  const statusProjectIconByProjectViewKey = useProjectIcons({
-    projects: statusProjectIconTargets,
-  });
+  // One fetch, one map, every mode — project mode paints icons on its headers and every other
+  // mode paints them on each row, all keyed by `projectViewKey`. This used to be two calls with
+  // two gates, and the mode-gated one still read `groupMode === "status"` after label grouping
+  // started rendering through the same branch: the branch below learned about the new mode, the
+  // gate fourteen lines above it did not, and every label-grouped row fell through to its
+  // placeholder initial. The targets now come from the projection that produced the rows, so the
+  // question "what is on screen" is answered once. See `SidebarProjection.projectIconTargets`.
+  const projectIconByProjectViewKey = useProjectIcons({ projects: projectIconTargets });
 
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
   // this whole subtree, which unmounted the header — and the header is where the display menu's
@@ -2001,13 +2006,16 @@ export function SidebarWorkspaceList({
   const labelFilterEmpty =
     hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0;
 
+  // Project mode is the one that keeps its project headers; every other grouping mode is a flat
+  // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
+  // one's `else`.
   const content =
-    groupMode === "status" || groupMode === "label" ? (
-      <SidebarStatusModeWrapper
+    groupMode !== "project" ? (
+      <SidebarGroupedModeList
         workspaceGroups={workspaceGroups}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
-        projectIconByProjectViewKey={statusProjectIconByProjectViewKey}
+        projectIconByProjectViewKey={projectIconByProjectViewKey}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
         hostBadgeByServerId={hostBadgeByServerId}
@@ -2024,6 +2032,7 @@ export function SidebarWorkspaceList({
         projects={projects}
         pinnedGroups={pinnedGroups}
         workspaceEntriesByKey={workspaceEntriesByKey}
+        projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
         onToggleProjectCollapsed={onToggleProjectCollapsed}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
@@ -2046,7 +2055,13 @@ export function SidebarWorkspaceList({
   return content;
 }
 
-function SidebarStatusModeWrapper({
+/**
+ * Every grouping mode except project: the rows are grouped by something that is not a project, so
+ * each row carries its own project icon. Named for what it does rather than for the first mode
+ * that needed it — `SidebarStatusModeWrapper` is what made a label-mode reader believe the data
+ * above it was status-only.
+ */
+function SidebarGroupedModeList({
   workspaceGroups,
   pinnedGroups,
   workspaceEntriesByKey,
@@ -2111,6 +2126,7 @@ function ProjectModeList({
   projects,
   pinnedGroups,
   workspaceEntriesByKey,
+  projectIconByProjectViewKey,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
   shortcutIndexByWorkspaceKey,
@@ -2129,10 +2145,16 @@ function ProjectModeList({
   onPinnedWorkspaceReorder,
 }: Omit<
   SidebarWorkspaceListProps,
-  "workspaceGroups" | "groupMode" | "hasProjectsBeforeLabelFilter" | "isRefreshing" | "onRefresh"
+  | "workspaceGroups"
+  | "projectIconTargets"
+  | "groupMode"
+  | "hasProjectsBeforeLabelFilter"
+  | "isRefreshing"
+  | "onRefresh"
 > & {
   /** Swaps the list body for the label filter's empty state. Never the header above it. */
   labelFilterEmpty: boolean;
+  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
@@ -2169,7 +2191,6 @@ function ProjectModeList({
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
   } = useLimitedSidebarGroup(pinnedChats);
-  const projectIconTargets = useMemo(() => resolveSidebarProjectIconTargets(projects), [projects]);
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2183,10 +2204,6 @@ function ProjectModeList({
         : undefined,
     [parentGestureRef],
   );
-
-  const projectIconByProjectViewKey = useProjectIcons({
-    projects: projectIconTargets,
-  });
 
   useEffect(() => {
     const timeouts = creatingWorkspaceTimeoutsRef.current;
