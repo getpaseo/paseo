@@ -3,6 +3,7 @@ export type { Transport, TransportMessage, EncryptedChannelEvents } from "./encr
 
 export {
   InvalidPeerKeyError,
+  CANONICAL_LOW_ORDER_POINTS,
   generateKeyPair,
   exportPublicKey,
   importPublicKey,

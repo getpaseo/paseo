@@ -151,7 +151,7 @@ function hexToBytes(hex: string): Uint8Array {
  * entry really is low order, so a mistyped constant fails the suite instead
  * of silently weakening the check.
  */
-const CANONICAL_LOW_ORDER_POINTS: readonly string[] = [
+export const CANONICAL_LOW_ORDER_POINTS: readonly string[] = [
   // 0 and 1
   "0000000000000000000000000000000000000000000000000000000000000000",
   "0100000000000000000000000000000000000000000000000000000000000000",
@@ -221,7 +221,15 @@ function isLowOrderPoint(publicKey: Uint8Array): boolean {
 function snapshot(source: Uint8Array, length: number): Uint8Array {
   const copy = new Uint8Array(length);
   for (let i = 0; i < length; i++) {
-    copy[i] = source[i] as number;
+    const byte: unknown = source[i];
+    // A missing index reads as undefined, and assigning that to a Uint8Array
+    // stores 0 -- so a one-byte source claiming a byteLength of 32 would be
+    // silently zero-padded into the all-zero point this function exists to
+    // reject. Every byte has to be a real byte.
+    if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) {
+      throw new InvalidPeerKeyError("Key material is not a sequence of bytes");
+    }
+    copy[i] = byte;
   }
   return copy;
 }

@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import nacl from "tweetnacl";
 
-import { InvalidPeerKeyError, deriveSharedKey, generateKeyPair } from "./index.js";
+import {
+  CANONICAL_LOW_ORDER_POINTS,
+  InvalidPeerKeyError,
+  deriveSharedKey,
+  generateKeyPair,
+} from "./index.js";
 
 /**
  * Negative tests for peer-key validation.
@@ -31,15 +36,10 @@ function bytesToHex(bytes: Uint8Array): string {
  * that they were transcribed correctly. A blacklist with a mistyped constant
  * would otherwise pass every test while protecting nothing.
  */
-const CANONICAL_LOW_ORDER_POINT_HEX = [
-  "0000000000000000000000000000000000000000000000000000000000000000",
-  "0100000000000000000000000000000000000000000000000000000000000000",
-  "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
-  "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
-  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-] as const;
+// The shipped table, not a copy of it. Transcribing it here meant the suite
+// could exercise a different blacklist from the one that ships, the moment
+// either drifted.
+const CANONICAL_LOW_ORDER_POINT_HEX = CANONICAL_LOW_ORDER_POINTS;
 
 /** Each canonical point plus its high-bit-set encoding, which X25519 treats identically. */
 const LOW_ORDER_POINT_HEX = CANONICAL_LOW_ORDER_POINT_HEX.flatMap((hex) => {
@@ -100,35 +100,46 @@ describe("low-order point rejection", () => {
 });
 
 describe("validation and derivation see the same bytes", () => {
-  // Checking one value and deriving from another is the classic way a
-  // validation gets stepped around: a caller can pass an object whose indexed
-  // reads change between the check and the use. deriveSharedKey is exported,
-  // so "no caller in this repo does that" is not the bar.
-  it("rejects a peer key whose bytes change after validation", () => {
+  // The property, not one implementation's read count: every index of the
+  // caller's array must be read exactly once. An earlier version of this test
+  // only switched the bytes after 480 reads, so an unsafe implementation making
+  // 64 reads passed it while still validating one value and deriving another.
+  it("reads each index of the peer key exactly once", () => {
     const basepoint = new Uint8Array(32);
     basepoint[0] = 9;
     const zero = new Uint8Array(32);
+    const reads: number[] = Array.from({ length: 32 }, () => 0);
 
-    let reads = 0;
-    const shifting = new Proxy(basepoint, {
+    const onceOnly = new Proxy(basepoint, {
       get(target, prop) {
         if (typeof prop === "string" && /^\d+$/.test(prop)) {
-          reads += 1;
-          // Honest while inspected, all-zero once the checks are done.
-          return reads <= 480 ? basepoint[Number(prop)] : zero[Number(prop)];
+          const i = Number(prop);
+          reads[i] = (reads[i] ?? 0) + 1;
+          // Honest the first time, hostile every time after. Any implementation
+          // that reads an index twice derives from the all-zero point.
+          return (reads[i] as number) === 1 ? basepoint[i] : zero[i];
         }
         return Reflect.get(target, prop);
       },
     }) as Uint8Array;
 
     const secret = generateKeyPair().secretKey;
-    const derived = deriveSharedKey(secret, shifting);
+    const derived = deriveSharedKey(secret, onceOnly);
 
-    // The all-zero point yields this key for every secret; deriving it would
-    // mean the peer knows the session key.
+    expect(reads.every((n) => n === 1)).toBe(true);
+    expect(bytesToHex(derived)).toBe(bytesToHex(deriveSharedKey(secret, basepoint)));
     expect(bytesToHex(derived)).not.toBe(
       "351f86faa3b988468a850122b65b0acece9c4826806aeee63de9c0da2bd7f91e",
     );
-    expect(bytesToHex(derived)).toBe(bytesToHex(deriveSharedKey(secret, basepoint)));
+  });
+
+  it("rejects key material that is not a full sequence of bytes", () => {
+    // A one-byte array claiming to be 32 used to be zero-padded into the very
+    // point the blacklist rejects.
+    const short = new Uint8Array(1);
+    short[0] = 9;
+    Object.defineProperty(short, "byteLength", { value: 32 });
+
+    expect(() => deriveSharedKey(generateKeyPair().secretKey, short)).toThrow(InvalidPeerKeyError);
   });
 });
