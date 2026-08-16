@@ -47,7 +47,12 @@ import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-s
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
-import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
+import {
+  MessageInput,
+  type AttachmentMenuItem,
+  type ComposerKeyPressEvent,
+  type MessageInputRef,
+} from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -1830,8 +1835,7 @@ function ComposerContentImpl({
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) =>
-      autocompleteOnKeyPressRef.current(event),
+    (event: ComposerKeyPressEvent) => autocompleteOnKeyPressRef.current(event),
     [],
   );
 

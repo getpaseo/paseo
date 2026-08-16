@@ -38,6 +38,15 @@ interface UseAgentAutocompleteInput {
   canExecuteClientSlashCommand?: boolean;
 }
 
+interface AgentAutocompleteKeyPressEvent {
+  key: string;
+  preventDefault: () => void;
+  input: {
+    text: string;
+    selection: { start: number; end: number };
+  };
+}
+
 type AgentAutocompleteOption =
   | (AutocompleteOption & { type: "client_command"; command: ClientSlashCommand })
   | (AutocompleteOption & { type: "provider_command" })
@@ -55,8 +64,38 @@ interface AgentAutocompleteResult {
   errorMessage?: string;
   loadingText: string;
   emptyText: string;
-  onSelectOption: (option: AutocompleteOption) => void;
-  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  onSelectOption: (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) => void;
+  onKeyPress: (event: AgentAutocompleteKeyPressEvent) => boolean;
+}
+
+interface AgentAutocompleteSnapshot {
+  text: string;
+  slashCommand: SlashCommandRange | null;
+  fileMention: FileMentionRange | null;
+}
+
+function resolveAgentAutocompleteSnapshot(input: {
+  event?: AgentAutocompleteKeyPressEvent;
+  userInput: string;
+  cursorIndex: number;
+  activeSlashCommand: SlashCommandRange | null;
+  activeFileMention: FileMentionRange | null;
+}): AgentAutocompleteSnapshot {
+  if (!input.event) {
+    return {
+      text: input.userInput,
+      slashCommand: input.activeSlashCommand,
+      fileMention: input.activeFileMention,
+    };
+  }
+
+  const text = input.event.input.text;
+  const cursorIndex = input.event.input.selection.start;
+  return {
+    text,
+    slashCommand: findActiveSlashCommand({ text, cursorIndex }),
+    fileMention: findActiveFileMention({ text, cursorIndex }),
+  };
 }
 
 interface DirectorySuggestionEntry {
@@ -426,8 +465,18 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   );
 
   const onSelectOption = useCallback(
-    (option: AutocompleteOption) => {
+    (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) => {
       const selected = option as AgentAutocompleteOption;
+      const current = resolveAgentAutocompleteSnapshot({
+        event,
+        userInput,
+        cursorIndex,
+        activeSlashCommand,
+        activeFileMention,
+      });
+      const selectedIsCommand =
+        selected.type === "client_command" || selected.type === "provider_command";
+      if (event && selectedIsCommand && !current.slashCommand) return;
       if (
         selected.type === "client_command" &&
         selected.command.execution === "immediate" &&
@@ -438,16 +487,16 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         return;
       }
 
-      if (selected.type === "client_command" || selected.type === "provider_command") {
-        if (!activeSlashCommand) {
+      if (selectedIsCommand) {
+        if (!current.slashCommand) {
           setUserInput(`/${selected.id} `);
           onAutocompleteApplied?.();
           return;
         }
 
         const nextInput = applySlashCommandReplacement({
-          text: userInput,
-          command: activeSlashCommand,
+          text: current.text,
+          command: current.slashCommand,
           commandName: selected.id,
         });
         setUserInput(nextInput);
@@ -455,9 +504,10 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         return;
       }
 
+      if (!current.fileMention) return;
       const nextInput = applyFileMentionReplacement({
-        text: userInput,
-        mention: selected.mention,
+        text: current.text,
+        mention: current.fileMention,
         relativePath: selected.entryPath,
       });
       setUserInput(nextInput);
@@ -469,6 +519,8 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       onClientSlashCommand,
       setUserInput,
       userInput,
+      cursorIndex,
+      activeFileMention,
       activeSlashCommand,
     ],
   );

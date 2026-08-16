@@ -56,7 +56,6 @@ import {
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
-import { useDraftStore } from "@/stores/draft-store";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
@@ -744,7 +743,7 @@ function normalizeBranchDetails(
 
 interface SubmitDraftInput {
   serverId: string;
-  draftKey: string;
+  clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
   initialSetup?: WorkspaceDraftTabSetup;
   workspaceId: string;
@@ -855,7 +854,7 @@ interface CreateChatAgentInput {
     withInitialAgent: boolean;
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
-  draftKey: string;
+  clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
   supportsForgeSearch: boolean;
   labels: {
@@ -919,7 +918,7 @@ function buildComposerInitialValues(input: {
 }
 
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
-  const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
+  const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
   const { text, attachments, cwd } = payload;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
@@ -949,7 +948,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   });
   submitWorkspaceDraft({
     serverId,
-    draftKey,
+    clearDraft,
     draftId: input.draftId,
     initialSetup,
     workspaceId: ensuredWorkspace.id,
@@ -1026,7 +1025,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
 function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const {
     serverId,
-    draftKey,
+    clearDraft,
     draftId: draftIdInput,
     workspaceId,
     workspaceDirectory,
@@ -1078,12 +1077,12 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
     allowEmptyText: true,
   });
+  clearDraft("sent");
   navigateToWorkspace({
     serverId,
     workspaceId,
     target: submission.target,
   });
-  useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
 }
 
 function useNewWorkspaceHostSelector(input: {
@@ -2071,7 +2070,7 @@ export function NewWorkspaceScreen({
           forkDraftSetup,
           ensureWorkspace,
           serverId: selectedServerId,
-          draftKey,
+          clearDraft: chatDraft.clear,
           draftId,
           supportsForgeSearch,
           labels: {
@@ -2089,7 +2088,7 @@ export function NewWorkspaceScreen({
     [
       composerState,
       draftId,
-      draftKey,
+      chatDraft.clear,
       ensureWorkspace,
       forkDraftSetup,
       launchTarget,

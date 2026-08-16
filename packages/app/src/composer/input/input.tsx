@@ -88,6 +88,15 @@ export interface AttachmentMenuItem {
   icon?: React.ReactElement | null;
 }
 
+export interface ComposerKeyPressEvent {
+  key: string;
+  preventDefault: () => void;
+  input: {
+    text: string;
+    selection: { start: number; end: number };
+  };
+}
+
 export interface MessageInputProps {
   value: string;
   onChangeText: (text: string) => void;
@@ -138,7 +147,7 @@ export interface MessageInputProps {
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
-  onKeyPress?: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress?: (event: ComposerKeyPressEvent) => boolean;
   /** Reports cursor selection updates from the underlying input. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
@@ -362,7 +371,8 @@ function SendButtonContent({
 }
 
 interface DesktopKeyPressContext {
-  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
+  onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
+  input: ComposerKeyPressEvent["input"];
   submitOnEnter: boolean;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
@@ -383,6 +393,7 @@ function handleDesktopKeyPressImpl(
     const handled = ctx.onKeyPressCallback({
       key: event.nativeEvent.key,
       preventDefault: () => event.preventDefault(),
+      input: ctx.input,
     });
     if (handled) return;
   }
@@ -1056,7 +1067,7 @@ interface ResolvedMessageInputProps {
   defaultSendBehavior: "interrupt" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
-  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
+  onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
   onFocusChange: ((focused: boolean) => void) | undefined;
   onHeightChange: ((height: number) => void) | undefined;
@@ -1569,8 +1580,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
       if (!shouldHandleWebKeyPress) return;
+      const text = textInputRef.current?.getText() ?? valueRef.current;
+      const textArea = getWebTextAreaImpl(textInputRef.current);
+      const selectionStart = textArea?.selectionStart ?? text.length;
+      const selectionEnd = textArea?.selectionEnd ?? selectionStart;
       handleDesktopKeyPressImpl(event, {
         onKeyPressCallback,
+        input: {
+          text,
+          selection: { start: selectionStart, end: selectionEnd },
+        },
         submitOnEnter: shouldSubmitOnEnter,
         isAgentRunning,
         onQueue,
