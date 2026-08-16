@@ -181,6 +181,18 @@ export function resolveThinkingOptionId(args: {
   return effectiveModel?.defaultThinkingOptionId ?? thinkingOptions[0]?.id ?? "";
 }
 
+export function resolveModelThinkingOptionId(input: {
+  availableModels: AgentModelDefinition[] | null;
+  providerPrefs: ProviderPrefs | undefined;
+  modelId: string;
+}): string {
+  return resolveThinkingOptionId({
+    availableModels: input.availableModels,
+    modelId: input.modelId,
+    requestedThinkingOptionId: resolvePreferredThinkingOptionId(input),
+  });
+}
+
 const normalizeSelectedModeId = normalizeSelectedModelId;
 
 function resolvePreferredModeId(input: {

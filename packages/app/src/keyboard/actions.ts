@@ -14,10 +14,17 @@ export type MessageInputKeyboardActionKind =
   | "dictation-confirm"
   | "voice-toggle"
   | "voice-mute-toggle"
-  | "mode-cycle";
+  | "mode-cycle"
+  | "model-cycle"
+  | "thinking-decrease"
+  | "thinking-increase"
+  | "favorite-model-previous"
+  | "favorite-model-next";
 
 export type KeyboardActionId =
   | "agent.interrupt"
+  | "agent.prompt.next"
+  | "agent.prompt.previous"
   | "agent.new"
   | "workspace.tab.new"
   | "workspace.tab.close.current"

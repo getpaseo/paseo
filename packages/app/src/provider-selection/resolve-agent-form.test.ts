@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAgentForm,
   resolveFormState,
+  resolveModelThinkingOptionId,
   resolveThinkingOptionId,
   mergeSelectedComposerPreferences,
   combineInitialValues,
@@ -259,6 +260,33 @@ describe("resolveThinkingOptionId", () => {
         requestedThinkingOptionId: "",
       }),
     ).toBe("low");
+  });
+});
+
+describe("resolveModelThinkingOptionId", () => {
+  it("restores the last thinking option for each model", () => {
+    const models: AgentModelDefinition[] = [
+      {
+        provider: "codex",
+        id: "sol",
+        label: "Sol",
+        thinkingOptions: [{ id: "medium", label: "Medium" }],
+      },
+      {
+        provider: "codex",
+        id: "luna",
+        label: "Luna",
+        thinkingOptions: [{ id: "max", label: "Max" }],
+      },
+    ];
+    const providerPrefs = { thinkingByModel: { sol: "medium", luna: "max" } };
+
+    expect(
+      resolveModelThinkingOptionId({ availableModels: models, providerPrefs, modelId: "sol" }),
+    ).toBe("medium");
+    expect(
+      resolveModelThinkingOptionId({ availableModels: models, providerPrefs, modelId: "luna" }),
+    ).toBe("max");
   });
 });
 

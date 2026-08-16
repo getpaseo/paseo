@@ -223,6 +223,30 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches Ctrl+Alt+Up to jump to the previous prompt on mac desktop",
+      event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "agent.prompt.previous",
+    },
+    {
+      name: "matches Ctrl+Alt+Up to jump to the previous prompt on non-mac desktop",
+      event: { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "agent.prompt.previous",
+    },
+    {
+      name: "matches Ctrl+Alt+Down to jump to the next prompt on mac desktop",
+      event: { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "agent.prompt.next",
+    },
+    {
+      name: "matches Ctrl+Alt+Down to jump to the next prompt on non-mac desktop",
+      event: { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
+      context: { isMac: false, isDesktop: true },
+      action: "agent.prompt.next",
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -325,6 +349,48 @@ describe("keyboard-shortcuts", () => {
       context: { focusScope: "message-input" },
       action: "message-input.action",
       payload: { kind: "mode-cycle" },
+    },
+    {
+      name: "routes Ctrl+Shift+M to change model from the message input on mac",
+      event: { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "model-cycle" },
+    },
+    {
+      name: "routes Ctrl+Shift+M to change model on non-mac from the message input",
+      event: { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "model-cycle" },
+    },
+    {
+      name: "routes Ctrl+, to decrease thinking from the message input",
+      event: { key: ",", code: "Comma", ctrlKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "thinking-decrease" },
+    },
+    {
+      name: "routes Ctrl+. to increase thinking from the message input",
+      event: { key: ".", code: "Period", ctrlKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "thinking-increase" },
+    },
+    {
+      name: "routes Ctrl+Shift+, to previous favorite model from the message input",
+      event: { key: "<", code: "Comma", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "favorite-model-previous" },
+    },
+    {
+      name: "routes Ctrl+Shift+. to next favorite model from the message input",
+      event: { key: ">", code: "Period", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "favorite-model-next" },
     },
     {
       name: "routes space to voice mute toggle outside editable scopes",
@@ -487,6 +553,11 @@ describe("keyboard-shortcuts", () => {
       context: { focusScope: "other" },
     },
     {
+      name: "does not change model outside the message input",
+      event: { key: "M", code: "KeyM", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "other" },
+    },
+    {
       name: "does not repeat agent mode cycling while Shift+Tab is held",
       event: { key: "Tab", code: "Tab", shiftKey: true, repeat: true },
       context: { focusScope: "message-input" },
@@ -643,6 +714,11 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
         "cycle-agent-mode": ["shift", "Tab"],
+        "cycle-model": ["ctrl", "shift", "M"],
+        "decrease-thinking": ["ctrl", ","],
+        "increase-thinking": ["ctrl", "."],
+        "previous-favorite-model": ["ctrl", "shift", ","],
+        "next-favorite-model": ["ctrl", "shift", "."],
       },
     },
     {
@@ -661,6 +737,11 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["mod", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
+        "cycle-model": ["ctrl", "shift", "M"],
+        "decrease-thinking": ["ctrl", ","],
+        "increase-thinking": ["ctrl", "."],
+        "previous-favorite-model": ["ctrl", "shift", ","],
+        "next-favorite-model": ["ctrl", "shift", "."],
       },
     },
     {
@@ -669,6 +750,11 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
+        "cycle-model": ["ctrl", "shift", "M"],
+        "decrease-thinking": ["ctrl", ","],
+        "increase-thinking": ["ctrl", "."],
+        "previous-favorite-model": ["ctrl", "shift", ","],
+        "next-favorite-model": ["ctrl", "shift", "."],
       },
     },
     {
@@ -792,14 +878,26 @@ describe("keyboard-shortcut help sections", () => {
     const workspaces = sections.find((section) => section.id === "workspaces");
     const layout = sections.find((section) => section.id === "layout");
     const openProject = findRow(sections, "new-agent");
+    const previousPrompt = findRow(sections, "agent-prompt-previous");
     const cycleAgentMode = findRow(sections, "cycle-agent-mode");
+    const cycleModel = findRow(sections, "cycle-model");
+    const decreaseThinking = findRow(sections, "decrease-thinking");
+    const increaseThinking = findRow(sections, "increase-thinking");
+    const previousFavoriteModel = findRow(sections, "previous-favorite-model");
+    const nextFavoriteModel = findRow(sections, "next-favorite-model");
     const showShortcuts = findRow(sections, "show-shortcuts");
 
     expect(workspaces?.titleKey).toBe("settings.shortcuts.sections.workspaces");
     expect(layout?.titleKey).toBe("settings.shortcuts.sections.layout");
     expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
     expect(openProject?.label).toBe("Open project");
+    expect(previousPrompt?.labelKey).toBe("settings.shortcuts.help.previousPrompt");
     expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
+    expect(cycleModel?.labelKey).toBe("agentControls.hints.model");
+    expect(decreaseThinking?.labelKey).toBe("settings.shortcuts.help.decreaseThinking");
+    expect(increaseThinking?.labelKey).toBe("settings.shortcuts.help.increaseThinking");
+    expect(previousFavoriteModel?.labelKey).toBe("settings.shortcuts.help.previousFavoriteModel");
+    expect(nextFavoriteModel?.labelKey).toBe("settings.shortcuts.help.nextFavoriteModel");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });
 

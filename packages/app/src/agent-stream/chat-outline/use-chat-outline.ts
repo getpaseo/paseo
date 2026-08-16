@@ -9,6 +9,8 @@ import type { StreamViewportHandle } from "../strategy";
 import {
   createActivePromptPublisher,
   resolveActivePromptSeq,
+  resolveNextPromptSeq,
+  resolvePreviousPromptSeq,
   shouldAcceptPromptIndexEpoch,
   type ActivePromptSource,
   type ChatOutlinePrompt,
@@ -39,6 +41,8 @@ export interface ChatOutline {
   prompts: ChatOutlinePrompt[];
   activePrompt: ActivePromptSource;
   jumpToPrompt: (seq: number) => void;
+  jumpToNextPrompt: () => boolean;
+  jumpToPreviousPrompt: () => boolean;
   reportReadingPosition: (rowId: string | null) => void;
 }
 
@@ -174,5 +178,26 @@ export function useChatOutline({
     [agentId, index, loadedItems, onJumpError, serverId, viewportRef],
   );
 
-  return { prompts, activePrompt, jumpToPrompt, reportReadingPosition };
+  const jumpToPreviousPrompt = useCallback(() => {
+    const previousSeq = resolvePreviousPromptSeq(prompts, activePrompt.getActiveSeq());
+    if (previousSeq === null) return false;
+    jumpToPrompt(previousSeq);
+    return true;
+  }, [activePrompt, jumpToPrompt, prompts]);
+
+  const jumpToNextPrompt = useCallback(() => {
+    const nextSeq = resolveNextPromptSeq(prompts, activePrompt.getActiveSeq());
+    if (nextSeq === null) return false;
+    jumpToPrompt(nextSeq);
+    return true;
+  }, [activePrompt, jumpToPrompt, prompts]);
+
+  return {
+    prompts,
+    activePrompt,
+    jumpToPrompt,
+    jumpToNextPrompt,
+    jumpToPreviousPrompt,
+    reportReadingPosition,
+  };
 }

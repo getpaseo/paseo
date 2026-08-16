@@ -28,6 +28,8 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
 describe("routeKeyboardShortcut — dispatch passthroughs", () => {
   it.each([
     ["agent.interrupt", { id: "agent.interrupt", scope: "global" }],
+    ["agent.prompt.next", { id: "agent.prompt.next", scope: "workspace" }],
+    ["agent.prompt.previous", { id: "agent.prompt.previous", scope: "workspace" }],
     ["workspace.tab.new", { id: "workspace.tab.new", scope: "workspace" }],
     ["workspace.new", { id: "workspace.new", scope: "sidebar" }],
     ["workspace.project.pick", { id: "workspace.project.pick", scope: "workspace" }],
@@ -280,6 +282,11 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     ["voice-toggle", "message-input.voice-toggle"],
     ["voice-mute-toggle", "message-input.voice-mute-toggle"],
     ["mode-cycle", "message-input.mode-cycle"],
+    ["model-cycle", "message-input.model-cycle"],
+    ["thinking-decrease", "message-input.thinking-decrease"],
+    ["thinking-increase", "message-input.thinking-increase"],
+    ["favorite-model-previous", "message-input.favorite-model-previous"],
+    ["favorite-model-next", "message-input.favorite-model-next"],
   ] as const)("kind=%s → dispatch %s", (kind, id) => {
     expect(
       routeKeyboardShortcut({ action: "message-input.action", payload: { kind } }, makeCtx()),

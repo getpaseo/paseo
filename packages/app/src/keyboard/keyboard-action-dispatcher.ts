@@ -2,6 +2,8 @@ export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "work
 
 export type KeyboardActionId =
   | "agent.interrupt"
+  | "agent.prompt.next"
+  | "agent.prompt.previous"
   | "message-input.focus"
   | "message-input.send"
   | "message-input.dictation-toggle"
@@ -10,6 +12,11 @@ export type KeyboardActionId =
   | "message-input.voice-toggle"
   | "message-input.voice-mute-toggle"
   | "message-input.mode-cycle"
+  | "message-input.model-cycle"
+  | "message-input.thinking-decrease"
+  | "message-input.thinking-increase"
+  | "message-input.favorite-model-previous"
+  | "message-input.favorite-model-next"
   | "workspace.tab.new"
   | "workspace.tab.close-current"
   | "workspace.tab.navigate-index"
@@ -37,6 +44,8 @@ export type KeyboardActionId =
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
+  | { id: "agent.prompt.next"; scope: KeyboardActionScope }
+  | { id: "agent.prompt.previous"; scope: KeyboardActionScope }
   | { id: "message-input.focus"; scope: KeyboardActionScope }
   | { id: "message-input.send"; scope: KeyboardActionScope }
   | { id: "message-input.dictation-toggle"; scope: KeyboardActionScope }
@@ -45,6 +54,11 @@ export type KeyboardActionDefinition =
   | { id: "message-input.voice-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
+  | { id: "message-input.model-cycle"; scope: KeyboardActionScope }
+  | { id: "message-input.thinking-decrease"; scope: KeyboardActionScope }
+  | { id: "message-input.thinking-increase"; scope: KeyboardActionScope }
+  | { id: "message-input.favorite-model-previous"; scope: KeyboardActionScope }
+  | { id: "message-input.favorite-model-next"; scope: KeyboardActionScope }
   | { id: "workspace.tab.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
   | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }

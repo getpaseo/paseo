@@ -17,6 +17,7 @@ const SERVICE: WorkspaceServiceSummary = { name: "web", health: null };
 
 function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {}) {
   return selectMetaRowItems({
+    projectName: null,
     hasHostBadge: true,
     prHint: PR_HINT,
     serviceSummary: SERVICE,
@@ -31,6 +32,13 @@ const kinds = (items: ReturnType<typeof selectMetaRowItems>) => items.map((item)
 describe("selectMetaRowItems", () => {
   it("reads identity, then the change, then its state, then what is running", () => {
     expect(kinds(select())).toEqual(["host", "changeRequest", "checks", "services"]);
+  });
+
+  it("puts the project after the host for a hoisted workspace", () => {
+    expect(kinds(select({ projectName: "Paseo", prHint: null, serviceSummary: null }))).toEqual([
+      "host",
+      "project",
+    ]);
   });
 
   it("omits what the workspace does not have", () => {

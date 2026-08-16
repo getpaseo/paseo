@@ -45,9 +45,8 @@ const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 /**
- * The subtitle under a workspace title: which host it lives on, its change request, that
- * change request's CI, and any running service. Everything the row knows about a workspace
- * that isn't its name.
+ * The subtitle under a workspace title: which host it lives on, its project when the row is
+ * hoisted, its change request, that change request's CI, and any running service.
  *
  * Items are peers separated by a dot rather than ranked by chrome. The host used to be a
  * tinted pill on the title line, which made it the loudest thing in a row whose subject is
@@ -55,16 +54,19 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * leaves color to mean status.
  */
 export function WorkspaceMetaRow({
+  projectName = null,
   hostBadge,
   prHint,
   serviceSummary,
 }: {
+  projectName?: string | null;
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
+    projectName,
     hasHostBadge: hostBadge !== null,
     prHint,
     serviceSummary,
@@ -93,6 +95,13 @@ function MetaItemNode({
   item: MetaRowItem;
   hostBadge: HostBadgeModel | null;
 }): ReactNode {
+  if (item.kind === "project") {
+    return (
+      <Text style={styles.projectName} numberOfLines={1}>
+        {item.name}
+      </Text>
+    );
+  }
   if (item.kind === "host") {
     return hostBadge ? <HostBadge badge={hostBadge} /> : null;
   }
@@ -204,9 +213,8 @@ const CHECK_STATE_ACCESSIBLE_KEYS = {
 } as const;
 
 /**
- * A running service, named. It is the one item on the line whose text is arbitrary — everything
- * else is a number, a short word, or a host label the user already picked — so it is also the
- * only one allowed to shrink, and it truncates rather than pushing the line past the row.
+ * A running service, named. Like the project name, it truncates rather than pushing the line
+ * past the row.
  *
  * A failed health check turns the whole item danger, glyph and name together. Colouring only the
  * glyph would leave the name reading as fine, and the name is the part you look at.
@@ -276,7 +284,14 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 16,
     flexShrink: 0,
   },
-  // The one item that gives way when the line runs out of room — see `ServiceItem`.
+  projectName: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  // Arbitrary project and service names give way before fixed identity and status items.
   serviceItem: {
     flexDirection: "row",
     alignItems: "center",

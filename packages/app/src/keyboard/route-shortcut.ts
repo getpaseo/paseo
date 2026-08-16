@@ -40,6 +40,8 @@ const NONE: ShortcutAction = { kind: "none" };
 // Action ids whose routing is a no-payload pass-through to the dispatcher.
 const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
+  "agent.prompt.next": { id: "agent.prompt.next", scope: "workspace" },
+  "agent.prompt.previous": { id: "agent.prompt.previous", scope: "workspace" },
   "workspace.tab.new": { id: "workspace.tab.new", scope: "workspace" },
   "workspace.new": { id: "workspace.new", scope: "sidebar" },
   "workspace.project.pick": { id: "workspace.project.pick", scope: "workspace" },
@@ -81,6 +83,14 @@ const MESSAGE_INPUT_DISPATCH: Record<
   "voice-toggle": { id: "message-input.voice-toggle", scope: "message-input" },
   "voice-mute-toggle": { id: "message-input.voice-mute-toggle", scope: "message-input" },
   "mode-cycle": { id: "message-input.mode-cycle", scope: "message-input" },
+  "model-cycle": { id: "message-input.model-cycle", scope: "message-input" },
+  "thinking-decrease": { id: "message-input.thinking-decrease", scope: "message-input" },
+  "thinking-increase": { id: "message-input.thinking-increase", scope: "message-input" },
+  "favorite-model-previous": {
+    id: "message-input.favorite-model-previous",
+    scope: "message-input",
+  },
+  "favorite-model-next": { id: "message-input.favorite-model-next", scope: "message-input" },
 };
 
 function hasPayloadKey<K extends "index" | "delta" | "kind">(

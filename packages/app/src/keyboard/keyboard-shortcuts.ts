@@ -192,6 +192,13 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
+    "agent-prompt-previous",
+    "agent-prompt-next",
+    "cycle-model",
+    "decrease-thinking",
+    "increase-thinking",
+    "previous-favorite-model",
+    "next-favorite-model",
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
@@ -212,6 +219,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
+  "agent-prompt-next": "settings.shortcuts.help.nextPrompt",
+  "agent-prompt-previous": "settings.shortcuts.help.previousPrompt",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
   "workspace-pane-split-down": "settings.shortcuts.help.splitPaneDown",
   "workspace-pane-focus-left": "settings.shortcuts.help.focusPaneLeft",
@@ -235,6 +244,11 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
+  "cycle-model": "agentControls.hints.model",
+  "decrease-thinking": "settings.shortcuts.help.decreaseThinking",
+  "increase-thinking": "settings.shortcuts.help.increaseThinking",
+  "previous-favorite-model": "settings.shortcuts.help.previousFavoriteModel",
+  "next-favorite-model": "settings.shortcuts.help.nextFavoriteModel",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
@@ -615,6 +629,52 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
+  // --- Prompt navigation ---
+  {
+    id: "agent-prompt-previous-cmd-alt-up-mac",
+    action: "agent.prompt.previous",
+    combo: "Ctrl+Alt+ArrowUp",
+    when: { mac: true, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-previous",
+      section: "agent-input",
+      label: "Previous prompt",
+    },
+  },
+  {
+    id: "agent-prompt-previous-ctrl-alt-up-non-mac",
+    action: "agent.prompt.previous",
+    combo: "Ctrl+Alt+ArrowUp",
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-previous",
+      section: "agent-input",
+      label: "Previous prompt",
+    },
+  },
+  {
+    id: "agent-prompt-next-ctrl-alt-down-mac",
+    action: "agent.prompt.next",
+    combo: "Ctrl+Alt+ArrowDown",
+    when: { mac: true, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-next",
+      section: "agent-input",
+      label: "Next prompt",
+    },
+  },
+  {
+    id: "agent-prompt-next-ctrl-alt-down-non-mac",
+    action: "agent.prompt.next",
+    combo: "Ctrl+Alt+ArrowDown",
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "agent-prompt-next",
+      section: "agent-input",
+      label: "Next prompt",
+    },
+  },
+
   // --- Pane management (mac only) ---
   {
     id: "workspace-pane-split-right-cmd-backslash",
@@ -854,6 +914,62 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     when: { commandCenter: false },
   },
 
+  // --- Message input control shortcuts ---
+  // These precede the global Ctrl+, / Ctrl+. bindings below so the focused
+  // message input gets the more specific action.
+  {
+    id: "message-input-thinking-decrease-ctrl-comma",
+    action: "message-input.action",
+    combo: "Ctrl+,",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "thinking-decrease" },
+    help: {
+      id: "decrease-thinking",
+      section: "agent-input",
+      label: "Decrease thinking effort",
+    },
+  },
+  {
+    id: "message-input-thinking-increase-ctrl-period",
+    action: "message-input.action",
+    combo: "Ctrl+.",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "thinking-increase" },
+    help: {
+      id: "increase-thinking",
+      section: "agent-input",
+      label: "Increase thinking effort",
+    },
+  },
+  {
+    id: "message-input-favorite-model-previous-ctrl-shift-comma",
+    action: "message-input.action",
+    combo: "Ctrl+Shift+,",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "favorite-model-previous" },
+    help: {
+      id: "previous-favorite-model",
+      section: "agent-input",
+      label: "Previous favorite model",
+    },
+  },
+  {
+    id: "message-input-favorite-model-next-ctrl-shift-period",
+    action: "message-input.action",
+    combo: "Ctrl+Shift+.",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "favorite-model-next" },
+    help: {
+      id: "next-favorite-model",
+      section: "agent-input",
+      label: "Next favorite model",
+    },
+  },
+
   // --- Toggle both sidebars ---
   {
     id: "sidebar-toggle-both-cmd-period-mac",
@@ -986,6 +1102,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "cycle-agent-mode",
       section: "agent-input",
       label: "Cycle agent mode",
+    },
+  },
+  {
+    id: "message-input-model-cycle-cmd-shift-m-mac",
+    action: "message-input.action",
+    combo: "Ctrl+Shift+M",
+    repeat: false,
+    when: { mac: true, commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "model-cycle" },
+    help: {
+      id: "cycle-model",
+      section: "agent-input",
+      label: "Change model",
+    },
+  },
+  {
+    id: "message-input-model-cycle-ctrl-shift-m-non-mac",
+    action: "message-input.action",
+    combo: "Ctrl+Shift+M",
+    repeat: false,
+    when: { mac: false, commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "model-cycle" },
+    help: {
+      id: "cycle-model",
+      section: "agent-input",
+      label: "Change model",
     },
   },
   {

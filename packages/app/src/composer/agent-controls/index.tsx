@@ -34,6 +34,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { resolveModelThinkingOptionId } from "@/provider-selection/resolve-agent-form";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -57,6 +58,7 @@ import {
   getFeatureHighlightColor,
   getFeatureTooltip,
   getAgentControlHintKey,
+  resolveRelativeAgentControlId,
   resolveAgentModelSelection,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -77,6 +79,9 @@ import { ComposerControlLayoutProvider } from "@/composer/agent-controls/layout-
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import {
   useAgentProfilePicker,
   type AgentProfileApplyTarget,
@@ -109,6 +114,7 @@ interface ControlledAgentControlsProps {
   disabled?: boolean;
   isModelLoading?: boolean;
   modelSelectorProviders?: ProviderSelectorProvider[];
+  favoriteKeys?: ReadonlySet<string>;
   agentProfiles?: AgentProfilePicker | null;
   onApplyAgentProfile?: (profileId: string) => void;
   onEditAgentProfiles?: () => void;
@@ -429,6 +435,106 @@ function buildOpenChangeHandler(
   };
 }
 
+function useModelCycleShortcut(input: {
+  disabled: boolean;
+  favoriteKeys: ReadonlySet<string>;
+  isActiveComposer: boolean;
+  modelOptions: AgentControlOption[] | undefined;
+  onSelectModel: ((modelId: string) => void) | undefined;
+  provider: string;
+  selectedModelId: string | undefined;
+}) {
+  const handlerIdRef = useRef(`model-control:${Math.random().toString(36).slice(2)}`);
+  const favoriteModelOptions = input.modelOptions?.filter((model) =>
+    input.favoriteKeys.has(`${input.provider}:${model.id}`),
+  );
+  const handle = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      let delta: 1 | -1 | null = null;
+      if (action.id === "message-input.favorite-model-previous") {
+        delta = -1;
+      } else if (
+        action.id === "message-input.favorite-model-next" ||
+        action.id === "message-input.model-cycle"
+      ) {
+        delta = 1;
+      }
+      if (delta === null) return false;
+      if (input.disabled || !input.isActiveComposer || !input.onSelectModel) return false;
+      const nextModelId = resolveRelativeAgentControlId({
+        options: favoriteModelOptions ?? [],
+        selectedId: input.selectedModelId,
+        delta,
+      });
+      if (!nextModelId) return false;
+      input.onSelectModel(nextModelId);
+      return true;
+    },
+    [favoriteModelOptions, input],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: handlerIdRef.current,
+    actions: [
+      "message-input.model-cycle",
+      "message-input.favorite-model-previous",
+      "message-input.favorite-model-next",
+    ],
+    enabled:
+      input.isActiveComposer &&
+      !input.disabled &&
+      Boolean(input.onSelectModel) &&
+      (favoriteModelOptions?.length ?? 0) > 1,
+    priority: 200,
+    handle,
+  });
+}
+
+function useThinkingStrengthShortcut(input: {
+  disabled: boolean;
+  isActiveComposer: boolean;
+  thinkingOptions: AgentControlOption[] | undefined;
+  onSelectThinkingOption: ((thinkingOptionId: string) => void) | undefined;
+  selectedThinkingOptionId: string | undefined;
+}) {
+  const handlerIdRef = useRef(`thinking-control:${Math.random().toString(36).slice(2)}`);
+  const handle = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      let delta: 1 | -1 | null = null;
+      if (action.id === "message-input.thinking-decrease") {
+        delta = -1;
+      } else if (action.id === "message-input.thinking-increase") {
+        delta = 1;
+      }
+      if (delta === null) return false;
+      if (input.disabled || !input.isActiveComposer || !input.onSelectThinkingOption) {
+        return false;
+      }
+      const nextThinkingId = resolveRelativeAgentControlId({
+        options: input.thinkingOptions ?? [],
+        selectedId: input.selectedThinkingOptionId,
+        delta,
+      });
+      if (!nextThinkingId) return false;
+      input.onSelectThinkingOption(nextThinkingId);
+      return true;
+    },
+    [input],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: handlerIdRef.current,
+    actions: ["message-input.thinking-decrease", "message-input.thinking-increase"],
+    enabled:
+      input.isActiveComposer &&
+      !input.disabled &&
+      Boolean(input.onSelectThinkingOption) &&
+      (input.thinkingOptions?.length ?? 0) > 1,
+    priority: 200,
+    handle,
+  });
+}
+
 function ControlledAgentControls({
   provider,
   providerOptions,
@@ -444,6 +550,7 @@ function ControlledAgentControls({
   disabled = false,
   isModelLoading = false,
   modelSelectorProviders,
+  favoriteKeys = new Set<string>(),
   agentProfiles = null,
   onApplyAgentProfile,
   onEditAgentProfiles,
@@ -460,6 +567,7 @@ function ControlledAgentControls({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
+  const { isActiveComposer } = useComposerKeyboardScope();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
@@ -637,6 +745,23 @@ function ControlledAgentControls({
     },
     [onSelectModel, onSelectProviderAndModel, provider],
   );
+
+  useModelCycleShortcut({
+    disabled,
+    favoriteKeys,
+    isActiveComposer,
+    modelOptions,
+    onSelectModel,
+    provider,
+    selectedModelId,
+  });
+  useThinkingStrengthShortcut({
+    disabled,
+    isActiveComposer,
+    thinkingOptions,
+    onSelectThinkingOption,
+    selectedThinkingOptionId,
+  });
 
   const providerPressableStyle = useMemo(
     () =>
@@ -1465,7 +1590,7 @@ export const AgentControls = memo(function AgentControls({
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { updatePreferences } = useFormPreferences();
+  const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
@@ -1520,6 +1645,15 @@ export const AgentControls = memo(function AgentControls({
   const modelOptions = useMemo<AgentControlOption[]>(() => {
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
   }, [models]);
+  const favoriteKeys = useMemo(
+    () =>
+      new Set(
+        (preferences.favoriteModels ?? []).map(
+          (favorite) => `${favorite.provider}:${favorite.modelId}`,
+        ),
+      ),
+    [preferences.favoriteModels],
+  );
 
   const thinkingOptions = useMemo<AgentControlOption[]>(() => {
     return (modelSelection.thinkingOptions ?? []).map((option) => ({
@@ -1538,6 +1672,15 @@ export const AgentControls = memo(function AgentControls({
       }
       try {
         await client.setAgentModel(agentId, modelId);
+        const thinkingOptionId = resolveModelThinkingOptionId({
+          availableModels: models,
+          providerPrefs: preferences.providerPreferences?.[agentProvider],
+          modelId,
+        });
+        if (thinkingOptionId) {
+          const notice = await client.setAgentThinkingOption(agentId, thinkingOptionId);
+          showProviderNoticeToast(toast, notice);
+        }
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
@@ -1546,11 +1689,19 @@ export const AgentControls = memo(function AgentControls({
           }),
         );
       } catch (error) {
-        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
+        console.warn("[AgentControls] select model failed", error);
         toast.error(toErrorMessage(error));
       }
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [
+      agentId,
+      agentProvider,
+      client,
+      models,
+      preferences.providerPreferences,
+      toast,
+      updatePreferences,
+    ],
   );
   const handleSelectCommandCenterModel = useCallback(
     (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
@@ -1682,6 +1833,7 @@ export const AgentControls = memo(function AgentControls({
       modelOptions={modelOptions}
       selectedModelId={modelSelection.activeModelId ?? undefined}
       onSelectModel={handleSelectModel}
+      favoriteKeys={favoriteKeys}
       agentProfiles={agentProfiles}
       onApplyAgentProfile={agentProfiles?.applyProfile}
       onEditAgentProfiles={handleEditAgentProfiles}
