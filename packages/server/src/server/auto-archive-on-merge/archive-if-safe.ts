@@ -49,38 +49,19 @@ const defaultDependencies: ArchiveIfSafeDependencies = {
 
 export async function archiveIfSafe(input: {
   workspaceId: string;
-  cwd: string;
-  pullRequest: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
+  snapshot: WorkspaceGitRuntimeSnapshot;
   options: AutoArchiveArchiveOptions;
   log: Logger;
   deps?: ArchiveIfSafeDependencies;
 }): Promise<void> {
-  const { workspaceId, cwd, pullRequest: observedPullRequest, options, log } = input;
+  const { workspaceId, snapshot, options, log } = input;
   const deps = input.deps ?? defaultDependencies;
-
-  if (!observedPullRequest?.isMerged) {
-    return;
-  }
-  if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
-    return;
-  }
-  let snapshot: Awaited<ReturnType<typeof options.workspaceGitService.getSnapshot>> | null;
-  try {
-    snapshot = await options.workspaceGitService.getSnapshot(cwd, {
-      reason: "auto-archive-on-merge",
-    });
-  } catch (error) {
-    log.warn({ err: error, cwd }, "Failed to read snapshot for auto-archive; skipping");
-    return;
-  }
-  if (!snapshot) {
-    return;
-  }
+  const cwd = snapshot.cwd;
   const pullRequest = snapshot.forge.pullRequest;
+
   if (!pullRequest?.isMerged) {
     return;
   }
-
   if (snapshot.git.isDirty === true) {
     return;
   }
