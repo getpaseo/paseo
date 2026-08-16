@@ -56,6 +56,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -575,6 +576,13 @@ function TabChip({
         },
       } as const)
     : undefined;
+  const tabMenuTriggerBlockers = useMemo(() => {
+    if (!isNative) return undefined;
+    const stop = (event: { stopPropagation?: () => void }) => {
+      event.stopPropagation?.();
+    };
+    return { onPointerDown: stop, onMouseDown: stop, onPressIn: stop, onPress: stop } as const;
+  }, []);
 
   const tabChipStyle = useCallback(
     () => [
@@ -661,7 +669,6 @@ function TabChip({
               {...(dragHandleProps?.listeners as object | undefined)}
               testID={`workspace-tab-${buildDeterministicWorkspaceTabId(tab.target)}`}
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
-              enabledOnMobile={false}
               style={tabChipStyle}
               onHoverIn={handleTabHoverIn}
               onHoverOut={handleTabHoverOut}
@@ -719,6 +726,14 @@ function TabChip({
                     );
                   }}
                 </Pressable>
+              ) : null}
+              {isNative ? (
+                <MobileTabTrailingAccessory
+                  menuTestIDBase={contextMenuTestId}
+                  presentationLabel={tooltipLabel}
+                  menuEntries={menuEntries}
+                  triggerProps={tabMenuTriggerBlockers}
+                />
               ) : null}
             </ContextMenuTrigger>
           </TooltipTrigger>
