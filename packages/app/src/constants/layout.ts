@@ -1,5 +1,6 @@
 import { useWindowDimensions } from "react-native";
 import { isWeb } from "@/constants/platform";
+import { APP_BREAKPOINTS } from "@/styles/unistyles";
 
 export const FOOTER_HEIGHT = 75;
 
@@ -41,14 +42,16 @@ export {
  * Always use this instead of reading UnistylesRuntime.breakpoint directly.
  */
 export function useIsCompactFormFactor(): boolean {
-  // Use RN's useWindowDimensions instead of the Unistyles breakpoint: on
-  // Android the Unistyles mini-runtime only refreshes its screen dimensions
-  // on an ACTION_CONFIGURATION_CHANGED broadcast, which Android does not send
-  // while resizing a split-screen or free-form window. RN's dimensions update
-  // through onGlobalLayout, which fires continuously during those resizes.
-  // Keep the thresholds aligned with the Unistyles breakpoints (md = 720).
+  // Read the width through RN's useWindowDimensions rather than the
+  // Unistyles breakpoint: on Android the Unistyles mini-runtime only
+  // refreshes its screen dimensions on an ACTION_CONFIGURATION_CHANGED
+  // broadcast, which Android does not send while a split-screen or free-form
+  // window is being resized — and a stale breakpoint from a small start size
+  // would keep the layout compact forever. RN's dimensions update through
+  // onGlobalLayout, which fires continuously during those resizes, so the
+  // width is always current. The threshold is the md breakpoint.
   const { width } = useWindowDimensions();
-  return width < 720;
+  return width < APP_BREAKPOINTS.md;
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.
