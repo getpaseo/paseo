@@ -1082,7 +1082,6 @@ describe("PiRpcAgentSession", () => {
       { type: "turn_started", turnId },
       { type: "turn_completed", turnId },
     ]);
-
   });
 
   describe("steerActiveTurn", () => {
@@ -1226,16 +1225,30 @@ describe("PiRpcAgentSession", () => {
       const { pi, session, events } = await createSession();
       const fakeSession = pi.latestSession();
 
-      const { turnId } = await session.startTurn("original prompt");
+      const { turnId } = await session.startTurn("original prompt", {
+        clientMessageId: "turn-client",
+      });
       await session.steerActiveTurn("follow up", {
         expectedTurnId: turnId,
         clientMessageId: "client-steer",
       });
 
+      // The original prompt echo arrives first, then the steered echo.
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
       fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "follow up" });
 
       const userItems = userMessageItems(events);
       expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+          clientMessageId: "turn-client",
+        },
         {
           type: "user_message",
           text: "follow up",
@@ -1261,11 +1274,21 @@ describe("PiRpcAgentSession", () => {
         clientMessageId: "client-2",
       });
 
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
       fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
       fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
 
       const userItems = userMessageItems(events);
       expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+        },
         {
           type: "user_message",
           text: "first",
@@ -1277,6 +1300,140 @@ describe("PiRpcAgentSession", () => {
           text: "second",
           messageId: "entry-2",
           clientMessageId: "client-2",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("consumes identical steers in order without confusing the original echo", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt", {
+        clientMessageId: "turn-client",
+      });
+      await session.steerActiveTurn("hello", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-1",
+      });
+      await session.steerActiveTurn("hello", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-2",
+      });
+
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "hello" });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "hello" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+          clientMessageId: "turn-client",
+        },
+        {
+          type: "user_message",
+          text: "hello",
+          messageId: "entry-1",
+          clientMessageId: "client-1",
+        },
+        {
+          type: "user_message",
+          text: "hello",
+          messageId: "entry-2",
+          clientMessageId: "client-2",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("keeps a steer matching the original prompt text on the right identity", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("hello", {
+        clientMessageId: "turn-client",
+      });
+      await session.steerActiveTurn("hello", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-1",
+      });
+
+      // Both echoes carry identical text; the first is the original prompt
+      // (turn identity), the second the steered message (steer identity).
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "hello",
+      });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "hello" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "hello",
+          messageId: "entry-original",
+          clientMessageId: "turn-client",
+        },
+        {
+          type: "user_message",
+          text: "hello",
+          messageId: "entry-1",
+          clientMessageId: "client-1",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("original prompt echo does not steal a steer's client id", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt", {
+        clientMessageId: "turn-client",
+      });
+      // Steer is admitted before Pi flushes the original prompt's echo (that
+      // happens when the first assistant message starts), so the original echo
+      // must keep the turn identity and leave the steer entry untouched.
+      await session.steerActiveTurn("follow up", {
+        expectedTurnId: turnId,
+        clientMessageId: "steer-client",
+      });
+
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-steer",
+        parentId: null,
+        text: "follow up",
+      });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+          clientMessageId: "turn-client",
+        },
+        {
+          type: "user_message",
+          text: "follow up",
+          messageId: "entry-steer",
+          clientMessageId: "steer-client",
         },
       ]);
 
@@ -1324,11 +1481,21 @@ describe("PiRpcAgentSession", () => {
       });
       await session.steerActiveTurn("second", { expectedTurnId: turnId });
 
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
       fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
       fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
 
       const userItems = userMessageItems(events);
       expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+        },
         {
           type: "user_message",
           text: "first",
@@ -1356,11 +1523,21 @@ describe("PiRpcAgentSession", () => {
         clientMessageId: "client-2",
       });
 
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-original",
+        parentId: null,
+        text: "original prompt",
+      });
       fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
       fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
 
       const userItems = userMessageItems(events);
       expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-original",
+        },
         {
           type: "user_message",
           text: "first",

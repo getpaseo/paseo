@@ -227,7 +227,6 @@ interface PiRpcAgentSessionOptions {
   currentModeId?: string | null;
   cleanup?: () => void;
   extensionTimeoutMs?: number;
-  logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
 }
 
@@ -1254,13 +1253,20 @@ export class PiRpcAgentSession implements AgentSession {
   private interruptingTurnId: string | null = null;
   private lastInterruptedTurnId: string | null = null;
   private interruptedTerminalError: { turnId: string; error: string } | null = null;
-  // Client message ids of accepted steering prompts, consumed FIFO when Pi
-  // delivers each message (message_start for a user entry) so the timeline echo
-  // carries the right clientMessageId. Every accepted steer reserves exactly
-  // one slot (null when it carried no client id) so echoes cannot steal the
-  // next steer's id. Multiple steers can be queued inside one turn, which the
-  // single activeClientMessageId slot cannot express.
-  private readonly steerClientMessageIds: Array<string | null> = [];
+  // Accepted steering prompts, consumed when Pi delivers each message
+  // (message_start for a user entry) so the timeline echo carries the right
+  // clientMessageId. Every accepted steer reserves exactly one entry (null
+  // clientMessageId when the steer carried none). Echoes are matched by text —
+  // not unconditionally shifted — so the original turn prompt's echo, which can
+  // arrive after a steer was admitted, never steals a steer's identity.
+  private readonly steerClientMessageIds: Array<{
+    clientMessageId: string | null;
+    text: string;
+  }> = [];
+  // Counts submitted user-entry echoes per turn so the first one (the turn's
+  // original prompt) can be told apart from steered echoes even when their
+  // text is identical.
+  private submittedUserEchoCount = 0;
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1276,7 +1282,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.state.thinkingLevel ??
       null;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
-    this.logger = options.logger;
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -1300,7 +1305,6 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly runtimeSession: PiRuntimeSession;
   private readonly config: AgentSessionConfig;
-  private readonly logger: Logger;
   private readonly cleanup?: () => void;
   private readonly extensionTimeoutMs: number;
 
@@ -1338,6 +1342,10 @@ export class PiRpcAgentSession implements AgentSession {
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
+    // Pi flushes the turn's original user-entry echo when the first assistant
+    // message starts, before any steered echo; it is always the first submitted
+    // echo of the turn and carries the turn's own clientMessageId.
+    this.submittedUserEchoCount = 0;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
     void (async () => {
@@ -1507,10 +1515,13 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     try {
-      // Reserve the queue slot before delivery so a steer without a client id
+      // Reserve the queue entry before delivery so a steer without a client id
       // still consumes exactly one echo (null) instead of stealing the next
       // steer's id.
-      this.steerClientMessageIds.push(options.clientMessageId ?? null);
+      this.steerClientMessageIds.push({
+        clientMessageId: options.clientMessageId ?? null,
+        text: payload.text,
+      });
       await this.runtimeSession.prompt(payload.text, payload.images, {
         streamingBehavior: "steer",
       });
@@ -1995,16 +2006,16 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
-    // Pi delivers accepted steering prompts as regular user entries; consume
-    // the matching client id so the echo lands on the steered message rather
-    // than the turn's original prompt. Every accepted steer reserves one slot
-    // (null when it had no client id), so a steered echo is distinguishable
-    // from a plain turn prompt echo by queue non-emptiness.
-    const queuedClientMessageId = this.steerClientMessageIds.shift();
+    // Pi delivers accepted steering prompts as regular user entries. The turn's
+    // original prompt echo always arrives first (flushed when the first
+    // assistant message starts) and carries the turn's own clientMessageId;
+    // steered echoes match the reserved queue entries by text so identical
+    // steers consume their entries in order.
+    this.submittedUserEchoCount += 1;
     const clientMessageId =
-      queuedClientMessageId === undefined
+      this.submittedUserEchoCount === 1
         ? (this.activeClientMessageId ?? undefined)
-        : (queuedClientMessageId ?? undefined);
+        : (this.consumeSteerClientMessageId(entry.text) ?? this.activeClientMessageId ?? undefined);
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -2017,6 +2028,15 @@ export class PiRpcAgentSession implements AgentSession {
       },
     });
     return true;
+  }
+
+  private consumeSteerClientMessageId(text: string): string | undefined {
+    const index = this.steerClientMessageIds.findIndex((entry) => entry.text === text);
+    if (index === -1) {
+      return undefined;
+    }
+    const [entry] = this.steerClientMessageIds.splice(index, 1);
+    return entry?.clientMessageId ?? undefined;
   }
 
   private handleEntryCaptureMarker(message: string): boolean {
@@ -2580,7 +2600,6 @@ export class PiRpcAgentClient implements AgentClient {
         logger: this.logger,
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
-        logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
       });
     } catch (error) {
@@ -2644,7 +2663,6 @@ export class PiRpcAgentClient implements AgentClient {
         logger: this.logger,
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
-        logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
       });
     } catch (error) {
