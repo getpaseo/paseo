@@ -1012,6 +1012,8 @@ export const ptBR: TranslationResources = {
       matchAny: "Corresponder a qualquer uma",
       matchAll: "Corresponder a todas",
       clear: "Limpar filtro",
+      exclude: "Excluir do filtro",
+      excludeLabel: "Excluir {{name}} do filtro",
       noMatchesTitle: "Nenhum espaço de trabalho corresponde",
       noMatchesDescription: "Altere ou limpe o filtro de etiquetas para ver espaços de trabalho.",
     },

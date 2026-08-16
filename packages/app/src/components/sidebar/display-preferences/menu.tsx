@@ -3,12 +3,11 @@ import {
   useMemo,
   useState,
   type ComponentType,
-  type PropsWithChildren,
   type ReactElement,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
@@ -37,8 +36,10 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import {
@@ -69,15 +70,16 @@ const OPTION_ICON_SIZE = 14;
 const MENU_WIDTH = 232;
 
 /**
- * Excluded rows carry this where an included row carries `MenuItem`'s own check.
+ * The exclude control's glyph, and the mark an excluded row keeps.
  *
  * `X` and `Check` are the same lucide pair — same stroke, same ink bounds at the same 16 — so the
- * trailing rail does not shift as a row cycles through the three states. Anything heavier here
- * (`Ban`, say) fills its box where the check does not, and the whole column twitches.
- *
- * One element for the life of the module: there is nothing per-row about it.
+ * trailing rail does not shift as a row's state changes. Anything heavier here (`Ban`, say) fills
+ * its box where the check does not, and the whole column twitches.
  */
-const EXCLUDED_MARK = <ThemedX size={16} uniProps={mutedIconMapping} />;
+const EXCLUDE_ICON_SIZE = 16;
+
+/** Grows the control to a 44pt target without moving its glyph off the trailing rail. */
+const EXCLUDE_HIT_SLOP = (44 - EXCLUDE_ICON_SIZE) / 2;
 
 /**
  * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
@@ -354,6 +356,7 @@ function LabelFilterPage({
   onManage: () => void;
 }): ReactElement {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const selections = preferences.labelFilter.labels;
   const includeCount = Object.values(selections).filter((state) => state === "include").length;
   const matchAny = useCallback(() => preferences.setLabelMatch("any"), [preferences]);
@@ -364,23 +367,27 @@ function LabelFilterPage({
         <LabelFilterItem
           key={workspaceLabelKey(label.name)}
           name={label.name}
+          label={label.name}
           color={label.color}
           state={selections[workspaceLabelKey(label.name)]}
-          onCycle={preferences.cycleLabelFilter}
+          isCompact={isCompact}
+          onInclude={preferences.toggleLabelInclude}
+          onExclude={preferences.toggleLabelExclude}
           testID={`sidebar-label-filter-option-${label.name}`}
-        >
-          {label.name}
-        </LabelFilterItem>
+          excludeTestID={`sidebar-label-filter-exclude-${label.name}`}
+        />
       ))}
       <LabelFilterItem
         name={SIDEBAR_UNLABELLED_LABEL_KEY}
+        label={t("workspaceLabels.unlabelled")}
         color={null}
         state={selections[SIDEBAR_UNLABELLED_LABEL_KEY]}
-        onCycle={preferences.cycleLabelFilter}
+        isCompact={isCompact}
+        onInclude={preferences.toggleLabelInclude}
+        onExclude={preferences.toggleLabelExclude}
         testID="sidebar-label-filter-option-unlabelled"
-      >
-        {t("workspaceLabels.unlabelled")}
-      </LabelFilterItem>
+        excludeTestID="sidebar-label-filter-exclude-unlabelled"
+      />
       {hasActiveSidebarLabelFilter(preferences.labelFilter) ? (
         <>
           <MenuSeparator />
@@ -422,50 +429,168 @@ function LabelFilterPage({
 }
 
 /**
- * One label, cycling off -> include -> exclude -> off.
+ * One label: the row owns include, and the control on its trailing rail owns exclude.
  *
- * Include is `MenuItem`'s own check, so the two marked states share the trailing rail by
- * construction. Exclude also dims the row: a mark you have to identify is not a state you can
- * read at a glance, and a label that has been ruled out should look pushed back next to the ones
- * that are still in play.
+ * Two independent toggles rather than one rotation. Include and exclude are each one press each
+ * way, and neither is reached through the other — clearing an include used to cost two presses
+ * and re-filter the sidebar into an exclude nobody asked for on the way past.
+ *
+ * A row is never both, so the trailing rail holds exactly one 16pt glyph in every state: the
+ * check, a permanent `X`, or the same `X` revealed on hover. Exclude also dims the row, because a
+ * mark you have to identify is not a state you can read at a glance.
  *
  * Exclude passes `selected="mixed"` for the same reason it draws its own trailing mark: the row is
  * marked, but not by the check. Without it a screen reader cannot tell an excluded label from an
  * untouched one, since dimming and an `X` are both invisible to it.
+ *
+ * Hover lives on the plain wrapping `View` and press on the `Pressable`s inside it, which is the
+ * one shape that survives a pressable inside a hover target (docs/hover.md).
  */
 function LabelFilterItem({
   name,
+  label,
   color,
   state,
-  onCycle,
+  isCompact,
+  onInclude,
+  onExclude,
   testID,
-  children,
-}: PropsWithChildren<{
+  excludeTestID,
+}: {
+  /** The filter key this row acts on. Empty for Unlabelled — see `SIDEBAR_UNLABELLED_LABEL_KEY`. */
   name: string;
+  label: string;
   /** `null` is Unlabelled, the one row with no color to stand for. */
   color: WorkspaceLabelColor | null;
   state: SidebarLabelState | undefined;
-  onCycle: (name: string) => void;
+  isCompact: boolean;
+  onInclude: (name: string) => void;
+  onExclude: (name: string) => void;
   testID: string;
-}>): ReactElement {
-  const cycle = useCallback(() => onCycle(name), [name, onCycle]);
+  excludeTestID: string;
+}): ReactElement {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handleExcludeFocus = useCallback(() => setIsFocused(true), []);
+  const handleExcludeBlur = useCallback(() => setIsFocused(false), []);
+  const include = useCallback(() => onInclude(name), [name, onInclude]);
+  const exclude = useCallback(() => onExclude(name), [name, onExclude]);
+
   const leading = useMemo(
     () => (color ? <WorkspaceLabelDot color={color} /> : UNLABELLED_MARK),
     [color],
   );
+
   const excluded = state === "exclude";
+  const included = state === "include";
+  // An excluded row keeps its mark because that is its state, not an affordance to discover.
+  // Everything else follows the app's rule for hover-revealed controls, plus keyboard focus so
+  // reaching the control by tab does not mean pressing something invisible.
+  const revealed = excluded || isHovered || isFocused || isNative || isCompact;
+  const trailing = useMemo(
+    () =>
+      included ? null : (
+        <LabelExcludeControl
+          label={label}
+          excluded={excluded}
+          revealed={revealed}
+          onPress={exclude}
+          onFocus={handleExcludeFocus}
+          onBlur={handleExcludeBlur}
+          testID={excludeTestID}
+        />
+      ),
+    [
+      included,
+      label,
+      excluded,
+      revealed,
+      exclude,
+      handleExcludeFocus,
+      handleExcludeBlur,
+      excludeTestID,
+    ],
+  );
+
   return (
-    <MenuItem
-      selected={excluded ? "mixed" : state === "include"}
-      muted={excluded}
-      leading={leading}
-      trailing={excluded ? EXCLUDED_MARK : undefined}
-      closeOnSelect={false}
-      onSelect={cycle}
-      testID={testID}
-    >
-      {children}
-    </MenuItem>
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <MenuItem
+        selected={excluded ? "mixed" : included}
+        muted={excluded}
+        leading={leading}
+        trailing={trailing}
+        closeOnSelect={false}
+        onSelect={include}
+        testID={testID}
+      >
+        {label}
+      </MenuItem>
+    </View>
+  );
+}
+
+/**
+ * Exclude, as its own control on the row's trailing rail.
+ *
+ * Hidden by opacity rather than unmounted, so revealing it cannot move the row out from under the
+ * pointer that revealed it, and so a screen reader still finds it on a row that has no visible
+ * mark. The 44pt target comes from `hitSlop`, which grows outward and leaves the glyph on the rail.
+ *
+ * The tooltip is what makes an icon-only control legible, so it is gated to where hover exists:
+ * on native the control is simply always there, and `TooltipContent` would put a `Modal` — a
+ * second overlay with a backdrop of its own — over the menu it belongs to.
+ */
+function LabelExcludeControl({
+  label,
+  excluded,
+  revealed,
+  onPress,
+  onFocus,
+  onBlur,
+  testID,
+}: {
+  label: string;
+  excluded: boolean;
+  revealed: boolean;
+  onPress: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  testID: string;
+}): ReactElement {
+  const { t } = useTranslation();
+  const controlStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.excludeControl,
+      !revealed && styles.excludeControlHidden,
+      pressed && styles.excludeControlPressed,
+    ],
+    [revealed],
+  );
+  const accessibilityState = useMemo(() => ({ checked: excluded }), [excluded]);
+
+  return (
+    <Tooltip delayDuration={250} enabledOnDesktop={isWeb} enabledOnMobile={false}>
+      <TooltipTrigger
+        accessibilityRole="checkbox"
+        accessibilityLabel={t("workspaceLabels.filter.excludeLabel", { name: label })}
+        accessibilityState={accessibilityState}
+        aria-checked={excluded}
+        hitSlop={EXCLUDE_HIT_SLOP}
+        onPress={onPress}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        pointerEvents={revealed ? "auto" : "none"}
+        style={controlStyle}
+        testID={testID}
+      >
+        <ThemedX size={EXCLUDE_ICON_SIZE} uniProps={mutedIconMapping} />
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" offset={10} testID={`${testID}-tooltip`}>
+        <Text style={styles.tooltipText}>{t("workspaceLabels.filter.exclude")}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -674,5 +799,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  excludeControl: {
+    // The glyph is the whole control, sized like the check it shares a rail with. No padding: the
+    // hit area is `hitSlop`, which grows outward instead of pushing the glyph off the rail.
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  excludeControlHidden: {
+    opacity: 0,
+  },
+  excludeControlPressed: {
+    opacity: 0.6,
+  },
+  tooltipText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
   },
 }));

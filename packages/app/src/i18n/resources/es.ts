@@ -1021,6 +1021,8 @@ export const es: TranslationResources = {
       matchAny: "Coincidir con cualquiera",
       matchAll: "Coincidir con todas",
       clear: "Borrar filtro",
+      exclude: "Excluir",
+      excludeLabel: "Excluir {{name}}",
       noMatchesTitle: "Ningún espacio de trabajo coincide",
       noMatchesDescription: "Cambia o borra el filtro de etiquetas para ver espacios de trabajo.",
     },

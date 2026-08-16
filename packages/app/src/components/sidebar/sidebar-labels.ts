@@ -34,7 +34,7 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
 }
 
 /**
- * Applies the Labels page's tri-state rows to the sidebar.
+ * Applies the Labels page's selection to the sidebar.
  *
  * `Unlabelled` is a row like any other, so it is a key in the same map rather than a pair of
  * booleans beside it; the only thing that makes it special is what the key asks of a workspace.

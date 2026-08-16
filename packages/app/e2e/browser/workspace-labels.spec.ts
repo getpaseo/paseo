@@ -193,7 +193,7 @@ test.describe("Workspace labels", () => {
         await page.keyboard.press("Escape");
       });
 
-      await test.step("one label row cycles include, exclude, off and composes with grouping", async () => {
+      await test.step("the row owns include, its trailing control owns exclude", async () => {
         const labelledRow = page.getByTestId(
           `sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`,
         );
@@ -204,13 +204,51 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("sidebar-display-label-filter").click();
 
         const urgent = page.getByTestId("sidebar-label-filter-option-Urgent");
+        const excludeUrgent = page.getByTestId("sidebar-label-filter-exclude-Urgent");
+
+        // The control is on the row's rail the whole time and only fades in, so revealing it
+        // cannot move the row out from under the pointer that revealed it.
+        await expect(excludeUrgent).toHaveCSS("opacity", "0");
+        await urgent.hover();
+        await expect(excludeUrgent).toHaveCSS("opacity", "1");
+
+        // The tooltip says what the glyph means, and hovering it is not the pointer leaving the
+        // flyout — the page it belongs to is still up underneath it.
+        await excludeUrgent.hover();
+        await expect(page.getByTestId("sidebar-label-filter-exclude-Urgent-tooltip")).toContainText(
+          "Exclude",
+        );
+        await expect(page.getByTestId("sidebar-label-manage")).toBeVisible();
+
+        // One press in, one press out, and the sidebar never passes through exclude on the way.
         await urgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeHidden();
+        // An included row's rail holds the check and nothing else.
+        await expect(excludeUrgent).toHaveCount(0);
 
         await urgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "false");
+        await expect(labelledRow).toBeVisible();
+        await expect(unlabelledRow).toBeVisible();
+
+        // Pressing the control excludes and does not also fire the row it sits in: one press
+        // from off lands on exclude, not on include.
+        await excludeUrgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "mixed");
+        await expect(excludeUrgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeVisible();
+
+        await excludeUrgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "false");
+
+        // A row is never both: including an excluded label replaces the exclude in one press.
+        await excludeUrgent.click();
+        await urgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "true");
+        await expect(excludeUrgent).toHaveCount(0);
 
         await urgent.click();
         await page.getByTestId("sidebar-label-filter-option-unlabelled").click();

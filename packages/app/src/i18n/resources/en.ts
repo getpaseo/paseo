@@ -996,6 +996,8 @@ export const en = {
       matchAny: "Match any",
       matchAll: "Match all",
       clear: "Clear filter",
+      exclude: "Exclude",
+      excludeLabel: "Exclude {{name}}",
       noMatchesTitle: "No workspaces match",
       noMatchesDescription: "Change or clear the label filter to see workspaces.",
     },

@@ -979,6 +979,8 @@ export const zhCN: TranslationResources = {
       matchAny: "匹配任一",
       matchAll: "匹配全部",
       clear: "清除筛选",
+      exclude: "排除",
+      excludeLabel: "排除{{name}}",
       noMatchesTitle: "没有匹配的工作区",
       noMatchesDescription: "更改或清除标签筛选以查看工作区。",
     },

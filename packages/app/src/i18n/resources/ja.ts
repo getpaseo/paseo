@@ -998,6 +998,8 @@ export const ja: TranslationResources = {
       matchAny: "いずれかに一致",
       matchAll: "すべてに一致",
       clear: "フィルターをクリア",
+      exclude: "除外",
+      excludeLabel: "{{name}}を除外",
       noMatchesTitle: "一致するワークスペースがありません",
       noMatchesDescription:
         "ワークスペースを表示するにはラベルフィルターを変更またはクリアしてください。",

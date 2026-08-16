@@ -139,31 +139,51 @@ describe("sidebar view store", () => {
     });
   });
 
-  it("cycles a label row off, include, exclude, off under one normalized identity", () => {
-    const { cycleLabelFilter } = useSidebarViewStore.getState();
+  it("toggles include on and off under one normalized identity, never through exclude", () => {
+    const { toggleLabelInclude } = useSidebarViewStore.getState();
     const labels = () => useSidebarViewStore.getState().labelFilter.labels;
 
-    cycleLabelFilter("Urgent");
+    toggleLabelInclude("Urgent");
     expect(labels()).toEqual({ urgent: "include" });
     expect(hasActiveSidebarLabelFilter(useSidebarViewStore.getState().labelFilter)).toBe(true);
 
-    cycleLabelFilter(" URGENT ");
-    expect(labels()).toEqual({ urgent: "exclude" });
-
-    cycleLabelFilter("urgent");
+    toggleLabelInclude(" URGENT ");
     expect(labels()).toEqual({});
     expect(hasActiveSidebarLabelFilter(useSidebarViewStore.getState().labelFilter)).toBe(false);
   });
 
-  it("cycles Unlabelled alongside real labels without colliding with one", () => {
-    const { cycleLabelFilter } = useSidebarViewStore.getState();
+  it("toggles exclude on and off under one normalized identity, never through include", () => {
+    const { toggleLabelExclude } = useSidebarViewStore.getState();
+    const labels = () => useSidebarViewStore.getState().labelFilter.labels;
 
-    cycleLabelFilter(SIDEBAR_UNLABELLED_LABEL_KEY);
-    cycleLabelFilter("Urgent");
+    toggleLabelExclude("Urgent");
+    expect(labels()).toEqual({ urgent: "exclude" });
+
+    toggleLabelExclude("urgent");
+    expect(labels()).toEqual({});
+  });
+
+  it("gives a label one opinion, so either control clears the other", () => {
+    const { toggleLabelInclude, toggleLabelExclude } = useSidebarViewStore.getState();
+    const labels = () => useSidebarViewStore.getState().labelFilter.labels;
+
+    toggleLabelInclude("Urgent");
+    toggleLabelExclude("Urgent");
+    expect(labels()).toEqual({ urgent: "exclude" });
+
+    toggleLabelInclude("Urgent");
+    expect(labels()).toEqual({ urgent: "include" });
+  });
+
+  it("filters Unlabelled alongside real labels without colliding with one", () => {
+    const { toggleLabelInclude, toggleLabelExclude } = useSidebarViewStore.getState();
+
+    toggleLabelInclude(SIDEBAR_UNLABELLED_LABEL_KEY);
+    toggleLabelExclude("Urgent");
     useSidebarViewStore.getState().setLabelMatch("all");
 
     expect(useSidebarViewStore.getState().labelFilter).toEqual({
-      labels: { [SIDEBAR_UNLABELLED_LABEL_KEY]: "include", urgent: "include" },
+      labels: { [SIDEBAR_UNLABELLED_LABEL_KEY]: "include", urgent: "exclude" },
       match: "all",
     });
   });

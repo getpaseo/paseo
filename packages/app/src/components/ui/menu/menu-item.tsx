@@ -231,9 +231,9 @@ export interface MenuItemProps {
    * This row's value is the chosen one. Draws a check and nothing else — a checked row that is
    * also filled in reads as two different claims about the same state.
    *
-   * `"mixed"` is the third state of a tri-state row: marked, but not by the check. The row draws
-   * whatever `trailing` it was given and announces ARIA's own `mixed`, so a page that cycles
-   * through more than on/off is audible without the engine knowing what its states mean.
+   * `"mixed"` is the third state of a row that has one: marked, but not by the check. The row
+   * draws whatever `trailing` it was given and announces ARIA's own `mixed`, so a page holding
+   * more than on/off is audible without the engine knowing what its states mean.
    */
   selected?: boolean | "mixed";
   /** Reserves a leading check column so a group of items stays aligned whether ticked or not. */
