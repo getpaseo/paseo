@@ -55,6 +55,7 @@ import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeightMirror } from "./height-mirror";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
@@ -1761,31 +1762,33 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         >
           {attachmentSlot}
           {/* Text input */}
-          <ComposerTextSurface
-            readOnly={readOnly}
-            value={value}
-            textInputRef={textInputRef}
-            textInputStyle={textInputStyle}
-            readOnlyTextStyle={readOnlyTextStyle}
-            placeholder={placeholder ?? t("composer.placeholders.fallback")}
-            accessibilityLabel={t(mode.accessibilityLabelKey)}
-            onChangeText={handleInputChange}
-            onFocus={handleInputFocus}
-            onBlur={handleInputBlur}
-            editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
-            scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
-            autoFocus={false}
-            onContentSizeChange={handleContentSizeChange}
-            onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
-            onSelectionChange={handleSelectionChange}
-            onPasteImages={onPasteImages}
-            onPasteError={handlePasteError}
-            focusHintVisible={isWeb && !isInputFocused && !value}
-            focusInputKeys={focusInputKeys}
-            focusHintLabel={t("composer.input.focusHint", {
-              shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
-            })}
-          />
+          <RenderProfile id="ComposerTextSurface">
+            <ComposerTextSurface
+              readOnly={readOnly}
+              value={value}
+              textInputRef={textInputRef}
+              textInputStyle={textInputStyle}
+              readOnlyTextStyle={readOnlyTextStyle}
+              placeholder={placeholder ?? t("composer.placeholders.fallback")}
+              accessibilityLabel={t(mode.accessibilityLabelKey)}
+              onChangeText={handleInputChange}
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
+              editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
+              scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
+              autoFocus={false}
+              onContentSizeChange={handleContentSizeChange}
+              onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
+              onSelectionChange={handleSelectionChange}
+              onPasteImages={onPasteImages}
+              onPasteError={handlePasteError}
+              focusHintVisible={isWeb && !isInputFocused && !value}
+              focusInputKeys={focusInputKeys}
+              focusHintLabel={t("composer.input.focusHint", {
+                shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
+              })}
+            />
+          </RenderProfile>
 
           {/* Button row */}
           <View style={styles.buttonRow}>

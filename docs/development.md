@@ -242,6 +242,24 @@ focused invalidation capture; React Native's generated stacks make that mode hig
 Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
 the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
+For sustained composer typing, run the paired composer-versus-textarea benchmark against a seeded
+daemon:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:composer-typing --workspace=@getpaseo/app
+```
+
+The benchmark opens the first workspace, preserves its existing draft, and dispatches 300 printable
+keys at a fixed 16 ms cadence without waiting for each key to paint. It measures renderer
+`keydown` to the next paint opportunity, verifies that every character survived, alternates the
+composer and plain-textarea control across three runs, then restores the original draft. The report
+includes percentiles, frame coalescing, input processing, React work, long tasks, slow samples, and
+Playwright dispatch lateness. Set `PASEO_PROFILE_TYPING_KEYS`, `PASEO_PROFILE_TYPING_CADENCE_MS`,
+`PASEO_PROFILE_TYPING_REPEATS`, or `PASEO_PROFILE_WORKSPACE_DIGIT` to change the scenario. Optional
+`PASEO_PROFILE_CPU_PATH` and `PASEO_PROFILE_TRACE_PATH` captures run separately after the latency
+measurements so profiling overhead does not contaminate them.
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync

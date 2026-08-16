@@ -22,6 +22,8 @@ import {
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady } from "@/stores/draft-store/state";
+import { AfterPaintPublication } from "@/composer/after-paint-publication";
+import { isWeb } from "@/constants/platform";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -110,19 +112,32 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
+  const textPublication = useMemo(
+    () =>
+      new AfterPaintPublication<string>((nextText) => {
+        saveDraft((current) => ({ ...current, text: nextText }));
+      }),
+    [saveDraft],
+  );
+
   const editText = useCallback(
     (nextText: string) => {
-      saveDraft((current) => ({ ...current, text: nextText }));
+      if (isWeb) {
+        textPublication.stage(nextText);
+      } else {
+        saveDraft((current) => ({ ...current, text: nextText }));
+      }
     },
-    [saveDraft],
+    [saveDraft, textPublication],
   );
 
   const replaceText = useCallback(
     (nextText: string) => {
+      textPublication.cancel();
       saveDraft((current) => ({ ...current, text: nextText }));
       setTextReplacementRevision((revision) => revision + 1);
     },
-    [saveDraft],
+    [saveDraft, textPublication],
   );
 
   const setAttachments = useCallback(
@@ -137,10 +152,35 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
+      textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
     },
-    [draftKey],
+    [draftKey, textPublication],
   );
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") textPublication.flush();
+    };
+    const flush = () => textPublication.flush();
+    const canListenForPageHide =
+      isWeb && typeof window !== "undefined" && typeof window.addEventListener === "function";
+    if (isWeb && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", flushWhenHidden);
+    }
+    if (canListenForPageHide) {
+      window.addEventListener("pagehide", flush);
+    }
+    return () => {
+      if (isWeb && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", flushWhenHidden);
+      }
+      if (canListenForPageHide) {
+        window.removeEventListener("pagehide", flush);
+      }
+      textPublication.flush();
+    };
+  }, [textPublication]);
 
   useEffect(() => {
     let cancelled = false;
