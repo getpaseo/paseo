@@ -7,6 +7,7 @@ import {
   moveAddProjectSelection,
   openAddProjectFlow,
   openDirectorySearchPage,
+  openExistingWorkspaceSearchPage,
   openGithubLocationPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
@@ -44,6 +45,20 @@ describe("Add Project navigation", () => {
       isSubmitting: false,
     });
     expect(backAddProjectPage(state)).toBeNull();
+  });
+
+  it("opens a separate search page for adding an existing workspace", () => {
+    const state = openExistingWorkspaceSearchPage(
+      openAddProjectFlow({ hosts: [HOST] }),
+      HOST.serverId,
+    );
+
+    expect(currentAddProjectPage(state)).toMatchObject({
+      kind: "workspace-search",
+      hostId: HOST.serverId,
+      query: "",
+      isSubmitting: false,
+    });
   });
 
   it("restores page input and selection after Back", () => {
@@ -132,6 +147,11 @@ describe("Add Project options", () => {
         id: "directory-search",
         label: "Search for directory",
         description: "Find a directory on Local",
+      },
+      {
+        id: "existing-workspace",
+        label: "Add existing workspace",
+        description: "Use a workspace already on Local",
       },
       {
         id: "github",

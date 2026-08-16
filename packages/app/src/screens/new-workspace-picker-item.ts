@@ -28,7 +28,7 @@ export type PickerItem =
 
 export type PickerCheckoutRequest = Pick<
   CreatePaseoWorktreeInput,
-  "action" | "refName" | "checkoutSource" | "githubPrNumber"
+  "action" | "refName" | "checkoutSource" | "githubPrNumber" | "worktreeSlug"
 >;
 
 const BRANCH_OPTION_PREFIX = "branch:";

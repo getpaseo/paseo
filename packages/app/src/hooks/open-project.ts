@@ -4,7 +4,12 @@ import type {
   ProjectAddResponse,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store";
+import {
+  normalizeProjectDescriptor,
+  normalizeWorkspaceDescriptor,
+  type ProjectDescriptor,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
@@ -24,6 +29,27 @@ export type OpenProjectResult = OpenProjectSuccess | OpenProjectFailure;
 export type OpenProjectFailureReason = "directory_not_found" | "open_failed";
 export type { ProjectGithubCloneProtocol };
 
+export interface AddExistingWorkspaceDirectlyInput {
+  serverId: string;
+  workspacePath: string;
+  isConnected: boolean;
+  client: Pick<DaemonClient, "createWorkspace"> | null;
+  mergeWorkspaces: (serverId: string, workspaces: WorkspaceDescriptor[]) => void;
+  setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+}
+
+export interface AddExistingWorkspaceSuccess {
+  ok: true;
+  workspace: WorkspaceDescriptor;
+}
+
+export interface AddExistingWorkspaceFailure {
+  ok: false;
+  error: string | null;
+}
+
+export type AddExistingWorkspaceResult = AddExistingWorkspaceSuccess | AddExistingWorkspaceFailure;
+
 export function getOpenProjectFailureReason(
   result: OpenProjectResult,
 ): OpenProjectFailureReason | null {
@@ -36,6 +62,31 @@ export function getOpenProjectFailureReason(
   }
 
   return "open_failed";
+}
+
+export async function addExistingWorkspaceDirectly(
+  input: AddExistingWorkspaceDirectlyInput,
+): Promise<AddExistingWorkspaceResult> {
+  const normalizedServerId = input.serverId.trim();
+  const trimmedPath = input.workspacePath.trim();
+  if (!normalizedServerId || !trimmedPath || !input.client || !input.isConnected) {
+    return { ok: false, error: null };
+  }
+
+  const payload = await input.client.createWorkspace({
+    source: { kind: "directory", path: trimmedPath },
+  });
+  if (payload.error || !payload.workspace) {
+    return {
+      ok: false,
+      error: payload.error ?? "Unable to add existing workspace",
+    };
+  }
+
+  const workspace = normalizeWorkspaceDescriptor(payload.workspace);
+  input.mergeWorkspaces(normalizedServerId, [workspace]);
+  input.setHasHydratedWorkspaces(normalizedServerId, true);
+  return { ok: true, workspace };
 }
 
 export interface OpenProjectDirectlyInput {

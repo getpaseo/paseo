@@ -30,6 +30,7 @@ export type AddProjectPage =
   | ({ kind: "host" } & SearchPageState)
   | ({ kind: "method"; hostId: string; isSubmitting: boolean } & PageState)
   | ({ kind: "directory-search"; hostId: string; isSubmitting: boolean } & SearchPageState)
+  | ({ kind: "workspace-search"; hostId: string; isSubmitting: boolean } & SearchPageState)
   | ({ kind: "github-search"; hostId: string } & SearchPageState)
   | ({
       kind: "github-location";
@@ -152,6 +153,17 @@ export function openDirectorySearchPage(
 ): AddProjectFlowState {
   return pushAddProjectPage(state, {
     ...searchPage("directory-search"),
+    hostId,
+    isSubmitting: false,
+  });
+}
+
+export function openExistingWorkspaceSearchPage(
+  state: AddProjectFlowState,
+  hostId: string,
+): AddProjectFlowState {
+  return pushAddProjectPage(state, {
+    ...searchPage("workspace-search"),
     hostId,
     isSubmitting: false,
   });
