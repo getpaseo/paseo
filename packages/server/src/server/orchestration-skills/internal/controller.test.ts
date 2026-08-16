@@ -18,9 +18,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { SkillSelection, SkillTargets } from "./operations";
-import { createSkillSelectionStore, type SkillSelectionStore } from "./selection-store";
-import { createSkillsController, type SkillsController } from "./skills-controller";
-import { beginSkillsTransaction } from "./skills-transaction";
+import type { SkillSelectionStore } from "./selection-store";
+import { createSkillsController, type SkillsController } from "./controller";
+import { beginSkillsTransaction } from "./transaction";
 
 interface Harness {
   root: string;
@@ -43,8 +43,17 @@ async function makeHarness(selectionStore?: SkillSelectionStore): Promise<Harnes
     await mkdir(path.join(targets.sourceDir, name), { recursive: true });
     await writeFile(path.join(targets.sourceDir, name, "SKILL.md"), `${name}-v1`);
   }
+  let selection: SkillSelection = { mode: "all" };
   const store =
-    selectionStore ?? createSkillSelectionStore({ userDataPath: path.join(root, "user-data") });
+    selectionStore ??
+    ({
+      get: async () => selection,
+      set: async (next: unknown) => {
+        selection = next as SkillSelection;
+        return selection;
+      },
+      isSet: async () => true,
+    } satisfies SkillSelectionStore);
   return {
     root,
     targets,
@@ -64,6 +73,7 @@ async function makeHarness(selectionStore?: SkillSelectionStore): Promise<Harnes
 function createUnwritableSelectionStore(initial: SkillSelection): SkillSelectionStore {
   return {
     get: async () => initial,
+    isSet: async () => true,
     set: async () => {
       throw new Error("selection store is read-only");
     },
@@ -86,6 +96,7 @@ function createGatedUnwritableSelectionStore(initial: SkillSelection): {
   return {
     store: {
       get: async () => initial,
+      isSet: async () => true,
       set: async () => {
         markStarted();
         await failureGate;
@@ -114,10 +125,12 @@ function createGatedSelectionStore(initial: SkillSelection): {
   return {
     store: {
       get: async () => current,
+      isSet: async () => true,
       set: async (selection) => {
         markStarted();
         await gate;
         current = selection;
+        return current;
       },
     },
     persistenceStarted,
@@ -209,6 +222,38 @@ async function isInstalled(targets: SkillTargets, name: string): Promise<boolean
 }
 
 describe("skills controller", () => {
+  it("imports a legacy selection only while daemon selection is absent", async () => {
+    let current: SkillSelection = { mode: "all" };
+    let explicit = false;
+    const store: SkillSelectionStore = {
+      get: async () => current,
+      set: async (selection) => {
+        current = selection as SkillSelection;
+        explicit = true;
+        return current;
+      },
+      isSet: async () => explicit,
+    };
+    const harness = await makeHarness(store);
+
+    await expect(
+      harness.controller.importLegacySelectionIfUnset({
+        mode: "custom",
+        skills: ["paseo", "paseo-loop"],
+      }),
+    ).resolves.toEqual({
+      imported: true,
+      selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
+    });
+    await expect(harness.controller.importLegacySelectionIfUnset({ mode: "all" })).resolves.toEqual(
+      {
+        imported: false,
+        selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
+      },
+    );
+    expect(await installedEverywhere(harness.targets)).toEqual([[], [], []]);
+  });
+
   let harness: Harness;
 
   beforeEach(async () => {

@@ -476,6 +476,7 @@ export interface SessionOptions {
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
   };
+  orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -654,6 +655,7 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
@@ -738,6 +740,7 @@ export class Session {
       workspaceAutoName,
       daemonConfigStore,
       pluginRuntime,
+      orchestrationSkills,
       stt,
       sttLanguage,
       tts,
@@ -778,6 +781,7 @@ export class Session {
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
+    this.orchestrationSkills = orchestrationSkills;
     this.unsubscribePluginChanges = this.subscribeToPluginChanges(pluginRuntime);
     this.sessionLogger = logger.child({
       module: "session",
@@ -1883,12 +1887,73 @@ export class Session {
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
+      this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchOrchestrationSkillsMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    if (!this.orchestrationSkills || !msg.type.startsWith("agent.skills.")) return undefined;
+    const emitStatus = (
+      type:
+        | "agent.skills.get_status.response"
+        | "agent.skills.reconcile.response"
+        | "agent.skills.uninstall.response",
+      requestId: string,
+      operation: Promise<import("./orchestration-skills/index.js").SkillsSnapshot>,
+    ) =>
+      operation.then((status) => {
+        this.emit({ type, payload: { requestId, ...status } });
+        return undefined;
+      });
+    switch (msg.type) {
+      case "agent.skills.get_status.request":
+        return emitStatus(
+          "agent.skills.get_status.response",
+          msg.requestId,
+          this.orchestrationSkills.getStatus(),
+        );
+      case "agent.skills.reconcile.request":
+        return emitStatus(
+          "agent.skills.reconcile.response",
+          msg.requestId,
+          this.orchestrationSkills.reconcile(),
+        );
+      case "agent.skills.uninstall.request":
+        return emitStatus(
+          "agent.skills.uninstall.response",
+          msg.requestId,
+          this.orchestrationSkills.uninstall(),
+        );
+      case "agent.skills.save_selection.request":
+        return this.orchestrationSkills
+          .saveSelection(msg.selection, msg.confirmedRemovals)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.save_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      case "agent.skills.import_legacy_selection.request":
+        return this.orchestrationSkills
+          .importLegacySelectionIfUnset(msg.selection)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.import_legacy_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      default:
+        return undefined;
+    }
   }
 
   private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {

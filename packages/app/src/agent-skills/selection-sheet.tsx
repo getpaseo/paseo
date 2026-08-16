@@ -10,7 +10,10 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import type { SkillSelection, SkillsSaveResult } from "@/desktop/daemon/desktop-daemon";
+import type {
+  AgentSkillSelection as SkillSelection,
+  AgentSkillsSaveResult as SkillsSaveResult,
+} from "@getpaseo/protocol/messages";
 
 const ThemedCheck = withUnistyles(Check);
 const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
@@ -33,7 +36,7 @@ function isSkillSelected(draft: SkillSelection, name: string): boolean {
 
 /**
  * Draft form state only. The saved selection, the convergence across agent skill
- * directories, and the resulting status all belong to the desktop skills module.
+ * directories, and the resulting status all belong to the selected host.
  */
 export function SkillSelectionSheet({
   visible,
@@ -87,11 +90,11 @@ export function SkillSelectionSheet({
         const attempt = await onSave(draft);
         if (attempt.confirmationRequired) {
           const confirmed = await confirmDialog({
-            title: t("settings.integrations.skills.removeTitle"),
-            message: t("settings.integrations.skills.removeMessage", {
+            title: t("settings.host.skills.removeTitle"),
+            message: t("settings.host.skills.removeMessage", {
               skills: attempt.confirmationRequired.removals.join(", "),
             }),
-            confirmLabel: t("settings.integrations.actions.remove"),
+            confirmLabel: t("settings.host.skills.actions.remove"),
             destructive: true,
           });
           if (!confirmed) return;
@@ -99,13 +102,13 @@ export function SkillSelectionSheet({
           // Something else changed the directories again while the dialog was
           // up. Ask about the new list rather than deleting it unannounced.
           if (retry.confirmationRequired) {
-            setSaveError(t("settings.integrations.skills.saveFailed"));
+            setSaveError(t("settings.host.skills.saveFailed"));
             return;
           }
         }
         onClose();
       } catch {
-        setSaveError(t("settings.integrations.skills.saveFailed"));
+        setSaveError(t("settings.host.skills.saveFailed"));
       }
     })();
   }, [draft, onClose, onSave, t]);
@@ -115,10 +118,7 @@ export function SkillSelectionSheet({
     onClose();
   }, [isSaving, onClose]);
 
-  const header = useMemo<SheetHeader>(
-    () => ({ title: t("settings.integrations.skills.choose") }),
-    [t],
-  );
+  const header = useMemo<SheetHeader>(() => ({ title: t("settings.host.skills.choose") }), [t]);
 
   const footer = useMemo(
     () => (
@@ -139,8 +139,8 @@ export function SkillSelectionSheet({
           testID="skill-selection-save"
         >
           {isSaving
-            ? t("settings.integrations.actions.saving")
-            : t("settings.integrations.actions.save")}
+            ? t("settings.host.skills.actions.saving")
+            : t("settings.host.skills.actions.save")}
         </Button>
       </View>
     ),
@@ -160,18 +160,14 @@ export function SkillSelectionSheet({
       <View style={settingsStyles.card} testID="skill-selection-all-card">
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>
-              {t("settings.integrations.skills.chooseAll")}
-            </Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.integrations.skills.chooseAllHint")}
-            </Text>
+            <Text style={settingsStyles.rowTitle}>{t("settings.host.skills.chooseAll")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.host.skills.chooseAllHint")}</Text>
           </View>
           <Switch
             value={allSkills}
             onValueChange={handleToggleAll}
             disabled={isSaving}
-            accessibilityLabel={t("settings.integrations.skills.chooseAll")}
+            accessibilityLabel={t("settings.host.skills.chooseAll")}
             testID="skill-selection-all"
           />
         </View>
@@ -179,13 +175,11 @@ export function SkillSelectionSheet({
 
       {/* The sheet body already spaces its blocks apart, so the section owns
           only the gap between its label and the list the label names. */}
-      <SettingsSection title={t("settings.integrations.skills.chooseList")} flush>
+      <SettingsSection title={t("settings.host.skills.chooseList")} flush>
         <View style={settingsStyles.card} testID="skill-selection-list-card">
           {available.length === 0 ? (
             <View style={settingsStyles.row}>
-              <Text style={settingsStyles.rowHint}>
-                {t("settings.integrations.skills.chooseEmpty")}
-              </Text>
+              <Text style={settingsStyles.rowHint}>{t("settings.host.skills.chooseEmpty")}</Text>
             </View>
           ) : (
             available.map((name, index) => (

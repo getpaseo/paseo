@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
@@ -1298,13 +1298,6 @@ export const ar: TranslationResources = {
         statusFailed: "غير قادر على التحقق من حالة تثبيت CLI.",
         installFailed: "غير قادر على تثبيت PaseoCLI.",
       },
-      skills: {
-        statusFailed: "غير قادر على التحقق من حالة مهارات التنسيق.",
-        installFailed: "غير قادر على تثبيت مهارات التنسيق.",
-        updateFailed: "غير قادر على تحديث مهارات التنسيق.",
-        uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
-        saveSelectionFailed: "غير قادر على حفظ اختيار مهارات التنسيق.",
-      },
     },
   },
   rootError: {
@@ -2081,47 +2074,16 @@ export const ar: TranslationResources = {
       title: "التكامل",
       docs: {
         cli: "مستندات CLI",
-        skills: "وثائق المهارات",
         openCli: "افتح وثائق CLI",
-        openSkills: "فتح وثائق المهارات",
       },
       commandLine: {
         title: "سطر الأوامر",
         description: "وكلاء التحكم والبرنامج النصي من المحطة الطرفية الخاصة بك",
       },
-      skills: {
-        title: "مهارات التنسيق",
-        description: "قم بتعليم عملائك كيفية التنسيق من خلال CLI",
-        updateAvailable: "التحديث متاح",
-        updateTitle: "تحديث مهارات Paseo ؟",
-        updateFallback: "مزامنة المهارات المجمعة لجهازك.",
-        uninstallTitle: "إلغاء تثبيت مهارات Paseo ؟",
-        uninstallMessage: "يزيل جميع مهارات تنسيق Paseo من ~/.agents ، ~/.claude ، ~/.codex.",
-        choose: "اختيار المهارات",
-        chooseAll: "كل المهارات",
-        chooseAllHint: "أبقِ جميع المهارات المرفقة مثبتة، بما فيها ما يُضاف لاحقًا.",
-        chooseList: "المهارات المرفقة",
-        chooseEmpty: "لا تتضمن هذه النسخة أي مهارات.",
-        removeTitle: "إزالة المهارات غير المحددة؟",
-        removeMessage:
-          "سيتم حذف {{skills}} من ~/.agents و~/.claude و~/.codex. كما يُحذف كل ما أضفته داخل مجلدات المهارات تلك.",
-        saveFailed: "تعذر حفظ اختيار المهارات.",
-      },
       actions: {
         install: "ثَبَّتَ",
         installing: "جارٍ التثبيت...",
         installed: "تم التثبيت",
-        update: "تحديث",
-        working: "عمل...",
-        remove: "إزالة",
-        uninstall: "إلغاء التثبيت",
-        save: "حفظ",
-        saving: "جارٍ الحفظ...",
-      },
-      operations: {
-        add: "أضف مهارة",
-        update: "تحديث المهارة",
-        delete: "حذف المهارة",
       },
     },
     permissions: {
@@ -2190,6 +2152,47 @@ export const ar: TranslationResources = {
         title: "إقران الأجهزة",
         rowTitle: "إقران جهاز",
         rowHint: "امسح رمز QR ضوئيًا أو انسخ رابطًا لتوصيل هاتفك بهذا المضيف",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "مهارات التنسيق",
+        title: "مهارات التنسيق",
+        description: "قم بتعليم عملائك كيفية التنسيق من خلال CLI",
+        updateAvailable: "التحديث متاح",
+        updateTitle: "تحديث مهارات Paseo ؟",
+        updateFallback: "مزامنة المهارات المجمعة لجهازك.",
+        uninstallTitle: "إلغاء تثبيت مهارات Paseo ؟",
+        uninstallMessage: "يزيل جميع مهارات تنسيق Paseo من ~/.agents ، ~/.claude ، ~/.codex.",
+        choose: "اختيار المهارات",
+        chooseAll: "كل المهارات",
+        chooseAllHint: "أبقِ جميع المهارات المرفقة مثبتة، بما فيها ما يُضاف لاحقًا.",
+        chooseList: "المهارات المرفقة",
+        chooseEmpty: "لا تتضمن هذه النسخة أي مهارات.",
+        removeTitle: "إزالة المهارات غير المحددة؟",
+        removeMessage:
+          "سيتم حذف {{skills}} من ~/.agents و~/.claude و~/.codex. كما يُحذف كل ما أضفته داخل مجلدات المهارات تلك.",
+        saveFailed: "تعذر حفظ اختيار المهارات.",
+        statusFailed: "غير قادر على التحقق من حالة مهارات التنسيق.",
+        updateFailed: "غير قادر على تحديث مهارات التنسيق.",
+        uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
+        saveSelectionFailed: "غير قادر على حفظ اختيار مهارات التنسيق.",
+        actions: {
+          install: "ثَبَّتَ",
+          installing: "جارٍ التثبيت...",
+          installed: "تم التثبيت",
+          update: "تحديث",
+          working: "عمل...",
+          remove: "إزالة",
+          uninstall: "إلغاء التثبيت",
+          save: "حفظ",
+          saving: "جارٍ الحفظ...",
+          cancel: "يلغي",
+        },
+        operations: {
+          add: "أضف مهارة",
+          update: "تحديث المهارة",
+          delete: "حذف المهارة",
+        },
       },
       orchestration: {
         title: "التنسيق",

@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
@@ -1340,14 +1340,6 @@ export const fr: TranslationResources = {
         statusFailed: "Impossible de vérifier l'état de l'installation deCLI.",
         installFailed: "Impossible d'installer lePaseoCLI.",
       },
-      skills: {
-        statusFailed: "Impossible de vérifier l'état des compétences d'orchestration.",
-        installFailed: "Impossible d'installer les compétences d'orchestration.",
-        updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
-        uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
-        saveSelectionFailed:
-          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
-      },
     },
   },
   rootError: {
@@ -2134,49 +2126,16 @@ export const fr: TranslationResources = {
       title: "Intégrations",
       docs: {
         cli: "DocumentsCLI",
-        skills: "Documents de compétences",
         openCli: "Ouvrir la documentationCLI",
-        openSkills: "Documentation des compétences ouvertes",
       },
       commandLine: {
         title: "Ligne de commande",
         description: "Agents de contrôle et de script depuis votre terminal",
       },
-      skills: {
-        title: "Compétences en orchestration",
-        description: "Apprenez à vos agents à orchestrer via leCLI",
-        updateAvailable: "Mise à jour disponible",
-        updateTitle: "Mettre à jour les compétencesPaseo?",
-        updateFallback: "Synchronisez les compétences regroupées sur votre machine.",
-        uninstallTitle: "Désinstaller les compétencesPaseo?",
-        uninstallMessage:
-          "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
-        choose: "Choisir les compétences",
-        chooseAll: "Toutes les compétences",
-        chooseAllHint:
-          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
-        chooseList: "Compétences fournies",
-        chooseEmpty: "Cette version ne fournit aucune compétence.",
-        removeTitle: "Supprimer les compétences décochées ?",
-        removeMessage:
-          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
-        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
-      },
       actions: {
         install: "Installer",
         installing: "Installation...",
         installed: "Installé",
-        update: "Mise à jour",
-        working: "Fonctionnement...",
-        remove: "Supprimer",
-        uninstall: "Désinstaller",
-        save: "Enregistrer",
-        saving: "Enregistrement...",
-      },
-      operations: {
-        add: "Ajouter une compétence",
-        update: "Mettre à jour la compétence",
-        delete: "Supprimer la compétence",
       },
     },
     permissions: {
@@ -2245,6 +2204,50 @@ export const fr: TranslationResources = {
         title: "Associer des appareils",
         rowTitle: "Associer un appareil",
         rowHint: "Scannez un codeQRou copiez un lien pour connecter votre téléphone à cet hôte",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "Compétences en orchestration",
+        title: "Compétences en orchestration",
+        description: "Apprenez à vos agents à orchestrer via leCLI",
+        updateAvailable: "Mise à jour disponible",
+        updateTitle: "Mettre à jour les compétencesPaseo?",
+        updateFallback: "Synchronisez les compétences regroupées sur votre machine.",
+        uninstallTitle: "Désinstaller les compétencesPaseo?",
+        uninstallMessage:
+          "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choisir les compétences",
+        chooseAll: "Toutes les compétences",
+        chooseAllHint:
+          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
+        chooseList: "Compétences fournies",
+        chooseEmpty: "Cette version ne fournit aucune compétence.",
+        removeTitle: "Supprimer les compétences décochées ?",
+        removeMessage:
+          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
+        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
+        statusFailed: "Impossible de vérifier l'état des compétences d'orchestration.",
+        updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
+        uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
+        saveSelectionFailed:
+          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
+        actions: {
+          install: "Installer",
+          installing: "Installation...",
+          installed: "Installé",
+          update: "Mise à jour",
+          working: "Fonctionnement...",
+          remove: "Supprimer",
+          uninstall: "Désinstaller",
+          save: "Enregistrer",
+          saving: "Enregistrement...",
+          cancel: "Annuler",
+        },
+        operations: {
+          add: "Ajouter une compétence",
+          update: "Mettre à jour la compétence",
+          delete: "Supprimer la compétence",
+        },
       },
       orchestration: {
         title: "Orchestration",

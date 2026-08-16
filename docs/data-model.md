@@ -175,6 +175,10 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 Single file, validated with `PersistedConfigSchema`.
 
+`agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
+`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
+skill directories and keeps config plus filesystem convergence behind one serialized owner.
+
 `paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
 fields and their removal/default semantics; session handlers and the CLI only relay the structured
@@ -218,6 +222,9 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     local: { modelsDir: string }
   },
   agents: {
+    skills?: {
+      selection?: { mode: "all" } | { mode: "custom", skills: string[] }
+    },
     // ProviderOverrideSchema; legacy entries with `command: { mode, ... }` are migrated to the
     // current shape on load via `migrateProviderSettings`. Custom provider IDs must declare
     // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.

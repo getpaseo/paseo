@@ -1,5 +1,8 @@
 import type {
   AgentSnapshotPayload,
+  AgentSkillSelection,
+  AgentSkillsSaveResult,
+  AgentSkillsStatus,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
   FetchWorkspacesResponseMessage,
@@ -272,6 +275,19 @@ export interface PaseoAgentActions {
    * The returned function only removes this SDK listener.
    */
   subscribe(handler: PaseoAgentUpdateHandler): () => void;
+  readonly skills: {
+    getStatus(): Promise<AgentSkillsStatus>;
+    reconcile(): Promise<AgentSkillsStatus>;
+    uninstall(): Promise<AgentSkillsStatus>;
+    saveSelection(
+      selection: AgentSkillSelection,
+      confirmedRemovals?: readonly string[],
+    ): Promise<AgentSkillsSaveResult>;
+    importLegacySelectionIfUnset(selection: AgentSkillSelection): Promise<{
+      imported: boolean;
+      selection: AgentSkillSelection;
+    }>;
+  };
 }
 
 export type PaseoProviderModelsResult = ListProviderModelsResponseMessage["payload"];
@@ -439,6 +455,15 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
         daemonClient.on("agent_update", (message) => {
           handler(message.payload);
         }),
+      skills: {
+        getStatus: () => daemonClient.getAgentSkillsStatus(),
+        reconcile: () => daemonClient.reconcileAgentSkills(),
+        uninstall: () => daemonClient.uninstallAgentSkills(),
+        saveSelection: (selection, confirmedRemovals) =>
+          daemonClient.saveAgentSkillsSelection(selection, confirmedRemovals),
+        importLegacySelectionIfUnset: (selection) =>
+          daemonClient.importLegacyAgentSkillsSelection(selection),
+      },
     },
     providers: {
       listModels: (provider, options) => daemonClient.listProviderModels(provider, options),

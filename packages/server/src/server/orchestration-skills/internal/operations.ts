@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 import { listFilesRecursive, removeSkill, syncSkills } from "./sync.js";
 
 export type SkillsState = "not-installed" | "up-to-date" | "drift";
@@ -11,7 +12,7 @@ export type SkillOp =
   | { kind: "delete"; name: string };
 
 /** What the user asked to have installed. `all` follows the bundle as it grows. */
-export type SkillSelection = { mode: "all" } | { mode: "custom"; skills: readonly string[] };
+export type SkillSelection = AgentSkillSelection;
 
 export interface SkillsStatus {
   state: SkillsState;

@@ -188,6 +188,12 @@ export const PluginSourceSchema = z.discriminatedUnion("source", [DirectoryPlugi
 
 export type PluginSource = z.infer<typeof PluginSourceSchema>;
 
+export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }).strict(),
+  z.object({ mode: z.literal("custom"), skills: z.array(z.string()) }).strict(),
+]);
+export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -222,6 +228,7 @@ export const MutableDaemonConfigSchema = z
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -1394,6 +1401,59 @@ export const PluginRpcInvokeRequestSchema = z.object({
   method: z.string().min(1),
   input: z.unknown(),
 });
+
+export const AgentSkillOperationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("add"), name: z.string() }).strict(),
+  z.object({ kind: z.literal("update"), name: z.string() }).strict(),
+  z.object({ kind: z.literal("delete"), name: z.string() }).strict(),
+]);
+export type AgentSkillOperation = z.infer<typeof AgentSkillOperationSchema>;
+
+export const AgentSkillsStatusSchema = z.object({
+  state: z.enum(["not-installed", "up-to-date", "drift"]),
+  ops: z.array(AgentSkillOperationSchema),
+  available: z.array(z.string()),
+  installed: z.array(z.string()),
+  selection: AgentSkillSelectionSchema,
+});
+export type AgentSkillsStatus = z.infer<typeof AgentSkillsStatusSchema>;
+
+export const AgentSkillsConfirmationSchema = z.object({ removals: z.array(z.string()) }).strict();
+export type AgentSkillsConfirmation = z.infer<typeof AgentSkillsConfirmationSchema>;
+
+export const AgentSkillsSaveResultSchema = AgentSkillsStatusSchema.extend({
+  confirmationRequired: AgentSkillsConfirmationSchema.nullable(),
+});
+export type AgentSkillsSaveResult = z.infer<typeof AgentSkillsSaveResultSchema>;
+
+function agentSkillsRequest<const Type extends string>(type: Type) {
+  return z.object({ type: z.literal(type), requestId: z.string() }).strict();
+}
+
+export const AgentSkillsGetStatusRequestSchema = agentSkillsRequest(
+  "agent.skills.get_status.request",
+);
+export const AgentSkillsReconcileRequestSchema = agentSkillsRequest(
+  "agent.skills.reconcile.request",
+);
+export const AgentSkillsUninstallRequestSchema = agentSkillsRequest(
+  "agent.skills.uninstall.request",
+);
+export const AgentSkillsSaveSelectionRequestSchema = z
+  .object({
+    type: z.literal("agent.skills.save_selection.request"),
+    requestId: z.string(),
+    selection: AgentSkillSelectionSchema,
+    confirmedRemovals: z.array(z.string()).optional(),
+  })
+  .strict();
+export const AgentSkillsImportLegacySelectionRequestSchema = z
+  .object({
+    type: z.literal("agent.skills.import_legacy_selection.request"),
+    requestId: z.string(),
+    selection: AgentSkillSelectionSchema,
+  })
+  .strict();
 
 export const GetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("get_daemon_config_request"),
@@ -2875,6 +2935,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  AgentSkillsGetStatusRequestSchema,
+  AgentSkillsReconcileRequestSchema,
+  AgentSkillsUninstallRequestSchema,
+  AgentSkillsSaveSelectionRequestSchema,
+  AgentSkillsImportLegacySelectionRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -3205,6 +3270,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
+        skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -5933,6 +6000,35 @@ export const PluginRpcInvokeResponseSchema = z.object({
   }),
 });
 
+function agentSkillsStatusResponse<const Type extends string>(type: Type) {
+  return z.object({
+    type: z.literal(type),
+    payload: AgentSkillsStatusSchema.extend({ requestId: z.string() }),
+  });
+}
+
+export const AgentSkillsGetStatusResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.get_status.response",
+);
+export const AgentSkillsReconcileResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.reconcile.response",
+);
+export const AgentSkillsUninstallResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.uninstall.response",
+);
+export const AgentSkillsSaveSelectionResponseSchema = z.object({
+  type: z.literal("agent.skills.save_selection.response"),
+  payload: AgentSkillsSaveResultSchema.extend({ requestId: z.string() }),
+});
+export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
+  type: z.literal("agent.skills.import_legacy_selection.response"),
+  payload: z.object({
+    requestId: z.string(),
+    imported: z.boolean(),
+    selection: AgentSkillSelectionSchema,
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
@@ -5950,6 +6046,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  AgentSkillsGetStatusResponseSchema,
+  AgentSkillsReconcileResponseSchema,
+  AgentSkillsUninstallResponseSchema,
+  AgentSkillsSaveSelectionResponseSchema,
+  AgentSkillsImportLegacySelectionResponseSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,

@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
@@ -1282,13 +1282,6 @@ export const zhCN: TranslationResources = {
         statusFailed: "无法检查 CLI 安装状态。",
         installFailed: "无法安装 Paseo CLI。",
       },
-      skills: {
-        statusFailed: "无法检查编排 skills 状态。",
-        installFailed: "无法安装编排 skills。",
-        updateFailed: "无法更新编排 skills。",
-        uninstallFailed: "无法卸载编排 skills。",
-        saveSelectionFailed: "无法保存编排 skills 的选择。",
-      },
     },
   },
   rootError: {
@@ -2057,47 +2050,16 @@ export const zhCN: TranslationResources = {
       title: "集成",
       docs: {
         cli: "CLI 文档",
-        skills: "Skills 文档",
         openCli: "打开 CLI 文档",
-        openSkills: "打开 skills 文档",
       },
       commandLine: {
         title: "命令行",
         description: "从终端控制 Agent 并运行脚本",
       },
-      skills: {
-        title: "编排 skills",
-        description: "教会 Agent 通过 CLI 编排任务",
-        updateAvailable: "有更新可用",
-        updateTitle: "更新 Paseo skills？",
-        updateFallback: "将内置 skills 同步到你的机器。",
-        uninstallTitle: "卸载 Paseo skills？",
-        uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
-        choose: "选择 skills",
-        chooseAll: "全部 skills",
-        chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
-        chooseList: "内置 skills",
-        chooseEmpty: "此版本未内置 skills。",
-        removeTitle: "移除取消勾选的 skills？",
-        removeMessage:
-          "将从 ~/.agents、~/.claude、~/.codex 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
-        saveFailed: "无法保存你的 skills 选择。",
-      },
       actions: {
         install: "安装",
         installing: "正在安装...",
         installed: "已安装",
-        update: "更新",
-        working: "处理中...",
-        remove: "移除",
-        uninstall: "卸载",
-        save: "保存",
-        saving: "正在保存...",
-      },
-      operations: {
-        add: "添加 skill",
-        update: "更新 skill",
-        delete: "删除 skill",
       },
     },
     permissions: {
@@ -2166,6 +2128,47 @@ export const zhCN: TranslationResources = {
         title: "配对设备",
         rowTitle: "配对设备",
         rowHint: "扫描二维码或复制链接，将手机连接到这个 Host",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "编排 skills",
+        title: "编排 skills",
+        description: "教会 Agent 通过 CLI 编排任务",
+        updateAvailable: "有更新可用",
+        updateTitle: "更新 Paseo skills？",
+        updateFallback: "将内置 skills 同步到你的机器。",
+        uninstallTitle: "卸载 Paseo skills？",
+        uninstallMessage: "会从 ~/.agents、~/.claude、~/.codex 移除所有 Paseo 编排 skills。",
+        choose: "选择 skills",
+        chooseAll: "全部 skills",
+        chooseAllHint: "保持安装所有内置 skills，包括以后新增的。",
+        chooseList: "内置 skills",
+        chooseEmpty: "此版本未内置 skills。",
+        removeTitle: "移除取消勾选的 skills？",
+        removeMessage:
+          "将从 ~/.agents、~/.claude、~/.codex 中删除 {{skills}}。你在这些 skill 文件夹里添加的内容也会一并删除。",
+        saveFailed: "无法保存你的 skills 选择。",
+        statusFailed: "无法检查编排 skills 状态。",
+        updateFailed: "无法更新编排 skills。",
+        uninstallFailed: "无法卸载编排 skills。",
+        saveSelectionFailed: "无法保存编排 skills 的选择。",
+        actions: {
+          install: "安装",
+          installing: "正在安装...",
+          installed: "已安装",
+          update: "更新",
+          working: "处理中...",
+          remove: "移除",
+          uninstall: "卸载",
+          save: "保存",
+          saving: "正在保存...",
+          cancel: "取消",
+        },
+        operations: {
+          add: "添加 skill",
+          update: "更新 skill",
+          delete: "删除 skill",
+        },
       },
       orchestration: {
         title: "编排",

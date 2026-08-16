@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
@@ -1324,13 +1324,6 @@ export const ptBR: TranslationResources = {
         statusFailed: "Não foi possível verificar o status de instalação da CLI.",
         installFailed: "Não foi possível instalar a CLI do Paseo.",
       },
-      skills: {
-        statusFailed: "Não foi possível verificar o status das skills de orquestração.",
-        installFailed: "Não foi possível instalar as skills de orquestração.",
-        updateFailed: "Não foi possível atualizar as skills de orquestração.",
-        uninstallFailed: "Não foi possível desinstalar as skills de orquestração.",
-        saveSelectionFailed: "Não foi possível salvar a seleção de skills de orquestração.",
-      },
     },
   },
   rootError: {
@@ -2113,49 +2106,16 @@ export const ptBR: TranslationResources = {
       title: "Integrações",
       docs: {
         cli: "Docs da CLI",
-        skills: "Docs das skills",
         openCli: "Abrir documentação da CLI",
-        openSkills: "Abrir documentação das skills",
       },
       commandLine: {
         title: "Linha de comando",
         description: "Controle agentes e execute scripts pelo terminal",
       },
-      skills: {
-        title: "Skills de orquestração",
-        description: "Ensine seus agentes a orquestrar pela CLI",
-        updateAvailable: "Atualização disponível",
-        updateTitle: "Atualizar Paseo skills?",
-        updateFallback: "Sincronize as skills incluídas com sua máquina.",
-        uninstallTitle: "Desinstalar Paseo skills?",
-        uninstallMessage:
-          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
-        choose: "Escolher skills",
-        chooseAll: "Todas as skills",
-        chooseAllHint:
-          "Mantenha instaladas todas as skills incluídas, inclusive as adicionadas depois.",
-        chooseList: "Skills incluídas",
-        chooseEmpty: "Esta versão não inclui skills.",
-        removeTitle: "Remover as skills desmarcadas?",
-        removeMessage:
-          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
-        saveFailed: "Não foi possível salvar sua seleção de skills.",
-      },
       actions: {
         install: "Instalar",
         installing: "Instalando...",
         installed: "Instalado",
-        update: "Atualizar",
-        working: "Trabalhando...",
-        remove: "Remover",
-        uninstall: "Desinstalar",
-        save: "Salvar",
-        saving: "Salvando...",
-      },
-      operations: {
-        add: "Adicionar skill",
-        update: "Atualizar skill",
-        delete: "Excluir skill",
       },
     },
     permissions: {
@@ -2224,6 +2184,49 @@ export const ptBR: TranslationResources = {
         title: "Parear dispositivos",
         rowTitle: "Parear um dispositivo",
         rowHint: "Escaneie um QR code ou copie um link para conectar seu celular a este host",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "Skills de orquestração",
+        title: "Skills de orquestração",
+        description: "Ensine seus agentes a orquestrar pela CLI",
+        updateAvailable: "Atualização disponível",
+        updateTitle: "Atualizar Paseo skills?",
+        updateFallback: "Sincronize as skills incluídas com sua máquina.",
+        uninstallTitle: "Desinstalar Paseo skills?",
+        uninstallMessage:
+          "Remove todas as skills de orquestração do Paseo de ~/.agents, ~/.claude e ~/.codex.",
+        choose: "Escolher skills",
+        chooseAll: "Todas as skills",
+        chooseAllHint:
+          "Mantenha instaladas todas as skills incluídas, inclusive as adicionadas depois.",
+        chooseList: "Skills incluídas",
+        chooseEmpty: "Esta versão não inclui skills.",
+        removeTitle: "Remover as skills desmarcadas?",
+        removeMessage:
+          "{{skills}} serão excluídas de ~/.agents, ~/.claude e ~/.codex. Tudo o que você adicionou dentro dessas pastas de skills também é excluído.",
+        saveFailed: "Não foi possível salvar sua seleção de skills.",
+        statusFailed: "Não foi possível verificar o status das skills de orquestração.",
+        updateFailed: "Não foi possível atualizar as skills de orquestração.",
+        uninstallFailed: "Não foi possível desinstalar as skills de orquestração.",
+        saveSelectionFailed: "Não foi possível salvar a seleção de skills de orquestração.",
+        actions: {
+          install: "Instalar",
+          installing: "Instalando...",
+          installed: "Instalado",
+          update: "Atualizar",
+          working: "Trabalhando...",
+          remove: "Remover",
+          uninstall: "Desinstalar",
+          save: "Salvar",
+          saving: "Salvando...",
+          cancel: "Cancelar",
+        },
+        operations: {
+          add: "Adicionar skill",
+          update: "Atualizar skill",
+          delete: "Excluir skill",
+        },
       },
       orchestration: {
         title: "Orquestração",

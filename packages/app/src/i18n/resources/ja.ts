@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
@@ -1311,13 +1311,6 @@ export const ja: TranslationResources = {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
       },
-      skills: {
-        statusFailed: "オーケストレーションスキルのステータスを確認できません。",
-        installFailed: "オーケストレーションスキルをインストールできません。",
-        updateFailed: "オーケストレーションスキルを更新できません。",
-        uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
-        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
-      },
     },
   },
   rootError: {
@@ -2099,49 +2092,16 @@ export const ja: TranslationResources = {
       title: "連携",
       docs: {
         cli: "CLIドキュメント",
-        skills: "スキルドキュメント",
         openCli: "CLIドキュメントを開く",
-        openSkills: "スキルドキュメントを開く",
       },
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
       },
-      skills: {
-        title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
-        updateAvailable: "更新が利用可能",
-        updateTitle: "Paseoスキルを更新しますか？",
-        updateFallback: "バンドルされたスキルをマシンに同期します。",
-        uninstallTitle: "Paseoスキルをアンインストールしますか？",
-        uninstallMessage:
-          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
-        choose: "スキルを選択",
-        chooseAll: "すべてのスキル",
-        chooseAllHint:
-          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
-        chooseList: "バンドルされたスキル",
-        chooseEmpty: "このビルドにはスキルが含まれていません。",
-        removeTitle: "選択を外したスキルを削除しますか？",
-        removeMessage:
-          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
-        saveFailed: "スキルの選択を保存できませんでした。",
-      },
       actions: {
         install: "インストール",
         installing: "インストール中...",
         installed: "インストール済み",
-        update: "更新",
-        working: "処理中...",
-        remove: "削除",
-        uninstall: "アンインストール",
-        save: "保存",
-        saving: "保存中...",
-      },
-      operations: {
-        add: "スキルを追加",
-        update: "スキルを更新",
-        delete: "スキルを削除",
       },
     },
     permissions: {
@@ -2210,6 +2170,49 @@ export const ja: TranslationResources = {
         title: "デバイスをペアリング",
         rowTitle: "デバイスをペアリング",
         rowHint: "QRコードをスキャンするかリンクをコピーしてスマートフォンをこのホストに接続",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "オーケストレーションスキル",
+        title: "オーケストレーションスキル",
+        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        updateAvailable: "更新が利用可能",
+        updateTitle: "Paseoスキルを更新しますか？",
+        updateFallback: "バンドルされたスキルをマシンに同期します。",
+        uninstallTitle: "Paseoスキルをアンインストールしますか？",
+        uninstallMessage:
+          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+        choose: "スキルを選択",
+        chooseAll: "すべてのスキル",
+        chooseAllHint:
+          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
+        chooseList: "バンドルされたスキル",
+        chooseEmpty: "このビルドにはスキルが含まれていません。",
+        removeTitle: "選択を外したスキルを削除しますか？",
+        removeMessage:
+          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+        saveFailed: "スキルの選択を保存できませんでした。",
+        statusFailed: "オーケストレーションスキルのステータスを確認できません。",
+        updateFailed: "オーケストレーションスキルを更新できません。",
+        uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
+        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
+        actions: {
+          install: "インストール",
+          installing: "インストール中...",
+          installed: "インストール済み",
+          update: "更新",
+          working: "処理中...",
+          remove: "削除",
+          uninstall: "アンインストール",
+          save: "保存",
+          saving: "保存中...",
+          cancel: "キャンセル",
+        },
+        operations: {
+          add: "スキルを追加",
+          update: "スキルを更新",
+          delete: "スキルを削除",
+        },
       },
       orchestration: {
         title: "オーケストレーション",

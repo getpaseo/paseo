@@ -13,10 +13,7 @@ import {
   coerceSkillSelection,
   type SkillSelectionStore,
 } from "./selection-store.js";
-import {
-  beginSkillsTransaction,
-  recoverInterruptedSkillTransactions,
-} from "./skills-transaction.js";
+import { beginSkillsTransaction, recoverInterruptedSkillTransactions } from "./transaction.js";
 
 /** Everything the settings UI needs to render skills in one round trip. */
 export interface SkillsSnapshot extends SkillsStatus {
@@ -38,6 +35,10 @@ export interface SkillsController {
   uninstall(): Promise<SkillsSnapshot>;
   autoUpdate(): Promise<SkillsSnapshot>;
   save(request: unknown): Promise<SkillsSaveResult>;
+  importLegacySelectionIfUnset(selection: unknown): Promise<{
+    imported: boolean;
+    selection: SkillSelection;
+  }>;
 }
 
 type Converge = (targets: SkillTargets, selection: SkillSelection) => Promise<SkillsStatus>;
@@ -149,6 +150,14 @@ export function createSkillsController({
     throw new Error("Skills changed repeatedly while the selection was being saved");
   }
 
+  async function importLegacySelectionIfUnset(selection: unknown) {
+    if (await selectionStore.isSet()) {
+      return { imported: false, selection: await selectionStore.get() };
+    }
+    const imported = await selectionStore.set(selection);
+    return { imported: true, selection: imported };
+  }
+
   return {
     status: () => serialize(() => converge(getSkillsStatus)),
     install: () => serialize(() => converge(updateSkills)),
@@ -156,5 +165,7 @@ export function createSkillsController({
     uninstall: () => serialize(() => converge(uninstallSkills)),
     autoUpdate: () => serialize(() => converge(autoUpdateInstalledSkills)),
     save: (selection) => serialize(() => saveSelection(selection)),
+    importLegacySelectionIfUnset: (selection) =>
+      serialize(() => importLegacySelectionIfUnset(selection)),
   };
 }

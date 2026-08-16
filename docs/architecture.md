@@ -64,19 +64,20 @@ not retain non-Git directories.
 
 **Key modules:**
 
-| Module                          | Responsibility                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay  |
-| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing        |
-| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations         |
-| `server/directory-sync/`        | Daemon-global latest-state sequences for projects, workspaces, and agents     |
-| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management       |
-| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
-| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
-| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
-| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
-| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
-| `server/schedule/`              | Cron-based scheduled agents                                                   |
+| Module                          | Responsibility                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay   |
+| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing         |
+| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations          |
+| `server/directory-sync/`        | Daemon-global latest-state sequences for projects, workspaces, and agents      |
+| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management        |
+| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                          |
+| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation  |
+| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK        |
+| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                                |
+| `server/orchestration-skills/`  | Bundled catalog, host selection, convergence, and skill-directory transactions |
+| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                  |
+| `server/schedule/`              | Cron-based scheduled agents                                                    |
 
 ### `packages/protocol` — Wire schemas and shared protocol types
 
@@ -171,6 +172,10 @@ Electron wrapper for macOS, Linux, and Windows.
 - Can spawn the daemon as a managed subprocess
 - Native file access for workspace integration
 - Same WebSocket client as mobile app
+
+The desktop does not manage agent skills. It retains one compatibility reader for the old
+`skill-selection.json`, imports that preference into its managed local daemon, then deletes the old
+file after the daemon confirms persistence.
 
 **Multi-window (hybrid land-on model).** `createWindow()` in `main.ts` is reusable: `⌘⇧N`/File→New Window, relaunching the app (`second-instance`), and the sidebar "Open in new window" action each open a fresh `BrowserWindow`. Every window shows the full sidebar — there is no per-window project ownership or filtering. "Land on a project" is delivered by a per-`webContents` `PendingOpenProjectStore`: each window pulls its own pending project path on mount (`paseo:get-pending-open-project`) and runs the normal open-project flow, identical to a CLI `paseo <path>` launch.
 

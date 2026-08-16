@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
@@ -1327,13 +1327,6 @@ export const ru: TranslationResources = {
         statusFailed: "Невозможно проверить статус установки CLI.",
         installFailed: "Невозможно установить PaseoCLI.",
       },
-      skills: {
-        statusFailed: "Невозможно проверить статус навыков оркестровки.",
-        installFailed: "Невозможно установить навыки оркестровки.",
-        updateFailed: "Невозможно обновить навыки оркестровки.",
-        uninstallFailed: "Невозможно удалить навыки оркестровки.",
-        saveSelectionFailed: "Не удалось сохранить выбор навыков оркестровки.",
-      },
     },
   },
   rootError: {
@@ -2120,47 +2113,16 @@ export const ru: TranslationResources = {
       title: "Интеграции",
       docs: {
         cli: "Документация CLI",
-        skills: "Документы по навыкам",
         openCli: "Открыть документацию CLI",
-        openSkills: "Открытая документация по навыкам",
       },
       commandLine: {
         title: "Командная строка",
         description: "Агенты управления и сценариев с вашего терминала",
       },
-      skills: {
-        title: "Навыки оркестровки",
-        description: "Научите своих агентов организовывать работу через CLI",
-        updateAvailable: "Доступно обновление",
-        updateTitle: "Обновить навыки Paseo?",
-        updateFallback: "Синхронизируйте связанные навыки с вашим компьютером.",
-        uninstallTitle: "Удалить навыки Paseo?",
-        uninstallMessage: "Удаляет все навыки оркестровки Paseo из ~/.agents, ~/.claude, ~/.codex.",
-        choose: "Выбрать навыки",
-        chooseAll: "Все навыки",
-        chooseAllHint: "Держите установленными все входящие навыки, включая добавленные позже.",
-        chooseList: "Входящие навыки",
-        chooseEmpty: "В этой сборке нет навыков.",
-        removeTitle: "Удалить снятые навыки?",
-        removeMessage:
-          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex. Всё, что вы добавили внутри этих папок навыков, тоже удаляется.",
-        saveFailed: "Не удалось сохранить выбор навыков.",
-      },
       actions: {
         install: "Установить",
         installing: "Установка...",
         installed: "Установлено",
-        update: "Обновлять",
-        working: "Работающий...",
-        remove: "Удалить",
-        uninstall: "Удалить",
-        save: "Сохранить",
-        saving: "Сохранение...",
-      },
-      operations: {
-        add: "Добавить навык",
-        update: "Обновить навык",
-        delete: "Удалить навык",
       },
     },
     permissions: {
@@ -2230,6 +2192,47 @@ export const ru: TranslationResources = {
         rowTitle: "Сопряжение устройства",
         rowHint:
           "Отсканируйте код QR или скопируйте ссылку, чтобы подключить свой телефон к этому хосту.",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "Навыки оркестровки",
+        title: "Навыки оркестровки",
+        description: "Научите своих агентов организовывать работу через CLI",
+        updateAvailable: "Доступно обновление",
+        updateTitle: "Обновить навыки Paseo?",
+        updateFallback: "Синхронизируйте связанные навыки с вашим компьютером.",
+        uninstallTitle: "Удалить навыки Paseo?",
+        uninstallMessage: "Удаляет все навыки оркестровки Paseo из ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Выбрать навыки",
+        chooseAll: "Все навыки",
+        chooseAllHint: "Держите установленными все входящие навыки, включая добавленные позже.",
+        chooseList: "Входящие навыки",
+        chooseEmpty: "В этой сборке нет навыков.",
+        removeTitle: "Удалить снятые навыки?",
+        removeMessage:
+          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex. Всё, что вы добавили внутри этих папок навыков, тоже удаляется.",
+        saveFailed: "Не удалось сохранить выбор навыков.",
+        statusFailed: "Невозможно проверить статус навыков оркестровки.",
+        updateFailed: "Невозможно обновить навыки оркестровки.",
+        uninstallFailed: "Невозможно удалить навыки оркестровки.",
+        saveSelectionFailed: "Не удалось сохранить выбор навыков оркестровки.",
+        actions: {
+          install: "Установить",
+          installing: "Установка...",
+          installed: "Установлено",
+          update: "Обновлять",
+          working: "Работающий...",
+          remove: "Удалить",
+          uninstall: "Удалить",
+          save: "Сохранить",
+          saving: "Сохранение...",
+          cancel: "Отмена",
+        },
+        operations: {
+          add: "Добавить навык",
+          update: "Обновить навык",
+          delete: "Удалить навык",
+        },
       },
       orchestration: {
         title: "оркестровка",

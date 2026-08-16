@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
@@ -1307,13 +1307,6 @@ export const ko: TranslationResources = {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
       },
-      skills: {
-        statusFailed: "오케스트레이션 스킬 상태를 확인할 수 없습니다.",
-        installFailed: "오케스트레이션 스킬을 설치할 수 없습니다.",
-        updateFailed: "오케스트레이션 스킬을 업데이트할 수 없습니다.",
-        uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
-        saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
-      },
     },
   },
   rootError: {
@@ -2092,48 +2085,16 @@ export const ko: TranslationResources = {
       title: "통합",
       docs: {
         cli: "CLI 문서",
-        skills: "스킬 문서",
         openCli: "CLI 문서 열기",
-        openSkills: "스킬 문서 열기",
       },
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
       },
-      skills: {
-        title: "오케스트레이션 스킬",
-        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
-        updateAvailable: "업데이트 사용 가능",
-        updateTitle: "Paseo 스킬을 업데이트할까요?",
-        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
-        uninstallTitle: "Paseo 스킬을 제거할까요?",
-        uninstallMessage:
-          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
-        choose: "스킬 선택",
-        chooseAll: "모든 스킬",
-        chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
-        chooseList: "번들 스킬",
-        chooseEmpty: "이 빌드에는 번들 스킬이 없습니다.",
-        removeTitle: "선택 해제한 스킬을 제거할까요?",
-        removeMessage:
-          "{{skills}}는 ~/.agents, ~/.claude 및 ~/.codex에서 삭제됩니다. 해당 스킬 폴더 안에 추가한 모든 항목도 삭제됩니다.",
-        saveFailed: "선택한 스킬을 저장하지 못했습니다.",
-      },
       actions: {
         install: "설치",
         installing: "설치 중...",
         installed: "설치됨",
-        update: "업데이트",
-        working: "작업 중...",
-        remove: "제거",
-        uninstall: "제거",
-        save: "저장",
-        saving: "저장 중...",
-      },
-      operations: {
-        add: "스킬 추가",
-        update: "스킬 업데이트",
-        delete: "스킬 삭제",
       },
     },
     permissions: {
@@ -2202,6 +2163,48 @@ export const ko: TranslationResources = {
         title: "기기 페어링",
         rowTitle: "기기 페어링",
         rowHint: "QR 코드를 스캔하거나 링크를 복사하여 휴대폰을 이 호스트에 연결하세요",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "오케스트레이션 스킬",
+        title: "오케스트레이션 스킬",
+        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
+        updateAvailable: "업데이트 사용 가능",
+        updateTitle: "Paseo 스킬을 업데이트할까요?",
+        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
+        uninstallTitle: "Paseo 스킬을 제거할까요?",
+        uninstallMessage:
+          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
+        choose: "스킬 선택",
+        chooseAll: "모든 스킬",
+        chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
+        chooseList: "번들 스킬",
+        chooseEmpty: "이 빌드에는 번들 스킬이 없습니다.",
+        removeTitle: "선택 해제한 스킬을 제거할까요?",
+        removeMessage:
+          "{{skills}}는 ~/.agents, ~/.claude 및 ~/.codex에서 삭제됩니다. 해당 스킬 폴더 안에 추가한 모든 항목도 삭제됩니다.",
+        saveFailed: "선택한 스킬을 저장하지 못했습니다.",
+        statusFailed: "오케스트레이션 스킬 상태를 확인할 수 없습니다.",
+        updateFailed: "오케스트레이션 스킬을 업데이트할 수 없습니다.",
+        uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
+        saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
+        actions: {
+          install: "설치",
+          installing: "설치 중...",
+          installed: "설치됨",
+          update: "업데이트",
+          working: "작업 중...",
+          remove: "제거",
+          uninstall: "제거",
+          save: "저장",
+          saving: "저장 중...",
+          cancel: "취소",
+        },
+        operations: {
+          add: "스킬 추가",
+          update: "스킬 업데이트",
+          delete: "스킬 삭제",
+        },
       },
       orchestration: {
         title: "오케스트레이션",

@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
@@ -1338,13 +1338,6 @@ export const es: TranslationResources = {
         statusFailed: "No se puede verificar el estado de instalación deCLI.",
         installFailed: "No se puede instalar elPaseoCLI.",
       },
-      skills: {
-        statusFailed: "No se puede comprobar el estado de las habilidades de orquestación.",
-        installFailed: "No se pueden instalar habilidades de orquestación.",
-        updateFailed: "No se pueden actualizar las habilidades de orquestación.",
-        uninstallFailed: "No se pueden desinstalar las habilidades de orquestación.",
-        saveSelectionFailed: "No se puede guardar la selección de habilidades de orquestación.",
-      },
     },
   },
   rootError: {
@@ -2129,49 +2122,16 @@ export const es: TranslationResources = {
       title: "Integraciones",
       docs: {
         cli: "DocumentosCLI",
-        skills: "Documentos de habilidades",
         openCli: "Abrir la documentación deCLI",
-        openSkills: "Documentación de habilidades abiertas",
       },
       commandLine: {
         title: "línea de comando",
         description: "Agentes de control y script desde tu terminal",
       },
-      skills: {
-        title: "Habilidades de orquestación",
-        description: "Enseñe a sus agentes a orquestar a través delCLI",
-        updateAvailable: "Actualización disponible",
-        updateTitle: "¿Actualizar las habilidades dePaseo?",
-        updateFallback: "Sincronice las habilidades incluidas con su máquina.",
-        uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
-        uninstallMessage:
-          "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
-        choose: "Elegir habilidades",
-        chooseAll: "Todas las habilidades",
-        chooseAllHint:
-          "Mantén instaladas todas las habilidades incluidas, también las que se agreguen después.",
-        chooseList: "Habilidades incluidas",
-        chooseEmpty: "Esta versión no incluye habilidades.",
-        removeTitle: "¿Eliminar las habilidades deseleccionadas?",
-        removeMessage:
-          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
-        saveFailed: "No se pudo guardar tu selección de habilidades.",
-      },
       actions: {
         install: "Instalar",
         installing: "Instalando...",
         installed: "Instalado",
-        update: "Actualizar",
-        working: "Laboral...",
-        remove: "Eliminar",
-        uninstall: "Desinstalar",
-        save: "Guardar",
-        saving: "Guardando...",
-      },
-      operations: {
-        add: "Agregar habilidad",
-        update: "Actualizar habilidad",
-        delete: "Eliminar habilidad",
       },
     },
     permissions: {
@@ -2240,6 +2200,49 @@ export const es: TranslationResources = {
         title: "Emparejar dispositivos",
         rowTitle: "Emparejar un dispositivo",
         rowHint: "Escanee un códigoQRo copie un enlace para conectar su teléfono a este host",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "Habilidades de orquestación",
+        title: "Habilidades de orquestación",
+        description: "Enseñe a sus agentes a orquestar a través delCLI",
+        updateAvailable: "Actualización disponible",
+        updateTitle: "¿Actualizar las habilidades dePaseo?",
+        updateFallback: "Sincronice las habilidades incluidas con su máquina.",
+        uninstallTitle: "¿Desinstalar las habilidadesPaseo?",
+        uninstallMessage:
+          "Elimina todas las habilidades de orquestaciónPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Elegir habilidades",
+        chooseAll: "Todas las habilidades",
+        chooseAllHint:
+          "Mantén instaladas todas las habilidades incluidas, también las que se agreguen después.",
+        chooseList: "Habilidades incluidas",
+        chooseEmpty: "Esta versión no incluye habilidades.",
+        removeTitle: "¿Eliminar las habilidades deseleccionadas?",
+        removeMessage:
+          "{{skills}} se eliminarán de ~/.agents, ~/.claude y ~/.codex. También se elimina todo lo que hayas añadido dentro de esas carpetas de habilidades.",
+        saveFailed: "No se pudo guardar tu selección de habilidades.",
+        statusFailed: "No se puede comprobar el estado de las habilidades de orquestación.",
+        updateFailed: "No se pueden actualizar las habilidades de orquestación.",
+        uninstallFailed: "No se pueden desinstalar las habilidades de orquestación.",
+        saveSelectionFailed: "No se puede guardar la selección de habilidades de orquestación.",
+        actions: {
+          install: "Instalar",
+          installing: "Instalando...",
+          installed: "Instalado",
+          update: "Actualizar",
+          working: "Laboral...",
+          remove: "Eliminar",
+          uninstall: "Desinstalar",
+          save: "Guardar",
+          saving: "Guardando...",
+          cancel: "Cancelar",
+        },
+        operations: {
+          add: "Agregar habilidad",
+          update: "Actualizar habilidad",
+          delete: "Eliminar habilidad",
+        },
       },
       orchestration: {
         title: "Orquestación",

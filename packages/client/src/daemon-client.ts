@@ -105,6 +105,9 @@ import type {
   WorkspaceRecoveryState,
   PluginListItem,
   PluginLogEntry,
+  AgentSkillSelection,
+  AgentSkillsStatus,
+  AgentSkillsSaveResult,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -4764,6 +4767,61 @@ export class DaemonClient {
       responseType: "plugin.logs.get.response",
     });
     return payload.entries;
+  }
+
+  async getAgentSkillsStatus(): Promise<AgentSkillsStatus> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "agent.skills.get_status.request", requestId },
+      responseType: "agent.skills.get_status.response",
+    });
+  }
+
+  async reconcileAgentSkills(): Promise<AgentSkillsStatus> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "agent.skills.reconcile.request", requestId },
+      responseType: "agent.skills.reconcile.response",
+    });
+  }
+
+  async uninstallAgentSkills(): Promise<AgentSkillsStatus> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "agent.skills.uninstall.request", requestId },
+      responseType: "agent.skills.uninstall.response",
+    });
+  }
+
+  async saveAgentSkillsSelection(
+    selection: AgentSkillSelection,
+    confirmedRemovals?: readonly string[],
+  ): Promise<AgentSkillsSaveResult> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      message: {
+        type: "agent.skills.save_selection.request",
+        requestId,
+        selection,
+        ...(confirmedRemovals ? { confirmedRemovals: [...confirmedRemovals] } : {}),
+      },
+      responseType: "agent.skills.save_selection.response",
+    });
+  }
+
+  async importLegacyAgentSkillsSelection(selection: AgentSkillSelection): Promise<{
+    imported: boolean;
+    selection: AgentSkillSelection;
+  }> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      message: {
+        type: "agent.skills.import_legacy_selection.request",
+        requestId,
+        selection,
+      },
+      responseType: "agent.skills.import_legacy_selection.response",
+    });
   }
 
   async installDirectoryPlugin(path: string, id?: string): Promise<PluginListItem> {

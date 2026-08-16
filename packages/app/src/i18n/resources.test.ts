@@ -258,7 +258,6 @@ describe("translation resources", () => {
     expect(en.settings.appearance.fonts.interfaceFont).toBe("Interface font");
     expect(en.settings.shortcuts.actions.rebind).toBe("Rebind");
     expect(en.settings.integrations.commandLine.title).toBe("Command line");
-    expect(en.settings.integrations.skills.updateAvailable).toBe("Update available");
     expect(en.settings.notifications.playSound).toBe("Play sound");
     expect(en.settings.notifications.permission).toBe("Notification permission");
     expect(en.settings.notifications.sentTitle).toBe("Test notification sent");
@@ -675,9 +674,6 @@ describe("translation resources", () => {
     );
     expect(en.desktop.daemon.loadFailed).toBe("Unable to load desktop daemon status.");
     expect(en.desktop.integrations.cli.installFailed).toBe("Unable to install the Paseo CLI.");
-    expect(en.desktop.integrations.skills.installFailed).toBe(
-      "Unable to install orchestration skills.",
-    );
   });
 
   it("includes remaining utility chrome keys for the Batch 4T migration", () => {
