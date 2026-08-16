@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Platform, useWindowDimensions } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 
@@ -12,12 +12,23 @@ const TABLET_MIN_SHORT_SIDE = 600; // dp
 
 export function useAdaptiveOrientation(): void {
   const { width, height } = useWindowDimensions();
+  // Resize events arrive continuously while a split-screen or free-form
+  // window is being dragged, and each lock/unlock call makes Android re-layout
+  // the whole activity. Remember the last applied state so only actual
+  // transitions (phone <-> tablet) hit the native orientation API.
+  const lastLockedRef = useRef<boolean | null>(null);
+
   useEffect(() => {
     if (Platform.OS !== "android") {
       return;
     }
     const shortSide = Math.min(width, height);
-    if (shortSide < TABLET_MIN_SHORT_SIDE) {
+    const shouldLock = shortSide < TABLET_MIN_SHORT_SIDE;
+    if (lastLockedRef.current === shouldLock) {
+      return;
+    }
+    lastLockedRef.current = shouldLock;
+    if (shouldLock) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } else {
       void ScreenOrientation.unlockAsync();
