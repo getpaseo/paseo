@@ -432,7 +432,9 @@ export function SidebarWorkspaceTrailingActionOverlay({
   if (!visible || !children) return null;
   return (
     <>
-      {scrimBackdrop ? <TrailingActionScrim backdrop={scrimBackdrop} /> : null}
+      {scrimBackdrop ? (
+        <TrailingActionScrim backdrop={scrimBackdrop} testID="sidebar-workspace-trailing-scrim" />
+      ) : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>{children}</View>
     </>
   );
