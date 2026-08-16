@@ -16,6 +16,9 @@ const PinnedTabTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("draft") }),
   z.strictObject({ kind: z.literal("terminal") }),
   z.strictObject({ kind: z.literal("browser") }),
+  z.strictObject({ kind: z.literal("working_diff") }),
+  z.strictObject({ kind: z.literal("files") }),
+  z.strictObject({ kind: z.literal("pull_request") }),
   z.strictObject({ kind: z.literal("profile"), profileId: z.string() }),
 ]);
 const PinnedTargetsPersistedStateSchema = z.strictObject({
