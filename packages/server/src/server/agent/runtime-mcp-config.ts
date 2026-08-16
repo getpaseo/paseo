@@ -1,7 +1,18 @@
 import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 
-const PASEO_MCP_SERVER_NAME = "paseo";
+export const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
+
+/**
+ * Name used when injecting the internal Paseo MCP server into ACP agents.
+ * ACP agents (e.g. Devin CLI) merge ACP-injected MCP servers with their own
+ * native config files by server name. If a user has a manual `paseo` entry in
+ * their agent's native MCP config (a common workaround), the native entry wins
+ * and the ACP injection — which carries the correct callerAgentId, auth token,
+ * and daemon URL — is silently dropped. Using a distinct name avoids the
+ * collision so the injected server always loads.
+ */
+export const ACP_PASEO_MCP_SERVER_NAME = "paseo-daemon";
 
 export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSessionConfig {
   const mcpServers = config.mcpServers;
@@ -57,7 +68,7 @@ export function withRuntimePaseoMcpServer(params: {
   };
 }
 
-function isInternalPaseoMcpServer(config: McpServerConfig): boolean {
+export function isInternalPaseoMcpServer(config: McpServerConfig): boolean {
   if (config.type !== "http" && config.type !== "sse") {
     return false;
   }

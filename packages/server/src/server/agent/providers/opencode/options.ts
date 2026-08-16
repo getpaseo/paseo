@@ -54,7 +54,7 @@ export function buildOpenCodePermissionRules(
 ): OpenCodePermissionRule[] | undefined {
   const grants =
     toolPolicy?.preapproved.map((grant) => ({
-      permission: `${grant.server}_${grant.tool}`,
+      permission: `${grant.server}.${grant.tool}`,
       pattern: "*",
       action: "allow" as const,
     })) ?? [];

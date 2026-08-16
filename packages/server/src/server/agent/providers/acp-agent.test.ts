@@ -1,5 +1,8 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -24,6 +27,7 @@ import {
   createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
+  ensureDevinMcpPermissionPreapproval,
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
@@ -2433,6 +2437,122 @@ describe("ACPAgentSession", () => {
     );
 
     expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
+  });
+
+  test("renames internal Paseo MCP server to avoid collision with native agent config", () => {
+    // ACP agents (e.g. Devin CLI) merge ACP-injected MCP servers with their
+    // own native config files by name. A user's manual `paseo` entry would
+    // shadow the ACP injection. The internal server must be renamed.
+    const session = new ACPAgentSession(
+      {
+        provider: "acp-with-mcp",
+        cwd: "/tmp/paseo-acp-test",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer test-token" },
+          },
+          external: {
+            type: "http",
+            url: "https://example.com/mcp",
+          },
+        },
+      },
+      {
+        provider: "acp-with-mcp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-with-mcp", "serve"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+
+    const servers = asInternals<ACPSessionInternals>(session).acpMcpServers() as Array<{
+      name: string;
+      type?: string;
+      url?: string;
+    }>;
+    const byName = new Map(servers.map((s) => [s.name, s]));
+    expect(byName.has("paseo")).toBe(false);
+    const renamed = byName.get("paseo-daemon");
+    expect(renamed).toBeDefined();
+    expect(renamed?.type).toBe("http");
+    expect(renamed?.url).toBe("http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1");
+    // Non-internal servers keep their names.
+    expect(byName.get("external")?.url).toBe("https://example.com/mcp");
+  });
+
+  test("ensureDevinMcpPermissionPreapproval writes mcp permission to .devin/config.local.json", async () => {
+    const dir = await fs.mkdtemp(path.join(tmpdir(), "devin-mcp-perm-"));
+    try {
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+
+      const configPath = path.join(dir, ".devin", "config.local.json");
+      const raw = await fs.readFile(configPath, "utf8");
+      const parsed = JSON.parse(raw) as { permissions: { allow: string[] } };
+      expect(parsed.permissions.allow).toContain("mcp__paseo-daemon__*");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ensureDevinMcpPermissionPreapproval merges with existing config and preserves user permissions", async () => {
+    const dir = await fs.mkdtemp(path.join(tmpdir(), "devin-mcp-perm-merge-"));
+    try {
+      const configPath = path.join(dir, ".devin", "config.local.json");
+      await fs.mkdir(path.dirname(configPath), { recursive: true });
+      await fs.writeFile(
+        configPath,
+        JSON.stringify({
+          permissions: {
+            allow: ["Exec(grep)", "mcp__github__list_issues"],
+            deny: ["Bash(rm *)"],
+          },
+          otherField: "preserved",
+        }),
+        "utf8",
+      );
+
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+
+      const raw = await fs.readFile(configPath, "utf8");
+      const parsed = JSON.parse(raw) as {
+        permissions: { allow: string[]; deny: string[] };
+        otherField: string;
+      };
+      expect(parsed.permissions.allow).toEqual([
+        "Exec(grep)",
+        "mcp__github__list_issues",
+        "mcp__paseo-daemon__*",
+      ]);
+      expect(parsed.permissions.deny).toEqual(["Bash(rm *)"]);
+      expect(parsed.otherField).toBe("preserved");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ensureDevinMcpPermissionPreapproval is idempotent", async () => {
+    const dir = await fs.mkdtemp(path.join(tmpdir(), "devin-mcp-perm-idempotent-"));
+    try {
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+
+      const configPath = path.join(dir, ".devin", "config.local.json");
+      const raw = await fs.readFile(configPath, "utf8");
+      const parsed = JSON.parse(raw) as { permissions: { allow: string[] } };
+      expect(parsed.permissions.allow.filter((p) => p === "mcp__paseo-daemon__*")).toHaveLength(1);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("summarizes JSON-RPC error details without stringifying objects", () => {

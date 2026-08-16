@@ -173,7 +173,7 @@ describe("exact MCP preapproval mappings", () => {
         hubPolicy,
       ),
     ).toEqual([
-      { permission: "hub_finish_execution", pattern: "*", action: "allow" },
+      { permission: "hub.finish_execution", pattern: "*", action: "allow" },
       { permission: "hub_finish_execution", pattern: "*", action: "deny" },
       { permission: "bash", pattern: "*", action: "ask" },
     ]);

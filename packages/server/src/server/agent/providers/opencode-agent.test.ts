@@ -2015,7 +2015,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     expect(promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         permission: [
-          { permission: "hub_finish_execution", pattern: "*", action: "allow" },
+          { permission: "hub.finish_execution", pattern: "*", action: "allow" },
           { permission: "bash", pattern: "*", action: "ask" },
           { permission: "hub_reply", pattern: "*", action: "deny" },
         ],
@@ -3980,6 +3980,112 @@ describe("OpenCode provider subagent contract", () => {
       ),
     );
     expect(parent.getPendingPermissions()).toEqual([]);
+    await parent.close();
+  });
+
+  test("auto-approves internal Paseo MCP tool permissions even without auto-accept", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_paseo_mcp" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    // Note: no auto_accept featureValue — internal Paseo MCP tools must be
+    // auto-approved regardless of the auto-accept setting.
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    parent.subscribe(() => undefined);
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_paseo_mcp_child",
+          parentID: "ses_parent_paseo_mcp",
+          title: "Paseo MCP child",
+          directory: "/workspace/paseo-child",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(parentClient.calls.sessionChildren.length).toBeGreaterThanOrEqual(1),
+    );
+    parentClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_paseo_mcp_create_agent",
+        sessionID: "ses_paseo_mcp_child",
+        permission: "paseo.create_agent",
+        patterns: ["create agent"],
+        metadata: {},
+      },
+    });
+
+    await vi.waitFor(() =>
+      expect(parentClient.calls.permissionReply).toContainEqual(
+        expect.objectContaining({
+          requestID: "perm_paseo_mcp_create_agent",
+          directory: "/workspace/paseo-child",
+          reply: "always",
+        }),
+      ),
+    );
+    expect(parent.getPendingPermissions()).toEqual([]);
+    await parent.close();
+  });
+
+  test("does not auto-approve non-Paseo MCP tool permissions without auto-accept", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_other_mcp" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+    });
+    parent.subscribe(() => undefined);
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_other_mcp_child",
+          parentID: "ses_parent_other_mcp",
+          title: "Other MCP child",
+          directory: "/workspace/other-child",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(parentClient.calls.sessionChildren.length).toBeGreaterThanOrEqual(1),
+    );
+    parentClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_other_mcp_tool",
+        sessionID: "ses_other_mcp_child",
+        permission: "github.create_issue",
+        patterns: ["create issue"],
+        metadata: {},
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(parent.getPendingPermissions()).toEqual([
+        expect.objectContaining({ id: "perm_other_mcp_tool" }),
+      ]);
+    });
+    expect(parentClient.calls.permissionReply).not.toContainEqual(
+      expect.objectContaining({ requestID: "perm_other_mcp_tool" }),
+    );
     await parent.close();
   });
 
