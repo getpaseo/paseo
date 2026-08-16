@@ -669,7 +669,7 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
-  private readonly steerAdmissionTails = new Map<string, Promise<void>>();
+  private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -2469,36 +2469,38 @@ export class AgentManager {
     expectedTurnId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const previous = this.steerAdmissionTails.get(agent.id) ?? Promise.resolve();
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        await this.drainSessionEvents(agent.id);
-        this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
-        const barrier: SteerEventBarrier = { events: [] };
-        this.steerEventBarriers.set(agent.id, barrier);
-        try {
-          return await operation();
-        } finally {
-          if (this.steerEventBarriers.get(agent.id) === barrier) {
-            this.steerEventBarriers.delete(agent.id);
-          }
-          for (const event of barrier.events) {
-            this.enqueueSessionEvent(agent.id, event);
-          }
-          await this.drainSessionEvents(agent.id);
+    return this.runForegroundMutation(agent.id, async () => {
+      await this.drainSessionEvents(agent.id);
+      this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
+      const barrier: SteerEventBarrier = { events: [] };
+      this.steerEventBarriers.set(agent.id, barrier);
+      try {
+        return await operation();
+      } finally {
+        if (this.steerEventBarriers.get(agent.id) === barrier) {
+          this.steerEventBarriers.delete(agent.id);
         }
-      });
+        for (const event of barrier.events) {
+          this.enqueueSessionEvent(agent.id, event);
+        }
+        await this.drainSessionEvents(agent.id);
+      }
+    });
+  }
+
+  private async runForegroundMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.foregroundMutationTails.get(agentId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(operation);
     const tail = run.then(
       () => undefined,
       () => undefined,
     );
-    this.steerAdmissionTails.set(agent.id, tail);
+    this.foregroundMutationTails.set(agentId, tail);
     try {
       return await run;
     } finally {
-      if (this.steerAdmissionTails.get(agent.id) === tail) {
-        this.steerAdmissionTails.delete(agent.id);
+      if (this.foregroundMutationTails.get(agentId) === tail) {
+        this.foregroundMutationTails.delete(agentId);
       }
     }
   }
@@ -2694,6 +2696,10 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  }
+
+  private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??
