@@ -131,11 +131,8 @@ test("restores durable canonical turn membership when an agent is reopened", asy
   }
 });
 
-test("uses durable history completeness when registering a persisted agent", async () => {
-  for (const scenario of [
-    { historyComplete: true, expectedHistoryCalls: 0, expectedTexts: ["initial"] },
-    { historyComplete: false, expectedHistoryCalls: 1, expectedTexts: ["initial", "tail"] },
-  ]) {
+test("reconciles provider history whenever a persisted agent starts a new runtime", async () => {
+  for (const scenario of [{ historyComplete: true }, { historyComplete: false }]) {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-completeness-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const timelineDirectory = join(workdir, "agent-timelines");
@@ -200,14 +197,14 @@ test("uses durable history completeness when registering a persisted agent", asy
       await ensureAgentLoaded(created.id, { agentManager: second, agentStorage: storage, logger });
 
       const rows = second.fetchTimeline(created.id, { limit: 0 }).rows;
-      expect(historyCalls).toBe(scenario.expectedHistoryCalls);
+      expect(historyCalls).toBe(1);
       const textRows = rows.flatMap((row) => {
         if (row.item.type === "user_message" || row.item.type === "assistant_message") {
           return [row.item.text];
         }
         return [];
       });
-      expect(textRows).toEqual(scenario.expectedTexts);
+      expect(textRows).toEqual(["initial", "tail"]);
       expect(
         rows.filter((row) => row.item.type === "user_message" && row.item.text === "initial"),
       ).toEqual([canonicalRow]);
@@ -219,7 +216,7 @@ test("uses durable history completeness when registering a persisted agent", asy
         reopened.rows.filter(
           (row) => row.item.type === "assistant_message" && row.item.text === "tail",
         ),
-      ).toHaveLength(scenario.historyComplete ? 0 : 1);
+      ).toHaveLength(1);
     } finally {
       if (second && agentId) await second.closeAgent(agentId).catch(() => undefined);
       await storage.flush().catch(() => undefined);
@@ -270,6 +267,11 @@ test("retains a canonical steer when incomplete provider history lags on reopen"
         yield {
           type: "timeline",
           provider: "codex",
+          item: { type: "assistant_message", text: "provider prefix" },
+        };
+        yield {
+          type: "timeline",
+          provider: "codex",
           item: { type: "user_message", text: "initial" },
         };
       }
@@ -288,11 +290,46 @@ test("retains a canonical steer when incomplete provider history lags on reopen"
       durableTimelineStore: new FileAgentTimelineStore(timelineDirectory),
       logger,
     });
-    await ensureAgentLoaded(created.id, { agentManager: second, agentStorage: storage, logger });
+    const events: AgentManagerEvent[] = [];
+    second.subscribe((event) => events.push(event), {
+      agentId: created.id,
+      replayState: false,
+    });
+    await ensureAgentLoaded(created.id, {
+      agentManager: second,
+      agentStorage: storage,
+      logger,
+      broadcastTimeline: true,
+    });
 
     expect(second.fetchTimeline(created.id, { limit: 0 }).rows).toMatchObject([
+      { item: { type: "assistant_message", text: "provider prefix" } },
       { item: { text: "initial", clientMessageId: "initial" }, turnId: "turn-1" },
       { item: { text: "hello", clientMessageId: "hello" }, turnId: "turn-1" },
+    ]);
+    expect(
+      events.flatMap((event) => {
+        if (event.type !== "agent_stream" || event.event.type !== "timeline") return [];
+        return [
+          {
+            seq: event.seq,
+            item: event.event.item,
+            turnId: event.event.turnId,
+          },
+        ];
+      }),
+    ).toMatchObject([
+      { seq: 1, item: { type: "assistant_message", text: "provider prefix" } },
+      {
+        seq: 2,
+        item: { type: "user_message", text: "initial", clientMessageId: "initial" },
+        turnId: "turn-1",
+      },
+      {
+        seq: 3,
+        item: { type: "user_message", text: "hello", clientMessageId: "hello" },
+        turnId: "turn-1",
+      },
     ]);
     expect(
       await new FileAgentTimelineStore(timelineDirectory).getCommittedSnapshot(created.id),

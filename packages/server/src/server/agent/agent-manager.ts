@@ -3152,7 +3152,6 @@ export class AgentManager {
         session,
         config,
         now,
-        durableHistoryComplete,
         options,
       });
 
@@ -3266,7 +3265,6 @@ export class AgentManager {
     session: AgentSession;
     config: AgentSessionConfig;
     now: Date;
-    durableHistoryComplete: boolean;
     options:
       | {
           createdAt?: Date;
@@ -3283,7 +3281,7 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableHistoryComplete, options } = params;
+    const { resolvedAgentId, session, config, now, options } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -3313,7 +3311,7 @@ export class AgentManager {
         options?.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableHistoryComplete,
+      historyPrimed: options?.historyPrimed ?? false,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -3676,16 +3674,8 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const [index, event] of historyEvents.entries()) {
-      const row = reconciledRows[index];
-      if (!row) continue;
-      if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
-      }
+    if (broadcast) {
+      this.dispatchReconciledTimelineRows(agent, reconciledRows);
     }
     await this.commitCompleteHistorySnapshot(agent.id);
     agent.historyPrimed = true;
@@ -3698,10 +3688,7 @@ export class AgentManager {
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
     const deferredBroadcast = typeof broadcast === "function";
-    const timelineEvents: Array<{
-      event: Extract<AgentStreamEvent, { type: "timeline" }>;
-      row: AgentTimelineRow;
-    }> = [];
+    let timelineRows: AgentTimelineRow[] = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     agent.historyPrimed = false;
@@ -3732,18 +3719,10 @@ export class AgentManager {
         historyEvents.map((event) => ({ item: event.item, timestamp: event.timestamp })),
       );
       this.timelineStore.initialize(agent.id, { rows: reconciledRows });
-      for (const [index, event] of historyEvents.entries()) {
-        const row = reconciledRows[index];
-        if (!row) continue;
-        if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
-        } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
-        }
+      if (deferredBroadcast) {
+        timelineRows = reconciledRows;
+      } else if (broadcast) {
+        this.dispatchReconciledTimelineRows(agent, reconciledRows);
       }
       await this.commitCompleteHistorySnapshot(agent.id);
       agent.historyPrimed = true;
@@ -3761,12 +3740,30 @@ export class AgentManager {
     for (const event of providerSubagentEvents) {
       this.dispatch(event);
     }
-    for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+    this.dispatchReconciledTimelineRows(agent, timelineRows);
+  }
+
+  private dispatchReconciledTimelineRows(
+    agent: ActiveManagedAgent,
+    rows: readonly AgentTimelineRow[],
+  ): void {
+    const epoch = this.timelineStore.getEpoch(agent.id);
+    for (const row of rows) {
+      this.dispatchStream(
+        agent.id,
+        {
+          type: "timeline",
+          provider: agent.provider,
+          item: row.item,
+          ...(row.turnId ? { turnId: row.turnId } : {}),
+          timestamp: row.timestamp,
+        },
+        {
+          seq: row.seq,
+          epoch,
+          timestamp: row.timestamp,
+        },
+      );
     }
   }
 
