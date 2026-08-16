@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import {
   createElectronSpawnOptions,
   registerDevRunnerShutdownSignals,
-  resolveChildKillTarget,
+  resolveChildTermination,
+  resolveNpxInvocation,
 } from "./dev-runner-config.mjs";
 
 describe("desktop dev process ownership", () => {
@@ -39,9 +40,30 @@ describe("desktop dev process ownership", () => {
     });
   });
 
-  test("targets the whole process group for detached child trees", () => {
-    expect(resolveChildKillTarget(42, true)).toBe(-42);
-    expect(resolveChildKillTarget(42, false)).toBe(42);
+  test("uses the Windows command shim through cmd.exe", () => {
+    expect(resolveNpxInvocation("win32", ["expo", "start"], "cmd.exe")).toEqual({
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", "npx.cmd", "expo", "start"],
+    });
+    expect(resolveNpxInvocation("linux", ["expo", "start"])).toEqual({
+      command: "npx",
+      args: ["expo", "start"],
+    });
+  });
+
+  test("terminates detached child trees on each platform", () => {
+    expect(resolveChildTermination("win32", 42, true)).toEqual({
+      kind: "taskkill",
+      args: ["/PID", "42", "/T", "/F"],
+    });
+    expect(resolveChildTermination("linux", 42, true)).toEqual({
+      kind: "signal",
+      target: -42,
+    });
+    expect(resolveChildTermination("win32", 42, false)).toEqual({
+      kind: "signal",
+      target: 42,
+    });
   });
 
   test("stops children when the owning terminal hangs up", () => {

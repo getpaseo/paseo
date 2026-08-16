@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   createElectronSpawnOptions,
   registerDevRunnerShutdownSignals,
-  resolveChildKillTarget,
+  resolveChildTermination,
+  resolveNpxInvocation,
 } from "./dev-runner-config.mjs";
 
 import { resolveDevElectronArgs } from "./dev-runner-args.mjs";
@@ -103,7 +104,16 @@ function killChild({ process: child, detached }, signal) {
   }
 
   try {
-    process.kill(resolveChildKillTarget(child.pid, detached), signal);
+    const termination = resolveChildTermination(process.platform, child.pid, detached);
+    if (termination.kind === "taskkill") {
+      execFileSync("taskkill", termination.args, {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return;
+    }
+
+    process.kill(termination.target, signal);
   } catch {
     // The child may have exited between the liveness check and the signal.
   }
@@ -165,7 +175,12 @@ function canConnect(port, host) {
 
 registerDevRunnerShutdownSignals({ signalSource: process, stop: stopAll });
 
-spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
+const metroInvocation = resolveNpxInvocation(
+  process.platform,
+  ["expo", "start", "--port", String(expoPort)],
+  process.env.ComSpec,
+);
+spawnChild("metro", metroInvocation.command, metroInvocation.args, {
   cwd: appDir,
   detached: true,
   env: {

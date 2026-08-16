@@ -12,8 +12,29 @@ export function createElectronSpawnOptions({ env, colorEnv, expoDevUrl }) {
   };
 }
 
-export function resolveChildKillTarget(pid, detached) {
-  return detached ? -pid : pid;
+export function resolveNpxInvocation(platform, args, windowsShell = "cmd.exe") {
+  if (platform === "win32") {
+    return {
+      command: windowsShell,
+      args: ["/d", "/s", "/c", "npx.cmd", ...args],
+    };
+  }
+
+  return { command: "npx", args };
+}
+
+export function resolveChildTermination(platform, pid, detached) {
+  if (platform === "win32" && detached) {
+    return {
+      kind: "taskkill",
+      args: ["/PID", String(pid), "/T", "/F"],
+    };
+  }
+
+  return {
+    kind: "signal",
+    target: detached ? -pid : pid,
+  };
 }
 
 export function registerDevRunnerShutdownSignals({ signalSource, stop }) {
