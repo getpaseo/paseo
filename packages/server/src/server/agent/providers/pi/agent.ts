@@ -1493,17 +1493,11 @@ export class PiRpcAgentSession implements AgentSession {
       );
       return { status: "unavailable" };
     }
+    // Paseo-owned slash commands (/compact, /autocompact) are intercepted
+    // out-of-band by the daemon before steering is attempted; everything that
+    // reaches steerActiveTurn is either a plain message or a Pi-owned slash
+    // command that Pi expands/executes itself. No slash check here.
     const payload = convertPromptInput(prompt, { model: this.state.model });
-    // Pi steer does not accept extension commands; slash commands are handled
-    // by the out-of-band path in the daemon, so fall back to replace. The check
-    // runs on the converted text so structured prompts cannot bypass it.
-    if (this.parseSlashCommandInput(payload.text) !== null) {
-      this.logger.info(
-        { expectedTurnId: options.expectedTurnId },
-        "pi.steer.unavailable.slash_command",
-      );
-      return { status: "unavailable" };
-    }
     // Re-check after conversion: a finished turn cannot admit a steering message.
     if (this.activeTurnId !== options.expectedTurnId) {
       this.logger.warn(
@@ -1659,10 +1653,7 @@ export class PiRpcAgentSession implements AgentSession {
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
   ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
-    if (typeof prompt !== "string") {
-      return null;
-    }
-    const parsed = this.parseSlashCommandInput(prompt);
+    const parsed = this.resolveSlashCommandFromPrompt(prompt);
     if (!parsed) {
       return null;
     }
@@ -1814,6 +1805,28 @@ export class PiRpcAgentSession implements AgentSession {
     const rawArgs =
       firstWhitespaceIdx === -1 ? "" : withoutPrefix.slice(firstWhitespaceIdx + 1).trim();
     return rawArgs.length > 0 ? { commandName, args: rawArgs } : { commandName };
+  }
+
+  /**
+   * Resolve a slash command from a prompt. Structured prompts can carry
+   * attachment text before the user command, so the check runs on every text
+   * block instead of only the concatenated prompt text — otherwise an
+   * attachment prefix would hide `/compact` and it would be submitted as a
+   * plain (steered) message instead of handled out-of-band.
+   */
+  private resolveSlashCommandFromPrompt(prompt: AgentPromptInput): PiSlashCommandInvocation | null {
+    if (typeof prompt === "string") {
+      return this.parseSlashCommandInput(prompt);
+    }
+    for (const block of prompt) {
+      if (block.type === "text") {
+        const parsed = this.parseSlashCommandInput(block.text);
+        if (parsed) {
+          return parsed;
+        }
+      }
+    }
+    return null;
   }
 
   private async executeCompactCommand(

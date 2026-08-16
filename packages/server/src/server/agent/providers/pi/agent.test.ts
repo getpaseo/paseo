@@ -1170,15 +1170,23 @@ describe("PiRpcAgentSession", () => {
       await session.close();
     });
 
-    test("returns unavailable for slash commands so the daemon can replace instead", async () => {
+    test("steers Pi-owned slash commands instead of refusing them", async () => {
       const { pi, session } = await createSession();
       const fakeSession = pi.latestSession();
 
       const { turnId } = await session.startTurn("original prompt");
-      const result = await session.steerActiveTurn("/compact", { expectedTurnId: turnId });
+      // Paseo-owned commands are intercepted out-of-band before steering, so a
+      // slash command reaching steerActiveTurn is Pi's own (e.g. /model) and
+      // Pi expands/executes it; it must not be refused.
+      const result = await session.steerActiveTurn("/model my-model", {
+        expectedTurnId: turnId,
+      });
 
-      expect(result).toEqual({ status: "unavailable" });
-      expect(fakeSession.prompts).toEqual([{ message: "original prompt", imageCount: 0 }]);
+      expect(result).toEqual({ status: "accepted" });
+      expect(fakeSession.prompts[1]).toMatchObject({
+        message: "/model my-model",
+        streamingBehavior: "steer",
+      });
 
       await session.close();
     });
@@ -1402,21 +1410,6 @@ describe("PiRpcAgentSession", () => {
           clientMessageId: "turn-client",
         },
       ]);
-
-      await session.close();
-    });
-
-    test("returns unavailable for structured prompts that contain a slash command", async () => {
-      const { pi, session } = await createSession();
-      const fakeSession = pi.latestSession();
-
-      const { turnId } = await session.startTurn("original prompt");
-      const result = await session.steerActiveTurn([{ type: "text", text: "/compact now" }], {
-        expectedTurnId: turnId,
-      });
-
-      expect(result).toEqual({ status: "unavailable" });
-      expect(fakeSession.prompts).toEqual([{ message: "original prompt", imageCount: 0 }]);
 
       await session.close();
     });
@@ -2292,6 +2285,26 @@ describe("PiRpcAgentClient", () => {
         item: { type: "compaction", status: "completed", trigger: "manual" },
       },
     ]);
+  });
+
+  test("intercepts Paseo-owned slash commands in structured prompts out-of-band", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    // Attachment text precedes the user command; the daemon must still catch
+    // /compact instead of letting it through as a steered message.
+    const handler = (session as AgentSession).tryHandleOutOfBand?.([
+      { type: "text", text: "Here is the failing test output." },
+      { type: "text", text: "/compact focus on the failing test" },
+    ]);
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.compactRequests).toEqual([
+      { customInstructions: "focus on the failing test" },
+    ]);
+    expect(fakeSession.prompts).toEqual([]);
   });
 
   test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
