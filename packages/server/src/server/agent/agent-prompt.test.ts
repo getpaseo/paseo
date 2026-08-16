@@ -13,6 +13,7 @@ import {
   isSystemInjectedEnvelope,
   setupFinishNotification,
   waitForAgentRunStartWithTimeout,
+  type FinishNotifyMode,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
@@ -51,6 +52,8 @@ interface FinishNotificationScenarioOptions {
   childParentAgentId?: string | null;
   requireParentOwnership?: boolean;
   parentPromptError?: Error;
+  callerArchived?: boolean;
+  notifyMode?: FinishNotifyMode;
   logger?: Logger;
 }
 
@@ -66,6 +69,7 @@ interface FinishNotificationScenario {
   parentPrompts(): string[];
   steerAttemptCount(): number;
   wasParentPrompted(): boolean;
+  subscriberCount(): number;
 }
 
 function createFinishNotificationScenario(
@@ -134,6 +138,9 @@ function createFinishNotificationScenario(
         labels: parentAgentId ? { "paseo.parent-agent-id": parentAgentId } : {},
       };
     }
+    if (agentId === "caller-agent" && options?.callerArchived) {
+      return { title: "Caller Agent", archivedAt: new Date().toISOString() };
+    }
     return null;
   });
 
@@ -145,6 +152,7 @@ function createFinishNotificationScenario(
         childAgentId: "child-agent",
         callerAgentId: "caller-agent",
         requireParentOwnership: options?.requireParentOwnership,
+        ...(options?.notifyMode ? { notifyMode: options.notifyMode } : {}),
         logger: options?.logger ?? createTestLogger(),
       });
     },
@@ -255,6 +263,9 @@ function createFinishNotificationScenario(
     },
     wasParentPrompted() {
       return parentPrompted;
+    },
+    subscriberCount() {
+      return subscriber ? 1 : 0;
     },
   };
 }
@@ -761,4 +772,58 @@ test("waiting for a run start still gives up at the run start budget", async () 
     vi.useRealTimers();
     await scenario.cleanup();
   }
+});
+
+test("the watcher stops after the first finish by default", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  await scenario.finishChildAndReadParentPrompt();
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(scenario.parentPrompts()).toHaveLength(1);
+});
+
+test('notifyMode "each" notifies the caller on every finish', async () => {
+  const scenario = createFinishNotificationScenario({ notifyMode: "each" });
+
+  scenario.startWatchingChild();
+  await scenario.finishChildAndReadParentPrompt();
+  await scenario.finishChildAndReadParentPrompt();
+  await scenario.finishChildAndReadParentPrompt();
+
+  expect(scenario.parentPrompts()).toHaveLength(3);
+  for (const prompt of scenario.parentPrompts()) {
+    expect(prompt).toContain("Agent child-agent (Child Agent) finished.");
+  }
+});
+
+test('notifyMode "each" still stops when the child closes', async () => {
+  const scenario = createFinishNotificationScenario({ notifyMode: "each" });
+
+  scenario.startWatchingChild();
+  await scenario.finishChildAndReadParentPrompt();
+  await scenario.closeChildAndReadParentPrompt();
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(scenario.parentPrompts()).toHaveLength(2);
+  expect(scenario.parentPrompts()[1]).toContain("was closed.");
+});
+
+test('notifyMode "each" stops once the caller is archived', async () => {
+  const scenario = createFinishNotificationScenario({
+    notifyMode: "each",
+    callerArchived: true,
+  });
+
+  scenario.startWatchingChild();
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(scenario.wasParentPrompted()).toBe(false);
+  expect(scenario.subscriberCount()).toBe(0);
 });
