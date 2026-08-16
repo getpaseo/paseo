@@ -18,7 +18,8 @@ import {
 import { readVerticalGap, waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const test = base.extend<{ skills: AgentSkillsSandbox }>({
-  skills: async (_fixtures, provide) => {
+  // oxlint-disable-next-line no-empty-pattern -- Playwright requires destructuring for fixture dependency discovery.
+  skills: async ({}, provide) => {
     const sandbox = await startAgentSkillsSandbox();
     try {
       await provide(sandbox);
