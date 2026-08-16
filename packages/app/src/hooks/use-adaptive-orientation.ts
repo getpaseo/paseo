@@ -29,7 +29,9 @@ export function useAdaptiveOrientation(): void {
     }
     lastLockedRef.current = shouldLock;
     if (shouldLock) {
-      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      void ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP
+      );
     } else {
       void ScreenOrientation.unlockAsync();
     }
