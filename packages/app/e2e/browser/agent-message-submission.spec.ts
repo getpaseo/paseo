@@ -27,6 +27,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { selectModel } from "../support/helpers/app";
@@ -354,7 +355,7 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     model: "ten-second-stream",
   });
   const evictionAgents = await Promise.all(
-    Array.from({ length: 3 }, (_unused, index) =>
+    Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
       seedMockAgentWorkspace({
         repoPrefix: `submission-workspace-eviction-${testInfo.workerIndex}-${index}-`,
         title: `Workspace eviction ${index + 1}`,
@@ -379,7 +380,9 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
       await expectComposerVisible(page);
     }
     await expect(targetDeckEntry).toHaveCount(0);
-    await subscriptions.waitForSubscribedAgents([evictionAgents[2]!.agentId]);
+    await subscriptions.waitForSubscribedAgents([
+      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
+    ]);
     gate.setAgentStreamSuppressed(false);
 
     await target.client.waitForFinish(target.agentId, 30_000);
