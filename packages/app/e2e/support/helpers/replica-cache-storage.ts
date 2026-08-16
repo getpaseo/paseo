@@ -5,10 +5,16 @@ const STORE_NAME = "key-value";
 const STORAGE_KEY = "@paseo:replica-cache";
 
 export interface ReplicaCacheRecord {
+  version?: number;
   hosts?: Array<{
     timeline?: {
       agentId?: string;
       items?: Array<Record<string, unknown>>;
+      range?: {
+        endSeq?: number;
+        epoch?: string;
+        startSeq?: number;
+      } | null;
     } | null;
   }>;
 }

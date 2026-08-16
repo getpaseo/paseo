@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
   common: {
@@ -527,6 +528,8 @@ export const ru: TranslationResources = {
         screenshotCopied: "Снимок скопирован в буфер обмена",
         elementCopied: "Элемент скопирован в буфер обмена",
         screenshotFailed: "Не удалось скопировать снимок",
+        selectorLoading: "Дождитесь окончания загрузки страницы",
+        selectorFailed: "Не удалось запустить выбор элемента",
       },
       annotate: {
         title: "Аннотировать элемент",
@@ -1649,6 +1652,7 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
+    archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1817,8 +1821,10 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Обзор",
     },
+    plugins: pluginSettings.ru,
     metadataGeneration: {
       title: "Создание метаданных",
       description:
