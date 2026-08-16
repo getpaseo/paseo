@@ -4,6 +4,7 @@ import { createProjectViewKey } from "@/projects/workspace-structure";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   composeWorkspaceStructure,
+  createWorkspaceStructureProjectsSelector,
   selectHasWorkspaces,
   selectHydratedWorkspaceServerIds,
   selectWorkspaceDirectoryServerIds,
@@ -338,6 +339,27 @@ describe("selectWorkspaceFields", () => {
 });
 
 describe("workspace structure composition", () => {
+  it("reuses structure when unrelated session state changes", () => {
+    const workspace = createWorkspace({ id: "workspace-a" });
+    const workspaces = new Map([[workspace.id, workspace]]);
+    const projects = new Map([
+      [workspace.projectId, projectDescriptorFromTestWorkspace(workspace)],
+    ]);
+    const selectProjects = createWorkspaceStructureProjectsSelector([SERVER_ID]);
+    const before = selectProjects({ sessions: { [SERVER_ID]: { workspaces, projects } } });
+    const after = selectProjects({
+      sessions: {
+        [SERVER_ID]: {
+          workspaces,
+          projects,
+          hasHydratedWorkspaces: true,
+        },
+      },
+    });
+
+    expect(after).toBe(before);
+  });
+
   function snapshotStructure(
     serverId: string,
     sidebar: SidebarOrderSnapshot,

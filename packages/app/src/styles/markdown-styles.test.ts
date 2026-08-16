@@ -3,6 +3,24 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-st
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
+  it("uses the standard interface size for conversation prose and list markers", () => {
+    const styles = createMarkdownStyles(darkTheme);
+    const proseLineHeight = Math.round(darkTheme.fontSize.sm * 1.4);
+
+    expect(styles.body).toMatchObject({
+      fontSize: darkTheme.fontSize.sm,
+      lineHeight: proseLineHeight,
+    });
+    expect(styles.bullet_list_icon).toMatchObject({
+      fontSize: darkTheme.fontSize.sm,
+      lineHeight: proseLineHeight,
+    });
+    expect(styles.ordered_list_icon).toMatchObject({
+      fontSize: darkTheme.fontSize.sm,
+      lineHeight: proseLineHeight,
+    });
+  });
+
   it("applies shrink-and-wrap constraints to long markdown text and links", () => {
     const styles = createMarkdownStyles(darkTheme);
 

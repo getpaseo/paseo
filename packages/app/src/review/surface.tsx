@@ -14,12 +14,9 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
-import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
-import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
@@ -50,9 +47,8 @@ function getWebTextInputElement(input: TextInput | null): HTMLElement | null {
 export const INLINE_REVIEW_COMMENT_HEIGHT = 72;
 export const INLINE_REVIEW_EDITOR_HEIGHT = 132;
 const INLINE_REVIEW_GAP = 6;
+const INLINE_REVIEW_VERTICAL_PADDING = 8;
 export const SMALL_ACTION_HIT_SLOP = 8;
-const REVIEW_CANCEL_SHORTCUT_KEYS: ShortcutKey[] = ["Esc"];
-const REVIEW_SAVE_SHORTCUT_KEYS: ShortcutKey[] = ["mod", "Enter"];
 const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveIconColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
 const accentForegroundIconColorMapping = (theme: Theme) => ({
@@ -222,7 +218,8 @@ export function getInlineReviewThreadState(input: {
   const height =
     visibleCommentCount * INLINE_REVIEW_COMMENT_HEIGHT +
     editorCount * INLINE_REVIEW_EDITOR_HEIGHT +
-    Math.max(0, visibleBlockCount - 1) * INLINE_REVIEW_GAP;
+    Math.max(0, visibleBlockCount - 1) * INLINE_REVIEW_GAP +
+    INLINE_REVIEW_VERTICAL_PADDING * 2;
 
   return { comments, hasEditor, editingCommentId, height };
 }
@@ -507,12 +504,10 @@ export function InlineReviewEditor({
   const { t } = useTranslation();
   const inputRef = useRef<TextInput | null>(null);
   const focus = useWorkspaceFocusRestoration();
-  const canShowKeyboardHints = useHasFinePointer();
   const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
   const canSave = trimmedBody.length > 0;
-  const showKeyboardHints = isFocused && canShowKeyboardHints;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -527,14 +522,6 @@ export function InlineReviewEditor({
     focus.restore();
   }, [focus]);
   const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
-  const cancelShortcut = useMemo(
-    () => (showKeyboardHints ? <Shortcut keys={REVIEW_CANCEL_SHORTCUT_KEYS} /> : null),
-    [showKeyboardHints],
-  );
-  const saveShortcut = useMemo(
-    () => (showKeyboardHints ? <Shortcut keys={REVIEW_SAVE_SHORTCUT_KEYS} /> : null),
-    [showKeyboardHints],
-  );
 
   useEffect(() => {
     const element = getWebTextInputElement(inputRef.current);
@@ -598,7 +585,6 @@ export function InlineReviewEditor({
           onPress={onCancel}
           variant="ghost"
           size="xs"
-          trailing={cancelShortcut}
         >
           {t("review.comment.cancel")}
         </Button>
@@ -610,7 +596,6 @@ export function InlineReviewEditor({
           onPress={handleSave}
           variant="default"
           size="xs"
-          trailing={saveShortcut}
         >
           {t("review.comment.save")}
         </Button>
@@ -658,7 +643,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     gap: INLINE_REVIEW_GAP,
-    paddingVertical: theme.spacing[2],
+    paddingVertical: INLINE_REVIEW_VERTICAL_PADDING,
     paddingHorizontal: theme.spacing[3],
   },
   commentBlock: {

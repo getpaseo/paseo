@@ -217,6 +217,49 @@ PASEO_PROFILE_IDLE_WAIT_MS=3000             # idle baseline before switching
 PASEO_PROFILE_DUMP_COMMITS=1                # include per-commit profiler samples
 ```
 
+For warm workspace switching, point the benchmark at an app backed by seeded
+daemon state:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:workspace-switching --workspace=@getpaseo/app
+```
+
+The benchmark first warms `Cmd+1` through `Cmd+7`, then records a rapid seven-workspace
+burst. It separately warms the three-entry workspace deck LRU and records `Cmd+1` through
+`Cmd+3` without waits between keys. Both scenarios report keydown-to-activation latency and
+React commits on the same browser clock. Set `PASEO_PROFILE_WORKSPACE_DIGITS`,
+`PASEO_PROFILE_WORKSPACE_LRU_SIZE`, or `PASEO_PROFILE_WARM_QUIET_MS` to change the shape. Set
+`PASEO_PROFILE_DUMP_COMMITS=1` to include the nested component breakdown for every commit.
+Set `PASEO_PROFILE_RETAINED_REPEATS=5` to repeat the retained-LRU burst for a less noisy sample.
+Set `PASEO_PROFILE_CPU_PATH=/tmp/workspace-switch.cpuprofile` to run a separate retained-LRU
+capture after the latency scenarios and write a raw CDP CPU profile without contaminating their
+timings.
+Set `PASEO_PROFILE_TRACE_PATH=/tmp/workspace-switch.trace.json` to run another separate retained-LRU
+capture and write a Chromium Performance trace with User Timing marks and screenshots. Open the
+trace in the Chrome DevTools Performance panel. Set `PASEO_PROFILE_TRACE_INVALIDATIONS=1` only for a
+focused invalidation capture; React Native's generated stacks make that mode highly intrusive.
+Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
+the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
+
+For sustained composer typing, run the paired composer-versus-textarea benchmark against a seeded
+daemon:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:composer-typing --workspace=@getpaseo/app
+```
+
+The benchmark opens the first workspace, preserves its existing draft, and dispatches 300 printable
+keys at a fixed 16 ms cadence without waiting for each key to paint. It measures renderer
+`keydown` to the next paint opportunity, verifies that every character survived, alternates the
+composer and plain-textarea control across three runs, then restores the original draft. The report
+includes percentiles, frame coalescing, input processing, React work, long tasks, slow samples, and
+Playwright dispatch lateness. Set `PASEO_PROFILE_TYPING_KEYS`, `PASEO_PROFILE_TYPING_CADENCE_MS`,
+`PASEO_PROFILE_TYPING_REPEATS`, or `PASEO_PROFILE_WORKSPACE_DIGIT` to change the scenario. Optional
+`PASEO_PROFILE_CPU_PATH` and `PASEO_PROFILE_TRACE_PATH` captures run separately after the latency
+measurements so profiling overhead does not contaminate them.
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync

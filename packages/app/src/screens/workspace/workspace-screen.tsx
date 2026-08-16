@@ -3942,14 +3942,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  // Compact steps the whole header down one rung of the scale. The title and the project line
-  // stack there, so at the shared size they read as two headings rather than a subject and its
-  // caption, and they cost two full lines of a header that has none to spare.
   headerTitle: {
-    fontSize: {
-      xs: theme.fontSize.sm,
-      md: theme.fontSize.base,
-    },
+    fontSize: theme.fontSize.sm,
   },
   headerTitleContainer: {
     flex: 1,
@@ -3999,7 +3993,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: {
       xs: theme.fontSize.xs,
-      md: theme.fontSize.base,
+      md: theme.fontSize.sm,
     },
     flexShrink: 1,
     minWidth: 0,
