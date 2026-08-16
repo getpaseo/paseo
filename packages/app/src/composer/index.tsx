@@ -116,6 +116,7 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { SelectedTextAnnotations } from "@/composer/selected-text-annotations";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -320,8 +321,18 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
 interface RenderAttachmentTrayArgs {
   selectedAttachments: ComposerAttachment[];
   isComposerLocked: boolean;
+  isPaneFocused: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
+  handleOpenSelectedText: (
+    attachment: Extract<ComposerAttachment, { kind: "selected_text" }>,
+  ) => void;
+  handleRemoveSelectedText: (id: string) => void;
+  selectedTextLabels: {
+    count: string;
+    remove: string;
+    noComment: string;
+  };
   labels: {
     openImage: string;
     removeImage: string;
@@ -335,23 +346,45 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
   const {
     selectedAttachments,
     isComposerLocked,
+    isPaneFocused,
     handleOpenAttachment,
     handleRemoveAttachment,
+    handleOpenSelectedText,
+    handleRemoveSelectedText,
+    selectedTextLabels,
     labels,
   } = args;
   if (selectedAttachments.length === 0) return null;
+  const selectedTextAttachments = selectedAttachments.filter(
+    (attachment): attachment is Extract<ComposerAttachment, { kind: "selected_text" }> =>
+      attachment.kind === "selected_text",
+  );
+  const regularAttachments = selectedAttachments.filter(
+    (attachment) => attachment.kind !== "selected_text",
+  );
   return (
     <View style={styles.attachmentTray} testID="composer-attachment-tray">
-      {selectedAttachments.map((attachment, index) =>
-        renderComposerAttachmentPill({
+      {regularAttachments.map((attachment) => {
+        const index = selectedAttachments.indexOf(attachment);
+        return renderComposerAttachmentPill({
           attachment,
           index,
           disabled: isComposerLocked,
           onOpen: handleOpenAttachment,
           onRemove: handleRemoveAttachment,
           labels,
-        }),
-      )}
+        });
+      })}
+      {selectedTextAttachments.length > 0 ? (
+        <SelectedTextAnnotations
+          annotations={selectedTextAttachments}
+          disabled={isComposerLocked}
+          isPaneFocused={isPaneFocused}
+          labels={selectedTextLabels}
+          onOpen={handleOpenSelectedText}
+          onRemove={handleRemoveSelectedText}
+        />
+      ) : null}
     </View>
   );
 }
@@ -393,7 +426,7 @@ interface RenderComposerAttachmentPillArgs {
   labels: RenderAttachmentTrayArgs["labels"];
 }
 
-function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
+function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement | null {
   const { attachment, index, disabled, onOpen, onRemove, labels } = args;
   if (attachment.kind === "image") {
     return (
@@ -432,6 +465,9 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         removeLabel={labels.removeFile}
       />
     );
+  }
+  if (attachment.kind === "selected_text") {
+    return null;
   }
   if (composerWorkspaceAttachment.is(attachment)) {
     return composerWorkspaceAttachment.renderPill({
@@ -866,6 +902,7 @@ interface ComposerProps {
   attachments: UserComposerAttachment[];
   attachmentScopeKeys?: readonly string[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
+  onOpenSelectedText?: (attachment: Extract<ComposerAttachment, { kind: "selected_text" }>) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
   onGithubPrDetected?: () => void;
   onGithubPrAutoAttach?: (item: ForgeSearchItem) => void;
@@ -1075,6 +1112,7 @@ export function Composer({
   attachments,
   attachmentScopeKeys = EMPTY_ATTACHMENT_SCOPE_KEYS,
   onOpenWorkspaceAttachment,
+  onOpenSelectedText,
   onChangeAttachments,
   onGithubPrDetected,
   onGithubPrAutoAttach,
@@ -1632,6 +1670,25 @@ export function Composer({
     [githubAutoAttach, removeAttachment, selectedAttachments, setSelectedAttachments],
   );
 
+  const handleOpenSelectedText = useCallback(
+    (attachment: Extract<ComposerAttachment, { kind: "selected_text" }>) => {
+      onOpenSelectedText?.(attachment);
+    },
+    [onOpenSelectedText],
+  );
+
+  const handleRemoveSelectedText = useCallback(
+    (id: string) => {
+      const index = selectedAttachments.findIndex(
+        (attachment) => attachment.kind === "selected_text" && attachment.id === id,
+      );
+      if (index >= 0) {
+        handleRemoveAttachment(index);
+      }
+    },
+    [handleRemoveAttachment, selectedAttachments],
+  );
+
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
       openComposerAttachment({
@@ -2114,8 +2171,19 @@ export function Composer({
       renderAttachmentTray({
         selectedAttachments,
         isComposerLocked,
+        isPaneFocused,
         handleOpenAttachment,
         handleRemoveAttachment,
+        handleOpenSelectedText,
+        handleRemoveSelectedText,
+        selectedTextLabels: {
+          count: t("composer.attachments.selectedTextCount", {
+            count: selectedAttachments.filter((attachment) => attachment.kind === "selected_text")
+              .length,
+          }),
+          remove: t("composer.attachments.removeSelectedText"),
+          noComment: t("composer.attachments.selectedTextNoComment"),
+        },
         labels: {
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
@@ -2126,7 +2194,16 @@ export function Composer({
             t("composer.attachments.removeGithub", { kind, number: numberLabel }),
         },
       }),
-    [handleOpenAttachment, handleRemoveAttachment, isComposerLocked, selectedAttachments, t],
+    [
+      handleOpenAttachment,
+      handleOpenSelectedText,
+      handleRemoveAttachment,
+      handleRemoveSelectedText,
+      isComposerLocked,
+      isPaneFocused,
+      selectedAttachments,
+      t,
+    ],
   );
 
   const queueList = useMemo(
@@ -2176,7 +2253,7 @@ export function Composer({
       <Animated.View style={composerContainerStyle}>
         <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
         {/* Input area */}
-        <View style={inputAreaContainerStyle}>
+        <View style={inputAreaContainerStyle} testID="composer-input-area">
           <View style={styles.inputAreaContent}>
             {queueList}
             {sendErrorNode}

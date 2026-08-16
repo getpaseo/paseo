@@ -1,4 +1,4 @@
-import type { ComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment, SelectedTextComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment } from "@/composer/types";
 import {
   isWorkspaceAttachment,
@@ -11,6 +11,7 @@ import {
 } from "@/utils/review-attachments";
 import { workspaceFileAttachmentToAgentAttachment } from "@/attachments/workspace-file";
 import { pluginResourceAttachmentToAgentAttachment } from "@/plugins/attachments";
+import { selectedTextAttachmentsToAgentAttachment } from "@/attachments/selected-text";
 
 export type ComposerAttachmentSubmitFormat = "forge" | "legacy-github";
 
@@ -34,6 +35,11 @@ export function splitComposerAttachmentsForSubmit(
 } {
   const images: ImageAttachment[] = [];
   const agentAttachments: AgentAttachment[] = [];
+  const selectedTextAttachments = attachments.filter(
+    (attachment): attachment is SelectedTextComposerAttachment =>
+      attachment.kind === "selected_text",
+  );
+  let addedSelectedTextAttachment = false;
   // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
   const buildSearchAttachment =
     options.format === "legacy-github"
@@ -53,6 +59,14 @@ export function splitComposerAttachmentsForSubmit(
 
     if (attachment.kind === "workspace_file") {
       agentAttachments.push(workspaceFileAttachmentToAgentAttachment(attachment));
+      continue;
+    }
+
+    if (attachment.kind === "selected_text") {
+      if (!addedSelectedTextAttachment) {
+        agentAttachments.push(selectedTextAttachmentsToAgentAttachment(selectedTextAttachments));
+        addedSelectedTextAttachment = true;
+      }
       continue;
     }
 

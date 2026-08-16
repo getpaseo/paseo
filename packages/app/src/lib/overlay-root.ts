@@ -37,9 +37,29 @@ export function getOverlayRoot(): HTMLElement {
   return el;
 }
 
+/**
+ * Shared web plane for fixed adornments that belong to page content, such as
+ * selected-text highlights and annotation markers. The root is above ordinary
+ * document paint but caps every descendant below menus, hover cards, and modals.
+ */
+export function getContentAdornmentRoot(): HTMLElement {
+  let el = document.getElementById("content-adornment-root");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "content-adornment-root";
+    document.body.appendChild(el);
+  }
+  el.style.position = "fixed";
+  el.style.inset = "0";
+  el.style.pointerEvents = "none";
+  el.style.zIndex = String(WEB_SURFACE_PLANE.contentAdornment);
+  return el;
+}
+
 export const WEB_SURFACE_PLANE = {
   browser: 0,
-  overlay: 1,
+  contentAdornment: 1,
+  overlay: 2,
 } as const;
 
 export const OVERLAY_Z = {

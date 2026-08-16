@@ -138,6 +138,10 @@ export const ptBR: TranslationResources = {
       removeBrowserElement: "Remover anexo de elemento do navegador",
       openReview: "Abrir anexo de revisão",
       removeReview: "Remover anexo de revisão",
+      selectedText: "Texto selecionado",
+      removeSelectedText: "Remover texto selecionado",
+      selectedTextCount: "{{count}} comentários",
+      selectedTextNoComment: "Sem comentário",
     },
     errors: {
       failedToSend: "Falha ao enviar mensagem",
@@ -199,6 +203,12 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    commentOnSelection: "Adicionar comentário",
+    addToComment: "Adicionar ao comentário",
+    addToConversation: "Adicionar à conversa",
+    commentPlaceholder: "Adicione um comentário opcional...",
+    saveComment: "Salvar",
+    cancelComment: "Cancelar",
     permission: {
       plan: "Plano",
       required: "Permissão necessária",

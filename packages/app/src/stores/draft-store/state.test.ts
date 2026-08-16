@@ -139,6 +139,24 @@ describe("draft-store normalization", () => {
     ).toEqual({ text: "Review this", attachments: [attachment] });
   });
 
+  it("preserves selected response text when hydrating a draft", () => {
+    const attachment = {
+      kind: "selected_text" as const,
+      id: "selected_text:1",
+      text: "Keep this invariant.",
+      occurrence: 1,
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Why?", attachments: [attachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({ text: "Why?", attachments: [attachment] });
+  });
+
   it("preserves New Workspace picker ownership when hydrating a draft", () => {
     const pickerAttachment = {
       kind: "github_pr" as const,

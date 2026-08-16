@@ -8,6 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Dimensions, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
@@ -30,8 +31,6 @@ import type { Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
 import { Pressable } from "react-native";
 import type { GestureResponderEvent } from "react-native";
-import { Portal } from "@gorhom/portal";
-import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -41,6 +40,7 @@ import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
+import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 
 interface Rect {
@@ -222,7 +222,7 @@ function WorkspaceHoverCardContent({
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
   const { t } = useTranslation();
-  const bottomSheetInternal = useBottomSheetModalInternal(true);
+  const floatingLayer = useOverlayLayer("floating");
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -274,9 +274,9 @@ function WorkspaceHoverCardContent({
     [position?.x, position?.y],
   );
 
-  return (
-    <Portal hostName={bottomSheetInternal?.hostName}>
-      <View pointerEvents="box-none" style={styles.portalOverlay}>
+  return createPortal(
+    <OverlayLayerProvider layer={floatingLayer}>
+      <View pointerEvents="box-none" style={[styles.portalOverlay, { zIndex: floatingLayer }]}>
         <FloatingSurface
           ref={contentRef}
           entering={FadeIn.duration(80)}
@@ -335,7 +335,8 @@ function WorkspaceHoverCardContent({
           ) : null}
         </FloatingSurface>
       </View>
-    </Portal>
+    </OverlayLayerProvider>,
+    getOverlayRoot(),
   );
 }
 

@@ -78,6 +78,14 @@ ordinary portals regardless of `z-index`, which would hide app toasts and
 tooltips behind the menu. The shared overlay scale keeps menus below toasts and
 lets tooltip portals paint above both.
 
+Fixed decorations that belong to document content, such as selection highlights
+and annotation markers, render into `content-adornment-root`. That root is a
+separate surface plane below `overlay-root`, so descendant `z-index` values can
+order decorations among themselves without covering menus, hover cards, or modals.
+Clip highlights to their owning chat viewport; this viewport ends where the
+composer begins. Interactive markers additionally suppress themselves when their
+hit area intersects the composer.
+
 The shared overlay scale is relative for interactive surfaces: a base floating
 panel is below a base modal, while a floating panel rendered from inside a modal
 inherits that modal's layer and paints above it. Wrap portal content in

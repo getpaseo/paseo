@@ -138,6 +138,10 @@ export const ar: TranslationResources = {
       removeBrowserElement: "إزالة مرفق عنصر المتصفح",
       openReview: "فتح مرفق المراجعة",
       removeReview: "إزالة مرفق المراجعة",
+      selectedText: "النص المحدد",
+      removeSelectedText: "إزالة النص المحدد",
+      selectedTextCount: "{{count}} تعليق",
+      selectedTextNoComment: "لا يوجد تعليق",
     },
     errors: {
       failedToSend: "فشل في إرسال الرسالة",
@@ -199,6 +203,12 @@ export const ar: TranslationResources = {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
+    commentOnSelection: "إضافة تعليق",
+    addToComment: "إضافة إلى التعليق",
+    addToConversation: "إضافة إلى المحادثة",
+    commentPlaceholder: "أضف تعليقًا اختياريًا...",
+    saveComment: "حفظ",
+    cancelComment: "إلغاء",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",

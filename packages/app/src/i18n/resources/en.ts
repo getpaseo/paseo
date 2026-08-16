@@ -135,6 +135,10 @@ export const en = {
       removeBrowserElement: "Remove browser element attachment",
       openReview: "Open review attachment",
       removeReview: "Remove review attachment",
+      selectedText: "Selected text",
+      removeSelectedText: "Remove selected text",
+      selectedTextCount: "{{count}} comments",
+      selectedTextNoComment: "No comment",
     },
     errors: {
       failedToSend: "Failed to send message",
@@ -196,6 +200,12 @@ export const en = {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
+    commentOnSelection: "Add comment",
+    addToComment: "Add to comment",
+    addToConversation: "Add to conversation",
+    commentPlaceholder: "Add an optional comment...",
+    saveComment: "Save",
+    cancelComment: "Cancel",
     permission: {
       plan: "Plan",
       required: "Permission Required",

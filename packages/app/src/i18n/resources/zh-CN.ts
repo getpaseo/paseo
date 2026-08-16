@@ -138,6 +138,10 @@ export const zhCN: TranslationResources = {
       removeBrowserElement: "移除浏览器元素附件",
       openReview: "打开 review 附件",
       removeReview: "移除 review 附件",
+      selectedText: "选中的文本",
+      removeSelectedText: "移除选中的文本",
+      selectedTextCount: "{{count}} 条注释",
+      selectedTextNoComment: "未添加评论",
     },
     errors: {
       failedToSend: "发送消息失败",
@@ -199,6 +203,12 @@ export const zhCN: TranslationResources = {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
+    commentOnSelection: "添加评论",
+    addToComment: "添加到评论",
+    addToConversation: "添加到对话",
+    commentPlaceholder: "添加可选评论...",
+    saveComment: "保存",
+    cancelComment: "取消",
     permission: {
       plan: "Plan",
       required: "需要权限",
