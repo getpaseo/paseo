@@ -305,8 +305,18 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  /**
+   * How long the watcher stays armed. `"once"` (the default, and the behaviour
+   * before this option existed) sends one notification and disarms. `"each"`
+   * re-arms after every finish, so a caller driving one long-lived child across
+   * many turns hears about all of them; it disarms when the child closes or
+   * errors, or when the caller is archived.
+   */
+  notifyMode?: FinishNotifyMode;
   logger: Logger;
 }
+
+export type FinishNotifyMode = "once" | "each";
 
 type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
 
@@ -360,6 +370,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
+    notifyMode = "once",
     logger,
   } = params;
   let hasSeenRunning = false;
@@ -380,6 +391,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   ): Promise<void> {
     const callerRecord = await agentStorage.get(callerAgentId);
     if (callerRecord?.archivedAt) {
+      // Under "once" the watcher has already stopped before this runs, so this
+      // only matters for "each": nobody is left to hear it, and a watcher that
+      // stays armed would hold the subscription for the child's whole life.
+      if (notifyMode === "each") stop();
       return;
     }
 
@@ -443,6 +458,14 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
+          if (notifyMode === "each") {
+            // Stay armed and reset the run gate, so the child's next
+            // running -> idle cycle notifies again. "was closed" and "errored"
+            // are still terminal, and so is an archived caller.
+            hasSeenRunning = false;
+            notifySafely("finished", { terminal: false });
+            return;
+          }
           notifySafely("finished");
           return;
         }
