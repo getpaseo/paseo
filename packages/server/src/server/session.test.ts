@@ -320,6 +320,7 @@ interface SessionForTestOptions {
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
+  pluginRuntime?: SessionOptions["pluginRuntime"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -405,6 +406,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       })),
       onChange: vi.fn(() => () => {}),
     }),
+    pluginRuntime: options.pluginRuntime,
     stt: options.stt ?? null,
     tts: null,
     terminalManager: options.terminalManager ?? null,
@@ -423,6 +425,71 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("routes plugin management requests and catalog notifications", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const listeners = new Set<(pluginId: string) => void>();
+  const plugin = {
+    id: "example",
+    path: "/plugins/example",
+    enabled: true,
+    status: "running" as const,
+  };
+  const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
+    listPlugins: () => [plugin],
+    installDirectory: async () => plugin,
+    inspectDirectory: async () => ({ id: "example" }),
+    reloadPlugin: async () => plugin,
+    enablePlugin: async () => plugin,
+    disablePlugin: async () => ({ ...plugin, enabled: false, status: "disabled" }),
+    removePlugin: async () => undefined,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    catalog: () => [{ id: "example", clientBundle: "bundle" }],
+    invokePluginRpc: async () => ({ ok: true }),
+  };
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({ type: "plugin.list.request", requestId: "list" });
+  await session.handleMessage({
+    type: "plugin.directory.install.request",
+    requestId: "install",
+    path: "/plugins/example",
+  });
+  await session.handleMessage({
+    type: "plugin.reload.request",
+    requestId: "reload",
+    pluginId: "example",
+  });
+  await session.handleMessage({
+    type: "plugin.disable.request",
+    requestId: "disable",
+    pluginId: "example",
+  });
+  await session.handleMessage({
+    type: "plugin.remove.request",
+    requestId: "remove",
+    pluginId: "example",
+  });
+  for (const listener of listeners) listener("example");
+
+  expect(messages.map((message) => message.type)).toEqual([
+    "plugin.list.response",
+    "plugin.directory.install.response",
+    "plugin.reload.response",
+    "plugin.disable.response",
+    "plugin.remove.response",
+    "status",
+  ]);
+  expect(messages.at(-1)).toEqual({
+    type: "status",
+    payload: { status: "plugin_catalog_changed", pluginId: "example" },
+  });
+  await session.cleanup();
+  expect(listeners.size).toBe(0);
+});
 
 describe("session authorization scopes", () => {
   test("routes named-agent validation through the session source", async () => {
@@ -710,6 +777,7 @@ describe("project command-center RPCs", () => {
               projectDisplayName: "new-project",
               projectCustomName: null,
               projectCustomIconRevision: null,
+              projectIconRevision: "automatic:none:v1",
               projectRootPath: directoryPath,
               projectKind: "non_git",
             },
@@ -4967,7 +5035,7 @@ test("keeps selective delivery scoped per socket when a retained session also ha
   ]);
 });
 
-test("sends project updates only to capable sockets in a retained session", () => {
+test("sends project updates only to capable sockets in a retained session", async () => {
   const messages: SessionOutboundMessage[] = [];
   const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
   const session = createSessionForTest({ messages, targetedMessages });
@@ -4976,7 +5044,7 @@ test("sends project updates only to capable sockets in a retained session", () =
   session.updateClientCapabilities(null, legacySocket);
   session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true }, capableSocket);
 
-  session.emitProjectUpdate({
+  await session.emitProjectUpdate({
     kind: "upsert",
     project: createPersistedProjectRecord({
       projectId: "project-capable-socket",
@@ -5039,6 +5107,7 @@ test("project.list returns every active project descriptor", async () => {
             projectDisplayName: "acme/app",
             projectCustomName: null,
             projectCustomIconRevision: null,
+            projectIconRevision: "automatic:none:v1",
             projectRootPath: "/tmp/project-active",
             projectKind: "git",
           },

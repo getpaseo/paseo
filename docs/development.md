@@ -266,8 +266,8 @@ the daemon-global Git process limits in `$PASEO_HOME/config.json`:
 }
 ```
 
-Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
-reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
 

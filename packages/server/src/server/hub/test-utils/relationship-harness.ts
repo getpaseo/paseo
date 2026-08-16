@@ -862,6 +862,10 @@ export class HubRelationshipHarness {
     return this.codex.creations;
   }
 
+  executionProviderCreations(): number {
+    return this.codex.createdConfigs.filter((config) => config.internal !== true).length;
+  }
+
   providerResumes(): number {
     return this.codex.resumes;
   }
