@@ -944,6 +944,140 @@ test("does not reconnect after close when ensureConnected is called", async () =
   expect(client.getConnectionState().status).toBe("disposed");
 });
 
+test("resumeConnection reconnects immediately while disconnected, skipping backoff", async () => {
+  useHeartbeatClock();
+  try {
+    const logger = createMockLogger();
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const transports = [first, second];
+    let transportIndex = 0;
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: {
+        enabled: true,
+        baseDelayMs: 60_000,
+        maxDelayMs: 60_000,
+      },
+      transportFactory: () => {
+        const next = transports[Math.min(transportIndex, transports.length - 1)];
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    first.triggerOpen();
+    await connectPromise;
+    expect(client.getConnectionState().status).toBe("connected");
+
+    first.triggerClose({ code: 1006 });
+    expect(client.getConnectionState().status).toBe("disconnected");
+
+    client.resumeConnection();
+    expect(client.getConnectionState().status).toBe("connecting");
+
+    second.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("resumeConnection is a no-op while connecting", async () => {
+  useHeartbeatClock();
+  try {
+    const logger = createMockLogger();
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const transports = [first, second];
+    let transportIndex = 0;
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: true, baseDelayMs: 5, maxDelayMs: 5 },
+      transportFactory: () => {
+        const next = transports[Math.min(transportIndex, transports.length - 1)];
+        transportIndex += 1;
+        return next.transport;
+      },
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    first.triggerOpen();
+    await connectPromise;
+
+    first.triggerClose({ code: 1006 });
+    expect(client.getConnectionState().status).toBe("disconnected");
+
+    await vi.advanceTimersByTimeAsync(5);
+    expect(client.getConnectionState().status).toBe("connecting");
+
+    const transportCountBefore = transportIndex;
+    client.resumeConnection();
+    expect(client.getConnectionState().status).toBe("connecting");
+    expect(transportIndex).toBe(transportCountBefore);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("resumeConnection is a no-op while connected", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: true },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  expect(client.getConnectionState().status).toBe("connected");
+
+  const callsBefore = transportFactory.mock.calls.length;
+  client.resumeConnection();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(transportFactory.mock.calls.length).toBe(callsBefore);
+});
+
+test("resumeConnection is a no-op on a disposed client", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await client.close();
+  expect(client.getConnectionState().status).toBe("disposed");
+
+  client.resumeConnection();
+  expect(client.getConnectionState().status).toBe("disposed");
+});
+
 test("keeps the transport connected when a session RPC ping times out", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

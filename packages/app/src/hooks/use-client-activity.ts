@@ -50,11 +50,15 @@ export function useClientActivity({
   // Track app visibility via AppState (native).
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      tracker.notifyAppVisibility(nextState === "active");
+      const visible = nextState === "active";
+      tracker.notifyAppVisibility(visible);
+      if (visible) {
+        client.resumeConnection();
+      }
       tracker.sendHeartbeat();
     });
     return () => subscription.remove();
-  }, [tracker]);
+  }, [client, tracker]);
 
   // Track user activity and visibility on web.
   useEffect(() => {
@@ -70,6 +74,7 @@ export function useClientActivity({
       const visible = document.visibilityState === "visible";
       const { changed } = tracker.notifyAppVisibility(visible);
       if (changed && visible) {
+        client.resumeConnection();
         tracker.maybeSendImmediateHeartbeat();
       }
     };
@@ -89,7 +94,7 @@ export function useClientActivity({
       window.removeEventListener("wheel", handleUserActivity);
       window.removeEventListener("touchstart", handleUserActivity);
     };
-  }, [tracker]);
+  }, [client, tracker]);
 
   // Track OS-wide activity in Electron so backgrounded desktop windows still report presence.
   useEffect(() => {

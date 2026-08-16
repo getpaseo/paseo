@@ -1375,6 +1375,30 @@ export class DaemonClient {
     void this.connect();
   }
 
+  /**
+   * Called when the app returns to the foreground. If the connection dropped
+   * while backgrounded, skip the exponential backoff and reconnect immediately.
+   * No-op for any other state — the existing reconnect path or live connection
+   * handles those cases.
+   */
+  resumeConnection(): void {
+    if (this.connectionState.status === "disposed") {
+      return;
+    }
+    if (this.connectionState.status !== "disconnected") {
+      return;
+    }
+    if (!this.shouldReconnect) {
+      this.shouldReconnect = true;
+    }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    this.reconnectAttempt = 0;
+    this.attemptConnect();
+  }
+
   getConnectionState(): ConnectionState {
     return this.connectionState;
   }
