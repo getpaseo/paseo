@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -27,6 +27,7 @@
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",
+    "profile:workspace-switching": "node ./scripts/profile-workspace-switching.mjs",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
     "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
@@ -48,6 +49,8 @@
     "@getpaseo/protocol": "*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@gorhom/portal": "^1.0.14",
+    "@mattermost/react-native-paste-input": "2.0.1",
+    "@paseo/plugin": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "^0.3.2",
     "@react-native/normalize-colors": "^0.81.5",
@@ -119,6 +122,7 @@
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "use-sync-external-store": "^1.6.0",
+    "yaml": "^2.8.4",
     "zod": "^4.4.3",
     "zustand": "^5.0.9"
   },

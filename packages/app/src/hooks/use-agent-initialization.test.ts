@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe("ensureAgentIsInitialized", () => {
-  it("requests a bounded projected tail when authoritative history is loaded", () => {
+  it("catches up after loaded authoritative history", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
@@ -74,13 +74,14 @@ describe("ensureAgentIsInitialized", () => {
         serverId,
         agentId,
         request: {
-          direction: "tail",
+          direction: "after",
+          cursor: { epoch: "epoch-1", seq: 42 },
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
         },
       },
     ]);
-    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
   });
 
   it("requests a bounded projected tail when no authoritative cursor is available", () => {
@@ -127,6 +128,8 @@ describe("ensureAgentIsInitialized", () => {
             timestamp: new Date("2026-07-27T10:00:00.000Z"),
           },
         ],
+        range: null,
+        hasOlder: false,
       },
     });
 
@@ -149,6 +152,52 @@ describe("ensureAgentIsInitialized", () => {
         },
       },
     ]);
+  });
+
+  it("catches up after the restored canonical replica range", () => {
+    const client = new FakeDaemonClient();
+    const runtime = new FakeTimelineRuntime();
+    useSessionStore.getState().restoreSessionReplica(serverId, {
+      agents: new Map(),
+      workspaces: new Map(),
+      projects: new Map(),
+      timeline: {
+        agentId,
+        items: [
+          {
+            kind: "assistant_message",
+            id: "canonical-item",
+            text: "Canonical before restart",
+            timelineCursor: { epoch: "epoch-1", seq: 12 },
+            timestamp: new Date("2026-07-27T10:00:00.000Z"),
+          },
+        ],
+        range: { epoch: "epoch-1", startSeq: 10, endSeq: 12 },
+        hasOlder: true,
+      },
+    });
+
+    void ensureAgentIsInitialized({
+      serverId,
+      agentId,
+      client: client as never,
+      runtime,
+      setAgentInitializing: bindSetAgentInitializing(),
+    });
+
+    expect(runtime.requests).toEqual([
+      {
+        serverId,
+        agentId,
+        request: {
+          direction: "after",
+          cursor: { epoch: "epoch-1", seq: 12 },
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          projection: "projected",
+        },
+      },
+    ]);
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
   });
 
   it("times out initialization after 65 seconds", async () => {

@@ -9,7 +9,12 @@ import {
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
-import { TerminalProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentProfileSchema,
+  PluginIdSchema,
+  PluginSourceSchema,
+  TerminalProfileSchema,
+} from "@getpaseo/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
@@ -259,6 +264,7 @@ export const PersistedConfigSchema = z
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),
         terminalProfiles: z.array(TerminalProfileSchema).optional(),
+        agentProfiles: z.array(AgentProfileSchema).optional(),
         cors: z
           .object({
             allowedOrigins: z.array(z.string()).optional(),
@@ -303,10 +309,13 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    pluginsEnabled: z.boolean().optional(),
+    plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
+        catalogRefreshTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
       })
       .strict()

@@ -331,6 +331,28 @@ describe("reconstructOldFile", () => {
 });
 
 describe("highlightDiffFromHunks", () => {
+  it("continues highlighting large diffs whose lines stay bounded", () => {
+    const sourceLines = Array.from(
+      { length: 101 },
+      (_, index) => `const value${index} = "${"x".repeat(990)}";`,
+    );
+    const [file] = parseDiff(
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- /dev/null",
+        "+++ b/example.ts",
+        `@@ -0,0 +1,${sourceLines.length} @@`,
+        ...sourceLines.map((line) => `+${line}`),
+      ].join("\n"),
+    );
+
+    const highlighted = highlightDiffFromHunks(file);
+    const contentLines = highlighted.hunks[0].lines.slice(1);
+
+    expect(contentLines[0].tokens).toContainEqual({ text: "const", style: "keyword" });
+    expect(contentLines[100].tokens).toContainEqual({ text: "const", style: "keyword" });
+  });
+
   it("adds syntax highlighting tokens to TypeScript code", () => {
     const files = parseDiff(SIMPLE_DIFF);
     const highlighted = highlightDiffFromHunks(files[0]);
@@ -507,6 +529,40 @@ describe("highlightDiffFromHunks", () => {
 });
 
 describe("highlightDiffWithFileContent", () => {
+  it("leaves files with an oversized line unhighlighted", async () => {
+    const oversizedLine = `const payload = "${"x".repeat(10_001)}";`;
+    const [file] = parseDiff(
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- /dev/null",
+        "+++ b/example.ts",
+        "@@ -0,0 +1 @@",
+        `+${oversizedLine}`,
+      ].join("\n"),
+    );
+
+    const highlighted = await highlightDiffWithFileContent(file, ".", {
+      newFileContent: oversizedLine,
+    });
+
+    expect(highlighted.hunks[0].lines[1]).toEqual({
+      type: "add",
+      content: oversizedLine,
+    });
+  });
+
+  it("uses hunk context when the full file has an oversized line elsewhere", async () => {
+    const file = parseDiff(SIMPLE_DIFF)[0];
+    const oversizedUnchangedLine = `const payload = "${"x".repeat(10_001)}";`;
+
+    const highlighted = await highlightDiffWithFileContent(file, ".", {
+      newFileContent: `${oversizedUnchangedLine}\nconst bar = 3;`,
+    });
+    const addedLine = highlighted.hunks[0].lines.find((line) => line.type === "add");
+
+    expect(addedLine?.tokens).toContainEqual({ text: "3", style: "number" });
+  });
+
   it("uses the old file content to preserve syntax context for removed lines", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "diff-highlight-old-file-"));
 

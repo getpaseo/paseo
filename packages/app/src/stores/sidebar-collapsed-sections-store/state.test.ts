@@ -52,13 +52,13 @@ describe("sidebar collapsed projects transitions", () => {
     expect(restored.collapsedPinned).toBe(true);
   });
 
-  it("restores collapsed project keys from persisted preferences", () => {
+  it("rejects the complete value when a persisted project key is invalid", () => {
     const restored = mergePersistedCollapsedProjects(
       { collapsedProjectKeys: ["project-a", "project-b", 42] },
       emptyState(),
     );
 
-    expect(Array.from(restored.collapsedProjectKeys)).toEqual(["project-a", "project-b"]);
+    expect(Array.from(restored.collapsedProjectKeys)).toEqual([]);
     expect(Array.from(restored.collapsedStatusGroupKeys)).toEqual([]);
   });
 

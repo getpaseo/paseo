@@ -1,11 +1,12 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { readValidatedJson, readValidatedString } from "@/storage/validated-storage";
 
 export const CHANGES_PREFERENCES_STORAGE_KEY = "@paseo:changes-preferences";
 export const LEGACY_WRAP_LINES_STORAGE_KEY = "diff-wrap-lines";
 export const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 
-const changesPreferencesSchema = z.object({
+const changesPreferencesSchema = z.strictObject({
   layout: z.enum(["unified", "split"]).optional(),
   viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
@@ -32,28 +33,28 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 async function loadLegacyWrapLinesPreference(storage: KeyValueStorage): Promise<boolean | null> {
-  const legacyValue = await storage.getItem(LEGACY_WRAP_LINES_STORAGE_KEY);
-  if (legacyValue === "true") {
-    return true;
-  }
-  if (legacyValue === "false") {
-    return false;
-  }
-  return null;
+  const legacyValue = await readValidatedString(
+    storage,
+    LEGACY_WRAP_LINES_STORAGE_KEY,
+    z.enum(["true", "false"]),
+  );
+  return legacyValue === null ? null : legacyValue === "true";
 }
 
 export async function loadChangesPreferencesFromStorage(
   storage: KeyValueStorage,
 ): Promise<ChangesPreferences> {
-  const stored = await storage.getItem(CHANGES_PREFERENCES_STORAGE_KEY);
+  const stored = await readValidatedJson(
+    storage,
+    CHANGES_PREFERENCES_STORAGE_KEY,
+    changesPreferencesSchema,
+  );
   if (stored) {
-    const parsed = changesPreferencesSchema.safeParse(JSON.parse(stored));
-    if (parsed.success) {
-      return { ...DEFAULT_CHANGES_PREFERENCES, ...parsed.data };
-    }
+    return { ...DEFAULT_CHANGES_PREFERENCES, ...stored };
   }
 
   const legacyWrapLines = await loadLegacyWrapLinesPreference(storage);

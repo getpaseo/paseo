@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { TaskListRow } from "@/components/task-list-row";
 import {
   View,
   Text,
@@ -23,9 +24,6 @@ import {
   useCallback,
   createContext,
   useContext,
-  isValidElement,
-  Children,
-  cloneElement,
 } from "react";
 import type { ComponentType, ReactNode } from "react";
 import type MarkdownIt from "markdown-it";
@@ -41,7 +39,10 @@ import {
   ChevronDown,
   Check,
   CheckSquare,
+  CircleDot,
   Copy,
+  Plus,
+  RotateCcw,
   TriangleAlertIcon,
   Scissors,
   MicVocal,
@@ -62,7 +63,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "reac
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
-import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
@@ -74,6 +75,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -165,7 +167,6 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
 const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
 
 const ThemedMicVocal = withUnistyles(MicVocal);
-const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
@@ -177,9 +178,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 const mutedForegroundColorMapping = (theme: Theme) => ({
   color: theme.colors.mutedForeground,
-});
-const primaryForegroundColorMapping = (theme: Theme) => ({
-  color: theme.colors.primaryForeground,
 });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
@@ -1860,13 +1858,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           source={getMarkdownLinkSource(node)}
           style={styles.link}
         >
-          {Children.map(children, (child) => {
-            if (!isValidElement(child)) return child;
-            const childProps = child.props as { style?: StyleProp<TextStyle> };
-            return cloneElement(child, {
-              style: [childProps.style, { color: styles.link.color }],
-            } as Partial<{ style: StyleProp<TextStyle> }>);
-          })}
+          {colorMarkdownLinkChildren(children, styles.link.color)}
         </AssistantMarkdownLink>
       ),
       image: (
@@ -2240,38 +2232,23 @@ export const CompactionMarker = memo(function CompactionMarker({
 
 interface TodoListCardProps {
   items: TodoEntry[];
+  activity: TaskActivity;
   disableOuterSpacing?: boolean;
 }
 
-interface TodoListItemRowProps {
-  text: string;
-  completed: boolean;
-}
-
-function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
-  const badgeStyle = useMemo(
-    () => [
-      todoListCardStylesheet.radioBadge,
-      completed
-        ? todoListCardStylesheet.radioBadgeComplete
-        : todoListCardStylesheet.radioBadgeIncomplete,
-    ],
-    [completed],
-  );
-  const textStyle = useMemo(
-    () => [todoListCardStylesheet.itemText, completed && todoListCardStylesheet.itemTextCompleted],
-    [completed],
-  );
-  return (
-    <View style={todoListCardStylesheet.itemRow}>
-      <View style={badgeStyle}>
-        {completed ? (
-          <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
-        ) : null}
-      </View>
-      <Text style={textStyle}>{text}</Text>
-    </View>
-  );
+function taskActivityIcon(activity: TaskActivity) {
+  switch (activity.type) {
+    case "added":
+      return Plus;
+    case "started":
+      return CircleDot;
+    case "completed":
+      return Check;
+    case "reopened":
+      return RotateCcw;
+    default:
+      return CheckSquare;
+  }
 }
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
@@ -2281,34 +2258,6 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   list: {
     gap: theme.spacing[1],
   },
-  itemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  radioBadge: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: theme.colors.foregroundMuted,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioBadgeIncomplete: {
-    opacity: 0.55,
-  },
-  radioBadgeComplete: {
-    opacity: 0.95,
-  },
-  itemText: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  itemTextCompleted: {
-    color: theme.colors.foregroundMuted,
-    textDecorationLine: "line-through",
-  },
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
@@ -2317,12 +2266,23 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
 
 export const TodoListCard = memo(function TodoListCard({
   items,
+  activity,
   disableOuterSpacing,
 }: TodoListCardProps) {
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
+  const activityDisplay = useMemo(() => {
+    if (activity.type === "created") {
+      return {
+        label: t("message.todo.activity.created", { count: activity.count }),
+        secondaryLabel: undefined,
+      };
+    }
+    return {
+      label: t(`message.todo.activity.${activity.type}`),
+      secondaryLabel: activity.task,
+    };
+  }, [activity, t]);
 
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -2335,9 +2295,7 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
-            items.map((item) => (
-              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
-            ))
+            items.map((item) => <TaskListRow key={item.id ?? item.text} task={item} />)
           )}
         </View>
       </View>
@@ -2346,9 +2304,9 @@ export const TodoListCard = memo(function TodoListCard({
 
   return (
     <ExpandableBadge
-      label={t("message.todo.title")}
-      secondaryLabel={nextTask}
-      icon={CheckSquare}
+      label={activityDisplay.label}
+      secondaryLabel={activityDisplay.secondaryLabel}
+      icon={taskActivityIcon(activity)}
       isExpanded={isExpanded}
       onToggle={handleToggle}
       renderDetails={renderDetails}

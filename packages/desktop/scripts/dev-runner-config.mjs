@@ -15,3 +15,9 @@ export function createElectronSpawnOptions({ env, colorEnv, expoDevUrl }) {
 export function resolveChildKillTarget(pid, detached) {
   return detached ? -pid : pid;
 }
+
+export function registerDevRunnerShutdownSignals({ signalSource, stop }) {
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+    signalSource.on(signal, () => stop("SIGTERM"));
+  }
+}

@@ -27,9 +27,16 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { selectModel } from "../support/helpers/app";
+import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
+import {
+  expectResumeOverflowFallsBackToOneTail,
+  rememberTimelineRequestCounts,
+} from "../support/helpers/timeline-resume";
+import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
 import {
   scrollTimelineToNewestLoadedEdge,
   scrollTimelineUntilOlderHistoryIsReachable,
@@ -333,6 +340,66 @@ async function expectInterruptedTurnOrderAfterReconnect(
   } finally {
     gate.restore();
     await agent.cleanup();
+  }
+}
+
+async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const subscriptions = observeTimelineSubscriptions(page);
+  const gate = await installDaemonWebSocketGate(page);
+  const target = await seedMockAgentWorkspace({
+    repoPrefix: `submission-hidden-stream-${testInfo.workerIndex}-`,
+    title: "Hidden streaming submission",
+    model: "ten-second-stream",
+  });
+  const evictionAgents = await Promise.all(
+    Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
+      seedMockAgentWorkspace({
+        repoPrefix: `submission-workspace-eviction-${testInfo.workerIndex}-${index}-`,
+        title: `Workspace eviction ${index + 1}`,
+      }),
+    ),
+  );
+  const prompt = "Keep this hidden image prompt before its streaming output.";
+  const targetDeckEntry = workspaceDeckEntryLocator(page, getServerId(), target.workspaceId);
+
+  try {
+    await openAgentRoute(page, target);
+    await expectComposerVisible(page);
+    await subscriptions.waitForSubscribedAgents([target.agentId]);
+
+    const userMessageCount = gate.getAgentStreamItemCount("user_message");
+    gate.setAgentStreamSuppressed(true);
+    const promptRow = await submitMessageWithImage(page, prompt);
+    await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
+
+    for (const evictionAgent of evictionAgents) {
+      await openAgentRoute(page, evictionAgent);
+      await expectComposerVisible(page);
+    }
+    await expect(targetDeckEntry).toHaveCount(0);
+    await subscriptions.waitForSubscribedAgents([
+      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
+    ]);
+    gate.setAgentStreamSuppressed(false);
+
+    await target.client.waitForFinish(target.agentId, 30_000);
+    const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    await openAgentRoute(page, target);
+    await expectComposerVisible(page);
+    await subscriptions.waitForSubscribedAgents([target.agentId]);
+
+    const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
+    await expect(promptRow).toBeVisible();
+    await expect(response).toBeVisible();
+    await expectRenderedBefore(promptRow, response);
+    expectResumeOverflowFallsBackToOneTail(gate, requestsBeforeReturn);
+  } finally {
+    gate.setAgentStreamSuppressed(false);
+    gate.restore();
+    await Promise.all([...evictionAgents.map((agent) => agent.cleanup()), target.cleanup()]);
   }
 }
 
@@ -1011,6 +1078,13 @@ test.describe("Agent message submission", () => {
   }, testInfo) => {
     test.setTimeout(90_000);
     await expectInterruptedTurnOrderAfterReconnect(page, testInfo);
+  });
+
+  test("keeps a streaming hidden submission before its output after workspace eviction", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    await expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(page, testInfo);
   });
 
   test("clears an attachment-only submission when canonical history arrives after a missed running transition", async ({

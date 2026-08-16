@@ -18,6 +18,7 @@ import { addHubProjectsCommand } from "./projects.js";
 import { processHubReporter, type HubReporter } from "./reporter.js";
 import { hubStatusResult } from "./status-output.js";
 import { addHubResolutionHelp } from "./help.js";
+import { addHubInitCommand } from "./init.js";
 
 interface HubCommandEnvironment {
   env: Readonly<Record<string, string | undefined>>;
@@ -56,6 +57,7 @@ export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {})
     flow: environment.login,
     reporter: environment.reporter,
   });
+  addHubInitCommand(hub, environment);
   addHubConnectCommand(hub, {
     env: environment.env,
     credentials: environment.credentials,

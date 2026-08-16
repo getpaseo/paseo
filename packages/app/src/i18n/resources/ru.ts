@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
   common: {
@@ -65,6 +66,8 @@ export const ru: TranslationResources = {
       newAgent: "Новый агент",
       addProject: "Добавить проект",
       home: "Дом",
+      groupByProject: "Группировать по проекту",
+      groupByStatus: "Группировать по статусу",
       modelGroupLabel: "Модель",
       modelSearchKeywords: "сменить модель изменить модель выбрать модель установить модель",
       thinkingGroupLabel: "Мышление",
@@ -333,6 +336,15 @@ export const ru: TranslationResources = {
     todo: {
       title: "Задачи",
       empty: "Заданий пока нет.",
+      tasksProgress: "{{completed}}/{{total}} задач",
+      tasksProgressCurrent: "{{completed}}/{{total}} задач · {{task}}",
+      activity: {
+        created: "Создано задач: {{count}}",
+        added: "Добавлена",
+        started: "Начата",
+        completed: "Завершена",
+        reopened: "Возобновлена",
+      },
     },
     compaction: {
       loading: "Уплотнение...",
@@ -516,6 +528,8 @@ export const ru: TranslationResources = {
         screenshotCopied: "Снимок скопирован в буфер обмена",
         elementCopied: "Элемент скопирован в буфер обмена",
         screenshotFailed: "Не удалось скопировать снимок",
+        selectorLoading: "Дождитесь окончания загрузки страницы",
+        selectorFailed: "Не удалось запустить выбор элемента",
       },
       annotate: {
         title: "Аннотировать элемент",
@@ -607,6 +621,7 @@ export const ru: TranslationResources = {
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Перезагруженный агент",
         failedToReloadAgent: "Не удалось перезагрузить агент",
+        failedToCloseAgent: "Не удалось закрыть агент",
       },
       confirmations: {
         unsavedTitle: "Несохранённые изменения",
@@ -977,6 +992,8 @@ export const ru: TranslationResources = {
       },
       show: {
         label: "Показывать",
+        branch: "Ветка",
+        project: "Проект",
         host: "Хост",
         changeRequest: "Pull request",
         checks: "Проверки",
@@ -1426,14 +1443,19 @@ export const ru: TranslationResources = {
     loadingSelector: "Загрузка выбора модели...",
     error: "Ошибка",
     defaultModel: "По умолчанию",
-    favorites: "Избранное",
-    favoriteModel: "Любимая модель",
-    unfavoriteModel: "Нелюбимая модель",
+    profiles: "Профили",
+    providers: "Провайдеры",
+    model: "Модель",
+    editProfiles: "Изменить",
+    editProfilesLabel: "Изменить профили агентов",
+    createProfile: "Создать профиль",
     modelCount: "{{count}} модель",
     modelCountPlural: "{{count}} моделей",
     retry: "Повторить попытку",
     retrying: "Повторная попытка...",
     noMatches: "Ни одна модель не соответствует вашему запросу",
+    noMatchesForQuery: "Нет моделей, соответствующих «{{query}}»",
+    searchAllPlaceholder: "Поиск по всем моделям...",
     searchPlaceholder: "Поиск моделей...",
     openProviderSettings: "Открыть настройки{{provider}}",
   },
@@ -1633,6 +1655,7 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
+    archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1801,8 +1824,10 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Обзор",
     },
+    plugins: pluginSettings.ru,
     metadataGeneration: {
       title: "Создание метаданных",
       description:
@@ -2227,6 +2252,44 @@ export const ru: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentProfiles: {
+        sectionTitle: "Профили агента",
+        unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агента",
+        unsupported: "На этом хосте работает daemon, который пока не поддерживает профили агента",
+        emptyState:
+          "Пока нет профилей. Добавьте один, чтобы запускать агентов с сохранённым провайдером и моделью.",
+        addProfileTitle: "Добавить профиль агента",
+        newProfile: "Новый профиль",
+        editProfile: "Изменить профиль",
+        editProfileTitle: "Изменить профиль агента",
+        nameLabel: "Имя",
+        namePlaceholder: "Работа над UI",
+        iconLabel: "Значок",
+        noIcon: "Нет",
+        providerLabel: "Провайдер",
+        providerPlaceholder: "Выберите провайдера",
+        noProviders: "На этом хосте нет доступных провайдеров",
+        modelLabel: "Модель",
+        noModels: "У этого провайдера нет моделей для выбора",
+        modeLabel: "Режим",
+        noModes: "У этого провайдера нет режимов для выбора",
+        thinkingLabel: "Мышление",
+        noThinkingOptions: "У этой модели нет уровней мышления",
+        featuresLabel: "Функции",
+        featureCount: "{{count}} функций",
+        featureCountOne: "{{count}} функция",
+        notesLabel: "Заметки для агентов",
+        notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
+        notesHint:
+          "Возвращается инструментом MCP «list_profiles». Напишите это как инструкцию для другого агента.",
+        save: "Сохранить",
+        saving: "Сохранение...",
+        remove: "Удалить",
+        removeConfirmTitle: "Удалить профиль?",
+        removeConfirmMessage: "Удалить «{{name}}»?",
+        moveUp: "Переместить вверх",
+        moveDown: "Переместить вниз",
+      },
       daemon: {
         rename: {
           editLabel: "Изменить ярлык",
@@ -2394,6 +2457,9 @@ export const ru: TranslationResources = {
           "Дополнительную информацию и переменные среды, доступные для этих команд, см. в документации.",
         setup: "Настраивать",
         setupAccessibility: "Команды настройки рабочего дерева",
+        uncommittedTitle: "Закоммитьте изменения paseo.json",
+        uncommittedDescription:
+          "Новые рабочие деревья используют сценарий настройки из выбранной базовой ветки.",
         teardown: "Срывать",
         teardownAccessibility: "Команды разрушения рабочего дерева",
       },

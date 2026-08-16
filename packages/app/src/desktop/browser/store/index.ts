@@ -1,9 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
   applyBrowserPatch,
+  BrowserIndexStateSchema,
   type BrowserIndexState,
   type BrowserRecord,
   type BrowserRecordPatch,
@@ -74,7 +76,7 @@ export const useBrowserStore = create<BrowserStoreState>()(
     }),
     {
       name: "workspace-browser-store",
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createValidatedPersistStorage(AsyncStorage, BrowserIndexStateSchema),
       partialize: (state) => sanitizeBrowsersForPersist(state),
       merge: (persistedState, currentState) => ({
         ...currentState,

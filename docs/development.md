@@ -131,9 +131,11 @@ desktop-only environment inherited by terminals opened inside Paseo from couplin
 a new worktree instance to the parent desktop instance's profile or single-instance
 lock.
 
-Electron remains in the desktop dev runner's process group. Closing or stopping the
-workspace-script terminal must terminate Electron with Metro; detaching Electron
-leaves an orphan holding the worktree's single-instance lock and broken output pipes.
+The desktop workspace script `exec`s the dev runner so the terminal owns the runner
+PID. Terminal shutdown reaches the runner as `SIGHUP`; the runner stops Metro and
+asks Electron to quit through its normal app lifecycle. Do not add an npm wrapper or
+detach Electron: either change leaves an orphan holding the worktree's single-instance
+lock and broken output pipes.
 
 With desktop dev running, verify the real BrowserWindow, titlebar clearance, fullscreen
 transition, and 751-pixel settings split with:
@@ -215,6 +217,31 @@ PASEO_PROFILE_IDLE_WAIT_MS=3000             # idle baseline before switching
 PASEO_PROFILE_DUMP_COMMITS=1                # include per-commit profiler samples
 ```
 
+For warm workspace switching, point the benchmark at an app backed by seeded
+daemon state:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:workspace-switching --workspace=@getpaseo/app
+```
+
+The benchmark first warms `Cmd+1` through `Cmd+7`, then records a rapid seven-workspace
+burst. It separately warms the three-entry workspace deck LRU and records `Cmd+1` through
+`Cmd+3` without waits between keys. Both scenarios report keydown-to-activation latency and
+React commits on the same browser clock. Set `PASEO_PROFILE_WORKSPACE_DIGITS`,
+`PASEO_PROFILE_WORKSPACE_LRU_SIZE`, or `PASEO_PROFILE_WARM_QUIET_MS` to change the shape. Set
+`PASEO_PROFILE_DUMP_COMMITS=1` to include the nested component breakdown for every commit.
+Set `PASEO_PROFILE_RETAINED_REPEATS=5` to repeat the retained-LRU burst for a less noisy sample.
+Set `PASEO_PROFILE_CPU_PATH=/tmp/workspace-switch.cpuprofile` to run a separate retained-LRU
+capture after the latency scenarios and write a raw CDP CPU profile without contaminating their
+timings.
+Set `PASEO_PROFILE_TRACE_PATH=/tmp/workspace-switch.trace.json` to run another separate retained-LRU
+capture and write a Chromium Performance trace with User Timing marks and screenshots. Open the
+trace in the Chrome DevTools Performance panel. Set `PASEO_PROFILE_TRACE_INVALIDATIONS=1` only for a
+focused invalidation capture; React Native's generated stacks make that mode highly intrusive.
+Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
+the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync
@@ -264,8 +291,8 @@ the daemon-global Git process limits in `$PASEO_HOME/config.json`:
 }
 ```
 
-Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
-reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
 
@@ -460,7 +487,7 @@ install.
 
 Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `paseo` binary on macOS is a symlink into the installed Paseo desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
 
-Canonical automation uses `paseo workspace create/ls/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
+Canonical automation uses `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally

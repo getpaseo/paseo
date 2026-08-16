@@ -70,7 +70,11 @@ function TrailingActionScrimSvg({ gradientId, color }: { gradientId: string; col
 
 const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
 
-const scrimColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceSidebarHover });
+const scrimColorMappings: Record<SidebarSurfaceBackdrop, (theme: Theme) => { color: string }> = {
+  surfaceSidebar: (theme) => ({ color: theme.colors.surfaceSidebar }),
+  surfaceSidebarHover: (theme) => ({ color: theme.colors.surfaceSidebarHover }),
+  surface2: (theme) => ({ color: theme.colors.surface2 }),
+};
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -109,7 +113,7 @@ export function SidebarWorkspaceRowFrame({
       disabled={contextMenuOpen}
     >
       {children({
-        isHovered: isHovered && !contextMenuOpen,
+        isHovered: isHovered && !contextMenuOpen && !isDragging,
         contextMenuOpen,
         onContextMenuOpenChange: handleContextMenuOpenChange,
         hoverHandlers,
@@ -192,6 +196,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
+            currentBranch={workspace.currentBranch}
+            projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}
@@ -458,18 +464,18 @@ export function SidebarWorkspaceTrailingActionBase({
 
 export function SidebarWorkspaceTrailingActionOverlay({
   visible,
-  scrim = false,
+  scrimBackdrop,
   children,
 }: {
   visible: boolean;
   /** Fade the row into the kebab when something (the diff stat) is still rendered behind it. */
-  scrim?: boolean;
+  scrimBackdrop?: SidebarSurfaceBackdrop;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
   return (
     <>
-      {scrim ? <TrailingActionScrim /> : null}
+      {scrimBackdrop ? <TrailingActionScrim backdrop={scrimBackdrop} /> : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>{children}</View>
     </>
   );
@@ -484,14 +490,21 @@ export function SidebarWorkspaceTrailingActionOverlay({
  * Anchored to the trailing slot, which is position:relative. Wider than the slot on purpose:
  * the fade has to start before the diff stat does or the diff's left edge cuts off hard.
  */
-function TrailingActionScrim() {
+function TrailingActionScrim({ backdrop }: { backdrop: SidebarSurfaceBackdrop }) {
   // useId's output contains characters that are not legal inside url(#...) — React 19 wraps
   // ids in guillemets, React 18 in colons — and an unresolvable fill paints nothing at all.
   // Keep the per-instance uniqueness, drop everything a fragment reference can't carry.
   const gradientId = `sidebar-scrim-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   return (
-    <View style={sidebarWorkspaceRowStyles.trailingActionScrim} pointerEvents="none">
-      <ThemedTrailingActionScrimSvg gradientId={gradientId} uniProps={scrimColorMapping} />
+    <View
+      style={sidebarWorkspaceRowStyles.trailingActionScrim}
+      pointerEvents="none"
+      testID="sidebar-workspace-trailing-scrim"
+    >
+      <ThemedTrailingActionScrimSvg
+        gradientId={gradientId}
+        uniProps={scrimColorMappings[backdrop]}
+      />
     </View>
   );
 }

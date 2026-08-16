@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type Locator, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../../src/utils/host-routes";
 import { test, expect } from "../support/fixtures";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -62,10 +62,6 @@ async function failNextDiscardRequest(page: Page): Promise<void> {
 }
 
 const CHANGES_PREFERENCES_KEY = "@paseo:changes-preferences";
-
-function diffGroups(scope: Page | Locator, fileIndex = 0): Locator {
-  return scope.getByTestId(new RegExp(`^diff-file-${fileIndex}-group-\\d+$`));
-}
 
 const BEFORE = `import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -469,12 +465,12 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
   await expect(visiblePanel).toBeVisible();
   await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
   await expect(visiblePanel).toContainText("zz-deleted.ts");
-  await expect(diffGroups(visiblePanel).first()).toBeVisible();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
   await expect(page.getByTestId("workspace-file-pane")).toHaveCount(0);
   await visiblePanel.getByTestId("diff-file-0-toggle").click();
-  await expect(diffGroups(visiblePanel)).toHaveCount(0);
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toHaveCount(0);
   await visiblePanel.getByTestId("diff-file-0-toggle").click();
-  await expect(diffGroups(visiblePanel).first()).toBeVisible();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
   const workingDiffLayoutToggle = visiblePanel.getByTestId("working-diff-toggle-layout");
   await expect(workingDiffLayoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
   await workingDiffLayoutToggle.click();
@@ -490,12 +486,14 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
   );
   await page.keyboard.press("Escape");
   await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
-  await expect(visiblePanel.getByTestId(/^diff-file-\d+-group-\d+$/)).toHaveCount(0);
+  await expect(visiblePanel.getByTestId(/^diff-file-\d+-body$/)).toHaveCount(0);
   await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
-  await expect(diffGroups(visiblePanel).first()).toBeVisible();
+  await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
 
   await page.getByTestId("explorer-content-area").getByTestId("diff-file-0-toggle").click();
-  await expect(diffGroups(page.getByTestId("explorer-content-area"))).toHaveCount(0);
+  await expect(
+    page.getByTestId("explorer-content-area").getByTestId("diff-file-0-body"),
+  ).toHaveCount(0);
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
 
   await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), BEFORE);
@@ -518,9 +516,13 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
 
   await changesTabToggle.click();
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(0);
-  await expect(diffGroups(page.getByTestId("explorer-content-area")).first()).toBeVisible();
+  await expect(
+    page.getByTestId("explorer-content-area").getByTestId("diff-file-0-body"),
+  ).toBeVisible();
   await page.getByTestId("explorer-content-area").getByTestId("diff-file-0-toggle").click();
-  await expect(diffGroups(page.getByTestId("explorer-content-area"))).toHaveCount(0);
+  await expect(
+    page.getByTestId("explorer-content-area").getByTestId("diff-file-0-body"),
+  ).toHaveCount(0);
 });
 
 test("changes diff switches between flat and tree file lists", async ({ page }) => {
@@ -551,8 +553,19 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
     "none",
   );
   await expect(page.getByTestId("diff-file-0")).toBeVisible();
-  await expect(page.getByTestId("diff-folder-src-toggle").locator("svg")).toHaveCount(2);
+  await expect(page.getByTestId("diff-folder-src-toggle").locator("svg")).toHaveCount(1);
   await expect(page.getByTestId("diff-file-0-toggle").locator("svg")).toHaveCount(1);
+  const folderToggleBounds = await page.getByTestId("diff-folder-src-toggle").boundingBox();
+  const folderChevronBounds = await page
+    .getByTestId("diff-folder-src-toggle")
+    .locator("svg")
+    .boundingBox();
+  expect(folderToggleBounds).not.toBeNull();
+  expect(folderChevronBounds).not.toBeNull();
+  expect(folderChevronBounds!.y + folderChevronBounds!.height / 2).toBeCloseTo(
+    folderToggleBounds!.y + folderToggleBounds!.height / 2,
+    0,
+  );
   const folderLabelBounds = await page
     .getByTestId("diff-folder-src")
     .getByText("src", { exact: true })
@@ -563,7 +576,7 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
     .boundingBox();
   expect(folderLabelBounds).not.toBeNull();
   expect(fileLabelBounds).not.toBeNull();
-  expect(fileLabelBounds!.x - folderLabelBounds!.x).toBeCloseTo(14, 0);
+  expect(fileLabelBounds!.x - folderLabelBounds!.x).toBeCloseTo(16, 0);
 
   const folderToggle = page.getByTestId("diff-folder-src-toggle");
   await folderToggle.click();
@@ -583,7 +596,7 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await page.getByRole("button", { name: "Collapse all" }).click();
   await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
   await page.getByRole("button", { name: "Expand all" }).click();
-  await expect(diffGroups(page).first()).toBeVisible();
+  await expect(page.getByTestId("diff-file-0-body")).toBeVisible();
 
   await page.getByTestId("diff-folder-src-toggle").click();
   await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
@@ -605,90 +618,6 @@ test("changes diff applies code size changes to gutter and code typography", asy
 
   await expectDiffCodeFontSize(page, 18);
   await expectVisibleDiffRowsShareTypography(page);
-});
-
-const LARGE_DIFF_WIDE_LINE_INDEX = 900;
-
-async function createWorkspaceWithLargeUnwrappedDiff(): Promise<DirtyWorkspace> {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  const addedLines = Array.from({ length: 1_200 }, (_, index) => {
-    if (index === 0) return `\t\t\t\tconst tabbed_${index} = "tabbed";`;
-    if (index === LARGE_DIFF_WIDE_LINE_INDEX) {
-      return `const wide_${index} = "${"界".repeat(80)}";`;
-    }
-    return `const generated_${index} = ${index};`;
-  }).join("\n");
-  await writeFile(
-    path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"),
-    `${AFTER}${addedLines}\n`,
-  );
-  return workspace;
-}
-
-async function scrollToWideDiffLine(page: Page): Promise<Locator> {
-  await page.getByTestId("git-diff-scroll").evaluate((element, lineIndex) => {
-    element.scrollTop = lineIndex * 18;
-    element.dispatchEvent(new Event("scroll", { bubbles: false }));
-  }, LARGE_DIFF_WIDE_LINE_INDEX);
-  const wideLine = page.getByText(new RegExp(`const wide_${LARGE_DIFF_WIDE_LINE_INDEX}`));
-  await expect(wideLine).toHaveCount(1);
-  return wideLine;
-}
-
-test("unwrapped virtualized rows use one horizontal file surface", async ({ page }) => {
-  const workspace = await createWorkspaceWithLargeUnwrappedDiff();
-  await useUnwrappedDiffLines(page);
-  await openWorkspaceChanges(page, workspace);
-
-  const horizontalSurface = page.getByTestId("diff-horizontal-scroll");
-  await expect(horizontalSurface).toHaveCount(1);
-  await expect(page.getByTestId(/^diff-file-0-group-\d+-scroll$/)).toHaveCount(0);
-  const codeBefore = await page.getByTestId("diff-code-row-0").boundingBox();
-  const gutterBefore = await page.getByTestId("diff-gutter-row-0").boundingBox();
-  expect(codeBefore).not.toBeNull();
-  expect(gutterBefore).not.toBeNull();
-  await horizontalSurface.evaluate((element, left) => {
-    element.scrollLeft = left;
-    element.dispatchEvent(new Event("scroll", { bubbles: false }));
-  }, 120);
-  await expect.poll(() => horizontalSurface.evaluate((element) => element.scrollLeft)).toBe(120);
-  await expect
-    .poll(async () => (await page.getByTestId("diff-code-row-0").boundingBox())?.x ?? 0)
-    .toBeLessThanOrEqual(codeBefore!.x - 119);
-  await expect
-    .poll(async () => (await page.getByTestId("diff-gutter-row-0").boundingBox())?.x ?? 0)
-    .toBeCloseTo(gutterBefore!.x, 0);
-  const initiallyMountedGroups = await readMountedDiffGroupIds(page);
-  await page.getByTestId("git-diff-scroll").evaluate((element) => {
-    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-    element.dispatchEvent(new Event("scroll", { bubbles: false }));
-  });
-  await expect
-    .poll(async () => {
-      const mountedGroups = await readMountedDiffGroupIds(page);
-      return mountedGroups.some((group) => !initiallyMountedGroups.includes(group));
-    })
-    .toBe(true);
-  await expect.poll(() => horizontalSurface.evaluate((element) => element.scrollLeft)).toBe(120);
-  await expect(page.getByTestId(/^diff-file-0-group-\d+-scroll$/)).toHaveCount(0);
-
-  const wideLine = await scrollToWideDiffLine(page);
-  await horizontalSurface.evaluate((element) => {
-    element.scrollLeft = element.scrollWidth;
-    element.dispatchEvent(new Event("scroll", { bubbles: false }));
-  });
-  await expect
-    .poll(async () => {
-      const surfaceBounds = await horizontalSurface.boundingBox();
-      const wideTextRight = await wideLine.evaluate((element) => {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        return range.getBoundingClientRect().right;
-      });
-      if (!surfaceBounds) return false;
-      return wideTextRight <= surfaceBounds.x + surfaceBounds.width + 1;
-    })
-    .toBe(true);
 });
 
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
@@ -716,12 +645,6 @@ async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
   );
 }
 
-async function readMountedDiffGroupIds(page: Page): Promise<(string | null)[]> {
-  return diffGroups(page).evaluateAll((groups) =>
-    groups.map((group) => group.getAttribute("data-testid")),
-  );
-}
-
 async function useUnwrappedDiffLines(page: Page): Promise<void> {
   await page.addInitScript(
     ({ preferencesKey }) => {
@@ -746,11 +669,13 @@ async function expectFlatFileList(page: Page): Promise<void> {
 }
 
 async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<void> {
+  const visibleCodeText = page
+    .getByTestId(/^diff-code-text-/)
+    .filter({ visible: true })
+    .first();
   await expect
     .poll(async () => {
-      return page
-        .getByTestId("diff-code-text-1")
-        .evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
+      return visibleCodeText.evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
     })
     .toBe(fontSize);
 }
@@ -770,22 +695,21 @@ async function readVisibleDiffRowGeometry(page: Page): Promise<{
     codeLineHeight: number;
   }[];
 }> {
-  return diffGroups(page).evaluateAll((groups) => {
-    if (groups.length === 0) {
+  return page.locator("body").evaluate(({ ownerDocument }) => {
+    const root = ownerDocument.querySelector('[data-testid="diff-file-0-body"]');
+    if (!root) {
       throw new Error("Expanded diff body is not mounted");
     }
 
     const readRows = (prefix: string, textPrefix: string) =>
-      groups.flatMap((group) =>
-        Array.from(group.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`)).map((row) => {
-          const testId = row.getAttribute("data-testid") ?? "";
-          const index = Number(testId.slice(prefix.length));
-          const rect = row.getBoundingClientRect();
-          const text = row.querySelector<HTMLElement>(`[data-testid="${textPrefix}${index}"]`);
-          const lineHeight = text ? Number.parseFloat(getComputedStyle(text).lineHeight) : 0;
-          return { index, top: rect.top, height: rect.height, lineHeight };
-        }),
-      );
+      Array.from(root.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`)).map((row) => {
+        const testId = row.getAttribute("data-testid") ?? "";
+        const index = Number(testId.slice(prefix.length));
+        const rect = row.getBoundingClientRect();
+        const text = root.querySelector<HTMLElement>(`[data-testid="${textPrefix}${index}"]`);
+        const lineHeight = text ? Number.parseFloat(getComputedStyle(text).lineHeight) : 0;
+        return { index, top: rect.top, height: rect.height, lineHeight };
+      });
 
     const gutters = new Map(
       readRows("diff-gutter-row-", "diff-gutter-text-").map((row) => [row.index, row]),
@@ -889,7 +813,7 @@ async function openChangesInVisibleExplorer(page: Page): Promise<void> {
 }
 
 async function expectExpandedMountedTabDiff(page: Page): Promise<void> {
-  await expect(diffGroups(page).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("diff-file-0-body")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("function createInitialMountedTabIds")).toBeVisible({
     timeout: 30_000,
   });
@@ -928,9 +852,15 @@ async function returnToWorkspaceChanges(page: Page): Promise<void> {
 }
 
 async function scrollToLowerUnwrappedDiffRows(page: Page): Promise<void> {
-  const groups = diffGroups(page);
-  await expect.poll(() => groups.count()).toBeGreaterThan(1);
-  const lastMountedGroup = groups.last();
-  await lastMountedGroup.scrollIntoViewIfNeeded();
-  await expect(lastMountedGroup.locator('[data-testid^="diff-code-row-"]').last()).toBeVisible();
+  const lastRowIndex = await page.getByTestId("diff-file-0-body").evaluate((root) => {
+    const rows = Array.from(root.querySelectorAll<HTMLElement>('[data-testid^="diff-code-row-"]'));
+    if (rows.length === 0) {
+      throw new Error("No unwrapped code rows are mounted");
+    }
+    return Math.max(
+      ...rows.map((row) => Number((row.getAttribute("data-testid") ?? "").slice(14))),
+    );
+  });
+  await page.getByTestId(`diff-code-row-${lastRowIndex}`).scrollIntoViewIfNeeded();
+  await expect(page.getByTestId(`diff-code-row-${lastRowIndex}`)).toBeVisible();
 }

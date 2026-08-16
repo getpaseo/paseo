@@ -221,9 +221,6 @@ const lightSemanticColors = {
   foregroundMuted: "#71717a",
   foregroundExtraMuted: "#a1a1aa",
 
-  // Controls
-  scrollbarHandle: "#3f3f46", // zinc-700
-
   // Borders - shifted one step lighter
   border: "#e4e4e7", // (was zinc-200, now zinc-200 - keep for contrast)
   borderAccent: "#ececf1", // Softer accent border for low-emphasis outlines
@@ -300,7 +297,6 @@ interface DarkThemeConfig {
   surfaceSidebarHover: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
-  scrollbarHandle: string;
   border: string;
   borderAccent: string;
   accent: string;
@@ -343,8 +339,6 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     foreground: "#fafafa",
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
-
-    scrollbarHandle: tint.scrollbarHandle,
 
     border: tint.border,
     borderAccent: tint.borderAccent,
@@ -406,7 +400,6 @@ const paseoDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#1c1f1e",
   foregroundMuted: "#A1A5A4",
   foregroundExtraMuted: "#717574",
-  scrollbarHandle: "#717574",
   border: "#252B2A",
   borderAccent: "#2F3534",
   accent: "#20744A",
@@ -428,7 +421,6 @@ const zincDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#1b1b1e",
   foregroundMuted: "#a1a1aa",
   foregroundExtraMuted: "#71717a",
-  scrollbarHandle: "#71717a",
   border: "#27272a",
   borderAccent: "#303036",
   accent: "#e4e4e7",
@@ -451,7 +443,6 @@ const midnightDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#1a1c28",
   foregroundMuted: "#9a9db0",
   foregroundExtraMuted: "#6b6e82",
-  scrollbarHandle: "#6b6e82",
   border: "#242636",
   borderAccent: "#2e3040",
   accent: "#3b6fcf",
@@ -473,7 +464,6 @@ const claudeDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#222120",
   foregroundMuted: "#ada9a5",
   foregroundExtraMuted: "#78746f",
-  scrollbarHandle: "#78746f",
   border: "#2c2a27",
   borderAccent: "#36332f",
   accent: "#d97757",
@@ -495,7 +485,6 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#292d36",
   foregroundMuted: "#c8ccd8",
   foregroundExtraMuted: "#a0a4b2",
-  scrollbarHandle: "#a0a4b2",
   border: "#353a47",
   borderAccent: "#3f4454",
   accent: "#89b4fa",
@@ -671,7 +660,6 @@ const pureBlackDarkColors = buildDarkSemanticColors({
   surfaceSidebarHover: "#161616",
   foregroundMuted: "#a1a1aa",
   foregroundExtraMuted: "#71717a",
-  scrollbarHandle: "#71717a",
   border: "#1c1c1c",
   borderAccent: "#242424",
   accent: "#20744A",

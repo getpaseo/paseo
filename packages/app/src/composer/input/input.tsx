@@ -54,8 +54,12 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerHeightMirror } from "./height-mirror";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import type { NativePastedFile } from "@/composer/native-pasted-image";
+import { ComposerTextInput } from "./text-input";
+import type { ComposerTextInputHandle } from "./text-input-types";
 import {
   resolveSendTooltipLabel,
   resolveSubmitAccessibilityLabel,
@@ -105,6 +109,7 @@ export interface MessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
+  onPasteImages?: (files: readonly NativePastedFile[]) => void;
   client: DaemonClient | null;
   /** Dictation start gate from host runtime (socket connected + directory ready). */
   isReadyForDictation?: boolean;
@@ -112,8 +117,6 @@ export interface MessageInputProps {
   autoFocus?: boolean;
   autoFocusKey?: string;
   disabled?: boolean;
-  /** True when this composer's pane is focused. Used to gate global hotkeys and stop dictation when hidden. */
-  isPaneFocused?: boolean;
   /** Content to render on the left side of the composer toolbar (e.g., AgentControls) */
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
@@ -147,6 +150,8 @@ export interface MessageInputProps {
   inputMode?: ComposerInputMode;
   /** Renders `value` as static text on the same surface, for content there is nothing to type into. */
   readOnly?: boolean;
+  /** Changes only when application state must replace native-owned text. */
+  textReplacementKey: string;
   /** Replaces the submit icon with this label, still inside the composer's own toolbar row. */
   submitLabel?: string;
 }
@@ -154,6 +159,8 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  getText: () => string;
+  replaceText: (text: string, selection?: { start: number; end: number }) => void;
   runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
    * Web-only: return the underlying DOM element for focus assertions/retries.
@@ -397,12 +404,9 @@ function handleDesktopKeyPressImpl(
   ctx.handleDefaultSendAction();
 }
 
-function getTextInputNativeElement(
-  current: TextInput | (TextInput & { getNativeRef?: () => unknown }) | null,
-): HTMLElement | null {
+function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTMLElement | null {
   if (!current) return null;
-  const handle = current as TextInput & { getNativeRef?: () => unknown };
-  const native = typeof handle.getNativeRef === "function" ? handle.getNativeRef() : current;
+  const native = typeof current.getNativeRef === "function" ? current.getNativeRef() : current;
   return native instanceof HTMLElement ? native : null;
 }
 
@@ -478,9 +482,7 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
 }
 
 function useAutoFocusOnWebEffect(
-  textInputRef: React.MutableRefObject<
-    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-  >,
+  textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>,
   autoFocus: boolean,
   autoFocusKey: string | undefined,
 ): void {
@@ -493,9 +495,24 @@ function useAutoFocusOnWebEffect(
         const active = typeof document !== "undefined" ? document.activeElement : null;
         return Boolean(element) && active === element;
       },
+      deferInitialAttempt: true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFocus, autoFocusKey]);
+}
+
+function MessageInputAutoFocus({
+  enabled,
+  autoFocusKey,
+  textInputRef,
+}: {
+  enabled: boolean;
+  autoFocusKey: string | undefined;
+  textInputRef: React.MutableRefObject<ComposerTextInputHandle | null>;
+}) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  useAutoFocusOnWebEffect(textInputRef, enabled && isActiveComposer, autoFocusKey);
+  return null;
 }
 
 function MessageInputOverlay({
@@ -577,7 +594,8 @@ function FocusHint({
   focusInputKeys: ShortcutChord | null | undefined;
   label: string;
 }) {
-  if (!visible || !focusInputKeys || !label.trim()) return null;
+  const { isActiveComposer } = useComposerKeyboardScope();
+  if (!isActiveComposer || !visible || !focusInputKeys || !label.trim()) return null;
   return (
     <Text style={styles.focusHintText} pointerEvents="none">
       {label}
@@ -588,8 +606,8 @@ function FocusHint({
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
-  textInputRef: React.Ref<TextInput>;
-  textInputStyle: React.ComponentProps<typeof ThemedTextInput>["style"];
+  textInputRef: React.Ref<ComposerTextInputHandle>;
+  textInputStyle: React.ComponentProps<typeof TextInput>["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
   placeholder: string;
   accessibilityLabel: string;
@@ -602,6 +620,8 @@ interface ComposerTextSurfaceProps {
   onContentSizeChange: (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => void;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
+  onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
+  onPasteError: (message: string) => void;
   focusHintVisible: boolean;
   focusInputKeys: ShortcutChord | null | undefined;
   focusHintLabel: string;
@@ -624,13 +644,12 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
   }
   return (
     <View style={styles.textInputScrollWrapper}>
-      <ThemedTextInput
+      <ComposerTextInput
         ref={props.textInputRef}
         dataSet={COMPOSER_INPUT_DATASET}
-        value={props.value}
+        text={props.value}
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
-        uniProps={textInputPlaceholderColorMapping}
         accessibilityLabel={props.accessibilityLabel}
         onFocus={props.onFocus}
         onBlur={props.onBlur}
@@ -641,6 +660,8 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         editable={props.editable}
         onKeyPress={props.onKeyPress}
         onSelectionChange={props.onSelectionChange}
+        onPasteImages={props.onPasteImages}
+        onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
       <FocusHint
@@ -904,7 +925,7 @@ interface QueueMessageContext {
   attachments: ComposerAttachment[];
   cwd: string;
   onQueue: ((payload: MessagePayload) => void) | undefined;
-  onChangeText: (text: string) => void;
+  replaceText: (text: string) => void;
   onMinimizeHeight: () => void;
 }
 
@@ -913,7 +934,7 @@ function queueMessageImpl(ctx: QueueMessageContext): void {
   const trimmed = ctx.value.trim();
   if (!trimmed && ctx.attachments.length === 0) return;
   ctx.onQueue({ text: trimmed, attachments: ctx.attachments, cwd: ctx.cwd });
-  ctx.onChangeText("");
+  ctx.replaceText("");
   ctx.onMinimizeHeight();
 }
 
@@ -965,9 +986,7 @@ function isTextAreaLike(v: unknown): v is TextAreaHandle {
   return typeof v === "object" && v !== null && "scrollHeight" in v;
 }
 
-function getWebTextAreaImpl(
-  current: TextInput | (TextInput & { getNativeRef?: () => unknown }) | null,
-): TextAreaHandle | null {
+function getWebTextAreaImpl(current: ComposerTextInputHandle | null): TextAreaHandle | null {
   if (!current) return null;
   const candidate = current as { getNativeRef?: () => unknown };
   if (typeof candidate.getNativeRef === "function") {
@@ -1019,13 +1038,13 @@ interface ResolvedMessageInputProps {
   attachmentMenuItems: AttachmentMenuItem[];
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   onAddImages: ((images: ImageAttachment[]) => void) | undefined;
+  onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
   client: DaemonClient | null;
   isReadyForDictation: boolean | undefined;
   placeholder: string | undefined;
   autoFocus: boolean;
   autoFocusKey: string | undefined;
   disabled: boolean;
-  isPaneFocused: boolean;
   leftContent: React.ReactNode;
   beforeVoiceContent: React.ReactNode;
   rightContent: React.ReactNode;
@@ -1044,6 +1063,7 @@ interface ResolvedMessageInputProps {
   attachmentSlot: React.ReactNode;
   inputMode: ComposerInputMode;
   readOnly: boolean;
+  textReplacementKey: string;
   submitLabel: string | undefined;
 }
 
@@ -1065,13 +1085,13 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentMenuItems: props.attachmentMenuItems,
     onAttachButtonRef: props.onAttachButtonRef,
     onAddImages: props.onAddImages,
+    onPasteImages: props.onPasteImages,
     client: props.client,
     isReadyForDictation: props.isReadyForDictation,
     placeholder: props.placeholder,
     autoFocus: props.autoFocus ?? false,
     autoFocusKey: props.autoFocusKey,
     disabled: props.disabled ?? false,
-    isPaneFocused: props.isPaneFocused ?? true,
     leftContent: props.leftContent,
     beforeVoiceContent: props.beforeVoiceContent,
     rightContent: props.rightContent,
@@ -1090,6 +1110,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentSlot: props.attachmentSlot,
     inputMode: props.inputMode ?? "chat",
     readOnly: props.readOnly ?? false,
+    textReplacementKey: props.textReplacementKey,
     submitLabel: props.submitLabel,
   };
 }
@@ -1119,13 +1140,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentMenuItems,
       onAttachButtonRef,
       onAddImages,
+      onPasteImages,
       client,
       isReadyForDictation,
       placeholder,
       autoFocus,
       autoFocusKey,
       disabled,
-      isPaneFocused,
       leftContent,
       beforeVoiceContent,
       rightContent,
@@ -1144,6 +1165,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentSlot,
       inputMode,
       readOnly,
+      textReplacementKey,
       submitLabel,
     } = resolveMessageInputProps(props);
     const mode = resolveComposerInputMode(inputMode);
@@ -1161,18 +1183,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const [isInputFocused, setIsInputFocused] = useState(false);
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
-    const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
-      null,
-    );
+    const textInputRef = useRef<ComposerTextInputHandle | null>(null);
     const isInputFocusedRef = useRef(false);
+    const valueRef = useRef(value);
+    const appliedTextReplacementKeyRef = useRef(textReplacementKey);
+
+    const replaceText = useCallback(
+      (nextText: string, selection?: { start: number; end: number }) => {
+        valueRef.current = nextText;
+        textInputRef.current?.replaceText(nextText, selection);
+        onChangeText(nextText);
+      },
+      [onChangeText],
+    );
 
     useImperativeHandle(ref, () => ({
       focus: () => {
         textInputRef.current?.focus();
       },
       blur: () => {
-        textInputRef.current?.blur?.();
+        textInputRef.current?.blur();
       },
+      getText: () => textInputRef.current?.getText() ?? valueRef.current,
+      replaceText,
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
           focusInput: () => textInputRef.current?.focus(),
@@ -1191,7 +1224,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }));
     const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
     const sendAfterTranscriptRef = useRef(false);
-    const valueRef = useRef(value);
     const serverInfo = useSessionStore(
       useCallback(
         (state) => {
@@ -1205,16 +1237,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     useEffect(() => {
+      if (appliedTextReplacementKeyRef.current === textReplacementKey) return;
+      appliedTextReplacementKeyRef.current = textReplacementKey;
       valueRef.current = value;
-    }, [value]);
+      textInputRef.current?.replaceText(value);
+    }, [textReplacementKey, value]);
 
     useEffect(() => {
       return () => {
         onFocusChange?.(false);
       };
     }, [onFocusChange]);
-
-    useAutoFocusOnWebEffect(textInputRef, autoFocus, autoFocusKey);
 
     const handleDictationTranscript = useCallback(
       (text: string, _meta: { requestId: string }) => {
@@ -1226,13 +1259,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           isAgentRunning,
           onQueue,
           onSubmit,
-          onChangeText,
+          replaceText,
           attachments,
           cwd,
           autoSend,
         });
       },
-      [onChangeText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
+      [replaceText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
     );
 
     const handleDictationError = useCallback(
@@ -1413,7 +1446,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const handleSendMessage = useCallback(
       () =>
         sendMessageImpl({
-          value: valueRef.current,
+          value: textInputRef.current?.getText() ?? valueRef.current,
           attachments,
           hasExternalContent,
           allowEmptySubmit,
@@ -1438,14 +1471,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const handleQueueMessage = useCallback(
       () =>
         queueMessageImpl({
-          value: valueRef.current,
+          value: textInputRef.current?.getText() ?? valueRef.current,
           attachments,
           cwd,
           onQueue,
-          onChangeText,
+          replaceText,
           onMinimizeHeight: minimizeInputHeight,
         }),
-      [attachments, cwd, onQueue, onChangeText, minimizeInputHeight],
+      [attachments, cwd, onQueue, replaceText, minimizeInputHeight],
     );
 
     const handleDefaultSendAction = useCallback(() => {
@@ -1618,6 +1651,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       onFocusChange?.(false);
     }, [onFocusChange]);
 
+    const handlePasteError = useCallback(
+      (message: string) => {
+        console.error("[MessageInput] Native paste failed:", message);
+        toast.error(t("composer.errors.pasteImageFailed"));
+      },
+      [t, toast],
+    );
+
     const attachButtonStyle = useCallback(
       ({ hovered }: { hovered?: boolean }) => [
         styles.attachButton,
@@ -1707,6 +1748,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     return (
       <View ref={rootRef} style={styles.container} testID="message-input-root">
+        <MessageInputAutoFocus
+          enabled={autoFocus}
+          autoFocusKey={autoFocusKey}
+          textInputRef={textInputRef}
+        />
         {/* Regular input */}
         <View
           ref={inputWrapperRef}
@@ -1728,11 +1774,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onBlur={handleInputBlur}
             editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
             scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
-            autoFocus={isWeb && autoFocus}
+            autoFocus={false}
             onContentSizeChange={handleContentSizeChange}
             onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
             onSelectionChange={handleSelectionChange}
-            focusHintVisible={isWeb && isPaneFocused && !isInputFocused && !value}
+            onPasteImages={onPasteImages}
+            onPasteError={handlePasteError}
+            focusHintVisible={isWeb && !isInputFocused && !value}
             focusInputKeys={focusInputKeys}
             focusHintLabel={t("composer.input.focusHint", {
               shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
@@ -1982,11 +2030,7 @@ const ThemedMicOff = withUnistyles(MicOff);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const ThemedTextInput = withUnistyles(TextInput);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
-const textInputPlaceholderColorMapping = (theme: Theme) => ({
-  placeholderTextColor: theme.colors.surface4,
-});

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
@@ -13,6 +14,7 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import type { SubagentRow } from "./select";
+import type { ArchiveFinishedStatus } from "./use-archive-finished";
 import {
   buildSubagentRowPresentationData,
   countFinishedSubagents,
@@ -20,8 +22,6 @@ import {
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedUnlink = withUnistyles(Unlink);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -35,6 +35,7 @@ export interface SubagentsTrackProps {
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onArchiveFinished?: () => void;
+  archiveFinishedStatus?: ArchiveFinishedStatus;
   onDetachSubagent?: (id: string) => void;
 }
 
@@ -56,6 +57,7 @@ export function SubagentsTrack({
   onOpenProviderSubagent,
   onArchiveSubagent,
   onArchiveFinished,
+  archiveFinishedStatus = { kind: "idle" },
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
@@ -70,47 +72,41 @@ export function SubagentsTrack({
     [expanded],
   );
 
-  const headerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.headerToggle,
-      (hovered || pressed) && styles.headerActive,
-    ],
-    [],
-  );
   const headerContainerStyle = useMemo(
     () => [styles.header, expanded ? styles.headerDivider : styles.headerCollapsed],
     [expanded],
   );
+  const headerAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
 
-  if (rows.length === 0) {
+  const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
+  const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
+  if (rows.length === 0 && !isArchivingFinished && !isArchiveFinishedFailed) {
     return null;
   }
 
   const headerLabel = formatHeaderLabel(rows);
   const finishedCount = countFinishedSubagents(rows);
+  const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
 
   return (
     <View style={styles.outer} testID="subagents-track">
       <View style={styles.track}>
         <View style={surfaceStyle}>
           <View style={headerContainerStyle}>
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              variant="ghost"
+              size="xs"
               accessibilityLabel={headerLabel}
+              accessibilityState={headerAccessibilityState}
               testID="subagents-track-header"
               onPress={toggleExpanded}
-              style={headerStyle}
+              leftIcon={expanded ? ChevronDown : ChevronRight}
+              style={styles.headerToggle}
+              textStyle={styles.headerLabel}
             >
-              {expanded ? (
-                <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-              ) : (
-                <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-              )}
-              <Text style={styles.headerLabel} numberOfLines={1}>
-                {headerLabel}
-              </Text>
-            </Pressable>
-            {finishedCount > 0 && onArchiveFinished ? (
+              {headerLabel}
+            </Button>
+            {showArchiveFinished && onArchiveFinished ? (
               <View style={styles.headerAction}>
                 <SubagentActionButton
                   accessibilityLabel={t("subagents.archiveFinishedAction")}
@@ -118,8 +114,28 @@ export function SubagentsTrack({
                   tooltipLabel={t("subagents.archiveFinishedTooltip")}
                   icon="archive"
                   visible
+                  disabled={isArchivingFinished}
                   onPress={onArchiveFinished}
                 />
+                {archiveFinishedStatus.kind === "archiving" ? (
+                  <Text
+                    style={styles.archiveFinishedStatus}
+                    testID="subagents-track-archive-progress"
+                  >
+                    {archiveFinishedStatus.completedCount}/{archiveFinishedStatus.totalCount}
+                  </Text>
+                ) : null}
+                {archiveFinishedStatus.kind === "failed" ? (
+                  <Text
+                    style={styles.archiveFinishedStatus}
+                    testID="subagents-track-archive-failed"
+                  >
+                    {t("subagents.archiveFinishedRetry", {
+                      failed: archiveFinishedStatus.failedCount,
+                      total: archiveFinishedStatus.totalCount,
+                    })}
+                  </Text>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -285,6 +301,7 @@ function SubagentActionButton({
   tooltipLabel,
   icon,
   visible,
+  disabled = false,
   onPress,
 }: {
   accessibilityLabel: string;
@@ -292,15 +309,17 @@ function SubagentActionButton({
   tooltipLabel: string;
   icon: SubagentActionIcon;
   visible: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }): ReactElement {
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild disabled={!visible}>
+      <TooltipTrigger asChild disabled={!visible || disabled}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           testID={testID}
+          disabled={disabled}
           onPress={onPress}
           style={styles.actionButton}
           hitSlop={8}
@@ -346,21 +365,24 @@ const styles = StyleSheet.create((theme) => ({
   headerToggle: {
     flex: 1,
     minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
+    justifyContent: "flex-start",
+    borderRadius: 0,
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[1],
     paddingVertical: theme.spacing[2],
   },
   headerAction: {
     paddingRight: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  archiveFinishedStatus: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   headerCollapsed: {
     paddingBottom: theme.spacing[4],
-  },
-  headerActive: {
-    backgroundColor: theme.colors.surface2,
   },
   headerDivider: {
     borderBottomWidth: theme.borderWidth[1],

@@ -293,6 +293,11 @@ function buildDefaultTestServiceDeps() {
       signal: null,
     })),
     getWorkspaceGitSelfHealPhaseMs: vi.fn(() => 30_000),
+    createWatcherLivenessCanary: vi.fn(() => ({
+      path: "",
+      filterEvents: (events) => events,
+      verify: vi.fn(async () => {}),
+    })),
     now: () => new Date("2026-04-12T00:00:00.000Z"),
   };
 }

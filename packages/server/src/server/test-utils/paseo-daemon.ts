@@ -12,6 +12,7 @@ import {
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/index.js";
+import type { AgentProfile } from "@getpaseo/protocol/messages";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
@@ -45,6 +46,10 @@ interface TestPaseoDaemonOptions {
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
+  agentProfiles?: AgentProfile[];
+  autoArchiveAfterMerge?: boolean;
+  pluginsEnabled?: PaseoDaemonConfig["pluginsEnabled"];
+  plugins?: PaseoDaemonConfig["plugins"];
 }
 
 export interface TestPaseoDaemon {
@@ -194,6 +199,10 @@ async function prepareTestDaemonConfig(
     voiceLlmModel: options.voiceLlmModel ?? null,
     dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
+    agentProfiles: options.agentProfiles,
+    autoArchiveAfterMerge: options.autoArchiveAfterMerge,
+    pluginsEnabled: options.pluginsEnabled,
+    plugins: options.plugins,
   };
   return { config, paseoHomeRoot, paseoHome, staticDir };
 }

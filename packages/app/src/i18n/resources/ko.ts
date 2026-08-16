@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
   common: {
@@ -65,6 +66,8 @@ export const ko: TranslationResources = {
       newAgent: "새 에이전트",
       addProject: "프로젝트 추가",
       home: "홈",
+      groupByProject: "프로젝트별 그룹화",
+      groupByStatus: "상태별 그룹화",
       modelGroupLabel: "모델",
       modelSearchKeywords: "모델 전환 모델 변경 모델 설정 모델 선택",
       thinkingGroupLabel: "추론",
@@ -332,6 +335,15 @@ export const ko: TranslationResources = {
     todo: {
       title: "작업",
       empty: "아직 작업이 없습니다.",
+      tasksProgress: "작업 {{completed}}/{{total}}개",
+      tasksProgressCurrent: "작업 {{completed}}/{{total}}개 · {{task}}",
+      activity: {
+        created: "작업 {{count}}개 생성",
+        added: "추가됨",
+        started: "시작됨",
+        completed: "완료됨",
+        reopened: "다시 열림",
+      },
     },
     compaction: {
       loading: "압축하는 중...",
@@ -513,6 +525,8 @@ export const ko: TranslationResources = {
         screenshotCopied: "스크린샷을 클립보드에 복사했습니다.",
         elementCopied: "요소를 클립보드에 복사했습니다.",
         screenshotFailed: "스크린샷을 복사할 수 없습니다.",
+        selectorLoading: "페이지 로딩이 끝날 때까지 기다려 주세요.",
+        selectorFailed: "요소 선택기를 시작할 수 없습니다.",
       },
       annotate: {
         title: "요소에 주석 달기",
@@ -605,6 +619,7 @@ export const ko: TranslationResources = {
         reloadingAgent: "에이전트 다시 로드 중...",
         reloadedAgent: "에이전트를 다시 로드했습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
+        failedToCloseAgent: "에이전트를 닫지 못했습니다",
       },
       confirmations: {
         close: "닫기",
@@ -962,6 +977,8 @@ export const ko: TranslationResources = {
       },
       show: {
         label: "표시 항목",
+        branch: "브랜치",
+        project: "프로젝트",
         host: "호스트",
         changeRequest: "풀 리퀘스트",
         checks: "검사",
@@ -1404,14 +1421,19 @@ export const ko: TranslationResources = {
     loadingSelector: "모델 선택기 불러오는 중...",
     error: "오류",
     defaultModel: "기본값",
-    favorites: "즐겨찾기",
-    favoriteModel: "모델 즐겨찾기",
-    unfavoriteModel: "모델 즐겨찾기 해제",
+    profiles: "프로필",
+    providers: "제공자",
+    model: "모델",
+    editProfiles: "편집",
+    editProfilesLabel: "에이전트 프로필 편집",
+    createProfile: "프로필 만들기",
     modelCount: "모델 {{count}}개",
     modelCountPlural: "모델 {{count}}개",
     retry: "다시 시도",
     retrying: "다시 시도 중...",
     noMatches: "검색과 일치하는 모델이 없습니다",
+    noMatchesForQuery: '"{{query}}"과(와) 일치하는 모델이 없습니다',
+    searchAllPlaceholder: "모든 모델 검색...",
     searchPlaceholder: "모델 검색...",
     openProviderSettings: "{{provider}} 설정 열기",
   },
@@ -1609,6 +1631,7 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1777,8 +1800,10 @@ export const ko: TranslationResources = {
       providers: "프로바이더",
       usage: "사용량",
       terminals: "터미널",
+      plugins: "플러그인",
       host: "개요",
     },
+    plugins: pluginSettings.ko,
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
@@ -2200,6 +2225,44 @@ export const ko: TranslationResources = {
         save: "저장",
         emptyState: "아직 프로필이 없습니다. 특정 명령으로 터미널을 실행하려면 하나 추가하세요.",
       },
+      agentProfiles: {
+        sectionTitle: "에이전트 프로필",
+        unavailable: "에이전트 프로필을 관리하려면 이 호스트에 연결하세요",
+        unsupported: "이 호스트에서 실행 중인 데몬은 아직 에이전트 프로필을 지원하지 않습니다",
+        emptyState:
+          "아직 프로필이 없습니다. 저장된 프로바이더와 모델로 에이전트를 시작하려면 하나 추가하세요.",
+        addProfileTitle: "에이전트 프로필 추가",
+        newProfile: "새 프로필",
+        editProfile: "프로필 편집",
+        editProfileTitle: "에이전트 프로필 편집",
+        nameLabel: "이름",
+        namePlaceholder: "UI 작업",
+        iconLabel: "아이콘",
+        noIcon: "없음",
+        providerLabel: "프로바이더",
+        providerPlaceholder: "프로바이더 선택",
+        noProviders: "이 호스트에서 사용 가능한 프로바이더가 없습니다",
+        modelLabel: "모델",
+        noModels: "이 프로바이더에는 선택할 수 있는 모델이 없습니다",
+        modeLabel: "모드",
+        noModes: "이 프로바이더에는 선택할 수 있는 모드가 없습니다",
+        thinkingLabel: "사고",
+        noThinkingOptions: "이 모델에는 사고 수준이 없습니다",
+        featuresLabel: "기능",
+        featureCount: "기능 {{count}}개",
+        featureCountOne: "기능 {{count}}개",
+        notesLabel: "에이전트를 위한 메모",
+        notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
+        notesHint:
+          "list_profiles MCP 도구가 반환합니다. 다른 에이전트에게 전달할 지침으로 작성하세요.",
+        save: "저장",
+        saving: "저장하는 중...",
+        remove: "제거",
+        removeConfirmTitle: "프로필을 제거할까요?",
+        removeConfirmMessage: '"{{name}}"을(를) 제거할까요?',
+        moveUp: "위로 이동",
+        moveDown: "아래로 이동",
+      },
       daemon: {
         rename: {
           editLabel: "레이블 편집",
@@ -2368,6 +2431,8 @@ export const ko: TranslationResources = {
         docsTooltip: "자세한 내용과 이 명령에 사용할 수 있는 환경 변수는 문서를 참조하세요",
         setup: "설정",
         setupAccessibility: "워크트리 설정 명령",
+        uncommittedTitle: "paseo.json 변경 사항을 커밋하세요",
+        uncommittedDescription: "새 워크트리는 선택한 기본 브랜치의 설정 스크립트를 사용합니다.",
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
       },

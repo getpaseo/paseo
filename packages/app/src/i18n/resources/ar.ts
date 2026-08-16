@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
   common: {
@@ -65,6 +66,8 @@ export const ar: TranslationResources = {
       newAgent: "وكيل جديد",
       addProject: "إضافة مشروع",
       home: "بيت",
+      groupByProject: "تجميع حسب المشروع",
+      groupByStatus: "تجميع حسب الحالة",
       modelGroupLabel: "النموذج",
       modelSearchKeywords: "تبديل النموذج تغيير النموذج تعيين النموذج اختيار النموذج",
       thinkingGroupLabel: "التفكير",
@@ -331,6 +334,15 @@ export const ar: TranslationResources = {
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
+      tasksProgress: "{{completed}}/{{total}} مهام",
+      tasksProgressCurrent: "{{completed}}/{{total}} مهام · {{task}}",
+      activity: {
+        created: "تم إنشاء {{count}} مهام",
+        added: "أُضيفت",
+        started: "بدأت",
+        completed: "اكتملت",
+        reopened: "أُعيد فتحها",
+      },
     },
     compaction: {
       loading: "الضغط...",
@@ -512,6 +524,8 @@ export const ar: TranslationResources = {
         screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
         elementCopied: "تم نسخ العنصر إلى الحافظة",
         screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+        selectorLoading: "انتظر حتى ينتهي تحميل الصفحة",
+        selectorFailed: "تعذّر بدء محدد العنصر",
       },
       annotate: {
         title: "التعليق على العنصر",
@@ -603,6 +617,7 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        failedToCloseAgent: "فشل في إغلاق الوكيل",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",
@@ -955,6 +970,8 @@ export const ar: TranslationResources = {
       },
       show: {
         label: "إظهار",
+        branch: "الفرع",
+        project: "المشروع",
         host: "المضيف",
         changeRequest: "طلب السحب",
         checks: "الفحوصات",
@@ -1394,14 +1411,19 @@ export const ar: TranslationResources = {
     loadingSelector: "جارٍ تحميل محدد النموذج...",
     error: "خطأ",
     defaultModel: "تقصير",
-    favorites: "المفضلة",
-    favoriteModel: "النموذج المفضل",
-    unfavoriteModel: "نموذج غير مفضل",
+    profiles: "الملفات الشخصية",
+    providers: "المزودون",
+    model: "النموذج",
+    editProfiles: "تحرير",
+    editProfilesLabel: "تحرير ملفات الوكيل",
+    createProfile: "إنشاء ملف شخصي",
     modelCount: "{{count}} نموذج",
     modelCountPlural: "{{count}} نماذج",
     retry: "أعد المحاولة",
     retrying: "جارٍ إعادة المحاولة...",
     noMatches: "لا توجد نماذج تطابق بحثك",
+    noMatchesForQuery: 'لا توجد نماذج تطابق "{{query}}"',
+    searchAllPlaceholder: "ابحث في كل النماذج...",
     searchPlaceholder: "نماذج البحث...",
     openProviderSettings: "افتح إعدادات{{provider}}",
   },
@@ -1599,6 +1621,7 @@ export const ar: TranslationResources = {
     archiveTooltip: "أرشفة الوكيل الفرعي",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedTooltip: "أرشفة المكتملين",
+    archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1767,8 +1790,10 @@ export const ar: TranslationResources = {
       providers: "مقدمي الخدمات",
       usage: "الاستخدام",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "نظرة عامة",
     },
+    plugins: pluginSettings.ar,
     metadataGeneration: {
       title: "إنشاء البيانات الوصفية",
       description:
@@ -2188,6 +2213,42 @@ export const ar: TranslationResources = {
         save: "Save",
         emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
       },
+      agentProfiles: {
+        sectionTitle: "ملفات تعريف الوكيل",
+        unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",
+        unsupported: "يشغّل هذا المضيف نسخة Daemon لا تدعم ملفات تعريف الوكيل بعد",
+        emptyState: "لا توجد ملفات تعريف بعد. أضف واحدًا لبدء الوكلاء من مزود ونموذج محفوظين.",
+        addProfileTitle: "إضافة ملف تعريف وكيل",
+        newProfile: "ملف تعريف جديد",
+        editProfile: "تعديل الملف",
+        editProfileTitle: "تعديل ملف تعريف الوكيل",
+        nameLabel: "الاسم",
+        namePlaceholder: "عمل الواجهة",
+        iconLabel: "الأيقونة",
+        noIcon: "بلا",
+        providerLabel: "المزود",
+        providerPlaceholder: "اختر مزودًا",
+        noProviders: "لا يوجد مزودون متاحون على هذا المضيف",
+        modelLabel: "النموذج",
+        noModels: "لا توجد نماذج يمكن الاختيار من بينها لهذا المزود",
+        modeLabel: "الوضع",
+        noModes: "لا توجد أوضاع يمكن الاختيار من بينها لهذا المزود",
+        thinkingLabel: "التفكير",
+        noThinkingOptions: "لا توجد مستويات تفكير لهذا النموذج",
+        featuresLabel: "السمات",
+        featureCount: "{{count}} سمة",
+        featureCountOne: "{{count}} سمة",
+        notesLabel: "ملاحظات للوكلاء",
+        notesPlaceholder: "استخدمه لعمل الواجهة — المكونات والتخطيط ورموز التصميم.",
+        notesHint: 'تُعاد بواسطة أداة MCP "list_profiles". اكتبها كتعليمة لوكيل آخر.',
+        save: "حفظ",
+        saving: "جارٍ الحفظ...",
+        remove: "إزالة",
+        removeConfirmTitle: "إزالة الملف؟",
+        removeConfirmMessage: 'إزالة "{{name}}"؟',
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
+      },
       daemon: {
         rename: {
           editLabel: "تحرير التسمية",
@@ -2353,6 +2414,9 @@ export const ar: TranslationResources = {
         docsTooltip: "راجع المستندات لمزيد من التفاصيل ومتغيرات البيئة المتاحة لهذه الأوامر",
         setup: "يثبت",
         setupAccessibility: "أوامر إعداد شجرة العمل",
+        uncommittedTitle: "ثبّت تغييرات paseo.json",
+        uncommittedDescription:
+          "تستخدم أشجار العمل الجديدة نص الإعداد البرمجي من الفرع الأساسي الذي تحدده.",
         teardown: "هدم",
         teardownAccessibility: "أوامر هدم شجرة العمل",
       },

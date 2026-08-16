@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
   common: {
@@ -65,6 +66,8 @@ export const ja: TranslationResources = {
       newAgent: "新しいエージェント",
       addProject: "プロジェクトを追加",
       home: "ホーム",
+      groupByProject: "プロジェクトでグループ化",
+      groupByStatus: "ステータスでグループ化",
       modelGroupLabel: "モデル",
       modelSearchKeywords: "モデルを切り替え モデルを変更 モデルを設定 モデルを選択",
       thinkingGroupLabel: "思考",
@@ -334,6 +337,15 @@ export const ja: TranslationResources = {
     todo: {
       title: "タスク",
       empty: "タスクがまだありません。",
+      tasksProgress: "{{completed}}/{{total}}タスク",
+      tasksProgressCurrent: "{{completed}}/{{total}}タスク · {{task}}",
+      activity: {
+        created: "{{count}}件のタスクを作成",
+        added: "追加",
+        started: "開始",
+        completed: "完了",
+        reopened: "再開",
+      },
     },
     compaction: {
       loading: "コンテキストを圧縮中...",
@@ -516,6 +528,8 @@ export const ja: TranslationResources = {
         screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
         elementCopied: "要素をクリップボードにコピーしました",
         screenshotFailed: "スクリーンショットをコピーできませんでした",
+        selectorLoading: "ページの読み込みが完了するまでお待ちください",
+        selectorFailed: "要素セレクターを開始できませんでした",
       },
       annotate: {
         title: "要素に注釈を付ける",
@@ -608,6 +622,7 @@ export const ja: TranslationResources = {
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
+        failedToCloseAgent: "エージェントを閉じられませんでした",
       },
       confirmations: {
         unsavedTitle: "未保存の変更",
@@ -966,6 +981,8 @@ export const ja: TranslationResources = {
       },
       show: {
         label: "表示項目",
+        branch: "ブランチ",
+        project: "プロジェクト",
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
@@ -1408,14 +1425,19 @@ export const ja: TranslationResources = {
     loadingSelector: "モデルセレクターを読み込み中...",
     error: "エラー",
     defaultModel: "デフォルト",
-    favorites: "お気に入り",
-    favoriteModel: "お気に入りモデル",
-    unfavoriteModel: "お気に入りを解除",
+    profiles: "プロファイル",
+    providers: "プロバイダー",
+    model: "モデル",
+    editProfiles: "編集",
+    editProfilesLabel: "エージェントプロファイルを編集",
+    createProfile: "プロファイルを作成",
     modelCount: "{{count}}つのモデル",
     modelCountPlural: "{{count}}つのモデル",
     retry: "再試行",
     retrying: "再試行中...",
     noMatches: "検索に一致するモデルがありません",
+    noMatchesForQuery: "「{{query}}」に一致するモデルがありません",
+    searchAllPlaceholder: "すべてのモデルを検索...",
     searchPlaceholder: "モデルを検索...",
     openProviderSettings: "{{provider}}の設定を開く",
   },
@@ -1615,6 +1637,7 @@ export const ja: TranslationResources = {
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedTooltip: "完了した項目をアーカイブ",
+    archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1783,8 +1806,10 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
+      plugins: "プラグイン",
       host: "概要",
     },
+    plugins: pluginSettings.ja,
     metadataGeneration: {
       title: "メタデータ生成",
       description:
@@ -2208,6 +2233,44 @@ export const ja: TranslationResources = {
         emptyState:
           "プロファイルがまだありません。特定のコマンドでターミナルを起動するために追加してください。",
       },
+      agentProfiles: {
+        sectionTitle: "エージェントプロファイル",
+        unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",
+        unsupported: "このホストで動作するデーモンはまだエージェントプロファイルに対応していません",
+        emptyState:
+          "プロファイルがまだありません。保存したプロバイダーとモデルでエージェントを起動するために追加してください。",
+        addProfileTitle: "エージェントプロファイルを追加",
+        newProfile: "新しいプロファイル",
+        editProfile: "プロファイルを編集",
+        editProfileTitle: "エージェントプロファイルを編集",
+        nameLabel: "名前",
+        namePlaceholder: "UI作業",
+        iconLabel: "アイコン",
+        noIcon: "なし",
+        providerLabel: "プロバイダー",
+        providerPlaceholder: "プロバイダーを選択",
+        noProviders: "このホストで利用できるプロバイダーがありません",
+        modelLabel: "モデル",
+        noModels: "このプロバイダーには選択できるモデルがありません",
+        modeLabel: "モード",
+        noModes: "このプロバイダーには選択できるモードがありません",
+        thinkingLabel: "思考",
+        noThinkingOptions: "このモデルには思考レベルがありません",
+        featuresLabel: "機能",
+        featureCount: "{{count}}個の機能",
+        featureCountOne: "{{count}}個の機能",
+        notesLabel: "エージェントへのメモ",
+        notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
+        notesHint:
+          "list_profiles MCPツールによって返されます。他のエージェントへの指示として記述してください。",
+        save: "保存",
+        saving: "保存中...",
+        remove: "削除",
+        removeConfirmTitle: "プロファイルを削除しますか？",
+        removeConfirmMessage: '"{{name}}"を削除しますか？',
+        moveUp: "上に移動",
+        moveDown: "下に移動",
+      },
       daemon: {
         rename: {
           editLabel: "ラベルを編集",
@@ -2376,6 +2439,9 @@ export const ja: TranslationResources = {
           "これらのコマンドで使用可能な詳細と環境変数についてはドキュメントを参照してください",
         setup: "セットアップ",
         setupAccessibility: "ワークツリーセットアップコマンド",
+        uncommittedTitle: "paseo.json の変更をコミットしてください",
+        uncommittedDescription:
+          "新しいワークツリーでは、選択したベースブランチのセットアップスクリプトが使われます。",
         teardown: "削除時",
         teardownAccessibility: "ワークツリー削除時のコマンド",
       },
