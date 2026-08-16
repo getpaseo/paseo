@@ -36,6 +36,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
@@ -221,6 +223,7 @@ interface PiRpcAgentSessionOptions {
   config: AgentSessionConfig;
   initialState: PiSessionState;
   capabilities: AgentCapabilityFlags;
+  logger: Logger;
   currentModeId?: string | null;
   cleanup?: () => void;
   extensionTimeoutMs?: number;
@@ -772,6 +775,26 @@ function isPiRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+/**
+ * Pi's `prompt` RPC rejects with a control-plane error when it cannot queue a
+ * steering message. Only those messages are definitive rejections the daemon
+ * may fall back from; timeouts, disconnects, and unknown errors are ambiguous
+ * and must propagate as failures (never auto-retried).
+ */
+function isDefinitivePiSteerRejection(error: unknown): boolean {
+  const message = toDiagnosticErrorMessage(error);
+  // Older Pi binaries drop unknown `streamingBehavior` fields and reject the
+  // prompt while streaming with this exact message.
+  if (/agent is already processing/i.test(message)) {
+    return true;
+  }
+  // Steering cannot be queued while a compaction summarization is in progress.
+  if (/compaction is in progress/i.test(message)) {
+    return true;
+  }
+  return false;
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: PiThinkingLevel,
@@ -1231,6 +1254,11 @@ export class PiRpcAgentSession implements AgentSession {
   private interruptingTurnId: string | null = null;
   private lastInterruptedTurnId: string | null = null;
   private interruptedTerminalError: { turnId: string; error: string } | null = null;
+  // Client message ids of accepted steering prompts, consumed FIFO when Pi
+  // delivers each message (message_start for a user entry) so the timeline echo
+  // carries the right clientMessageId. Multiple steers can be queued inside one
+  // turn, which the single activeClientMessageId slot cannot express.
+  private readonly steerClientMessageIds: string[] = [];
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1238,6 +1266,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.state = options.initialState;
     this.capabilities = options.capabilities;
     this.provider = PI_PROVIDER;
+    this.logger = options.logger;
     this.currentModeId = options.currentModeId ?? null;
     this.cleanup = options.cleanup;
     this.lastKnownThinkingOptionId =
@@ -1269,6 +1298,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly runtimeSession: PiRuntimeSession;
   private readonly config: AgentSessionConfig;
+  private readonly logger: Logger;
   private readonly cleanup?: () => void;
   private readonly extensionTimeoutMs: number;
 
@@ -1445,12 +1475,85 @@ export class PiRpcAgentSession implements AgentSession {
     };
   }
 
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    // Steer targets the currently active Pi run. Pi queues the message and
+    // delivers it after the current tool-call batch completes; it never aborts.
+    if (this.activeTurnId !== options.expectedTurnId) {
+      this.logger.warn(
+        {
+          expectedTurnId: options.expectedTurnId,
+          activeTurnId: this.activeTurnId,
+        },
+        "pi.steer.unavailable.turn_mismatch",
+      );
+      return { status: "unavailable" };
+    }
+    // Pi steer does not accept extension commands; slash commands are handled
+    // by the out-of-band path in the daemon, so fall back to replace.
+    if (typeof prompt === "string" && this.parseSlashCommandInput(prompt) !== null) {
+      this.logger.info(
+        { expectedTurnId: options.expectedTurnId },
+        "pi.steer.unavailable.slash_command",
+      );
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    // Re-check after conversion: a finished turn cannot admit a steering message.
+    if (this.activeTurnId !== options.expectedTurnId) {
+      this.logger.warn(
+        { expectedTurnId: options.expectedTurnId },
+        "pi.steer.unavailable.turn_finished_during_conversion",
+      );
+      return { status: "unavailable" };
+    }
+    try {
+      if (options.clientMessageId) {
+        this.steerClientMessageIds.push(options.clientMessageId);
+      }
+      await this.runtimeSession.prompt(payload.text, payload.images, {
+        streamingBehavior: "steer",
+      });
+      this.logger.info(
+        {
+          expectedTurnId: options.expectedTurnId,
+          clientMessageId: options.clientMessageId ?? null,
+        },
+        "pi.steer.accepted",
+      );
+      return { status: "accepted" };
+    } catch (error) {
+      if (options.clientMessageId) {
+        const index = this.steerClientMessageIds.lastIndexOf(options.clientMessageId);
+        if (index !== -1) {
+          this.steerClientMessageIds.splice(index, 1);
+        }
+      }
+      if (isDefinitivePiSteerRejection(error)) {
+        this.logger.info(
+          {
+            expectedTurnId: options.expectedTurnId,
+            error: toDiagnosticErrorMessage(error),
+          },
+          "pi.steer.unavailable.rejected",
+        );
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+  }
+
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId;
     if (turnId) {
       this.interruptingTurnId = turnId;
       this.lastInterruptedTurnId = turnId;
     }
+    // An aborted Pi run never delivers its queued steering messages; drop the
+    // client ids so a later echo cannot misattribute a clientMessageId.
+    this.steerClientMessageIds.splice(0, this.steerClientMessageIds.length);
     try {
       await this.runtimeSession.abort();
     } catch (error) {
@@ -1878,6 +1981,11 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
+    // Pi delivers accepted steering prompts as regular user entries; consume
+    // the matching client id so the echo lands on the steered message rather
+    // than the turn's original prompt.
+    const clientMessageId =
+      this.steerClientMessageIds.shift() ?? this.activeClientMessageId ?? undefined;
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -1886,7 +1994,7 @@ export class PiRpcAgentSession implements AgentSession {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
       },
     });
     return true;
@@ -2062,6 +2170,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.clearNoTurnBuffers();
+    this.steerClientMessageIds.splice(0, this.steerClientMessageIds.length);
     this.emit({
       type: "turn_failed",
       provider: this.provider,
@@ -2362,6 +2471,9 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.clearNoTurnBuffers();
+    // A finished run delivers nothing further; drop any steering ids that were
+    // queued but never echoed.
+    this.steerClientMessageIds.splice(0, this.steerClientMessageIds.length);
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
@@ -2446,6 +2558,7 @@ export class PiRpcAgentClient implements AgentClient {
         config,
         initialState: await runtimeSession.getState(),
         capabilities: capabilitiesForSession(mcpConfig !== null),
+        logger: this.logger,
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
@@ -2509,6 +2622,7 @@ export class PiRpcAgentClient implements AgentClient {
         config: resumeConfig.config,
         initialState: await runtimeSession.getState(),
         capabilities: capabilitiesForSession(mcpConfig !== null),
+        logger: this.logger,
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension?.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,

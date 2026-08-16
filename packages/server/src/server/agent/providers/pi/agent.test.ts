@@ -1082,6 +1082,225 @@ describe("PiRpcAgentSession", () => {
       { type: "turn_started", turnId },
       { type: "turn_completed", turnId },
     ]);
+
+  });
+
+  describe("steerActiveTurn", () => {
+    const userMessageItems = (events: SessionEvents) =>
+      events
+        .timelineItems()
+        .filter(
+          (item): item is Extract<typeof item, { type: "user_message" }> =>
+            item.type === "user_message",
+        );
+
+    test("queues a steering prompt on the active Pi run without aborting it", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn("follow up", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      });
+
+      expect(result).toEqual({ status: "accepted" });
+      expect(fakeSession.prompts).toEqual([
+        { message: "original prompt", imageCount: 0 },
+        { message: "follow up", imageCount: 0, streamingBehavior: "steer" },
+      ]);
+      expect(fakeSession.abortRequested).toBe(false);
+
+      await session.close();
+    });
+
+    test("forwards images in the steered prompt", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+      fakeSession.setModelResult = {
+        provider: "openai",
+        id: "gpt-5",
+        name: "OpenAI: gpt-5",
+        input: ["text", "image"],
+      };
+      await session.setModel("openai/gpt-5");
+
+      const { turnId } = await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn(
+        [
+          { type: "text", text: "look at this" },
+          { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+        ],
+        { expectedTurnId: turnId },
+      );
+
+      expect(result).toEqual({ status: "accepted" });
+      expect(fakeSession.prompts[1]).toMatchObject({
+        message: "look at this",
+        imageCount: 1,
+        streamingBehavior: "steer",
+      });
+
+      await session.close();
+    });
+
+    test("returns unavailable when no turn is active", async () => {
+      const { session } = await createSession();
+
+      const result = await session.steerActiveTurn("follow up", {
+        expectedTurnId: "missing-turn",
+      });
+
+      expect(result).toEqual({ status: "unavailable" });
+      await session.close();
+    });
+
+    test("returns unavailable when the expected turn is not the active turn", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn("follow up", {
+        expectedTurnId: "stale-turn",
+      });
+
+      expect(result).toEqual({ status: "unavailable" });
+      expect(fakeSession.prompts).toEqual([{ message: "original prompt", imageCount: 0 }]);
+
+      await session.close();
+    });
+
+    test("returns unavailable for slash commands so the daemon can replace instead", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn("/compact", { expectedTurnId: turnId });
+
+      expect(result).toEqual({ status: "unavailable" });
+      expect(fakeSession.prompts).toEqual([{ message: "original prompt", imageCount: 0 }]);
+
+      await session.close();
+    });
+
+    test("falls back when Pi definitively rejects the steering prompt", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+      fakeSession.promptError = new Error(
+        "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+      );
+
+      const { turnId } = await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn("follow up", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      });
+
+      expect(result).toEqual({ status: "unavailable" });
+
+      await session.close();
+    });
+
+    test("rethrows ambiguous steering failures instead of falling back", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      fakeSession.promptError = new Error("connection reset");
+      await expect(
+        session.steerActiveTurn("follow up", { expectedTurnId: turnId }),
+      ).rejects.toThrow("connection reset");
+
+      await session.close();
+    });
+
+    test("associates the steered echo with the steering client message id", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      await session.steerActiveTurn("follow up", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      });
+
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "follow up" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "follow up",
+          messageId: "entry-1",
+          clientMessageId: "client-steer",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("consumes multiple steering client ids in delivery order", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      await session.steerActiveTurn("first", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-1",
+      });
+      await session.steerActiveTurn("second", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-2",
+      });
+
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "first",
+          messageId: "entry-1",
+          clientMessageId: "client-1",
+        },
+        {
+          type: "user_message",
+          text: "second",
+          messageId: "entry-2",
+          clientMessageId: "client-2",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("drops steering client ids when the turn is interrupted", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      await session.steerActiveTurn("follow up", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      });
+      await session.interrupt();
+
+      // A late echo (e.g. delivery racing abort) must not pick up the steering
+      // client id that the aborted run never delivered.
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "follow up" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "follow up",
+          messageId: "entry-1",
+        },
+      ]);
+
+      await session.close();
+    });
   });
 
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {

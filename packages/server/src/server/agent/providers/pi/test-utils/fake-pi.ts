@@ -12,8 +12,10 @@ import type {
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
+  PiStreamingBehavior,
 } from "../rpc-types.js";
 import { buildPiLaunch } from "../runtime.js";
+import type { PiPromptOptions } from "../runtime.js";
 
 type FakePiSubagentSubscriptionLevel = "off" | "progress" | "events";
 type FakePiSubagentStatus = "pending" | "running" | "completed" | "failed" | "aborted";
@@ -93,7 +95,11 @@ export class FakePi implements PiRuntime {
 }
 
 export class FakePiSession implements PiRuntimeSession {
-  readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly prompts: Array<{
+    message: string;
+    imageCount: number;
+    streamingBehavior?: PiStreamingBehavior;
+  }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -126,6 +132,7 @@ export class FakePiSession implements PiRuntimeSession {
   emitCompactEnd = true;
   getStateError: Error | null = null;
   getSessionStatsError: Error | null = null;
+  promptError: Error | null = null;
   promptAck: PiPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   readonly branchRequests: string[] = [];
@@ -161,8 +168,16 @@ export class FakePiSession implements PiRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: PiPromptOptions,
   ): Promise<PiPromptAck> {
-    this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    this.prompts.push({
+      message,
+      imageCount: images?.length ?? 0,
+      ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
+    });
+    if (this.promptError) {
+      throw this.promptError;
+    }
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
       this.nextHeldPrompt = null;

@@ -9,6 +9,7 @@ import {
 } from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
+  type PiPromptOptions,
   type PiRuntime,
   type PiRuntimeLaunch,
   type PiRuntimeSession,
@@ -111,11 +112,13 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   async prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    options?: PiPromptOptions,
   ): Promise<PiPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
