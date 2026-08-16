@@ -6,7 +6,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -18,11 +17,9 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
-import { DiffViewer } from "./diff-viewer";
+import { DiffViewer, useDetailScrollView } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
-
-const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
 // ---- Content Component ----
 
@@ -149,6 +146,7 @@ interface ShellDetailProps {
 }
 
 function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+  const ScrollView = useDetailScrollView();
   const normalizedCommand = command.replace(/\n+$/, "");
   const commandOutput = (output ?? "").replace(/^\n+/, "");
   const hasOutput = commandOutput.length > 0;
@@ -194,6 +192,7 @@ function WorktreeSetupDetailSection({
   worktreePath,
   ds,
 }: WorktreeSetupDetailProps) {
+  const ScrollView = useDetailScrollView();
   const setupLog = log.replace(/^\n+/, "");
   const hasLog = setupLog.length > 0;
   return (
@@ -353,6 +352,7 @@ function SubAgentDetailSection({
   ds,
 }: SubAgentDetailProps) {
   const { t } = useTranslation();
+  const ScrollView = useDetailScrollView();
   const { actions, remainingLog } = useMemo(() => parseSubAgentLog(log), [log]);
   const fallbackHeader = resolveSubAgentFallbackHeader(
     subAgentType,
@@ -438,6 +438,7 @@ function ScrollableTextSection({
   filePath,
   startLine,
 }: ScrollableContentProps) {
+  const ScrollView = useDetailScrollView();
   const keyedLines = useMemo(
     () => (filePath ? highlightToKeyedLines(content, extensionFromPath(filePath)) : null),
     [content, filePath],
@@ -471,6 +472,7 @@ interface FetchDetailProps {
 }
 
 function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
+  const ScrollView = useDetailScrollView();
   return (
     <View style={ds.sectionFillStyle}>
       <ScrollView
@@ -490,6 +492,7 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
 }
 
 function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
+  const ScrollView = useDetailScrollView();
   return (
     <View style={styles.section}>
       <ScrollView
@@ -514,7 +517,11 @@ interface SearchDetail {
   annotations?: string[];
 }
 
-function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[] {
+function buildSearchSections(
+  detail: SearchDetail,
+  ds: DetailStyles,
+  ScrollView: React.ComponentType<React.ComponentProps<typeof RNScrollView>>,
+): ReactNode[] {
   const out: ReactNode[] = [];
   if (detail.content) {
     out.push(
@@ -577,7 +584,12 @@ interface UnknownDetail {
   output: unknown;
 }
 
-function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunction): ReactNode[] {
+function buildUnknownSections(
+  detail: UnknownDetail,
+  ds: DetailStyles,
+  t: TFunction,
+  ScrollView: React.ComponentType<React.ComponentProps<typeof RNScrollView>>,
+): ReactNode[] {
   const plainInputText =
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
@@ -631,6 +643,7 @@ function buildDetailSections(
   diffLines: DiffLine[] | undefined,
   ds: DetailStyles,
   t: TFunction,
+  ScrollView: React.ComponentType<React.ComponentProps<typeof RNScrollView>>,
 ): ReactNode[] {
   if (!detail) return [];
   if (detail.type === "shell") {
@@ -691,7 +704,7 @@ function buildDetailSections(
     ];
   }
   if (detail.type === "search") {
-    return buildSearchSections(detail, ds);
+    return buildSearchSections(detail, ds, ScrollView);
   }
   if (detail.type === "fetch") {
     return [<FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />];
@@ -701,13 +714,14 @@ function buildDetailSections(
     return [<ScrollablePlainTextSection key="plain-text" text={detail.text} ds={ds} />];
   }
   if (detail.type === "unknown") {
-    return buildUnknownSections(detail, ds, t);
+    return buildUnknownSections(detail, ds, t, ScrollView);
   }
   return [];
 }
 
 function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
   const { t } = useTranslation();
+  const ScrollView = useDetailScrollView();
   return (
     <View style={styles.section}>
       <Text style={[styles.sectionTitle, styles.errorText]}>{t("toolCallDetails.error")}</Text>
@@ -748,11 +762,12 @@ export function ToolCallDetailsContent({
   showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
+  const ScrollView = useDetailScrollView();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
   const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
-  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t);
+  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds, t, ScrollView);
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);

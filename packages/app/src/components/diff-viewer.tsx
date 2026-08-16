@@ -9,9 +9,17 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 
-const ScrollView = isWeb ? RNScrollView : GHScrollView;
+export function useDetailScrollView(): React.ComponentType<React.ComponentProps<typeof RNScrollView>> {
+  const isCompact = useIsCompactFormFactor();
+  // Web and the desktop shell scroll through the RN list that hosts this
+  // surface, so native gesture-handler scroll views would fight the parent
+  // FlatList (Android nested-scroll direction mismatch on inverted lists).
+  // Keep RNGH only for the compact sheet, which is RNGH-owned.
+  return isWeb || !isCompact ? RNScrollView : GHScrollView;
+}
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
@@ -124,6 +132,7 @@ export function DiffViewer({
   fillAvailableHeight = false,
 }: DiffViewerProps) {
   const { t } = useTranslation();
+  const ScrollView = useDetailScrollView();
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
   const resolvedEmptyLabel = emptyLabel ?? t("diffViewer.empty");
   const handleInnerLayout = React.useCallback(
