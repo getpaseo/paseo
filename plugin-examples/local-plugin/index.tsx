@@ -2,7 +2,13 @@ import React, { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
-import { defineRpc, type PluginContext, type PluginSurfaceProps, useRpc } from "@paseo/plugin";
+import {
+  defineRpc,
+  type PluginContext,
+  type PluginWorkspacePanelProps,
+  useWorkspace,
+  useRpc,
+} from "@paseo/plugin";
 
 const incrementRpc = defineRpc({
   name: "increment",
@@ -21,8 +27,9 @@ const ExampleThemeSchema = z.object({
   }),
 });
 
-function ExampleSurface({ theme }: PluginSurfaceProps) {
+function ExamplePanel({ theme, workspaceId }: PluginWorkspacePanelProps) {
   const { colors } = ExampleThemeSchema.parse(theme);
+  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
   const callIncrement = useRpc(incrementRpc);
   const { data, error, isPending, mutate } = useMutation({ mutationFn: callIncrement });
   const value = data?.value ?? 0;
@@ -43,7 +50,8 @@ function ExampleSurface({ theme }: PluginSurfaceProps) {
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.title}>Native plugin surface</Text>
+      <Text style={styles.title}>Workspace plugin panel</Text>
+      <Text style={styles.detail}>{workspace?.name}</Text>
       <Text style={styles.detail}>{data?.handledBy ?? "The RPC has not run yet."}</Text>
       <Pressable
         accessibilityRole="button"
@@ -65,12 +73,21 @@ export default function contribute(plugin: PluginContext) {
     value: input.value + 1,
     handledBy: "plugin subprocess",
   }));
-  plugin.addSurface("main", ExampleSurface);
-  plugin.addSidebarItem({
-    id: "main",
-    title: "Local plugin",
+  plugin.addWorkspacePanel({
+    id: "counter",
+    title: "Plugin counter",
     icon: "Blocks",
-    surface: "main",
+    context: "workspace",
+    Component: ExamplePanel,
   });
-  return () => undefined;
+  plugin.addCommandCenterItem({
+    id: "open-counter",
+    title: "Open plugin counter",
+    icon: "Blocks",
+    context: "workspace",
+    onSelect({ openPanel }) {
+      openPanel("counter");
+    },
+  });
+  return () => {};
 }

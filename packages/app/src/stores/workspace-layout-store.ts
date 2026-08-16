@@ -183,6 +183,21 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("setup"), workspaceId: z.string() }),
   z.strictObject({ kind: z.literal("commit_diff"), sha: z.string() }),
+  z.discriminatedUnion("context", [
+    z.strictObject({
+      kind: z.literal("plugin"),
+      pluginId: z.string(),
+      panelId: z.string(),
+      context: z.literal("workspace"),
+    }),
+    z.strictObject({
+      kind: z.literal("plugin"),
+      pluginId: z.string(),
+      panelId: z.string(),
+      context: z.literal("agent"),
+      agentId: z.string(),
+    }),
+  ]),
 ]);
 const WorkspaceTabStorageSchema = z.strictObject({
   tabId: z.string(),

@@ -483,6 +483,57 @@ describe("workspace-layout-store actions", () => {
     expect(findPaneById(layout.root, explorerPane?.paneId)?.focusedTabId).toBe(tabId);
   });
 
+  it("restores workspace and agent plugin panel targets", async () => {
+    const workspaceTarget = {
+      kind: "plugin",
+      pluginId: "review",
+      panelId: "summary",
+      context: "workspace",
+    };
+    const agentTarget = {
+      kind: "plugin",
+      pluginId: "review",
+      panelId: "details",
+      context: "agent",
+      agentId: "agent-1",
+    };
+    await AsyncStorage.setItem(
+      "workspace-layout-state",
+      JSON.stringify({
+        state: {
+          layoutByWorkspace: {
+            workspace: {
+              root: {
+                kind: "pane",
+                pane: {
+                  id: "main",
+                  tabIds: ["workspace-panel", "agent-panel"],
+                  focusedTabId: "agent-panel",
+                  tabs: [
+                    { tabId: "workspace-panel", target: workspaceTarget, createdAt: 1 },
+                    { tabId: "agent-panel", target: agentTarget, createdAt: 2 },
+                  ],
+                },
+              },
+              focusedPaneId: "main",
+            },
+          },
+          splitSizesByWorkspace: {},
+        },
+        version: 1,
+      }),
+    );
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+
+    await restored.persist.rehydrate();
+
+    const layout = restored.getState().layoutByWorkspace.workspace;
+    expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
+      workspaceTarget,
+      agentTarget,
+    ]);
+  });
+
   it("opens tabs into the focused pane and focuses duplicate opens instead of creating them", () => {
     useWorkspaceLayoutIds("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     const workspaceKey = createWorkspaceKey();

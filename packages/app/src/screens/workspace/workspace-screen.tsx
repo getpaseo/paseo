@@ -421,6 +421,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "pull_request") {
     return labels.pullRequest;
   }
+  if (tab.target.kind === "plugin") {
+    return tab.target.panelId;
+  }
   return tab.target.path;
 }
 

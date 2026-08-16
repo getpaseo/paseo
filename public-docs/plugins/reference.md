@@ -11,6 +11,8 @@ category: Plugins
 Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
 
 - React Native surfaces and sidebar items to Paseo clients;
+- workspace and agent panels opened as workspace tabs;
+- global, workspace, and agent actions in the Command Center;
 - schema-validated RPC handlers running beside the daemon;
 - normal Paseo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
@@ -36,7 +38,7 @@ The manifest contains the default plugin ID:
 { "id": "my-plugin" }
 ```
 
-Plugin, surface, sidebar-item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
+Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
 The generated declaration file supplies `@paseo/plugin` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
 
@@ -49,7 +51,7 @@ import type { PluginContext } from "@paseo/plugin";
 
 export default function contribute(plugin: PluginContext) {
   // Register contributions here.
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -75,7 +77,7 @@ export default function contribute(plugin: PluginContext) {
     icon: "Blocks",
     surface: "main",
   });
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -90,6 +92,149 @@ export default function contribute(plugin: PluginContext) {
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body. Icons use [Lucide](https://lucide.dev/icons/) names.
 
 Client code can import `react`, `react-native`, `@tanstack/react-query`, `zod`, and `@paseo/plugin`. Install them locally for typechecking; Paseo provides the client runtime instances.
+
+## Workspace panels
+
+Register one panel for workspace or agent context:
+
+```tsx
+import {
+  type PluginContext,
+  type PluginAgentPanelProps,
+  useAgent,
+  useWorkspace,
+} from "@paseo/plugin";
+import { Text } from "react-native";
+
+function ReviewPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
+  const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
+  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
+  return <Text>{`${workspaceName} · ${agent?.title ?? agent?.id}`}</Text>;
+}
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addWorkspacePanel({
+    id: "review",
+    title: "Review",
+    icon: "Scan",
+    context: "agent",
+    Component: ReviewPanel,
+  });
+  return () => {};
+}
+```
+
+`addWorkspacePanel` fields:
+
+| Field       | Required | Meaning                                                       |
+| ----------- | -------- | ------------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local panel ID.                                        |
+| `title`     | Yes      | Workspace-tab title.                                          |
+| `icon`      | Yes      | Lucide icon name.                                             |
+| `context`   | Yes      | `workspace` or `agent`.                                       |
+| `Component` | Yes      | React Native component matching the selected context's props. |
+
+A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
+
+Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
+
+Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.
+
+Workspace snapshot fields:
+
+| Field                | Type                                                              |
+| -------------------- | ----------------------------------------------------------------- |
+| `id`                 | `string`                                                          |
+| `projectId`          | `string`                                                          |
+| `projectDisplayName` | `string`                                                          |
+| `projectRootPath`    | `string`                                                          |
+| `directory`          | `string`                                                          |
+| `projectKind`        | `"git" \| "non_git" \| "directory"`                               |
+| `kind`               | `"directory" \| "local_checkout" \| "checkout" \| "worktree"`     |
+| `name`               | `string`                                                          |
+| `title`              | `string \| null`                                                  |
+| `status`             | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
+| `statusEnteredAt`    | ISO timestamp or `null`                                           |
+| `archivingAt`        | ISO timestamp or `null`                                           |
+| `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+
+Agent snapshot fields:
+
+| Field               | Type                                                           |
+| ------------------- | -------------------------------------------------------------- |
+| `id`                | `string`                                                       |
+| `workspaceId`       | `string`                                                       |
+| `provider`          | `string`                                                       |
+| `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `createdAt`         | ISO timestamp                                                  |
+| `updatedAt`         | ISO timestamp                                                  |
+| `lastActivityAt`    | ISO timestamp                                                  |
+| `title`             | `string \| null`                                               |
+| `cwd`               | `string`                                                       |
+| `model`             | `string \| null`                                               |
+| `currentModeId`     | `string \| null`                                               |
+| `thinkingOptionId`  | `string \| null`                                               |
+| `requiresAttention` | `boolean`                                                      |
+| `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
+| `parentAgentId`     | `string \| null`                                               |
+| `labels`            | `Record<string, string>`                                       |
+
+Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
+
+## Command Center items
+
+Register an action and open a panel from the callback:
+
+```tsx
+import { defineRpc } from "@paseo/plugin";
+import { z } from "zod";
+
+const refreshReview = defineRpc({
+  name: "review.refresh",
+  input: z.object({ agentId: z.string() }),
+  output: z.object({ refreshed: z.boolean() }),
+});
+
+plugin.addCommandCenterItem({
+  id: "open-review",
+  title: "Open review",
+  icon: "Scan",
+  keywords: ["inspect"],
+  context: "agent",
+  async onSelect({ paseo, rpc, workspace, agent, openPanel }) {
+    await paseo.workspaces.ref(workspace.id).setTitle(`Review ${agent.id}`);
+    await rpc(refreshReview, { agentId: agent.id });
+    openPanel("review");
+  },
+});
+```
+
+`addCommandCenterItem` fields:
+
+| Field      | Required | Meaning                                        |
+| ---------- | -------- | ---------------------------------------------- |
+| `id`       | Yes      | Plugin-local item ID.                          |
+| `title`    | Yes      | Search result title.                           |
+| `icon`     | Yes      | Lucide icon name.                              |
+| `keywords` | No       | Additional Command Center search terms.        |
+| `context`  | Yes      | `global`, `workspace`, or `agent`.             |
+| `onSelect` | Yes      | Client-side callback for the matching context. |
+
+Global items appear on the installation's selected host. Workspace items appear only when that host has an active cached workspace. Agent items appear only when the focused workspace tab is an agent or an agent-context plugin panel whose cached record belongs to that workspace. Missing context removes the item rather than calling the plugin to discover it.
+
+Every callback receives:
+
+| Field                  | Context             | Meaning                                                       |
+| ---------------------- | ------------------- | ------------------------------------------------------------- |
+| `context`              | All                 | Matching discriminator.                                       |
+| `paseo`                | All                 | Selected host's existing `PaseoApi`.                          |
+| `rpc(contract, input)` | All                 | Typed call to this installation's daemon-side plugin handler. |
+| `openSurface(id)`      | All                 | Opens one of this plugin's registered global surfaces.        |
+| `workspace`            | Workspace and agent | Synchronous workspace snapshot.                               |
+| `agent`                | Agent               | Synchronous matching agent snapshot.                          |
+| `openPanel(id)`        | Workspace and agent | Opens a registered panel in the callback's current context.   |
+
+An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
 ## Use the Paseo SDK
 
@@ -156,7 +301,7 @@ export default function contribute(plugin: PluginContext) {
     return { message: `${name}: plugins are ${config.pluginsEnabled ? "on" : "off"}` };
   });
   plugin.addSurface("main", GreetingButton);
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -236,7 +381,7 @@ const issues = defineAttachmentSource({
 export default function contribute(plugin: PluginContext) {
   plugin.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
   plugin.addAttachmentSource(issues);
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -247,6 +392,12 @@ Paseo owns the composer menu, search picker, selected pill, draft state, and sub
 Plugins are installed per daemon. When the same contribution exists on several connected hosts, Paseo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Paseo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.
 
 Attachment sources remain scoped to each composer's host.
+
+Workspace panels and Command Center items stay scoped to the active host and exact cached context.
+Reload replaces their registrations. Disable, removal, host disconnect, and evaluation failure
+remove Command Center items and clear the installation's query state. An already-restored panel tab
+remains as unavailable until its matching contribution returns or the user closes it. Panel render
+failures stay inside the plugin error boundary.
 
 ## CLI reference
 

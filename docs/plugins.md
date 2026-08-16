@@ -1,8 +1,9 @@
 # Local plugins
 
-Local plugins contribute daemon RPCs, native app surfaces, and composer attachment sources from one
-`index.tsx`. Paseo executes the server contribution in a subprocess and evaluates the client
-contribution in the app runtime. Plugin code is trusted code; this first slice does not sandbox it.
+Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
+and composer attachment sources from one `index.tsx`. Paseo executes the server contribution in a
+subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
+this first slice does not sandbox it.
 
 ## Install a directory source
 
@@ -136,7 +137,7 @@ export default function contribute(plugin: PluginContext) {
     icon: "MessageCircle",
     surface: "main",
   });
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -169,6 +170,21 @@ catalog is complete.
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Plugin code cannot address another host.
+
+Workspace panels and Command Center items remain client contributions. The daemon transports their
+compiled bundle without interpreting placement or callbacks. Panel props contain workspace and agent
+IDs. Required-selector hooks read normalized client state synchronously and use shallow equality, so a
+panel does not subscribe to fields it does not render. Command callbacks materialize their snapshots
+only when invoked. Contribution discovery and panel opening never fetch active context through plugin
+RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cannot mutate normalized
+app state or a memoized selection. Panels use one persisted
+`plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
+current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
+
+Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
+They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
+plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
+workspace-layout store access.
 
 ## Contribute composer attachments
 
@@ -207,7 +223,7 @@ const issues = defineAttachmentSource({
 export default function contribute(plugin: PluginContext) {
   plugin.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
   plugin.addAttachmentSource(issues);
-  return () => undefined;
+  return () => {};
 }
 ```
 

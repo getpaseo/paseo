@@ -46,7 +46,14 @@ describe("plugin scaffold", () => {
       `import React from "react";
 import { Text } from "react-native";
 import { z } from "zod";
-import { defineRpc, type PluginContext, usePaseo } from "@paseo/plugin";
+import {
+  defineRpc,
+  type PluginContext,
+  type PluginAgentPanelProps,
+  usePaseo,
+  useAgent,
+  useWorkspace,
+} from "@paseo/plugin";
 
 const inspect = defineRpc({
   name: "inspect",
@@ -63,12 +70,44 @@ function Surface() {
   return <Text>Paseo API</Text>;
 }
 
+function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
+  const workspaceName = useWorkspace(workspaceId, (workspace) => {
+    // @ts-expect-error Plugin snapshots are readonly.
+    workspace.name = "mutated";
+    return workspace.name;
+  });
+  const agentTitle = useAgent(agentId, (agent) => {
+    // @ts-expect-error Nested plugin snapshot values are readonly.
+    agent.labels.phase = "mutated";
+    return agent.title;
+  });
+  return <Text>{workspaceName}: {agentTitle}</Text>;
+}
+
 export default function contribute(plugin: PluginContext) {
   plugin.handle(inspect, async (_input, { paseo }) => ({
     configured: Boolean((await paseo.config.get()).config),
   }));
   plugin.addSurface("main", Surface);
-  return () => undefined;
+  plugin.addWorkspacePanel({
+    id: "review",
+    title: "Review",
+    icon: "Scan",
+    context: "agent",
+    Component: AgentPanel,
+  });
+  plugin.addCommandCenterItem({
+    id: "open-review",
+    title: "Open review",
+    icon: "Scan",
+    context: "agent",
+    async onSelect({ paseo, rpc, workspace, openPanel }) {
+      await paseo.workspaces.ref(workspace.id).setTitle("Review");
+      await rpc(inspect, {});
+      openPanel("review");
+    },
+  });
+  return () => {};
 }
 `,
     );

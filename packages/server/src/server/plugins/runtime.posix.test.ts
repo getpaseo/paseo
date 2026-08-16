@@ -467,6 +467,10 @@ function HelloSurface() {
   return <Text>Hello from native UI</Text>;
 }
 
+function ReviewPanel() {
+  return <Text>Workspace review panel</Text>;
+}
+
 export default function contribute(plugin: any) {
   plugin.handle(greetRpc, async (input: { name: string }) => ({
     message: "Hello, " + input.name,
@@ -474,6 +478,8 @@ export default function contribute(plugin: any) {
   }));
   plugin.addSurface("main", HelloSurface);
   plugin.addSidebarItem({ id: "hello", title: "Hello", icon: "Sparkles", surface: "main" });
+  plugin.addWorkspacePanel({ id: "review", title: "Review", icon: "Scan", context: "workspace", Component: ReviewPanel });
+  plugin.addCommandCenterItem({ id: "open-review", title: "Open review", icon: "Scan", context: "workspace", onSelect() {} });
   plugin.addAttachmentSource(attachments);
   return () => undefined;
 }`,
@@ -487,6 +493,8 @@ export default function contribute(plugin: any) {
     expect(catalog[0]?.id).toBe("hello");
     expect(catalog[0]?.clientBundle).toContain("Hello from native UI");
     expect(catalog[0]?.clientBundle).toContain("Attach example issue");
+    expect(catalog[0]?.clientBundle).toContain("Workspace review panel");
+    expect(catalog[0]?.clientBundle).toContain("Open review");
     expect(catalog[0]?.clientBundle).not.toContain("node:os");
     expect(catalog[0]?.clientBundle).not.toContain("get: () => from[key]");
     await expect(runtime.invoke("hello", "greet", { name: "Paseo" })).resolves.toMatchObject({

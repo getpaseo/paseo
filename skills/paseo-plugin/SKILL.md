@@ -54,11 +54,51 @@ import type { PluginContext } from "@paseo/plugin";
 
 export default function contribute(plugin: PluginContext) {
   // Register contributions here.
-  return () => undefined;
+  return () => {};
 }
 ```
 
 Cleanup can be async. Use it for timers, watchers, sockets, and other resources created by plugin code. Paseo removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin session, and stops the subprocess when the plugin stops.
+
+## Add a workspace panel
+
+Workspace panels live beside agents, terminals, files, and diffs. Their props contain stable IDs;
+required-selector hooks read cached client state without subscribing to unrelated fields:
+
+```tsx
+import { type PluginContext, type PluginWorkspacePanelProps, useWorkspace } from "@paseo/plugin";
+import { Text } from "react-native";
+
+function Overview({ workspaceId }: PluginWorkspacePanelProps) {
+  const name = useWorkspace(workspaceId, (workspace) => workspace.name);
+  return <Text>{name}</Text>;
+}
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addWorkspacePanel({
+    id: "overview",
+    title: "Workspace overview",
+    icon: "PanelsTopLeft",
+    context: "workspace",
+    Component: Overview,
+  });
+  plugin.addCommandCenterItem({
+    id: "open-overview",
+    title: "Open workspace overview",
+    icon: "PanelsTopLeft",
+    context: "workspace",
+    onSelect({ openPanel }) {
+      openPanel("overview");
+    },
+  });
+  return () => {};
+}
+```
+
+Use `useWorkspace(id, selector)` and `useAgent(id, selector)`. Selectors are required
+and their results use shallow equality. Never select the whole snapshot or add an RPC to discover
+the active workspace or agent. Command callbacks receive the selected host's `paseo`, typed
+`rpc(contract, input)`, `openSurface(id)`, and contextual `openPanel(id)` capabilities.
 
 ## Add a sidebar surface
 
@@ -93,7 +133,7 @@ export default function contribute(plugin: PluginContext) {
     icon: "ListPlus",
     surface: "main",
   });
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -164,7 +204,7 @@ export default function contribute(plugin: PluginContext) {
     return { message: `${name}: plugins are ${config.pluginsEnabled ? "on" : "off"}` };
   });
   plugin.addSurface("main", Greeting);
-  return () => undefined;
+  return () => {};
 }
 ```
 
@@ -228,7 +268,7 @@ const issues = defineAttachmentSource({
 export default function contribute(plugin: PluginContext) {
   plugin.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
   plugin.addAttachmentSource(issues);
-  return () => undefined;
+  return () => {};
 }
 ```
 
