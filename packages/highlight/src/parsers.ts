@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { haskell } from "@codemirror/legacy-modes/mode/haskell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -69,6 +70,8 @@ const languagesByExtension: Record<string, Language> = {
   dart: StreamLanguage.define(dart),
   // C#
   cs: csharpLanguage,
+  // Haskell
+  hs: StreamLanguage.define(haskell),
   // Elixir
   ex: language(elixirParser),
   exs: language(elixirParser),

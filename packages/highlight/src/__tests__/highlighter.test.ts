@@ -75,6 +75,17 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights Haskell code", () => {
+    const code = 'main = putStrLn "hello"';
+    const result = highlightCode(code, "Main.hs");
+
+    const operatorToken = result[0].find((token) => token.text === "=");
+    expect(operatorToken?.style).toBe("keyword");
+
+    const stringToken = result[0].find((token) => token.text.includes("hello"));
+    expect(stringToken?.style).toBe("string");
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

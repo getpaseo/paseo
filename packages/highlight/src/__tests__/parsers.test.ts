@@ -21,6 +21,7 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.swift")).toBe(true);
     expect(isLanguageSupported("test.dart")).toBe(true);
     expect(isLanguageSupported("test.cs")).toBe(true);
+    expect(isLanguageSupported("test.hs")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
   });
 
@@ -60,6 +61,7 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("swift");
     expect(extensions).toContain("dart");
     expect(extensions).toContain("cs");
+    expect(extensions).toContain("hs");
     expect(extensions).toContain("json");
   });
 });
