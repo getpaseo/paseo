@@ -1198,24 +1198,24 @@ export function WorkspaceDesktopTabsRow({
           getItemData={getTabDragData}
           renderItem={renderTab}
         />
-        <WorkspaceNewTabButton
-          shortcutKeys={newTabKeys}
-          onCreateAgentTab={handleCreateAgentTab}
-          onCreateTerminal={handleCreateTerminal}
-          onCreateBrowser={handleCreateBrowser}
-          onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-          onOpenChanges={handleOpenChanges}
-          onOpenFiles={handleOpenFiles}
-          onOpenPullRequest={handleOpenPullRequest}
-          onEditProfiles={handleEditProfiles}
-          normalizedServerId={normalizedServerId}
-          showCreateBrowserTab={showCreateBrowserTab}
-          terminalDisabled={terminalDisabled}
-          isGit={isGit}
-          showPullRequest={showPullRequest}
-          onLayout={handleInlineAddButtonLayout}
-        />
       </ScrollView>
+      <WorkspaceNewTabButton
+        shortcutKeys={newTabKeys}
+        onCreateAgentTab={handleCreateAgentTab}
+        onCreateTerminal={handleCreateTerminal}
+        onCreateBrowser={handleCreateBrowser}
+        onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+        onOpenChanges={handleOpenChanges}
+        onOpenFiles={handleOpenFiles}
+        onOpenPullRequest={handleOpenPullRequest}
+        onEditProfiles={handleEditProfiles}
+        normalizedServerId={normalizedServerId}
+        showCreateBrowserTab={showCreateBrowserTab}
+        terminalDisabled={terminalDisabled}
+        isGit={isGit}
+        showPullRequest={showPullRequest}
+        onLayout={handleInlineAddButtonLayout}
+      />
       <View style={styles.tabsActions} onLayout={handleTabsActionsLayout}>
         <WorkspacePinnedTargets
           onCreateAgentTab={handleCreateAgentTab}

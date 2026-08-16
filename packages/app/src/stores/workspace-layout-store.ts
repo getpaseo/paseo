@@ -164,6 +164,8 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
   z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
+  z.strictObject({ kind: z.literal("files") }),
+  z.strictObject({ kind: z.literal("pull_request") }),
   z.strictObject({
     kind: z.literal("file"),
     path: z.string(),
@@ -196,6 +198,7 @@ const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
         tabIds: z.array(z.string()),
         focusedTabId: z.string().nullable(),
         tabs: z.array(WorkspaceTabStorageSchema).optional(),
+        hidden: z.boolean().optional(),
       }),
     }),
     z.strictObject({
@@ -217,6 +220,8 @@ const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject(
 const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
   splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),
+  explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
+  acknowledgedPullRequestByWorkspace: z.record(z.string(), z.string()).optional(),
 });
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -1236,6 +1241,9 @@ export function createWorkspaceLayoutStore(
             ...currentState,
             layoutByWorkspace: result.data.layoutByWorkspace,
             splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
+            explorerPaneIdByWorkspace: result.data.explorerPaneIdByWorkspace ?? {},
+            acknowledgedPullRequestByWorkspace:
+              result.data.acknowledgedPullRequestByWorkspace ?? {},
           };
         },
       },

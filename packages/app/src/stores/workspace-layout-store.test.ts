@@ -347,6 +347,44 @@ describe("workspace-layout-store actions", () => {
     await expect(AsyncStorage.getItem("workspace-layout-state")).resolves.not.toBeNull();
   });
 
+  it("persists first-class pane targets, visibility, and focus", async () => {
+    await AsyncStorage.removeItem("workspace-layout-state");
+    const workspaceKey = createWorkspaceKey();
+    const source = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await source.persist.rehydrate();
+
+    source.getState().openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    const focusedAgentTabId = source
+      .getState()
+      .openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-2" });
+    const explorer = source.getState().ensureExplorerPane(workspaceKey);
+    expect(explorer).toBeTruthy();
+    source.getState().openTabFocused(workspaceKey, { kind: "files" });
+    source.getState().observePullRequest(workspaceKey, "pr:1");
+    source.getState().hidePane(workspaceKey, explorer!.paneId);
+
+    await vi.waitFor(async () => {
+      expect(await AsyncStorage.getItem("workspace-layout-state")).not.toBeNull();
+    });
+
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await restored.persist.rehydrate();
+    const state = restored.getState();
+    const layout = state.layoutByWorkspace[workspaceKey];
+
+    expect(layout.focusedPaneId).toBe("main");
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(focusedAgentTabId);
+    expect(findPaneById(layout.root, explorer!.paneId)?.hidden).toBe(true);
+    expect(collectAllTabs(layout.root).map((tab) => tab.target.kind)).toEqual([
+      "agent",
+      "agent",
+      "files",
+      "pull_request",
+    ]);
+    expect(state.explorerPaneIdByWorkspace[workspaceKey]).toBe(explorer!.paneId);
+    expect(state.acknowledgedPullRequestByWorkspace[workspaceKey]).toBe("pr:1");
+  });
+
   it("auto-adds each detected pull request once and respects a deliberate close", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

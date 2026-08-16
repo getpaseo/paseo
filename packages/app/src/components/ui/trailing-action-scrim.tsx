@@ -33,6 +33,7 @@ const backdropColorMappings: Record<SurfaceBackdrop, (theme: Theme) => { color: 
   surface2: (theme) => ({ color: theme.colors.surface2 }),
   surfaceSidebar: (theme) => ({ color: theme.colors.surfaceSidebar }),
   surfaceSidebarHover: (theme) => ({ color: theme.colors.surfaceSidebarHover }),
+  surfaceSidebarSelected: (theme) => ({ color: theme.colors.surfaceSidebarSelected }),
 };
 
 /** Fades trailing content into the surface beneath an absolutely overlaid action. */

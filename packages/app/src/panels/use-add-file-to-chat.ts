@@ -18,11 +18,11 @@ export function useAddFileToChat(input: { serverId: string; workspaceId?: string
     [input.serverId, layout],
   );
   const addFile = useCallback(
-    (filePath: string) => {
+    async (filePath: string) => {
       if (!focusedChat || !workspaceKey) {
         return;
       }
-      void useDraftStore.getState().attachWorkspaceFile({
+      await useDraftStore.getState().attachWorkspaceFile({
         draftKey: focusedChat.draftKey,
         attachment: createWorkspaceFileAttachment({ path: filePath }),
       });
