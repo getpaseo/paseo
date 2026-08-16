@@ -11,7 +11,10 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
-import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
+import {
+  resolveModelBrowserScrolling,
+  resolveModelSheetOpening,
+} from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -71,6 +74,7 @@ export function CompactModelSheet({
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
+  const modelBrowserScrolling = resolveModelBrowserScrolling(usesBottomSheet);
   const [isOpen, setIsOpen] = useState(false);
   const [isModelBrowserOpen, setIsModelBrowserOpen] = useState(false);
   const availableProviders = useMemo(() => {
@@ -282,7 +286,7 @@ export function CompactModelSheet({
             onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
             onRetryProvider={onRetryProvider}
             isRetryingProvider={isRetryingProvider}
-            scrolling="independent"
+            scrolling={modelBrowserScrolling}
             searchAllOnFocus={usesBottomSheet}
             rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
           />
@@ -324,7 +328,7 @@ export function CompactModelSheet({
               onSelect={handleBrowserSelect}
               onRetryProvider={onRetryProvider}
               isRetryingProvider={isRetryingProvider}
-              scrolling="independent"
+              scrolling={modelBrowserScrolling}
               searchAllOnFocus
             />
           </View>

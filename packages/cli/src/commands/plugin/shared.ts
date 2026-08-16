@@ -2,17 +2,20 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { CommandError } from "../../output/index.js";
 import { connectToDaemon } from "../../utils/client.js";
 
-export async function withPluginManagementClient<T>(
+type PluginFeature = "pluginManagement" | "pluginLogs";
+
+async function withPluginClient<T>(
   host: string | undefined,
+  feature: PluginFeature,
+  updateMessage: string,
   run: (client: DaemonClient) => Promise<T>,
 ): Promise<T> {
   const client = await connectToDaemon({ host });
-  // COMPAT(pluginManagement): added in v0.3.1, remove gate after 2027-08-14.
-  if (client.getLastServerInfoMessage()?.features?.pluginManagement !== true) {
+  if (client.getLastServerInfoMessage()?.features?.[feature] !== true) {
     await client.close().catch(() => undefined);
     throw {
       code: "DAEMON_UPDATE_REQUIRED",
-      message: "Update the host to use plugin management.",
+      message: updateMessage,
     } satisfies CommandError;
   }
   try {
@@ -20,4 +23,25 @@ export async function withPluginManagementClient<T>(
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+export async function withPluginManagementClient<T>(
+  host: string | undefined,
+  run: (client: DaemonClient) => Promise<T>,
+): Promise<T> {
+  // COMPAT(pluginManagement): added in v0.3.1, remove gate after 2027-08-14.
+  return withPluginClient(
+    host,
+    "pluginManagement",
+    "Update the host to use plugin management.",
+    run,
+  );
+}
+
+export async function withPluginLogsClient<T>(
+  host: string | undefined,
+  run: (client: DaemonClient) => Promise<T>,
+): Promise<T> {
+  // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
+  return withPluginClient(host, "pluginLogs", "Update the host to view plugin logs.", run);
 }

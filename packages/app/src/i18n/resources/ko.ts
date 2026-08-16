@@ -97,6 +97,7 @@ export const ko: TranslationResources = {
       interruptAgent: "에이전트 중단",
       queueMessage: "메시지 대기열에 추가",
       sendAndInterrupt: "보내고 중단",
+      sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
       queue: "대기열",
       send: "보내기",
@@ -977,6 +978,8 @@ export const ko: TranslationResources = {
       },
       show: {
         label: "표시 항목",
+        branch: "브랜치",
+        project: "프로젝트",
         host: "호스트",
         changeRequest: "풀 리퀘스트",
         checks: "검사",
@@ -1834,11 +1837,14 @@ export const ko: TranslationResources = {
         descriptions: {
           interrupt:
             "에이전트가 실행 중일 때 Enter는 중단합니다. Command/Ctrl+Enter는 대기열에 추가합니다.",
+          steer:
+            "에이전트가 실행 중일 때 Enter는 현재 턴에 지시합니다. Command/Ctrl+Enter는 대기열에 추가합니다.",
           queue:
             "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
         },
         options: {
           interrupt: "중단",
+          steer: "지시",
           queue: "대기열",
         },
       },

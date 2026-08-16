@@ -4,6 +4,7 @@ import { PluginIdSchema } from "@getpaseo/protocol/messages";
 
 const SDK_DECLARATIONS = `declare module "@paseo/plugin" {
   import type { ComponentType } from "react";
+  import type { PaseoApi } from "@getpaseo/client";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 
   export interface PluginSurfaceProps {
@@ -56,11 +57,16 @@ const SDK_DECLARATIONS = `declare module "@paseo/plugin" {
     Component: ComponentType<PluginSurfaceProps>;
   }
 
+  export interface PluginHandlerContext {
+    paseo: PaseoApi;
+  }
+
   export interface PluginContext {
     handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
       contract: PluginRpcContract<InputSchema, OutputSchema>,
       handler: (
         input: ZodOutput<InputSchema>,
+        context: PluginHandlerContext,
       ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
     ): void;
     addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
@@ -68,7 +74,7 @@ const SDK_DECLARATIONS = `declare module "@paseo/plugin" {
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   }
 
-  export type PluginCleanup = () => void;
+  export type PluginCleanup = () => void | Promise<void>;
   export type PluginContribution = (plugin: PluginContext) => PluginCleanup;
 
   export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(definition: {
@@ -80,6 +86,8 @@ const SDK_DECLARATIONS = `declare module "@paseo/plugin" {
   export function useRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
   ): (input: ZodInput<InputSchema>) => Promise<ZodOutput<OutputSchema>>;
+
+  export function usePaseo(): PaseoApi;
 
   export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
     definition: Definition,
@@ -143,6 +151,7 @@ export async function scaffoldPluginDirectory(
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
+      "@getpaseo/client": "^0.4.0",
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",

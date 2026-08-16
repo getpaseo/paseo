@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ComposerTextInput } from "./text-input.web";
 
 interface MountedInput {
@@ -73,12 +73,31 @@ afterEach(() => {
     act(() => mounted.root.unmount());
     mounted.container.remove();
   }
-  vi.useRealTimers();
 });
 
 describe("ComposerTextInput web IME composition", () => {
+  it("keeps locally typed text when its parent rerenders with a stale value", () => {
+    const recorder = createTextRecorder();
+    const mounted = mountInput(recorder.onChangeText);
+
+    act(() => {
+      typeFromIme(mounted.textarea, "locally typed");
+      mounted.root.render(
+        <ComposerTextInput
+          text=""
+          multiline={true}
+          onChangeText={recorder.onChangeText}
+          placeholder="rerender with stale publication"
+          testID="composer-input"
+        />,
+      );
+    });
+
+    expect(mounted.textarea.value).toBe("locally typed");
+    expect(recorder.changes).toEqual(["locally typed"]);
+  });
+
   it("keeps the DOM-owned candidate during composition and reports the committed text", () => {
-    vi.useFakeTimers();
     const recorder = createTextRecorder();
     const mounted = mountInput(recorder.onChangeText);
 
@@ -100,14 +119,12 @@ describe("ComposerTextInput web IME composition", () => {
 
     act(() => {
       dispatchComposition(mounted.textarea, "compositionend");
-      vi.runAllTimers();
     });
 
     expect(recorder.changes).toEqual(["你好"]);
   });
 
-  it("does not let a previous composition-end timer take ownership from a new composition", () => {
-    vi.useFakeTimers();
+  it("keeps the latest candidate across consecutive compositions", () => {
     const mounted = mountInput(ignoreTextChange);
 
     act(() => {
@@ -116,7 +133,6 @@ describe("ComposerTextInput web IME composition", () => {
       dispatchComposition(mounted.textarea, "compositionend");
       dispatchComposition(mounted.textarea, "compositionstart");
       mounted.textarea.value = "你好";
-      vi.runAllTimers();
       mounted.root.render(
         <ComposerTextInput
           text="你"
@@ -132,7 +148,6 @@ describe("ComposerTextInput web IME composition", () => {
   });
 
   it("does not report committed text twice when the input event already reported it", () => {
-    vi.useFakeTimers();
     const changes: string[] = [];
     const mounted = mountInput((text) => changes.push(text));
 
@@ -140,7 +155,6 @@ describe("ComposerTextInput web IME composition", () => {
       dispatchComposition(mounted.textarea, "compositionstart");
       typeFromIme(mounted.textarea, "你好");
       dispatchComposition(mounted.textarea, "compositionend");
-      vi.runAllTimers();
     });
 
     expect(changes).toEqual(["你好"]);

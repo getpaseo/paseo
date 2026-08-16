@@ -31,6 +31,8 @@ const TimelinePositionSchema = z.strictObject({
 const TimelineItemBaseShape = {
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
+  // COMPAT(active-turn-membership): absent on caches written before turn membership.
+  turnId: z.string().optional(),
   timestamp: IsoDateSchema,
 };
 
@@ -320,6 +322,7 @@ function timelineBase(item: StreamItem) {
   return {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
 }
@@ -394,6 +397,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
   switch (item.kind) {

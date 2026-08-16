@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { PaseoApi } from "@getpaseo/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
@@ -35,11 +36,16 @@ export interface PluginAttachmentSourceContribution {
   search: PluginRpcContract;
 }
 
+export interface PluginHandlerContext {
+  paseo: PaseoApi;
+}
+
 export interface PluginContext {
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     handler: (
       input: ZodOutput<InputSchema>,
+      context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
@@ -47,6 +53,6 @@ export interface PluginContext {
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
 }
 
-export type PluginCleanup = () => void;
+export type PluginCleanup = () => void | Promise<void>;
 
 export type PluginContribution = (plugin: PluginContext) => PluginCleanup;

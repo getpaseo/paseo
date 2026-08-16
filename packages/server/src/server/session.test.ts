@@ -426,9 +426,12 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   return new Session(sessionOptions);
 }
 
-test("routes plugin management requests and catalog notifications", async () => {
+test("routes plugin requests and releases its owned catalog subscription on cleanup", async () => {
   const messages: SessionOutboundMessage[] = [];
   const listeners = new Set<(pluginId: string) => void>();
+  const releasePluginSubscription = vi.fn((listener: (pluginId: string) => void) => {
+    listeners.delete(listener);
+  });
   const plugin = {
     id: "example",
     path: "/plugins/example",
@@ -437,6 +440,14 @@ test("routes plugin management requests and catalog notifications", async () => 
   };
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
     listPlugins: () => [plugin],
+    getLogs: () => [
+      {
+        sequence: 1,
+        timestamp: "2026-08-16T12:00:00.000Z",
+        stream: "stdout",
+        message: "ready",
+      },
+    ],
     installDirectory: async () => plugin,
     inspectDirectory: async () => ({ id: "example" }),
     reloadPlugin: async () => plugin,
@@ -445,7 +456,7 @@ test("routes plugin management requests and catalog notifications", async () => 
     removePlugin: async () => undefined,
     subscribe: (listener) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => releasePluginSubscription(listener);
     },
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
@@ -453,6 +464,11 @@ test("routes plugin management requests and catalog notifications", async () => 
   const session = createSessionForTest({ messages, pluginRuntime });
 
   await session.handleMessage({ type: "plugin.list.request", requestId: "list" });
+  await session.handleMessage({
+    type: "plugin.logs.get.request",
+    requestId: "logs",
+    pluginId: "example",
+  });
   await session.handleMessage({
     type: "plugin.directory.install.request",
     requestId: "install",
@@ -477,6 +493,7 @@ test("routes plugin management requests and catalog notifications", async () => 
 
   expect(messages.map((message) => message.type)).toEqual([
     "plugin.list.response",
+    "plugin.logs.get.response",
     "plugin.directory.install.response",
     "plugin.reload.response",
     "plugin.disable.response",
@@ -489,6 +506,7 @@ test("routes plugin management requests and catalog notifications", async () => 
   });
   await session.cleanup();
   expect(listeners.size).toBe(0);
+  expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
 describe("session authorization scopes", () => {

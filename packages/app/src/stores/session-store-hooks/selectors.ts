@@ -182,6 +182,38 @@ export function selectWorkspaceStructureProjects(
   return buildWorkspaceStructureProjects({ sessions });
 }
 
+export function createWorkspaceStructureProjectsSelector(
+  serverIds: readonly string[],
+): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
+  let previousInputs: Array<{
+    workspaces: Map<string, WorkspaceDescriptor> | undefined;
+    projects: Map<string, ProjectDescriptor> | undefined;
+  }> | null = null;
+  let previousProjects: WorkspaceStructureProject[] | null = null;
+
+  return (state) => {
+    const inputs = serverIds.map((serverId) => ({
+      workspaces: state.sessions[serverId]?.workspaces,
+      projects: state.sessions[serverId]?.projects,
+    }));
+    const priorInputs = previousInputs;
+    const unchanged =
+      priorInputs !== null &&
+      inputs.every(
+        (input, index) =>
+          input.workspaces === priorInputs[index]?.workspaces &&
+          input.projects === priorInputs[index]?.projects,
+      );
+    if (unchanged && previousProjects) {
+      return previousProjects;
+    }
+
+    previousInputs = inputs;
+    previousProjects = selectWorkspaceStructureProjects(state, serverIds);
+    return previousProjects;
+  };
+}
+
 export function selectProject(
   state: SessionsSnapshot,
   serverId: string | null,

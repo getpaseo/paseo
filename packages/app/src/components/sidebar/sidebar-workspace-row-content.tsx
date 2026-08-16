@@ -73,6 +73,7 @@ const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
 const scrimColorMappings: Record<SidebarSurfaceBackdrop, (theme: Theme) => { color: string }> = {
   surfaceSidebar: (theme) => ({ color: theme.colors.surfaceSidebar }),
   surfaceSidebarHover: (theme) => ({ color: theme.colors.surfaceSidebarHover }),
+  surfaceSidebarSelected: (theme) => ({ color: theme.colors.surfaceSidebarSelected }),
   surface2: (theme) => ({ color: theme.colors.surface2 }),
 };
 
@@ -196,6 +197,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
+            currentBranch={workspace.currentBranch}
+            projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}

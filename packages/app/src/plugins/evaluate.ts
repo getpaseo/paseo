@@ -10,6 +10,7 @@ import {
   type PluginAttachmentSourceContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
+  usePaseo,
   useRpc,
 } from "@paseo/plugin";
 import { createPluginContext, type PluginRegistrationCollector } from "@paseo/plugin/host";
@@ -91,7 +92,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc, useRpc };
+    if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc, usePaseo, useRpc };
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
@@ -119,7 +120,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     }
   } catch (error) {
     try {
-      cleanup();
+      void Promise.resolve(cleanup()).catch((cleanupError) => {
+        console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+      });
     } catch (cleanupError) {
       console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
     }

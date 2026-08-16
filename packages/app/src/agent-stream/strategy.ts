@@ -1,6 +1,7 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import { continuesTurn } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
@@ -165,18 +166,20 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     },
     collectAssistantTurnContent: (items, startIndex) => {
       const messages: string[] = [];
+      let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
         index >= 0 && index < items.length;
         index += config.assistantTurnTraversalStep
       ) {
         const currentItem = items[index];
-        if (currentItem.kind === "user_message") {
+        if (!currentItem || (laterItem && !continuesTurn(currentItem, laterItem))) {
           break;
         }
         if (currentItem.kind === "assistant_message") {
           messages.push(currentItem.text);
         }
+        laterItem = currentItem;
       }
       return messages.toReversed().join("\n\n");
     },

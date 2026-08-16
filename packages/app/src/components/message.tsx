@@ -354,8 +354,10 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   text: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    ...(isWeb ? { lineHeight: 22, overflowWrap: "anywhere" as const } : {}),
+    fontSize: theme.fontSize.sm,
+    ...(isWeb
+      ? { lineHeight: Math.round(theme.fontSize.sm * 1.4), overflowWrap: "anywhere" as const }
+      : {}),
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -1093,7 +1095,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   label: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     flexShrink: 0,
   },
@@ -1108,7 +1110,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     marginLeft: theme.spacing[2],
   },
@@ -1117,7 +1119,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   shimmerText: {
     color: "transparent",
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   spacer: {
@@ -1950,14 +1952,14 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
   },
   headerLabel: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
   text: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.base,
-    lineHeight: 22,
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
     color: theme.colors.foreground,
   },
 }));
@@ -2260,7 +2262,7 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
   },
 }));
 

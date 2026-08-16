@@ -97,6 +97,7 @@ export const ru: TranslationResources = {
       interruptAgent: "Агент прерываний",
       queueMessage: "Сообщение в очереди",
       sendAndInterrupt: "Отправить и прервать",
+      sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
       send: "Отправлять",
@@ -992,6 +993,8 @@ export const ru: TranslationResources = {
       },
       show: {
         label: "Показывать",
+        branch: "Ветка",
+        project: "Проект",
         host: "Хост",
         changeRequest: "Pull request",
         checks: "Проверки",
@@ -1858,10 +1861,13 @@ export const ru: TranslationResources = {
         label: "Отправка по умолчанию",
         descriptions: {
           interrupt: "Когда агент работает, Enter прерывает. Command/Ctrl+Enter ставит в очередь.",
+          steer:
+            "Когда агент работает, Enter направляет текущий ход. Command/Ctrl+Enter ставит в очередь.",
           queue: "Когда агент работает, Enter ставит в очередь. Command/Ctrl+Enter отправляет.",
         },
         options: {
           interrupt: "Прерывать",
+          steer: "Направить",
           queue: "Очередь",
         },
       },

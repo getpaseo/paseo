@@ -35,6 +35,14 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("preserves a persisted steer send behavior", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        "@paseo:app-settings": JSON.stringify({ sendBehavior: "steer" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("steer");
+  });
   it("defaults theme to auto when storage is empty", async () => {
     const deps = makeDeps();
 

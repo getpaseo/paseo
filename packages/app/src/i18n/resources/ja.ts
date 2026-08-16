@@ -97,6 +97,7 @@ export const ja: TranslationResources = {
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
       sendAndInterrupt: "送信して中断",
+      sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
       queue: "キュー",
       send: "送信",
@@ -981,6 +982,8 @@ export const ja: TranslationResources = {
       },
       show: {
         label: "表示項目",
+        branch: "ブランチ",
+        project: "プロジェクト",
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
@@ -1839,10 +1842,13 @@ export const ja: TranslationResources = {
         label: "デフォルトの送信",
         descriptions: {
           interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
+          steer:
+            "エージェント実行中、Enterで現在のターンに指示を送ります。Command/Ctrl+Enterでキューに追加。",
           queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
         },
         options: {
           interrupt: "中断",
+          steer: "指示",
           queue: "キュー",
         },
       },

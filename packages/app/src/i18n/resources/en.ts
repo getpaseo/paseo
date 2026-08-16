@@ -94,6 +94,7 @@ export const en = {
       interruptAgent: "Interrupt agent",
       queueMessage: "Queue message",
       sendAndInterrupt: "Send and interrupt",
+      sendAndSteer: "Send and steer",
       sendMessage: "Send message",
       queue: "Queue",
       send: "Send",
@@ -979,6 +980,8 @@ export const en = {
       },
       show: {
         label: "Show",
+        branch: "Branch",
+        project: "Project",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Checks",
@@ -1815,6 +1818,15 @@ export const en = {
       idPlaceholder: "Manifest default",
       install: "Install directory",
       installing: "Installing…",
+      logs: {
+        action: "Logs",
+        title: "Logs: {{id}}",
+        loading: "Loading logs…",
+        refresh: "Refresh",
+        refreshing: "Refreshing…",
+        errorTitle: "Unable to load plugin logs",
+        empty: "No plugin output yet",
+      },
       status: { running: "running", disabled: "disabled", failed: "failed" },
       actions: {
         reload: "Reload",
@@ -1879,10 +1891,13 @@ export const en = {
         label: "Default send",
         descriptions: {
           interrupt: "When the agent is running, Enter interrupts. Command/Ctrl+Enter queues.",
+          steer:
+            "When the agent is running, Enter steers the active turn. Command/Ctrl+Enter queues.",
           queue: "When the agent is running, Enter queues. Command/Ctrl+Enter submits.",
         },
         options: {
           interrupt: "Interrupt",
+          steer: "Steer",
           queue: "Queue",
         },
       },
