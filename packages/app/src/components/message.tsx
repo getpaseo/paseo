@@ -2990,14 +2990,25 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         </View>
       </Pressable>
       {detailContent ? (
-        <Pressable
-          ref={detailWrapperRef}
-          style={detailWrapperStyle}
-          onHoverIn={handleDetailHoverIn}
-          onHoverOut={handleDetailHoverOut}
-        >
-          {detailContent}
-        </Pressable>
+        isNative ? (
+          // A Pressable claims the touch responder unconditionally on native
+          // (Pressability returns true from onStartShouldSetResponder unless
+          // disabled), which swallows the scroll gestures of the detail
+          // content's inner scroll views. The wrapper only needs hover
+          // (web-only), so render a plain View on native.
+          <View ref={detailWrapperRef} style={detailWrapperStyle}>
+            {detailContent}
+          </View>
+        ) : (
+          <Pressable
+            ref={detailWrapperRef}
+            style={detailWrapperStyle}
+            onHoverIn={handleDetailHoverIn}
+            onHoverOut={handleDetailHoverOut}
+          >
+            {detailContent}
+          </Pressable>
+        )
       ) : null}
     </View>
   );
@@ -3063,7 +3074,12 @@ export const ToolCall = memo(function ToolCall({
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
-  const shouldRenderInline = !isMobile || forceInline;
+  // The desktop shell renders tool details inline, but on native tablets that
+  // nests a scroll view inside the inverted conversation FlatList, which
+  // fights the parent gesture (Android nested scroll inverts the direction).
+  // Route native tablets through the sheet like phones do — the sheet is an
+  // RNGH-owned container, so the inner scroll view scrolls cleanly.
+  const shouldRenderInline = (!isMobile && !isNative) || forceInline;
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
