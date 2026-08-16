@@ -979,6 +979,8 @@ export const en = {
       },
       show: {
         label: "Show",
+        branch: "Branch",
+        project: "Project",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Checks",

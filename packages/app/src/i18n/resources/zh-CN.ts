@@ -962,6 +962,8 @@ export const zhCN: TranslationResources = {
       },
       show: {
         label: "显示",
+        branch: "分支",
+        project: "项目",
         host: "主机",
         changeRequest: "拉取请求",
         checks: "检查",

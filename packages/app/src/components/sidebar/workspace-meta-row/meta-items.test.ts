@@ -17,6 +17,8 @@ const SERVICE: WorkspaceServiceSummary = { name: "web", health: null };
 
 function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {}) {
   return selectMetaRowItems({
+    currentBranch: "feature/sidebar-badges",
+    projectName: "Paseo",
     hasHostBadge: true,
     prHint: PR_HINT,
     serviceSummary: SERVICE,
@@ -29,12 +31,40 @@ function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {
 const kinds = (items: ReturnType<typeof selectMetaRowItems>) => items.map((item) => item.kind);
 
 describe("selectMetaRowItems", () => {
-  it("reads identity, then the change, then its state, then what is running", () => {
-    expect(kinds(select())).toEqual(["host", "changeRequest", "checks", "services"]);
+  it("puts the enabled branch and project badges first", () => {
+    const visible = { ...DEFAULT_SIDEBAR_ROW_ITEMS, branch: true, project: true };
+    expect(kinds(select({ visible }))).toEqual([
+      "branch",
+      "project",
+      "host",
+      "changeRequest",
+      "checks",
+      "services",
+    ]);
   });
 
   it("omits what the workspace does not have", () => {
-    expect(kinds(select({ hasHostBadge: false, prHint: null, serviceSummary: null }))).toEqual([]);
+    expect(
+      kinds(
+        select({
+          currentBranch: null,
+          projectName: null,
+          hasHostBadge: false,
+          prHint: null,
+          serviceSummary: null,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("only draws identity badges when enabled and available", () => {
+    const visible = { ...DEFAULT_SIDEBAR_ROW_ITEMS, branch: true, project: true };
+    expect(kinds(select({ currentBranch: null, projectName: null, visible }))).toEqual([
+      "host",
+      "changeRequest",
+      "checks",
+      "services",
+    ]);
   });
 
   it.each([
