@@ -584,6 +584,48 @@ test.describe("Composer autocomplete", () => {
     }
   });
 
+  test("uses the live input when clicking a slash command", async ({ page }) => {
+    await installListCommandsStub(page);
+    const agent = await openReadyMockAgent(page);
+
+    try {
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/td");
+      const option = page
+        .getByTestId("composer-autocomplete-popover")
+        .getByText("/tdd", { exact: true })
+        .first();
+      await expect(option).toBeVisible({ timeout: 30_000 });
+
+      await option.evaluate((element) => {
+        const textarea = document.querySelector('textarea[aria-label="Message agent..."]');
+        if (!(textarea instanceof HTMLTextAreaElement)) {
+          throw new Error("Composer input is not a textarea");
+        }
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value",
+        )?.set;
+        if (!valueSetter) throw new Error("Textarea value setter is unavailable");
+        valueSetter.call(textarea, "/tdd suffix");
+        textarea.setSelectionRange(4, 4);
+        textarea.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            data: "d suffix",
+            inputType: "insertText",
+          }),
+        );
+        (element as HTMLElement).click();
+      });
+
+      await expect(input).toHaveValue("/tdd suffix");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("stays anchored to the composer when the desktop sidebar is open", async ({ page }) => {
     await installListCommandsStub(page);
     const agent = await openReadyMockAgent(page);

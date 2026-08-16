@@ -41,10 +41,12 @@ interface UseAgentAutocompleteInput {
 interface AgentAutocompleteKeyPressEvent {
   key: string;
   preventDefault: () => void;
-  input: {
-    text: string;
-    selection: { start: number; end: number };
-  };
+  input: AgentAutocompleteInputSnapshot;
+}
+
+interface AgentAutocompleteInputSnapshot {
+  text: string;
+  selection: { start: number; end: number };
 }
 
 type AgentAutocompleteOption =
@@ -64,7 +66,7 @@ interface AgentAutocompleteResult {
   errorMessage?: string;
   loadingText: string;
   emptyText: string;
-  onSelectOption: (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) => void;
+  onSelectOption: (option: AutocompleteOption, input?: AgentAutocompleteInputSnapshot) => void;
   onKeyPress: (event: AgentAutocompleteKeyPressEvent) => boolean;
 }
 
@@ -75,13 +77,13 @@ interface AgentAutocompleteSnapshot {
 }
 
 function resolveAgentAutocompleteSnapshot(input: {
-  event?: AgentAutocompleteKeyPressEvent;
+  input?: AgentAutocompleteInputSnapshot;
   userInput: string;
   cursorIndex: number;
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
 }): AgentAutocompleteSnapshot {
-  if (!input.event) {
+  if (!input.input) {
     return {
       text: input.userInput,
       slashCommand: input.activeSlashCommand,
@@ -89,8 +91,8 @@ function resolveAgentAutocompleteSnapshot(input: {
     };
   }
 
-  const text = input.event.input.text;
-  const cursorIndex = input.event.input.selection.start;
+  const text = input.input.text;
+  const cursorIndex = input.input.selection.start;
   return {
     text,
     slashCommand: findActiveSlashCommand({ text, cursorIndex }),
@@ -465,10 +467,10 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   );
 
   const onSelectOption = useCallback(
-    (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) => {
+    (option: AutocompleteOption, snapshot?: AgentAutocompleteInputSnapshot) => {
       const selected = option as AgentAutocompleteOption;
       const current = resolveAgentAutocompleteSnapshot({
-        event,
+        input: snapshot,
         userInput,
         cursorIndex,
         activeSlashCommand,
@@ -476,7 +478,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       });
       const selectedIsCommand =
         selected.type === "client_command" || selected.type === "provider_command";
-      if (event && selectedIsCommand && !current.slashCommand) return;
+      if (snapshot && selectedIsCommand && !current.slashCommand) return;
       if (
         selected.type === "client_command" &&
         selected.command.execution === "immediate" &&
@@ -525,11 +527,17 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     ],
   );
 
+  const selectOptionFromKeyPress = useCallback(
+    (option: AutocompleteOption, event?: AgentAutocompleteKeyPressEvent) =>
+      onSelectOption(option, event?.input),
+    [onSelectOption],
+  );
+
   const { selectedIndex, onKeyPress } = useAutocomplete({
     isVisible,
     options,
     query: mode === "command" ? commandFilterQuery : fileFilterQuery,
-    onSelectOption,
+    onSelectOption: selectOptionFromKeyPress,
     onEscape:
       mode === "command" && activeSlashCommand?.position === "start"
         ? () => setUserInput("")

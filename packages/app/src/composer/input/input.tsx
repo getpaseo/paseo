@@ -88,13 +88,15 @@ export interface AttachmentMenuItem {
   icon?: React.ReactElement | null;
 }
 
+export interface ComposerInputSnapshot {
+  text: string;
+  selection: { start: number; end: number };
+}
+
 export interface ComposerKeyPressEvent {
   key: string;
   preventDefault: () => void;
-  input: {
-    text: string;
-    selection: { start: number; end: number };
-  };
+  input: ComposerInputSnapshot;
 }
 
 export interface MessageInputProps {
@@ -170,6 +172,7 @@ export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
   getText: () => string;
+  getInputSnapshot: () => ComposerInputSnapshot;
   replaceText: (text: string, selection?: { start: number; end: number }) => void;
   runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
@@ -1009,6 +1012,18 @@ function getWebTextAreaImpl(current: ComposerTextInputHandle | null): TextAreaHa
   return null;
 }
 
+function getComposerInputSnapshot(
+  current: ComposerTextInputHandle | null,
+  fallbackText: string,
+  fallbackSelection: ComposerInputSnapshot["selection"],
+): ComposerInputSnapshot {
+  const text = current?.getText() ?? fallbackText;
+  const textArea = getWebTextAreaImpl(current);
+  const start = textArea?.selectionStart ?? fallbackSelection.start;
+  const end = textArea?.selectionEnd ?? fallbackSelection.end;
+  return { text, selection: { start, end } };
+}
+
 interface SendButtonStateInput {
   disabled: boolean;
   isSubmitDisabled: boolean;
@@ -1198,11 +1213,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const textInputRef = useRef<ComposerTextInputHandle | null>(null);
     const isInputFocusedRef = useRef(false);
     const valueRef = useRef(value);
+    const selectionRef = useRef({ start: value.length, end: value.length });
     const appliedTextReplacementKeyRef = useRef(textReplacementKey);
 
     const replaceText = useCallback(
       (nextText: string, selection?: { start: number; end: number }) => {
         valueRef.current = nextText;
+        selectionRef.current = selection ?? { start: nextText.length, end: nextText.length };
         textInputRef.current?.replaceText(nextText, selection);
         onChangeText(nextText);
       },
@@ -1217,6 +1234,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         textInputRef.current?.blur();
       },
       getText: () => textInputRef.current?.getText() ?? valueRef.current,
+      getInputSnapshot: () =>
+        getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
       replaceText,
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
@@ -1570,6 +1589,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
         const start = event.nativeEvent.selection?.start ?? 0;
         const end = event.nativeEvent.selection?.end ?? start;
+        selectionRef.current = { start, end };
         onSelectionChangeCallback?.({ start, end });
       },
       [onSelectionChangeCallback],
@@ -1580,16 +1600,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
       if (!shouldHandleWebKeyPress) return;
-      const text = textInputRef.current?.getText() ?? valueRef.current;
-      const textArea = getWebTextAreaImpl(textInputRef.current);
-      const selectionStart = textArea?.selectionStart ?? text.length;
-      const selectionEnd = textArea?.selectionEnd ?? selectionStart;
       handleDesktopKeyPressImpl(event, {
         onKeyPressCallback,
-        input: {
-          text,
-          selection: { start: selectionStart, end: selectionEnd },
-        },
+        input: getComposerInputSnapshot(
+          textInputRef.current,
+          valueRef.current,
+          selectionRef.current,
+        ),
         submitOnEnter: shouldSubmitOnEnter,
         isAgentRunning,
         onQueue,
