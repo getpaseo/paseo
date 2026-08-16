@@ -244,6 +244,8 @@ export const PersistedConfigSchema = z
           .object({
             enabled: z.boolean().optional(),
             injectIntoAgents: z.boolean().optional(),
+            // should not be governed by an MCP-injection flag. Defaults to on.
+            nativeAgentTools: z.boolean().optional(),
           })
           .passthrough()
           .optional(),

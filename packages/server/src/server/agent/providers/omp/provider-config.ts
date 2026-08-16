@@ -18,11 +18,16 @@ export const OmpProviderParamsSchema = z
     smolModel: z.string().min(1).optional(),
     slowModel: z.string().min(1).optional(),
     planModel: z.string().min(1).optional(),
+    // Paseo's native host tools. Defaults to true, which is the behaviour
+    // before this field existed; set false to run an omp seat with no
+    // orchestration surface at all.
+    paseoTools: z.boolean().optional(),
   })
   .strict();
 
 export interface OmpRuntimeProviderParams {
   sessionDir: string;
+  paseoTools: boolean;
 }
 
 export interface OmpModelRoleParams {
@@ -130,7 +135,10 @@ export function resolveOmpProviderParams(providerParams: unknown): {
 } {
   const params = OmpProviderParamsSchema.parse(providerParams ?? {});
   return {
-    runtimeProviderParams: { sessionDir: params.sessionDir ?? OMP_SESSION_DIR },
+    runtimeProviderParams: {
+      sessionDir: params.sessionDir ?? OMP_SESSION_DIR,
+      paseoTools: params.paseoTools ?? true,
+    },
     modelRoleParams: {
       ...(params.smolModel ? { smolModel: params.smolModel } : {}),
       ...(params.slowModel ? { slowModel: params.slowModel } : {}),
