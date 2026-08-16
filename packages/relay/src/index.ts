@@ -1,6 +1,7 @@
 export type { ConnectionRole, RelaySessionAttachment } from "./types.js";
 
 export {
+  InvalidPeerKeyError,
   generateKeyPair,
   exportPublicKey,
   importPublicKey,

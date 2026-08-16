@@ -210,6 +210,22 @@ function isLowOrderPoint(publicKey: Uint8Array): boolean {
   return matched === 1;
 }
 
+/**
+ * A private copy, reading each index exactly once.
+ *
+ * `Uint8Array.from` refuses a Proxy-wrapped typed array outright, which would
+ * fail closed but with a TypeError that says nothing useful. Reading index by
+ * index works for any array-like and pins each byte to its first read, so the
+ * value that is validated is the value that is used.
+ */
+function snapshot(source: Uint8Array, length: number): Uint8Array {
+  const copy = new Uint8Array(length);
+  for (let i = 0; i < length; i++) {
+    copy[i] = source[i] as number;
+  }
+  return copy;
+}
+
 export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Array): SharedKey {
   if (ourSecretKey.byteLength !== nacl.box.secretKeyLength) {
     throw new Error(`Invalid secret key length (expected ${nacl.box.secretKeyLength})`);
@@ -217,18 +233,27 @@ export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Ar
   if (peerPublicKey.byteLength !== nacl.box.publicKeyLength) {
     throw new Error(`Invalid peer public key length (expected ${nacl.box.publicKeyLength})`);
   }
-  if (isLowOrderPoint(peerPublicKey)) {
+
+  // Validate and derive from the same bytes. Without the copies a caller can
+  // pass an object whose indexed reads change between the check and the use --
+  // a Proxy returning the basepoint while it is inspected and the all-zero
+  // point afterwards passes every check above and still yields the predictable
+  // key. Copying costs 64 bytes and removes the gap entirely.
+  const secret = snapshot(ourSecretKey, nacl.box.secretKeyLength);
+  const peer = snapshot(peerPublicKey, nacl.box.publicKeyLength);
+
+  if (isLowOrderPoint(peer)) {
     throw new InvalidPeerKeyError("Peer public key is a low-order Curve25519 point");
   }
 
   // `box.before` hashes the raw X25519 output through HSalsa20, so inspecting
   // its result cannot detect the all-zero case. Check the raw scalar
   // multiplication directly.
-  if (isAllZero(nacl.scalarMult(ourSecretKey, peerPublicKey))) {
+  if (isAllZero(nacl.scalarMult(secret, peer))) {
     throw new InvalidPeerKeyError("X25519 key agreement produced an all-zero shared secret");
   }
 
-  return nacl.box.before(peerPublicKey, ourSecretKey);
+  return nacl.box.before(peer, secret);
 }
 
 /**

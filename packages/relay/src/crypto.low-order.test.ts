@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import nacl from "tweetnacl";
 
-import { InvalidPeerKeyError, deriveSharedKey, generateKeyPair } from "./crypto.js";
+import { InvalidPeerKeyError, deriveSharedKey, generateKeyPair } from "./index.js";
 
 /**
  * Negative tests for peer-key validation.
@@ -96,5 +96,39 @@ describe("low-order point rejection", () => {
 
     expect(bytesToHex(ab)).toBe(bytesToHex(ba));
     expect(bytesToHex(ab)).not.toBe("00".repeat(32));
+  });
+});
+
+describe("validation and derivation see the same bytes", () => {
+  // Checking one value and deriving from another is the classic way a
+  // validation gets stepped around: a caller can pass an object whose indexed
+  // reads change between the check and the use. deriveSharedKey is exported,
+  // so "no caller in this repo does that" is not the bar.
+  it("rejects a peer key whose bytes change after validation", () => {
+    const basepoint = new Uint8Array(32);
+    basepoint[0] = 9;
+    const zero = new Uint8Array(32);
+
+    let reads = 0;
+    const shifting = new Proxy(basepoint, {
+      get(target, prop) {
+        if (typeof prop === "string" && /^\d+$/.test(prop)) {
+          reads += 1;
+          // Honest while inspected, all-zero once the checks are done.
+          return reads <= 480 ? basepoint[Number(prop)] : zero[Number(prop)];
+        }
+        return Reflect.get(target, prop);
+      },
+    }) as Uint8Array;
+
+    const secret = generateKeyPair().secretKey;
+    const derived = deriveSharedKey(secret, shifting);
+
+    // The all-zero point yields this key for every secret; deriving it would
+    // mean the peer knows the session key.
+    expect(bytesToHex(derived)).not.toBe(
+      "351f86faa3b988468a850122b65b0acece9c4826806aeee63de9c0da2bd7f91e",
+    );
+    expect(bytesToHex(derived)).toBe(bytesToHex(deriveSharedKey(secret, basepoint)));
   });
 });
