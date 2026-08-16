@@ -1289,6 +1289,11 @@ describe("createWebStreamStrategy", () => {
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
     expect(viewportObserverDisconnect).toHaveBeenCalledOnce();
     scrollTo.mockClear();
+    act(() => root?.render(renderWithActivity(true)));
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    act(() => root?.render(renderWithActivity(false)));
+    scrollTo.mockClear();
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2200 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });
     act(() => {

@@ -202,6 +202,37 @@ function syncNearBottom(
   return nextValue;
 }
 
+interface ActiveFollowOutputLayout {
+  scrollContainer: HTMLElement | null;
+  viewportWidth: number;
+  viewportHeight: number;
+  activationKey: string;
+  isActivationReady: boolean;
+  renderLiveAuxiliary: StreamRenderInput["renderers"]["renderLiveAuxiliary"];
+  historyMounted: StreamRenderInput["segments"]["historyMounted"];
+  historyVirtualized: StreamRenderInput["segments"]["historyVirtualized"];
+  liveHead: StreamRenderInput["segments"]["liveHead"];
+  virtualTotalSize: number;
+}
+
+function activeFollowOutputLayoutsEqual(
+  previous: ActiveFollowOutputLayout,
+  next: ActiveFollowOutputLayout,
+): boolean {
+  return (
+    previous.scrollContainer === next.scrollContainer &&
+    previous.viewportWidth === next.viewportWidth &&
+    previous.viewportHeight === next.viewportHeight &&
+    previous.activationKey === next.activationKey &&
+    previous.isActivationReady === next.isActivationReady &&
+    previous.renderLiveAuxiliary === next.renderLiveAuxiliary &&
+    previous.historyMounted === next.historyMounted &&
+    previous.historyVirtualized === next.historyVirtualized &&
+    previous.liveHead === next.liveHead &&
+    previous.virtualTotalSize === next.virtualTotalSize
+  );
+}
+
 function getScrollContainerDistanceFromBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ): number {
@@ -275,6 +306,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
   const historyStartPrependAnchorActiveRef = useRef(false);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
+  const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
+  const wasFollowOutputLayoutActiveRef = useRef(false);
+  const resumedUnchangedLayoutRef = useRef(false);
+  const suppressInitialResizeRef = useRef(false);
+  const suppressInitialResizeFrameRef = useRef<number | null>(null);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -753,14 +789,39 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   // Following output is a layout invariant: rows, footer, and bottom offset must
   // reach the browser in the same paint.
   useLayoutEffect(() => {
-    if (!isActive || !followOutputRef.current) {
+    const layout: ActiveFollowOutputLayout = {
+      scrollContainer: scrollContainerRef.current,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      activationKey,
+      isActivationReady,
+      renderLiveAuxiliary,
+      historyMounted: segments.historyMounted,
+      historyVirtualized: segments.historyVirtualized,
+      liveHead: segments.liveHead,
+      virtualTotalSize,
+    };
+    const resumedUnchangedLayout = Boolean(
+      isActive &&
+      !wasFollowOutputLayoutActiveRef.current &&
+      lastActiveFollowOutputLayoutRef.current &&
+      activeFollowOutputLayoutsEqual(lastActiveFollowOutputLayoutRef.current, layout),
+    );
+    resumedUnchangedLayoutRef.current = resumedUnchangedLayout;
+    suppressInitialResizeRef.current = resumedUnchangedLayout;
+    wasFollowOutputLayoutActiveRef.current = isActive;
+    if (!isActive) {
       return;
     }
+    lastActiveFollowOutputLayoutRef.current = layout;
+    if (!followOutputRef.current || resumedUnchangedLayout) return;
     cancelPendingStickToBottom();
     scrollMessagesToBottom("auto");
   }, [
+    activationKey,
     cancelPendingStickToBottom,
     isActive,
+    isActivationReady,
     renderLiveAuxiliary,
     scrollMessagesToBottom,
     segments.historyMounted,
@@ -771,6 +832,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   useEffect(() => {
     if (!isActive) {
+      return;
+    }
+    if (resumedUnchangedLayoutRef.current) {
+      resumedUnchangedLayoutRef.current = false;
       return;
     }
     updateScrollMetrics();
@@ -802,9 +867,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
 
-    updateScrollMetrics();
-    evaluateHistoryStart();
+    if (!suppressInitialResizeRef.current) {
+      updateScrollMetrics();
+      evaluateHistoryStart();
+    }
     const observer = new ResizeObserver(() => {
+      if (suppressInitialResizeRef.current) {
+        return;
+      }
       if (historyStartPrependAnchorActiveRef.current) {
         applyHistoryStartPrependAnchor();
       }
@@ -822,7 +892,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (contentNode) {
       observer.observe(contentNode);
     }
+    if (suppressInitialResizeRef.current) {
+      suppressInitialResizeFrameRef.current = window.requestAnimationFrame(() => {
+        suppressInitialResizeFrameRef.current = null;
+        suppressInitialResizeRef.current = false;
+      });
+    }
     return () => {
+      if (suppressInitialResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(suppressInitialResizeFrameRef.current);
+        suppressInitialResizeFrameRef.current = null;
+      }
       observer.disconnect();
     };
   }, [

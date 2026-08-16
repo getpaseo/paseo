@@ -231,6 +231,16 @@ burst. It separately warms the three-entry workspace deck LRU and records `Cmd+1
 React commits on the same browser clock. Set `PASEO_PROFILE_WORKSPACE_DIGITS`,
 `PASEO_PROFILE_WORKSPACE_LRU_SIZE`, or `PASEO_PROFILE_WARM_QUIET_MS` to change the shape. Set
 `PASEO_PROFILE_DUMP_COMMITS=1` to include the nested component breakdown for every commit.
+Set `PASEO_PROFILE_RETAINED_REPEATS=5` to repeat the retained-LRU burst for a less noisy sample.
+Set `PASEO_PROFILE_CPU_PATH=/tmp/workspace-switch.cpuprofile` to run a separate retained-LRU
+capture after the latency scenarios and write a raw CDP CPU profile without contaminating their
+timings.
+Set `PASEO_PROFILE_TRACE_PATH=/tmp/workspace-switch.trace.json` to run another separate retained-LRU
+capture and write a Chromium Performance trace with User Timing marks and screenshots. Open the
+trace in the Chrome DevTools Performance panel. Set `PASEO_PROFILE_TRACE_INVALIDATIONS=1` only for a
+focused invalidation capture; React Native's generated stacks make that mode highly intrusive.
+Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
+the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
 ### Desktop macOS compositor watchdog
 
