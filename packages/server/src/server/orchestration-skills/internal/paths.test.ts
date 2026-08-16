@@ -42,10 +42,12 @@ describe("orchestration skill paths", () => {
   });
 
   it("keeps the original fixed managed directories under the daemon user's home", () => {
-    expect(resolveSkillTargets("/home/agent")).toMatchObject({
-      agentsDir: "/home/agent/.agents/skills",
-      claudeDir: "/home/agent/.claude/skills",
-      codexDir: "/home/agent/.codex/skills",
+    const home = os.homedir();
+
+    expect(resolveSkillTargets()).toMatchObject({
+      agentsDir: path.join(home, ".agents", "skills"),
+      claudeDir: path.join(home, ".claude", "skills"),
+      codexDir: path.join(home, ".codex", "skills"),
     });
   });
 });
