@@ -2471,6 +2471,7 @@ export class AgentManager {
   ): Promise<T> {
     return this.runForegroundMutation(agent.id, async () => {
       await this.drainSessionEvents(agent.id);
+      this.agentStreamCoalescer.flushFor(agent.id);
       this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
       const barrier: SteerEventBarrier = { events: [] };
       this.steerEventBarriers.set(agent.id, barrier);
