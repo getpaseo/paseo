@@ -23,6 +23,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import { SidebarLabelFilterEmptyState } from "@/components/sidebar/empty-states";
 import { WORKSPACE_LABEL_ICON_MAPPINGS } from "@/workspace-labels/swatch";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
@@ -126,6 +127,8 @@ interface StatusWorkspaceListProps {
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspaceEntry[]) => void;
   listHeaderComponent?: ReactNode;
+  /** Swaps the group list for the label filter's empty state. Never the header above it. */
+  labelFilterEmpty?: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostPresented?: boolean;
 }
@@ -142,6 +145,7 @@ export function SidebarStatusWorkspaceList({
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
+  labelFilterEmpty = false,
   parentGestureRef,
   dragGestureHostPresented,
 }: StatusWorkspaceListProps) {
@@ -228,17 +232,21 @@ export function SidebarStatusWorkspaceList({
         </View>
       ) : null}
       {listHeaderComponent}
-      <StatusGroupList
-        groups={groups}
-        collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
-        projectIconByProjectViewKey={projectIconByProjectViewKey}
-        shortcutIndex={statusShortcutIndex}
-        showShortcutBadges={showShortcutBadges}
-        onWorkspacePress={onWorkspacePress}
-        hostBadgeByServerId={hostBadgeByServerId}
-        supportsPinningByServerId={supportsPinningByServerId}
-        onToggleWorkspacePin={onToggleWorkspacePin}
-      />
+      {labelFilterEmpty ? (
+        <SidebarLabelFilterEmptyState />
+      ) : (
+        <StatusGroupList
+          groups={groups}
+          collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
+          projectIconByProjectViewKey={projectIconByProjectViewKey}
+          shortcutIndex={statusShortcutIndex}
+          showShortcutBadges={showShortcutBadges}
+          onWorkspacePress={onWorkspacePress}
+          hostBadgeByServerId={hostBadgeByServerId}
+          supportsPinningByServerId={supportsPinningByServerId}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+        />
+      )}
     </>
   );
 

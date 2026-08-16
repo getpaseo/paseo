@@ -39,7 +39,8 @@ import {
 } from "@/components/ui/menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import {
@@ -388,6 +389,7 @@ function LabelFilterPage({
   onManage: () => void;
 }): ReactElement {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const selections = preferences.labelFilter.labels;
   const includeCount = Object.values(selections).filter((state) => state === "include").length;
   const matchAny = useCallback(() => preferences.setLabelMatch("any"), [preferences]);
@@ -401,6 +403,7 @@ function LabelFilterPage({
           label={label.name}
           color={label.color}
           state={selections[workspaceLabelKey(label.name)]}
+          isCompact={isCompact}
           onInclude={preferences.toggleLabelInclude}
           onExclude={preferences.toggleLabelExclude}
           testID={`sidebar-label-filter-option-${label.name}`}
@@ -413,6 +416,7 @@ function LabelFilterPage({
         label={t("workspaceLabels.unlabelled")}
         color={null}
         state={selections[SIDEBAR_UNLABELLED_LABEL_KEY]}
+        isCompact={isCompact}
         onInclude={preferences.toggleLabelInclude}
         onExclude={preferences.toggleLabelExclude}
         testID="sidebar-label-filter-option-unlabelled"
@@ -460,15 +464,21 @@ function LabelFilterPage({
 }
 
 /**
- * One label, with include and exclude both on the row's trailing rail at all times.
+ * One label, with include and exclude in fixed positions on the row's trailing rail.
  *
- * Nothing appears, disappears or swaps places: two fixed boxes, and state is which one is lit.
- * The row rotated through three states until Phase 6 and then carried one changing occupant, and
- * both meant the trailing area kept changing identity while you read down the column.
+ * Both boxes are always laid out and only their ink changes, so nothing appears, disappears or
+ * swaps places as a row changes state or the pointer crosses it. The row rotated through three
+ * states until Phase 6 and then carried one changing occupant, and both meant the trailing area
+ * kept changing identity while you read down the column.
+ *
+ * What a row shows at rest is its own state and nothing else: a marked row carries its mark, an
+ * untouched row carries nothing, so a column of labels reads as the filter rather than as two
+ * columns of buttons. Hover is what offers both actions, and it offers them on every row — the
+ * mark you already have stays lit and the other one comes up unlit beside it.
  *
  * Pressing the row includes, which is what the common case wants from the largest target on the
- * page; the check is that same action named. Because the ban is always there, include → exclude
- * is one press rather than two.
+ * page; the check is that same action named. Because the ban is there whenever you can reach it,
+ * include → exclude is one press rather than two.
  *
  * Exclude also dims the row: a lit mark tells you which state a row is in once you look at it,
  * and the dim tells you from the shape of the column that this one is subtracting.
@@ -476,12 +486,16 @@ function LabelFilterPage({
  * `selected` is the row's state and the buttons carry none, so the label's state is announced
  * once — `"mixed"` is exclude, ARIA's own third state, and the buttons read as the two actions
  * they are rather than as two more checkboxes claiming things about the same label.
+ *
+ * Hover lives on the plain wrapping `View` and press on the `Pressable`s inside it, which is the
+ * one shape that survives pressables inside a hover target (docs/hover.md).
  */
 function LabelFilterItem({
   name,
   label,
   color,
   state,
+  isCompact,
   onInclude,
   onExclude,
   testID,
@@ -494,6 +508,7 @@ function LabelFilterItem({
   /** `null` is Unlabelled, the one row with no color to stand for. */
   color: WorkspaceLabelColor | null;
   state: SidebarLabelState | undefined;
+  isCompact: boolean;
   onInclude: (name: string) => void;
   onExclude: (name: string) => void;
   testID: string;
@@ -501,6 +516,9 @@ function LabelFilterItem({
   excludeTestID: string;
 }): ReactElement {
   const { t } = useTranslation();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const include = useCallback(() => onInclude(name), [name, onInclude]);
   const exclude = useCallback(() => onExclude(name), [name, onExclude]);
 
@@ -511,6 +529,9 @@ function LabelFilterItem({
 
   const excluded = state === "exclude";
   const included = state === "include";
+  // Nowhere to hover on a touch surface, so both controls simply stand there — the app's rule
+  // for anything a pointer would otherwise have to find.
+  const revealed = isHovered || isNative || isCompact;
   const trailing = useMemo(
     () => (
       <View style={styles.filterControls}>
@@ -518,6 +539,7 @@ function LabelFilterItem({
           icon={ThemedCheck}
           size={INCLUDE_ICON_SIZE}
           lit={included}
+          revealed={revealed}
           accessibilityLabel={t("workspaceLabels.filter.includeLabel", { name: label })}
           tooltip={t("workspaceLabels.filter.include")}
           onPress={include}
@@ -527,6 +549,7 @@ function LabelFilterItem({
           icon={ThemedBan}
           size={EXCLUDE_ICON_SIZE}
           lit={excluded}
+          revealed={revealed}
           accessibilityLabel={t("workspaceLabels.filter.excludeLabel", { name: label })}
           tooltip={t("workspaceLabels.filter.exclude")}
           onPress={exclude}
@@ -534,21 +557,23 @@ function LabelFilterItem({
         />
       </View>
     ),
-    [t, label, included, excluded, include, exclude, includeTestID, excludeTestID],
+    [t, label, included, excluded, revealed, include, exclude, includeTestID, excludeTestID],
   );
 
   return (
-    <MenuItem
-      selected={excluded ? "mixed" : included}
-      muted={excluded}
-      leading={leading}
-      trailing={trailing}
-      closeOnSelect={false}
-      onSelect={include}
-      testID={testID}
-    >
-      {label}
-    </MenuItem>
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <MenuItem
+        selected={excluded ? "mixed" : included}
+        muted={excluded}
+        leading={leading}
+        trailing={trailing}
+        closeOnSelect={false}
+        onSelect={include}
+        testID={testID}
+      >
+        {label}
+      </MenuItem>
+    </View>
   );
 }
 
@@ -559,6 +584,12 @@ function LabelFilterItem({
  * Unlit steps down two, for the reason on `unlitIconMapping`. Solid tokens either way rather than
  * one token at two opacities: per-path opacity renders overlapping icon strokes unevenly.
  *
+ * A lit control is its row's state and shows at rest; an unlit one is an offer and shows while
+ * the row is under the pointer. Hidden by opacity rather than by unmounting, so revealing the
+ * pair cannot move the row out from under the pointer that revealed it, and so a screen reader
+ * finds both actions on a row that is displaying neither. Focus counts as revealed for the same
+ * reason: tabbing here must never land on something invisible.
+ *
  * The tooltip is what makes an icon-only control legible, so it is gated to where hover exists:
  * on native there is no hover to explain it, and `TooltipContent` would put a `Modal` — a second
  * overlay with a backdrop of its own — over the menu it belongs to.
@@ -567,6 +598,7 @@ function LabelFilterControl({
   icon: Icon,
   size,
   lit,
+  revealed,
   accessibilityLabel,
   tooltip,
   onPress,
@@ -575,17 +607,23 @@ function LabelFilterControl({
   icon: OptionIcon;
   size: number;
   lit: boolean;
+  revealed: boolean;
   accessibilityLabel: string;
   tooltip: string;
   onPress: () => void;
   testID: string;
 }): ReactElement {
+  const [isFocused, setIsFocused] = useState(false);
+  const handleFocus = useCallback(() => setIsFocused(true), []);
+  const handleBlur = useCallback(() => setIsFocused(false), []);
+  const visible = lit || revealed || isFocused;
   const controlStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.filterControl,
+      !visible && styles.filterControlHidden,
       pressed && styles.filterControlPressed,
     ],
-    [],
+    [visible],
   );
 
   return (
@@ -595,6 +633,9 @@ function LabelFilterControl({
         accessibilityLabel={accessibilityLabel}
         hitSlop={FILTER_CONTROL_HIT_SLOP}
         onPress={onPress}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        pointerEvents={visible ? "auto" : "none"}
         style={controlStyle}
         testID={testID}
       >
@@ -827,6 +868,11 @@ const styles = StyleSheet.create((theme) => ({
     height: FILTER_CONTROL_BOX,
     alignItems: "center",
     justifyContent: "center",
+  },
+  // The box stays; only the ink goes. Unmounting here would reflow the row under the pointer
+  // that is revealing it, which is failure mode 2 in docs/hover.md.
+  filterControlHidden: {
+    opacity: 0,
   },
   filterControlPressed: {
     opacity: 0.6,

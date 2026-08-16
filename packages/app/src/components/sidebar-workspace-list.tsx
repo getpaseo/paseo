@@ -113,12 +113,15 @@ import {
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
+import {
+  SidebarLabelFilterEmptyState,
+  SidebarProjectEmptyState,
+} from "@/components/sidebar/empty-states";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
   SidebarWorkspaceTrailingContent,
   useSidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
-import { Button } from "@/components/ui/button";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -1992,9 +1995,11 @@ export function SidebarWorkspaceList({
     projects: statusProjectIconTargets,
   });
 
-  if (hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0) {
-    return <SidebarLabelFilterEmptyState listHeaderComponent={listHeaderComponent} />;
-  }
+  // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
+  // this whole subtree, which unmounted the header — and the header is where the display menu's
+  // trigger lives, so pressing Exclude closed the menu you pressed it in.
+  const labelFilterEmpty =
+    hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0;
 
   const content =
     groupMode === "status" || groupMode === "label" ? (
@@ -2010,6 +2015,7 @@ export function SidebarWorkspaceList({
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
+        labelFilterEmpty={labelFilterEmpty}
         parentGestureRef={parentGestureRef}
         dragGestureHostPresented={dragGestureHostPresented}
       />
@@ -2025,6 +2031,7 @@ export function SidebarWorkspaceList({
         onAddProject={onAddProject}
         listFooterComponent={listFooterComponent}
         listHeaderComponent={listHeaderComponent}
+        labelFilterEmpty={labelFilterEmpty}
         parentGestureRef={parentGestureRef}
         dragGestureHostPresented={dragGestureHostPresented}
         pathname={pathname}
@@ -2051,6 +2058,7 @@ function SidebarStatusModeWrapper({
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
+  labelFilterEmpty,
   parentGestureRef,
   dragGestureHostPresented,
 }: {
@@ -2065,6 +2073,7 @@ function SidebarStatusModeWrapper({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
+  labelFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostPresented?: boolean;
 }) {
@@ -2091,6 +2100,7 @@ function SidebarStatusModeWrapper({
       onToggleWorkspacePin={onToggleWorkspacePin}
       onPinnedWorkspaceReorder={onPinnedWorkspaceReorder}
       listHeaderComponent={listHeaderComponent}
+      labelFilterEmpty={labelFilterEmpty}
       parentGestureRef={parentGestureRef}
       dragGestureHostPresented={dragGestureHostPresented}
     />
@@ -2108,6 +2118,7 @@ function ProjectModeList({
   onAddProject,
   listFooterComponent,
   listHeaderComponent,
+  labelFilterEmpty,
   parentGestureRef,
   dragGestureHostPresented,
   pathname,
@@ -2120,6 +2131,8 @@ function ProjectModeList({
   SidebarWorkspaceListProps,
   "workspaceGroups" | "groupMode" | "hasProjectsBeforeLabelFilter" | "isRefreshing" | "onRefresh"
 > & {
+  /** Swaps the list body for the label filter's empty state. Never the header above it. */
+  labelFilterEmpty: boolean;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
@@ -2128,7 +2141,6 @@ function ProjectModeList({
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
-  const { t } = useTranslation();
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -2408,6 +2420,26 @@ function ProjectModeList({
     ],
   );
 
+  const projectBody =
+    projects.length === 0 ? (
+      <SidebarProjectEmptyState onAddProject={onAddProject} />
+    ) : (
+      <DraggableList
+        testID="sidebar-project-list"
+        data={unpinnedProjects}
+        keyExtractor={projectViewKeyExtractor}
+        renderItem={renderProject}
+        onDragEnd={handleProjectDragEnd}
+        extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+        scrollEnabled={false}
+        useDragHandle
+        nestable={platformIsNative}
+        simultaneousGestureRef={parentGestureRef}
+        gestureHostPresented={dragGestureHostPresented}
+        containerStyle={styles.projectListContainer}
+      />
+    );
+
   const content = (
     <>
       {pinnedChats.length > 0 ? (
@@ -2440,33 +2472,13 @@ function ProjectModeList({
           )}
         </View>
       ) : null}
-      {unpinnedProjects.length > 0 || hasActiveHostFilter ? listHeaderComponent : null}
-      {projects.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
-            {t("sidebar.project.empty.title")}
-          </Text>
-          <Text style={styles.emptyText}>{t("sidebar.project.empty.description")}</Text>
-          <Button variant="ghost" size="sm" leftIcon={Plus} onPress={onAddProject}>
-            {t("sidebar.actions.addProject")}
-          </Button>
-        </View>
-      ) : (
-        <DraggableList
-          testID="sidebar-project-list"
-          data={unpinnedProjects}
-          keyExtractor={projectViewKeyExtractor}
-          renderItem={renderProject}
-          onDragEnd={handleProjectDragEnd}
-          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-          scrollEnabled={false}
-          useDragHandle
-          nestable={platformIsNative}
-          simultaneousGestureRef={parentGestureRef}
-          gestureHostPresented={dragGestureHostPresented}
-          containerStyle={styles.projectListContainer}
-        />
-      )}
+      {/* The header carries the display menu, which is the only way back out of a filter, so it
+        stays for as long as a filter is what emptied the list. It is absent only when the
+        sidebar is genuinely empty, where a section heading would sit over nothing. */}
+      {unpinnedProjects.length > 0 || hasActiveHostFilter || labelFilterEmpty
+        ? listHeaderComponent
+        : null}
+      {labelFilterEmpty ? <SidebarLabelFilterEmptyState /> : projectBody}
       {listFooterComponent}
     </>
   );
@@ -2493,35 +2505,6 @@ function ProjectModeList({
           {content}
         </ScrollView>
       )}
-    </View>
-  );
-}
-
-function SidebarLabelFilterEmptyState({
-  listHeaderComponent,
-}: {
-  listHeaderComponent?: ReactElement | null;
-}) {
-  const { t } = useTranslation();
-  const clearLabelFilter = useSidebarViewStore((state) => state.clearLabelFilter);
-
-  return (
-    <View style={styles.container}>
-      <ScrollView
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        testID="sidebar-label-filter-empty-scroll"
-      >
-        {listHeaderComponent}
-        <View style={styles.emptyContainer} testID="sidebar-label-filter-empty-state">
-          <Text style={styles.emptyTitle}>{t("workspaceLabels.filter.noMatchesTitle")}</Text>
-          <Text style={styles.emptyText}>{t("workspaceLabels.filter.noMatchesDescription")}</Text>
-          <Button variant="ghost" size="sm" onPress={clearLabelFilter}>
-            {t("workspaceLabels.filter.clear")}
-          </Button>
-        </View>
-      </ScrollView>
     </View>
   );
 }
@@ -2601,28 +2584,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foreground,
-  },
-  emptyContainer: {
-    marginHorizontal: theme.spacing[2],
-    marginTop: theme.spacing[4],
-    paddingTop: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface0,
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  emptyTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-    textAlign: "center",
-  },
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    textAlign: "center",
   },
   projectRow: {
     position: "relative",

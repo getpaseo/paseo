@@ -131,6 +131,11 @@ button names. The labels filter row is the case: it announces include as checked
 mixed, and its two buttons are "Include X" and "Exclude X" with no checked state of their own, so
 one label's state is claimed once rather than by three controls at the same time.
 
+To reveal such a control on hover, wrap the `MenuItem` in a plain `View` and track the pointer
+there — `MenuItem` is a `Pressable`, so hover on it fights the buttons inside it
+([hover.md](hover.md)). Hide with opacity, never by unmounting: the trailing slot sizes to its
+content, so a control that appears would move the rail it is on.
+
 A selected row does **not** get a background. A check and a fill are two separate claims about the
 same state, and showing both makes a chosen row compete with the row the pointer is actually on.
 `showSelectedCheck` moves the check to a reserved leading column when a group needs to stay
