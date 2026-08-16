@@ -52,6 +52,29 @@ import type { ProviderDefinition } from "./provider-registry.js";
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
 
+test("marks a fresh agent canonical timeline complete", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-fresh-complete-"));
+  const timelineDirectory = join(workdir, "agent-timelines");
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    durableTimelineStore: new FileAgentTimelineStore(timelineDirectory),
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    expect(
+      await new FileAgentTimelineStore(timelineDirectory).getCommittedSnapshot(agent.id),
+    ).toEqual({ rows: [], historyComplete: true });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("restores durable canonical turn membership when an agent is reopened", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-turn-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -205,6 +228,82 @@ test("uses durable history completeness when registering a persisted agent", asy
   }
 });
 
+test("retains a canonical steer when incomplete provider history lags on reopen", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-lagging-history-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const timelineDirectory = join(workdir, "agent-timelines");
+  const first = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: new FileAgentTimelineStore(timelineDirectory),
+    logger,
+  });
+  let second: AgentManager | null = null;
+  let agentId: string | null = null;
+  try {
+    const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    await first.closeAgent(created.id);
+    await storage.flush();
+    await new FileAgentTimelineStore(timelineDirectory).replaceCommittedSnapshot(created.id, {
+      historyComplete: false,
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          item: { type: "user_message", text: "initial", clientMessageId: "initial" },
+          turnId: "turn-1",
+        },
+        {
+          seq: 2,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          item: { type: "user_message", text: "hello", clientMessageId: "hello" },
+          turnId: "turn-1",
+        },
+      ],
+    });
+
+    class LaggingHistorySession extends TestAgentSession {
+      override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        yield {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "initial" },
+        };
+      }
+    }
+    class LaggingHistoryClient extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new LaggingHistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+      }
+    }
+    second = new AgentManager({
+      clients: { codex: new LaggingHistoryClient() },
+      registry: storage,
+      durableTimelineStore: new FileAgentTimelineStore(timelineDirectory),
+      logger,
+    });
+    await ensureAgentLoaded(created.id, { agentManager: second, agentStorage: storage, logger });
+
+    expect(second.fetchTimeline(created.id, { limit: 0 }).rows).toMatchObject([
+      { item: { text: "initial", clientMessageId: "initial" }, turnId: "turn-1" },
+      { item: { text: "hello", clientMessageId: "hello" }, turnId: "turn-1" },
+    ]);
+    expect(
+      await new FileAgentTimelineStore(timelineDirectory).getCommittedSnapshot(created.id),
+    ).toMatchObject({ historyComplete: true });
+  } finally {
+    if (second && agentId) await second.closeAgent(agentId).catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retries an interrupted initial history hydration after reopen without a durable prefix", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-retry-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -224,8 +323,14 @@ test("retries an interrupted initial history hydration after reopen without a du
       }
     }
     class InterruptedHistoryClient extends TestAgentClient {
-      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-        return new InterruptedHistorySession(config);
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        return new InterruptedHistorySession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
       }
     }
     first = new AgentManager({
@@ -234,9 +339,14 @@ test("retries an interrupted initial history hydration after reopen without a du
       durableTimelineStore: new FileAgentTimelineStore(timelineDirectory),
       logger,
     });
-    const created = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
+    const created = await first.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "interrupted-history",
+        metadata: { cwd: workdir },
+      },
+      { cwd: workdir },
+    );
     agentId = created.id;
     await expect(first.hydrateTimelineFromProvider(created.id)).rejects.toThrow(
       "history interrupted",
@@ -1055,6 +1165,7 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
 test("surfaces an ambiguous persistence error after one accepted steer without fallback", async () => {
   const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-persist-failure-"));
+  let durableWriteCount = 0;
   const manager = new AgentManager({
     clients: {
       codex: new (class extends TestAgentClient {
@@ -1065,7 +1176,8 @@ test("surfaces an ambiguous persistence error after one accepted steer without f
     },
     durableTimelineStore: new FileAgentTimelineStore(join(workdir, "timelines"), {
       writeJson: async () => {
-        throw new Error("disk full");
+        durableWriteCount += 1;
+        if (durableWriteCount > 1) throw new Error("disk full");
       },
     }),
     logger,
@@ -1346,6 +1458,88 @@ test("waits for durable canonical steer commit before resolving accepted", async
     if (agentId) {
       await manager.closeAgent(agentId).catch(() => undefined);
     }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("orders an accepted steer before output emitted while acknowledgement is pending", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  class HeldAcceptedSteerSession extends SteeringTestSession {
+    override async steerActiveTurn(
+      _prompt: AgentPromptInput,
+      options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      this.steerCount += 1;
+      expect(options.expectedTurnId).toBe("active-turn-1");
+      entered.resolve();
+      await release.promise;
+      return { status: "accepted" };
+    }
+  }
+  const session = new HeldAcceptedSteerSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-order-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    const consume = (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const steer = manager.steerAgentRun(agent.id, "hello", {
+      clientMessageId: "hello-client",
+    });
+    await entered.promise;
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "terminal output" },
+    });
+    session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "active-turn-1",
+    });
+    expect(manager.getTimeline(agent.id)).not.toContainEqual(
+      expect.objectContaining({ type: "assistant_message", text: "terminal output" }),
+    );
+
+    release.resolve();
+    await expect(steer).resolves.toEqual({ status: "accepted" });
+    await consume;
+    const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows.filter((row) => {
+      return (
+        (row.item.type === "user_message" && row.item.text === "hello") ||
+        (row.item.type === "assistant_message" && row.item.text === "terminal output")
+      );
+    });
+    expect(rows).toMatchObject([
+      { item: { type: "user_message", text: "hello" }, turnId: "active-turn-1" },
+      {
+        item: { type: "assistant_message", text: "terminal output" },
+        turnId: "active-turn-1",
+      },
+    ]);
+  } finally {
+    release.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -4285,7 +4479,7 @@ test("hydrateTimelineFromProvider restores and broadcasts provider children from
     replayState: false,
   });
 
-  await manager.hydrateTimelineFromProvider(snapshot.id, { broadcast: true });
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true, broadcast: true });
 
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({
@@ -5552,7 +5746,7 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
     { workspaceId: undefined },
   );
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
   expect(manager.getTimeline(snapshot.id)).toEqual([
     { type: "assistant_message", text: "chunk one " },
@@ -5635,7 +5829,7 @@ test("hydrateTimeline preserves reasoning between assistant chunks", async () =>
     { workspaceId: undefined },
   );
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
   expect(manager.getTimeline(snapshot.id)).toEqual([
     {
@@ -9572,7 +9766,7 @@ test("hydrateTimeline keeps provider user_message items when no canonical user h
     { workspaceId: undefined },
   );
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");
@@ -9637,7 +9831,7 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
     { workspaceId: undefined },
   );
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
   const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 0 }).rows;
 
   expect(timeline).toHaveLength(2);
@@ -10246,7 +10440,7 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
     workspaceId: undefined,
   });
 
-  await manager.hydrateTimelineFromProvider(snapshot.id);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
   const timeline = manager.getTimeline(snapshot.id);
   const userMessages = timeline.filter((item) => item.type === "user_message");

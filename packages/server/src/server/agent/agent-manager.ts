@@ -515,6 +515,10 @@ interface SubscriptionRecord {
   agentId: string | null;
 }
 
+interface SteerEventBarrier {
+  events: AgentStreamEvent[];
+}
+
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
@@ -664,6 +668,8 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
+  private readonly steerAdmissionTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1171,6 +1177,7 @@ export class AgentManager {
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
+      historyPrimed: true,
     });
   }
 
@@ -2395,14 +2402,20 @@ export class AgentManager {
     if (!expectedTurnId || !this.runs.hasRun(agentId) || !agent.session.steerActiveTurn) {
       return { status: "unavailable" };
     }
-    const result = await agent.session.steerActiveTurn(prompt, { ...options, expectedTurnId });
+    const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      const admission = await agent.session.steerActiveTurn!(prompt, {
+        ...options,
+        expectedTurnId,
+      });
+      if (admission.status === "accepted") {
+        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+      }
+      return admission;
+    });
     // An unavailable answer is only safe to fall back from while this admission
     // still owns the foreground. Never let an A admission replace a later B.
     if (result.status === "unavailable" && agent.activeForegroundTurnId !== expectedTurnId) {
       throw new Error("Active turn changed before steering could be delivered");
-    }
-    if (result.status === "accepted") {
-      await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
     }
     return result;
   }
@@ -2419,10 +2432,18 @@ export class AgentManager {
     }
 
     const result = agent.session.steerActiveTurn
-      ? await agent.session.steerActiveTurn(prompt, { ...options, expectedTurnId })
+      ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          const admission = await agent.session.steerActiveTurn!(prompt, {
+            ...options,
+            expectedTurnId,
+          });
+          if (admission.status === "accepted") {
+            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+          }
+          return admission;
+        })
       : { status: "unavailable" as const };
     if (result.status === "accepted") {
-      await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
       return { status: "steered" };
     }
 
@@ -2440,6 +2461,45 @@ export class AgentManager {
   ): void {
     if (agent.activeForegroundTurnId !== expectedTurnId || !this.runs.hasRun(agent.id)) {
       throw new Error("Active turn changed before steering could be delivered");
+    }
+  }
+
+  private async runSteerAdmission<T>(
+    agent: ActiveManagedAgent,
+    expectedTurnId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.steerAdmissionTails.get(agent.id) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.drainSessionEvents(agent.id);
+        this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
+        const barrier: SteerEventBarrier = { events: [] };
+        this.steerEventBarriers.set(agent.id, barrier);
+        try {
+          return await operation();
+        } finally {
+          if (this.steerEventBarriers.get(agent.id) === barrier) {
+            this.steerEventBarriers.delete(agent.id);
+          }
+          for (const event of barrier.events) {
+            this.enqueueSessionEvent(agent.id, event);
+          }
+          await this.drainSessionEvents(agent.id);
+        }
+      });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.steerAdmissionTails.set(agent.id, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.steerAdmissionTails.get(agent.id) === tail) {
+        this.steerAdmissionTails.delete(agent.id);
+      }
     }
   }
 
@@ -3096,6 +3156,9 @@ export class AgentManager {
         options,
       });
 
+      if (managed.historyPrimed && !durableHistoryComplete) {
+        await this.commitCompleteHistorySnapshot(resolvedAgentId);
+      }
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
       registered = true;
@@ -3345,6 +3408,11 @@ export class AgentManager {
       },
       "agent.manager.enqueue",
     );
+    const steerBarrier = this.steerEventBarriers.get(agentId);
+    if (steerBarrier) {
+      steerBarrier.events.push(event);
+      return;
+    }
     const pendingRun = this.runs.getPendingRun(agentId);
     if (pendingRun && !pendingRun.started) {
       pendingRun.stagedEvents.push(event);

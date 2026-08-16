@@ -19,30 +19,59 @@ export function reconcileProviderHistory(
       ? []
       : canonicalRows.map((row, index) => ({ ...row, seq: index + 1 }));
   }
-  const remaining = canonicalRows.map((row) => ({ row, used: false }));
-  return providerEntries.map((entry, index) => {
-    const matched = takeMatch(remaining, entry.item);
-    if (!matched) {
-      return {
-        seq: index + 1,
-        timestamp: entry.timestamp ?? new Date(0).toISOString(),
-        item: entry.item,
-      };
-    }
-    return {
-      seq: index + 1,
-      timestamp: matched.timestamp,
-      item: mergeCanonicalIdentity(matched.item, entry.item),
-      ...(matched.turnId ? { turnId: matched.turnId } : {}),
-      ...(matched.providerMessageId ? { providerMessageId: matched.providerMessageId } : {}),
-    };
+  const remaining = canonicalRows.map((row, canonicalIndex) => ({
+    row,
+    canonicalIndex,
+    used: false,
+  }));
+  const structuralCounts = countStructuralOccurrences(canonicalRows, providerEntries);
+  const providerRows = providerEntries.map((entry) => {
+    const match = takeMatch(remaining, entry.item, structuralCounts);
+    return { entry, match };
   });
+  const rows: AgentTimelineRow[] = [];
+  const emittedCanonicalIndexes = new Set<number>();
+
+  for (const { entry, match } of providerRows) {
+    if (match) {
+      for (const candidate of remaining) {
+        if (candidate.canonicalIndex >= match.canonicalIndex) break;
+        if (!emittedCanonicalIndexes.has(candidate.canonicalIndex)) {
+          rows.push({ ...candidate.row });
+          emittedCanonicalIndexes.add(candidate.canonicalIndex);
+        }
+      }
+      rows.push(
+        match.transferProviderIdentity ? mergeMatchedRow(match.row, entry) : { ...match.row },
+      );
+      emittedCanonicalIndexes.add(match.canonicalIndex);
+      continue;
+    }
+    rows.push({
+      seq: 0,
+      timestamp: entry.timestamp ?? new Date(0).toISOString(),
+      item: entry.item,
+    });
+  }
+
+  if (options?.mode !== "force") {
+    for (const candidate of remaining) {
+      if (!emittedCanonicalIndexes.has(candidate.canonicalIndex)) {
+        rows.push({ ...candidate.row });
+      }
+    }
+  }
+  rows.forEach((row, index) => {
+    row.seq = index + 1;
+  });
+  return rows;
 }
 
 function takeMatch(
-  remaining: Array<{ row: AgentTimelineRow; used: boolean }>,
+  remaining: Array<{ row: AgentTimelineRow; canonicalIndex: number; used: boolean }>,
   provider: AgentTimelineItem,
-): AgentTimelineRow | null {
+  structuralCounts: Map<string, { canonical: number; provider: number }>,
+): { row: AgentTimelineRow; canonicalIndex: number; transferProviderIdentity: boolean } | null {
   const strong = remaining.find(
     (candidate) => !candidate.used && hasSharedIdentity(candidate.row, provider),
   );
@@ -53,7 +82,50 @@ function takeMatch(
     );
   if (!structural) return null;
   structural.used = true;
-  return structural.row;
+  const key = structuralKey(provider);
+  const counts = structuralCounts.get(key);
+  return {
+    row: structural.row,
+    canonicalIndex: structural.canonicalIndex,
+    transferProviderIdentity:
+      strong !== undefined || (counts?.canonical === 1 && counts.provider === 1),
+  };
+}
+
+function mergeMatchedRow(
+  canonical: AgentTimelineRow,
+  provider: ProviderHistoryTimelineEntry,
+): AgentTimelineRow {
+  return {
+    ...canonical,
+    item: mergeCanonicalIdentity(canonical.item, provider.item),
+  };
+}
+
+function countStructuralOccurrences(
+  canonicalRows: readonly AgentTimelineRow[],
+  providerEntries: readonly ProviderHistoryTimelineEntry[],
+): Map<string, { canonical: number; provider: number }> {
+  const counts = new Map<string, { canonical: number; provider: number }>();
+  for (const row of canonicalRows) {
+    const key = structuralKey(row.item);
+    const count = counts.get(key) ?? { canonical: 0, provider: 0 };
+    count.canonical += 1;
+    counts.set(key, count);
+  }
+  for (const entry of providerEntries) {
+    const key = structuralKey(entry.item);
+    const count = counts.get(key) ?? { canonical: 0, provider: 0 };
+    count.provider += 1;
+    counts.set(key, count);
+  }
+  return counts;
+}
+
+function structuralKey(item: AgentTimelineItem): string {
+  return item.type === "user_message"
+    ? `user:${item.text}`
+    : `${item.type}:${JSON.stringify(item)}`;
 }
 
 function hasSharedIdentity(row: AgentTimelineRow, provider: AgentTimelineItem): boolean {

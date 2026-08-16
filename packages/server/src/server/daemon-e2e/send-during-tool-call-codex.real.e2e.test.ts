@@ -364,8 +364,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
         )
         .join("\n");
       const steeringRows = timeline.entries.filter(
-        (entry) =>
-          entry.item.type === "user_message" && entry.item.clientMessageId === steeringMessageId,
+        (entry) => entry.item.type === "user_message" && entry.item.text === "hello",
       );
       expect(steeringRows).toHaveLength(1);
       expect(steeringRows[0]?.item).toMatchObject({

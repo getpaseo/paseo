@@ -65,6 +65,57 @@ describe("reconcileProviderHistory", () => {
     ]);
   });
 
+  test("retains a canonical suffix when provider history is lagging", () => {
+    const rows = reconcileProviderHistory(
+      [
+        {
+          seq: 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          item: user("initial", "initial"),
+          turnId: "turn-1",
+        },
+        {
+          seq: 2,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          item: user("hello", "hello"),
+          turnId: "turn-1",
+        },
+      ],
+      [{ item: user("initial") }],
+    );
+
+    expect(rows).toMatchObject([
+      { seq: 1, item: { text: "initial", clientMessageId: "initial" }, turnId: "turn-1" },
+      { seq: 2, item: { text: "hello", clientMessageId: "hello" }, turnId: "turn-1" },
+    ]);
+  });
+
+  test("does not transfer provider identity between ambiguous repeated prompts", () => {
+    const rows = reconcileProviderHistory(
+      [
+        {
+          seq: 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          item: user("same", "one"),
+          turnId: "turn-1",
+        },
+        {
+          seq: 2,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          item: user("same", "two"),
+          turnId: "turn-2",
+        },
+      ],
+      [{ item: { type: "user_message", text: "same", messageId: "provider-two" } }],
+    );
+
+    expect(rows).toMatchObject([
+      { item: { clientMessageId: "one" }, turnId: "turn-1" },
+      { item: { clientMessageId: "two" }, turnId: "turn-2" },
+    ]);
+    expect(rows.some((row) => row.providerMessageId === "provider-two")).toBe(false);
+  });
+
   test("does not invent turn membership for provider-only rows", () => {
     expect(
       reconcileProviderHistory([], [{ item: { type: "assistant_message", text: "provider" } }])[0]
