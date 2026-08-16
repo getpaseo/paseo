@@ -194,6 +194,46 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("replays successful todo results as TodoListCard items, matching the live path", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "assistant",
+          responseId: "response-1",
+          content: [
+            {
+              type: "toolCall",
+              id: "todo-1",
+              name: "todo",
+              arguments: { action: "create", subject: "泡一杯咖啡" },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "todo-1",
+          toolName: "todo",
+          content: [{ type: "text", text: "Created #1: 泡一杯咖啡 (pending)" }],
+          details: {
+            action: "create",
+            params: { action: "create", subject: "泡一杯咖啡" },
+            tasks: [{ id: 1, subject: "泡一杯咖啡", status: "pending" }],
+            nextId: 2,
+          },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "todo",
+          items: [{ text: "泡一杯咖啡", completed: false }],
+        },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(

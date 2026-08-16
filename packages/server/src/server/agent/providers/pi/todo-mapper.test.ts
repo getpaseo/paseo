@@ -124,6 +124,16 @@ describe("Pi todo mapper", () => {
     expect(
       canMapPiTodoToolResult({ details: { tasks: [{ id: "not a number", subject: 123 }] } }),
     ).toBe(false);
+    expect(
+      canMapPiTodoToolResult({
+        details: {
+          tasks: [
+            { id: 1, subject: "正常任务", status: "pending" },
+            { id: "bad", status: "pending" },
+          ],
+        },
+      }),
+    ).toBe(false);
 
     expect(
       canMapPiTodoToolResult({
@@ -153,7 +163,7 @@ describe("Pi todo mapper", () => {
     ).toBeNull();
   });
 
-  test("drops tasks with missing required fields", () => {
+  test("treats a partially malformed task array as unrenderable (fallback, not partial list)", () => {
     const result = parseToolResult({
       content: [],
       details: {
@@ -169,9 +179,6 @@ describe("Pi todo mapper", () => {
       },
     });
 
-    expect(mapPiTodoToolResult(result)).toEqual({
-      type: "todo",
-      items: [{ text: "正常任务", completed: false }],
-    });
+    expect(mapPiTodoToolResult(result)).toBeNull();
   });
 });

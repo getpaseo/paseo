@@ -197,6 +197,14 @@ describe("Pi tool call mapper", () => {
       { output: "Created #1" },
       { details: { tasks: "not an array" } },
       { details: { tasks: [{ id: "not a number", subject: 123 }] } },
+      {
+        details: {
+          tasks: [
+            { id: 1, subject: "正常任务", status: "pending" },
+            { id: "bad", status: "pending" },
+          ],
+        },
+      },
     ];
 
     for (const result of malformedResults) {

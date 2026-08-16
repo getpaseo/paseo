@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import { mapPiTodoToolResult } from "./todo-mapper.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -188,20 +189,33 @@ export class PiHistoryMapper {
     this.pendingToolCalls.delete(message.toolCallId);
     const result = parseToolResult({ content: message.content, details: message.details });
     const detail = this.mapToolDetail(message.toolCallId, tracked, result, message.isError);
-    if (!detail) {
-      return null;
+    if (detail) {
+      return {
+        type: "timeline",
+        provider: this.provider,
+        item: toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: resolveToolCallName(tracked, result),
+          isError: Boolean(message.isError),
+          detail,
+          errorText: extractTextFromToolResult(result) ?? "Tool call failed",
+        }),
+      };
     }
-    return {
-      type: "timeline",
-      provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: resolveToolCallName(tracked, result),
-        isError: Boolean(message.isError),
-        detail,
-        errorText: extractTextFromToolResult(result) ?? "Tool call failed",
-      }),
-    };
+    // Successful todo calls are suppressed from the tool-call card path;
+    // replay them as TodoListCard items the same way the live path does
+    // (see agent.ts). Malformed results already produced a detail above.
+    if (tracked.toolName === "todo" && !message.isError) {
+      const item = mapPiTodoToolResult(result);
+      if (item) {
+        return {
+          type: "timeline",
+          provider: this.provider,
+          item,
+        };
+      }
+    }
+    return null;
   }
 
   private mapBashExecutionMessage(
