@@ -74,6 +74,53 @@ function labelRow(page: import("@playwright/test").Page, name: string) {
   return page.getByTestId(`workspace-label-picker-row-${name}`);
 }
 
+async function box(locator: import("@playwright/test").Locator) {
+  const measured = await locator.boundingBox();
+  if (!measured) throw new Error("expected a visible element to measure");
+  return measured;
+}
+
+async function size(locator: import("@playwright/test").Locator) {
+  await settled(locator);
+  const { width, height } = await box(locator);
+  return { width, height };
+}
+
+/**
+ * Waits until an element stops moving.
+ *
+ * The flyout scales in and the sidebar behind it re-lays out as the filter changes, so a rail
+ * measured mid-animation is not a rail — and a measurement built from two `boundingBox()` calls
+ * would take its two halves from two different frames.
+ */
+async function settled(locator: import("@playwright/test").Locator) {
+  let previous = "";
+  await expect
+    .poll(async () => {
+      const current = JSON.stringify(await box(locator));
+      const stable = current === previous;
+      previous = current;
+      return stable;
+    })
+    .toBe(true);
+}
+
+/** Where a control sits inside its row, which is the thing that must not move. */
+async function railOffset(
+  row: import("@playwright/test").Locator,
+  control: import("@playwright/test").Locator,
+) {
+  await settled(row);
+  const rowBox = await box(row);
+  const controlBox = await box(control);
+  return {
+    left: controlBox.x - rowBox.x,
+    top: controlBox.y - rowBox.y,
+    width: controlBox.width,
+    height: controlBox.height,
+  };
+}
+
 async function expectAssigned(
   page: import("@playwright/test").Page,
   name: string,
@@ -193,7 +240,7 @@ test.describe("Workspace labels", () => {
         await page.keyboard.press("Escape");
       });
 
-      await test.step("the row owns include, its trailing control owns exclude", async () => {
+      await test.step("include and exclude are two controls that never move", async () => {
         const labelledRow = page.getByTestId(
           `sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`,
         );
@@ -204,51 +251,69 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("sidebar-display-label-filter").click();
 
         const urgent = page.getByTestId("sidebar-label-filter-option-Urgent");
+        const includeUrgent = page.getByTestId("sidebar-label-filter-include-Urgent");
         const excludeUrgent = page.getByTestId("sidebar-label-filter-exclude-Urgent");
+        // Both rails, measured before anything is filtered. Nothing on the row is allowed to move
+        // through any of the transitions below, so every state re-measures against these.
+        //
+        // Relative to the row, not to the page: filtering changes what the sidebar holds, and the
+        // menu is anchored to a trigger that can shift with it.
+        const rails = async () => ({
+          include: await railOffset(urgent, includeUrgent),
+          exclude: await railOffset(urgent, excludeUrgent),
+          row: await size(urgent),
+        });
+        const atRest = await rails();
 
-        // The control is on the row's rail the whole time and only fades in, so revealing it
-        // cannot move the row out from under the pointer that revealed it.
-        await expect(excludeUrgent).toHaveCSS("opacity", "0");
-        await urgent.hover();
-        await expect(excludeUrgent).toHaveCSS("opacity", "1");
-
-        // The tooltip says what the glyph means, and hovering it is not the pointer leaving the
-        // flyout — the page it belongs to is still up underneath it.
+        // Both tooltips, and resting on either is not the pointer leaving the flyout — the page
+        // they belong to is still up underneath.
+        await includeUrgent.hover();
+        await expect(page.getByTestId("sidebar-label-filter-include-Urgent-tooltip")).toContainText(
+          "Include",
+        );
         await excludeUrgent.hover();
         await expect(page.getByTestId("sidebar-label-filter-exclude-Urgent-tooltip")).toContainText(
           "Exclude",
         );
         await expect(page.getByTestId("sidebar-label-manage")).toBeVisible();
 
-        // One press in, one press out, and the sidebar never passes through exclude on the way.
+        // The row includes, and one more press clears it — never through exclude.
         await urgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeHidden();
-        // An included row's rail holds the check and nothing else.
-        await expect(excludeUrgent).toHaveCount(0);
+        expect(await rails()).toEqual(atRest);
 
         await urgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "false");
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();
 
-        // Pressing the control excludes and does not also fire the row it sits in: one press
-        // from off lands on exclude, not on include.
+        // The check is the row's action made explicit, so it answers the same way.
+        await includeUrgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "true");
+        await includeUrgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "false");
+
+        // The ban excludes and does not also fire the row it sits in: one press from off lands on
+        // exclude, not on include.
         await excludeUrgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "mixed");
-        await expect(excludeUrgent).toHaveAttribute("aria-checked", "true");
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeVisible();
+        expect(await rails()).toEqual(atRest);
 
         await excludeUrgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "false");
 
-        // A row is never both: including an excluded label replaces the exclude in one press.
+        // A row is never both, and because both controls are always there each crossing is one
+        // press rather than a clear and a set.
+        await includeUrgent.click();
         await excludeUrgent.click();
-        await urgent.click();
+        await expect(urgent).toHaveAttribute("aria-checked", "mixed");
+        await includeUrgent.click();
         await expect(urgent).toHaveAttribute("aria-checked", "true");
-        await expect(excludeUrgent).toHaveCount(0);
+        expect(await rails()).toEqual(atRest);
 
         await urgent.click();
         await page.getByTestId("sidebar-label-filter-option-unlabelled").click();

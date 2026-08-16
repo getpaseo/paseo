@@ -10,7 +10,9 @@ import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Ban,
   Captions,
+  Check,
   Circle,
   CircleCheck,
   CircleDashed,
@@ -25,7 +27,6 @@ import {
   Settings2,
   Tag,
   Type,
-  X,
 } from "lucide-react-native";
 import {
   MenuItem,
@@ -38,8 +39,7 @@ import {
 } from "@/components/ui/menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import {
@@ -58,28 +58,60 @@ import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+/** A lit filter control: the thing being acted on, per docs/design.md:41. */
+const litIconMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+/**
+ * An unlit filter control.
+ *
+ * `foregroundExtraMuted` rather than `foregroundMuted`, which is what an unlit control would
+ * normally take, because this page renders both at once: the Match rows below carry `MenuItem`'s
+ * own check at `foregroundMuted` to mean *selected*, and an unlit check in that same colour eight
+ * pixels above it would say the opposite thing in the same ink. This is the token
+ * docs/design.md:43 reserves for always-visible passive chrome sitting behind muted text.
+ */
+const unlitIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 
 const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircle = withUnistyles(Circle);
-const ThemedX = withUnistyles(X);
+const ThemedCheck = withUnistyles(Check);
+const ThemedBan = withUnistyles(Ban);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
 const MENU_WIDTH = 232;
 
 /**
- * The exclude control's glyph, and the mark an excluded row keeps.
+ * The box each filter control is drawn in, and therefore the two rails they hold.
  *
- * `X` and `Check` are the same lucide pair — same stroke, same ink bounds at the same 16 — so the
- * trailing rail does not shift as a row's state changes. Anything heavier here (`Ban`, say) fills
- * its box where the check does not, and the whole column twitches.
+ * Both boxes are on every row in every state, so the rails are fixed by the boxes and a glyph
+ * changing size inside one cannot move the other. Only the colour changes with state.
  */
-const EXCLUDE_ICON_SIZE = 16;
+const FILTER_CONTROL_BOX = 16;
 
-/** Grows the control to a 44pt target without moving its glyph off the trailing rail. */
-const EXCLUDE_HIT_SLOP = (44 - EXCLUDE_ICON_SIZE) / 2;
+/** The check at the same 16 the engine's own trailing check uses, so the two pages agree. */
+const INCLUDE_ICON_SIZE = 16;
+
+/**
+ * `Ban` two points under the check, centred in the same 16pt box.
+ *
+ * The optical correction Phase 2 could not make while the two glyphs shared one rail. `Ban`'s ink
+ * is a closed circle plus a diagonal — about four times the check's stroke length, whatever the
+ * size — so at a matched 16 it is plainly the louder of the two lit marks. Equal ink would mean
+ * about 8pt, which is no longer a glyph; 14 is where the circle's diameter reads as the check's
+ * peer rather than its senior. Nothing moves with it: the rail is the box, and the box stays 16.
+ */
+const EXCLUDE_ICON_SIZE = 14;
+
+/**
+ * Vertical reach to a 44pt target; horizontal is half the gap between the two controls.
+ *
+ * The pair is two targets side by side, so the horizontal half has to tile rather than overlap —
+ * a slop wide enough to reach 44 on each would make the middle of the gap ambiguous. Growing
+ * outward either way, so neither glyph leaves its rail.
+ */
+const FILTER_CONTROL_HIT_SLOP = { top: 14, bottom: 14, left: 4, right: 4 };
 
 /**
  * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
@@ -356,7 +388,6 @@ function LabelFilterPage({
   onManage: () => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
   const selections = preferences.labelFilter.labels;
   const includeCount = Object.values(selections).filter((state) => state === "include").length;
   const matchAny = useCallback(() => preferences.setLabelMatch("any"), [preferences]);
@@ -370,10 +401,10 @@ function LabelFilterPage({
           label={label.name}
           color={label.color}
           state={selections[workspaceLabelKey(label.name)]}
-          isCompact={isCompact}
           onInclude={preferences.toggleLabelInclude}
           onExclude={preferences.toggleLabelExclude}
           testID={`sidebar-label-filter-option-${label.name}`}
+          includeTestID={`sidebar-label-filter-include-${label.name}`}
           excludeTestID={`sidebar-label-filter-exclude-${label.name}`}
         />
       ))}
@@ -382,10 +413,10 @@ function LabelFilterPage({
         label={t("workspaceLabels.unlabelled")}
         color={null}
         state={selections[SIDEBAR_UNLABELLED_LABEL_KEY]}
-        isCompact={isCompact}
         onInclude={preferences.toggleLabelInclude}
         onExclude={preferences.toggleLabelExclude}
         testID="sidebar-label-filter-option-unlabelled"
+        includeTestID="sidebar-label-filter-include-unlabelled"
         excludeTestID="sidebar-label-filter-exclude-unlabelled"
       />
       {hasActiveSidebarLabelFilter(preferences.labelFilter) ? (
@@ -429,32 +460,32 @@ function LabelFilterPage({
 }
 
 /**
- * One label: the row owns include, and the control on its trailing rail owns exclude.
+ * One label, with include and exclude both on the row's trailing rail at all times.
  *
- * Two independent toggles rather than one rotation. Include and exclude are each one press each
- * way, and neither is reached through the other — clearing an include used to cost two presses
- * and re-filter the sidebar into an exclude nobody asked for on the way past.
+ * Nothing appears, disappears or swaps places: two fixed boxes, and state is which one is lit.
+ * The row rotated through three states until Phase 6 and then carried one changing occupant, and
+ * both meant the trailing area kept changing identity while you read down the column.
  *
- * A row is never both, so the trailing rail holds exactly one 16pt glyph in every state: the
- * check, a permanent `X`, or the same `X` revealed on hover. Exclude also dims the row, because a
- * mark you have to identify is not a state you can read at a glance.
+ * Pressing the row includes, which is what the common case wants from the largest target on the
+ * page; the check is that same action named. Because the ban is always there, include → exclude
+ * is one press rather than two.
  *
- * Exclude passes `selected="mixed"` for the same reason it draws its own trailing mark: the row is
- * marked, but not by the check. Without it a screen reader cannot tell an excluded label from an
- * untouched one, since dimming and an `X` are both invisible to it.
+ * Exclude also dims the row: a lit mark tells you which state a row is in once you look at it,
+ * and the dim tells you from the shape of the column that this one is subtracting.
  *
- * Hover lives on the plain wrapping `View` and press on the `Pressable`s inside it, which is the
- * one shape that survives a pressable inside a hover target (docs/hover.md).
+ * `selected` is the row's state and the buttons carry none, so the label's state is announced
+ * once — `"mixed"` is exclude, ARIA's own third state, and the buttons read as the two actions
+ * they are rather than as two more checkboxes claiming things about the same label.
  */
 function LabelFilterItem({
   name,
   label,
   color,
   state,
-  isCompact,
   onInclude,
   onExclude,
   testID,
+  includeTestID,
   excludeTestID,
 }: {
   /** The filter key this row acts on. Empty for Unlabelled — see `SIDEBAR_UNLABELLED_LABEL_KEY`. */
@@ -463,18 +494,13 @@ function LabelFilterItem({
   /** `null` is Unlabelled, the one row with no color to stand for. */
   color: WorkspaceLabelColor | null;
   state: SidebarLabelState | undefined;
-  isCompact: boolean;
   onInclude: (name: string) => void;
   onExclude: (name: string) => void;
   testID: string;
+  includeTestID: string;
   excludeTestID: string;
 }): ReactElement {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-  const handleExcludeFocus = useCallback(() => setIsFocused(true), []);
-  const handleExcludeBlur = useCallback(() => setIsFocused(false), []);
+  const { t } = useTranslation();
   const include = useCallback(() => onInclude(name), [name, onInclude]);
   const exclude = useCallback(() => onExclude(name), [name, onExclude]);
 
@@ -485,110 +511,97 @@ function LabelFilterItem({
 
   const excluded = state === "exclude";
   const included = state === "include";
-  // An excluded row keeps its mark because that is its state, not an affordance to discover.
-  // Everything else follows the app's rule for hover-revealed controls, plus keyboard focus so
-  // reaching the control by tab does not mean pressing something invisible.
-  const revealed = excluded || isHovered || isFocused || isNative || isCompact;
   const trailing = useMemo(
-    () =>
-      included ? null : (
-        <LabelExcludeControl
-          label={label}
-          excluded={excluded}
-          revealed={revealed}
+    () => (
+      <View style={styles.filterControls}>
+        <LabelFilterControl
+          icon={ThemedCheck}
+          size={INCLUDE_ICON_SIZE}
+          lit={included}
+          accessibilityLabel={t("workspaceLabels.filter.includeLabel", { name: label })}
+          tooltip={t("workspaceLabels.filter.include")}
+          onPress={include}
+          testID={includeTestID}
+        />
+        <LabelFilterControl
+          icon={ThemedBan}
+          size={EXCLUDE_ICON_SIZE}
+          lit={excluded}
+          accessibilityLabel={t("workspaceLabels.filter.excludeLabel", { name: label })}
+          tooltip={t("workspaceLabels.filter.exclude")}
           onPress={exclude}
-          onFocus={handleExcludeFocus}
-          onBlur={handleExcludeBlur}
           testID={excludeTestID}
         />
-      ),
-    [
-      included,
-      label,
-      excluded,
-      revealed,
-      exclude,
-      handleExcludeFocus,
-      handleExcludeBlur,
-      excludeTestID,
-    ],
+      </View>
+    ),
+    [t, label, included, excluded, include, exclude, includeTestID, excludeTestID],
   );
 
   return (
-    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
-      <MenuItem
-        selected={excluded ? "mixed" : included}
-        muted={excluded}
-        leading={leading}
-        trailing={trailing}
-        closeOnSelect={false}
-        onSelect={include}
-        testID={testID}
-      >
-        {label}
-      </MenuItem>
-    </View>
+    <MenuItem
+      selected={excluded ? "mixed" : included}
+      muted={excluded}
+      leading={leading}
+      trailing={trailing}
+      closeOnSelect={false}
+      onSelect={include}
+      testID={testID}
+    >
+      {label}
+    </MenuItem>
   );
 }
 
 /**
- * Exclude, as its own control on the row's trailing rail.
+ * One of the row's two filter controls: a glyph that is lit when the row is in its state.
  *
- * Hidden by opacity rather than unmounted, so revealing it cannot move the row out from under the
- * pointer that revealed it, and so a screen reader still finds it on a row that has no visible
- * mark. The 44pt target comes from `hitSlop`, which grows outward and leaves the glyph on the rail.
+ * Lit is `foreground`, the same ink `MenuItem`'s own reserved check slot uses for a marked row.
+ * Unlit steps down two, for the reason on `unlitIconMapping`. Solid tokens either way rather than
+ * one token at two opacities: per-path opacity renders overlapping icon strokes unevenly.
  *
  * The tooltip is what makes an icon-only control legible, so it is gated to where hover exists:
- * on native the control is simply always there, and `TooltipContent` would put a `Modal` — a
- * second overlay with a backdrop of its own — over the menu it belongs to.
+ * on native there is no hover to explain it, and `TooltipContent` would put a `Modal` — a second
+ * overlay with a backdrop of its own — over the menu it belongs to.
  */
-function LabelExcludeControl({
-  label,
-  excluded,
-  revealed,
+function LabelFilterControl({
+  icon: Icon,
+  size,
+  lit,
+  accessibilityLabel,
+  tooltip,
   onPress,
-  onFocus,
-  onBlur,
   testID,
 }: {
-  label: string;
-  excluded: boolean;
-  revealed: boolean;
+  icon: OptionIcon;
+  size: number;
+  lit: boolean;
+  accessibilityLabel: string;
+  tooltip: string;
   onPress: () => void;
-  onFocus: () => void;
-  onBlur: () => void;
   testID: string;
 }): ReactElement {
-  const { t } = useTranslation();
   const controlStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
-      styles.excludeControl,
-      !revealed && styles.excludeControlHidden,
-      pressed && styles.excludeControlPressed,
+      styles.filterControl,
+      pressed && styles.filterControlPressed,
     ],
-    [revealed],
+    [],
   );
-  const accessibilityState = useMemo(() => ({ checked: excluded }), [excluded]);
 
   return (
     <Tooltip delayDuration={250} enabledOnDesktop={isWeb} enabledOnMobile={false}>
       <TooltipTrigger
-        accessibilityRole="checkbox"
-        accessibilityLabel={t("workspaceLabels.filter.excludeLabel", { name: label })}
-        accessibilityState={accessibilityState}
-        aria-checked={excluded}
-        hitSlop={EXCLUDE_HIT_SLOP}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        hitSlop={FILTER_CONTROL_HIT_SLOP}
         onPress={onPress}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        pointerEvents={revealed ? "auto" : "none"}
         style={controlStyle}
         testID={testID}
       >
-        <ThemedX size={EXCLUDE_ICON_SIZE} uniProps={mutedIconMapping} />
+        <Icon size={size} uniProps={lit ? litIconMapping : unlitIconMapping} />
       </TooltipTrigger>
       <TooltipContent side="right" align="center" offset={10} testID={`${testID}-tooltip`}>
-        <Text style={styles.tooltipText}>{t("workspaceLabels.filter.exclude")}</Text>
+        <Text style={styles.tooltipText}>{tooltip}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -800,16 +813,22 @@ const styles = StyleSheet.create((theme) => ({
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  excludeControl: {
-    // The glyph is the whole control, sized like the check it shares a rail with. No padding: the
-    // hit area is `hitSlop`, which grows outward instead of pushing the glyph off the rail.
+  // Two rails, one gap. The gap is what makes the pair two targets rather than one smudge, and
+  // `FILTER_CONTROL_HIT_SLOP` splits it so the two hit areas meet in the middle without overlapping.
+  filterControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  // A fixed box whatever glyph is in it, so the rails do not move with the optical size nudge.
+  // No padding: the hit area is `hitSlop`, which grows outward instead of pushing the glyph off.
+  filterControl: {
+    width: FILTER_CONTROL_BOX,
+    height: FILTER_CONTROL_BOX,
     alignItems: "center",
     justifyContent: "center",
   },
-  excludeControlHidden: {
-    opacity: 0,
-  },
-  excludeControlPressed: {
+  filterControlPressed: {
     opacity: 0.6,
   },
   tooltipText: {

@@ -994,6 +994,8 @@ export const ko: TranslationResources = {
       matchAny: "하나라도 일치",
       matchAll: "모두 일치",
       clear: "필터 지우기",
+      include: "포함",
+      includeLabel: "{{name}} 포함",
       exclude: "제외",
       excludeLabel: "{{name}} 제외",
       noMatchesTitle: "일치하는 워크스페이스가 없습니다",

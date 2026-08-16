@@ -987,6 +987,8 @@ export const ar: TranslationResources = {
       matchAny: "مطابقة أي منها",
       matchAll: "مطابقة جميعها",
       clear: "مسح عامل التصفية",
+      include: "تضمين",
+      includeLabel: "تضمين {{name}}",
       exclude: "استبعاد",
       excludeLabel: "استبعاد {{name}}",
       noMatchesTitle: "لا توجد مساحات عمل مطابقة",

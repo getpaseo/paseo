@@ -1020,6 +1020,8 @@ export const fr: TranslationResources = {
       matchAny: "Correspondre à l’une",
       matchAll: "Correspondre à toutes",
       clear: "Effacer le filtre",
+      include: "Inclure",
+      includeLabel: "Inclure {{name}}",
       exclude: "Exclure",
       excludeLabel: "Exclure {{name}}",
       noMatchesTitle: "Aucun espace de travail ne correspond",

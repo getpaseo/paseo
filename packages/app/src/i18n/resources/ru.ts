@@ -1009,6 +1009,8 @@ export const ru: TranslationResources = {
       matchAny: "Совпадает с любой",
       matchAll: "Совпадает со всеми",
       clear: "Очистить фильтр",
+      include: "Включить",
+      includeLabel: "Включить «{{name}}»",
       exclude: "Исключить",
       excludeLabel: "Исключить «{{name}}»",
       noMatchesTitle: "Нет подходящих рабочих пространств",

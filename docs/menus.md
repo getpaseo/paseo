@@ -122,9 +122,14 @@ opens on press.
 | `active`           | This row's submenu is open   | The fill, and no check    |
 
 `selected` also announces itself: `true` and `false` are `aria-checked`, and `"mixed"` is ARIA's own
-third state. Use it for a row that cycles through more than on and off — the labels filter's
+third state. Use it for a row that holds more than on and off — the labels filter's
 include / exclude / neither — so the state a screen reader gets is the one the row is in. Give that
 row its own `trailing` mark; the engine draws the check for `true` and nothing else.
+
+A row whose `trailing` is itself pressable keeps the state on the row and gives the controls plain
+button names. The labels filter row is the case: it announces include as checked and exclude as
+mixed, and its two buttons are "Include X" and "Exclude X" with no checked state of their own, so
+one label's state is claimed once rather than by three controls at the same time.
 
 A selected row does **not** get a background. A check and a fill are two separate claims about the
 same state, and showing both makes a chosen row compete with the row the pointer is actually on.
