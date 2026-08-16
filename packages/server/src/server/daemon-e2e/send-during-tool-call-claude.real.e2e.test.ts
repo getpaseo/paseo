@@ -47,6 +47,7 @@ function generateClientMessageId(): string {
 
 interface ObservedForegroundSleep {
   callId: string;
+  turnId?: string;
 }
 
 function getRunningClaudeSleep(
@@ -69,7 +70,7 @@ function getRunningClaudeSleep(
   ) {
     return null;
   }
-  return { callId: tool.callId };
+  return { callId: tool.callId, turnId: message.payload.event.turnId };
 }
 
 function hasRunningToolCall(messages: SessionOutboundMessage[], agentId: string): boolean {
@@ -363,9 +364,9 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
           agent.id,
           [
             "Use the Bash tool.",
-            "Run exactly: sleep 5. Run it in the foreground. Do not finish until a later user message arrives; after it arrives, reply exactly: STEERED_SAME_TURN.",
+            "Run exactly: sleep 5. Run it in the foreground. Do not finish until a later user message arrives.",
+            "After that message arrives, use the Bash tool again and run exactly: printf SECOND_BOUNDARY. Then reply exactly: STEERED_SAME_TURN.",
             "Do not use a background task.",
-            "Do not do anything after starting the command.",
           ].join(" "),
           { messageId: generateClientMessageId() },
         ),
@@ -389,6 +390,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
       expect(initialTurnStarts).toHaveLength(1);
       const initialTurnId = initialTurnStarts[0]?.payload.event.turnId;
       expect(initialTurnId).toEqual(expect.any(String));
+      expect(foregroundSleep.turnId).toBe(initialTurnId);
       const steeringMessageId = generateClientMessageId();
       const messagesBeforeSteer = resources.collector.messages.length;
       await within(
@@ -441,6 +443,32 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
         ),
         "the exact live sleep 5 call must not be canceled or fail after hello",
       ).toBe(false);
+      const secondBoundaryEvents = postSteerMessages.filter(
+        (message) =>
+          message.type === "agent_stream" &&
+          message.payload.agentId === agent.id &&
+          message.payload.event.type === "timeline" &&
+          message.payload.event.item.type === "tool_call" &&
+          message.payload.event.item.detail.type === "shell" &&
+          /\bprintf\s+SECOND_BOUNDARY\b/.test(message.payload.event.item.detail.command),
+      );
+      expect(
+        secondBoundaryEvents.some(
+          (message) =>
+            message.payload.event.type === "timeline" &&
+            message.payload.event.item.type === "tool_call" &&
+            message.payload.event.item.status === "completed",
+        ),
+        "hello must drive a second completed tool call in the same active loop",
+      ).toBe(true);
+      expect(
+        secondBoundaryEvents.every(
+          (message) =>
+            message.payload.event.type === "timeline" &&
+            message.payload.event.turnId === initialTurnId,
+        ),
+        "both Claude tool boundaries must retain the original turn ID",
+      ).toBe(true);
       const timeline = await within(
         "fetch steered Claude timeline",
         15_000,
