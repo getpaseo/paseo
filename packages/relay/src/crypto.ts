@@ -114,6 +114,102 @@ export function importSecretKey(base64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Raised when a peer-supplied public key is unusable for key agreement.
+ *
+ * Distinct from a generic Error so callers can close the channel uniformly
+ * without leaking *which* validation fired, and so tests can assert on the
+ * specific failure rather than on any throw.
+ */
+export class InvalidPeerKeyError extends Error {
+  constructor(message = "Invalid peer public key") {
+    super(message);
+    this.name = "InvalidPeerKeyError";
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Curve25519 points of small order, little-endian u-coordinates.
+ *
+ * A peer supplying one of these forces the X25519 output to the all-zero
+ * value, so both sides derive a shared key the attacker knows without ever
+ * possessing the corresponding secret. RFC 7748 section 6 prescribes
+ * rejecting the all-zero result for exactly this reason.
+ *
+ * The all-zero output check in `deriveSharedKey` is on its own sufficient —
+ * with clamped scalars every low-order input produces it. This table is
+ * defense in depth plus an early reject, so we never run the scalar
+ * multiplication on a known-bad point. `crypto.negative.test.ts` proves each
+ * entry really is low order, so a mistyped constant fails the suite instead
+ * of silently weakening the check.
+ */
+const CANONICAL_LOW_ORDER_POINTS: readonly string[] = [
+  // 0 and 1
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  // the two points of order 8
+  "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+  "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+  // p-1 (order 2), p (= 0), p+1 (= 1)
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+];
+
+/**
+ * X25519 ignores the top bit of the final byte, so each canonical point above
+ * has a second encoding with that bit set which is equally dangerous. Derive
+ * those rather than transcribing another seven constants -- every hand-copied
+ * value is a chance to write one that matches nothing.
+ */
+const LOW_ORDER_POINTS: readonly Uint8Array[] = Object.freeze(
+  CANONICAL_LOW_ORDER_POINTS.flatMap((hex) => {
+    const canonical = hexToBytes(hex);
+    const highBitSet = Uint8Array.from(canonical);
+    highBitSet[31] = (highBitSet[31] as number) | 0x80;
+    return [canonical, highBitSet];
+  }),
+);
+
+/**
+ * True when every byte is zero.
+ *
+ * Accumulates over the whole buffer with no early exit because the input is
+ * derived from a secret key. JavaScript cannot guarantee constant time (JIT,
+ * GC), but not short-circuiting removes the obvious signal.
+ */
+function isAllZero(bytes: Uint8Array): boolean {
+  let acc = 0;
+  for (let i = 0; i < bytes.length; i++) acc |= bytes[i] as number;
+  return acc === 0;
+}
+
+/**
+ * True when `publicKey` is one of the known small-order points.
+ *
+ * Both operands are public, so this needs no timing guarantee; it still
+ * avoids an early exit to keep the shape identical to `isAllZero`.
+ */
+function isLowOrderPoint(publicKey: Uint8Array): boolean {
+  let matched = 0;
+  for (const candidate of LOW_ORDER_POINTS) {
+    let diff = 0;
+    for (let i = 0; i < candidate.length; i++) {
+      diff |= (publicKey[i] as number) ^ (candidate[i] as number);
+    }
+    matched |= diff === 0 ? 1 : 0;
+  }
+  return matched === 1;
+}
+
 export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Array): SharedKey {
   if (ourSecretKey.byteLength !== nacl.box.secretKeyLength) {
     throw new Error(`Invalid secret key length (expected ${nacl.box.secretKeyLength})`);
@@ -121,6 +217,17 @@ export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Ar
   if (peerPublicKey.byteLength !== nacl.box.publicKeyLength) {
     throw new Error(`Invalid peer public key length (expected ${nacl.box.publicKeyLength})`);
   }
+  if (isLowOrderPoint(peerPublicKey)) {
+    throw new InvalidPeerKeyError("Peer public key is a low-order Curve25519 point");
+  }
+
+  // `box.before` hashes the raw X25519 output through HSalsa20, so inspecting
+  // its result cannot detect the all-zero case. Check the raw scalar
+  // multiplication directly.
+  if (isAllZero(nacl.scalarMult(ourSecretKey, peerPublicKey))) {
+    throw new InvalidPeerKeyError("X25519 key agreement produced an all-zero shared secret");
+  }
+
   return nacl.box.before(peerPublicKey, ourSecretKey);
 }
 
