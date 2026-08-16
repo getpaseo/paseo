@@ -1,9 +1,23 @@
 ---
 name: paseo
-description: Paseo reference for managing workspaces, workspace scripts, agents, schedules, and heartbeats.
+description: Paseo reference for managing projects, workspaces, workspace scripts, agents, schedules, and heartbeats.
 ---
 
 Paseo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
+
+## Projects
+
+Manage the daemon's project registry through the CLI:
+
+```bash
+paseo project create [path]
+paseo project ls
+paseo project rename <project-id> <name>
+paseo project rename <project-id> --reset
+paseo project delete <project-id>
+```
+
+For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its active workspaces and removes the project from Paseo without deleting the project directory.
 
 ## Workspaces
 
@@ -99,6 +113,10 @@ Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. Th
 The CLI and tools use the same ownership semantics even where their syntax differs:
 
 ```bash
+paseo project create [path]
+paseo project ls
+paseo project rename <project-id> <name>
+paseo project delete <project-id>
 paseo workspace create --isolation worktree --mode branch-off --new-branch fix-x --base main
 paseo workspace create --isolation worktree --mode checkout-branch --branch existing-work
 paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
