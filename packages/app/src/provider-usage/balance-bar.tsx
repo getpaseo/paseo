@@ -67,7 +67,12 @@ export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBal
         <Text style={styles.label} numberOfLines={1}>
           {balance.label}
         </Text>
-        <Text style={styles.value}>
+        <Text
+          style={styles.value}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID={`provider-usage-balance-${balance.id}-value`}
+        >
           {amountText}
           {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
@@ -97,6 +102,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
