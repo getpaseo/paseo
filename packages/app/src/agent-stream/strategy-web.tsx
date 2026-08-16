@@ -233,6 +233,34 @@ function activeFollowOutputLayoutsEqual(
   );
 }
 
+interface ObservedViewportGeometry {
+  clientWidth: number;
+  clientHeight: number;
+  scrollWidth: number;
+  scrollHeight: number;
+}
+
+function getObservedViewportGeometry(scrollContainer: HTMLElement): ObservedViewportGeometry {
+  return {
+    clientWidth: scrollContainer.clientWidth,
+    clientHeight: scrollContainer.clientHeight,
+    scrollWidth: scrollContainer.scrollWidth,
+    scrollHeight: scrollContainer.scrollHeight,
+  };
+}
+
+function observedViewportGeometriesEqual(
+  previous: ObservedViewportGeometry,
+  next: ObservedViewportGeometry,
+): boolean {
+  return (
+    previous.clientWidth === next.clientWidth &&
+    previous.clientHeight === next.clientHeight &&
+    previous.scrollWidth === next.scrollWidth &&
+    previous.scrollHeight === next.scrollHeight
+  );
+}
+
 function getScrollContainerDistanceFromBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ): number {
@@ -307,10 +335,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const historyStartPrependAnchorActiveRef = useRef(false);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
   const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
+  const lastObservedViewportGeometryRef = useRef<ObservedViewportGeometry | null>(null);
   const wasFollowOutputLayoutActiveRef = useRef(false);
   const resumedUnchangedLayoutRef = useRef(false);
-  const suppressInitialResizeRef = useRef(false);
-  const suppressInitialResizeFrameRef = useRef<number | null>(null);
+  const pendingResumeGeometryCheckRef = useRef(false);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -808,7 +836,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       activeFollowOutputLayoutsEqual(lastActiveFollowOutputLayoutRef.current, layout),
     );
     resumedUnchangedLayoutRef.current = resumedUnchangedLayout;
-    suppressInitialResizeRef.current = resumedUnchangedLayout;
+    pendingResumeGeometryCheckRef.current = resumedUnchangedLayout;
     wasFollowOutputLayoutActiveRef.current = isActive;
     if (!isActive) {
       return;
@@ -834,11 +862,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!isActive) {
       return;
     }
-    if (resumedUnchangedLayoutRef.current) {
-      resumedUnchangedLayoutRef.current = false;
-      return;
+    const resumedUnchangedLayout = resumedUnchangedLayoutRef.current;
+    resumedUnchangedLayoutRef.current = false;
+    if (!resumedUnchangedLayout) {
+      updateScrollMetrics();
     }
-    updateScrollMetrics();
     evaluateHistoryStart();
     if (historyStartPaginationStateRef.current.status === "settling") {
       scheduleHistoryStartPrependSettle();
@@ -867,13 +895,21 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
 
-    if (!suppressInitialResizeRef.current) {
+    if (!pendingResumeGeometryCheckRef.current) {
       updateScrollMetrics();
       evaluateHistoryStart();
     }
     const observer = new ResizeObserver(() => {
-      if (suppressInitialResizeRef.current) {
-        return;
+      const nextGeometry = getObservedViewportGeometry(scrollContainer);
+      if (pendingResumeGeometryCheckRef.current) {
+        pendingResumeGeometryCheckRef.current = false;
+        const previousGeometry = lastObservedViewportGeometryRef.current;
+        lastObservedViewportGeometryRef.current = nextGeometry;
+        if (previousGeometry && observedViewportGeometriesEqual(previousGeometry, nextGeometry)) {
+          return;
+        }
+      } else {
+        lastObservedViewportGeometryRef.current = nextGeometry;
       }
       if (historyStartPrependAnchorActiveRef.current) {
         applyHistoryStartPrependAnchor();
@@ -892,17 +928,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (contentNode) {
       observer.observe(contentNode);
     }
-    if (suppressInitialResizeRef.current) {
-      suppressInitialResizeFrameRef.current = window.requestAnimationFrame(() => {
-        suppressInitialResizeFrameRef.current = null;
-        suppressInitialResizeRef.current = false;
-      });
-    }
     return () => {
-      if (suppressInitialResizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(suppressInitialResizeFrameRef.current);
-        suppressInitialResizeFrameRef.current = null;
-      }
       observer.disconnect();
     };
   }, [

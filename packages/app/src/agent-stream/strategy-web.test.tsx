@@ -1220,18 +1220,45 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("keeps the retained viewport mounted while inactive and reconciles it once on return", () => {
-    const observed = new Map<Element, ReturnType<typeof vi.fn>>();
+  it("keeps the retained viewport mounted while inactive and reconciles it once on return", async () => {
+    interface ResizeObservation {
+      callback: ResizeObserverCallback;
+      disconnect: ReturnType<typeof vi.fn>;
+      observer: ResizeObserver;
+    }
+    const observed = new Map<Element, ResizeObservation>();
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
-      value: class ResizeObserver {
+      value: class TestResizeObserver {
         readonly disconnect = vi.fn();
 
+        constructor(private readonly callback: ResizeObserverCallback) {}
+
         observe(target: Element) {
-          observed.set(target, this.disconnect);
+          observed.set(target, {
+            callback: this.callback,
+            disconnect: this.disconnect,
+            observer: this as unknown as ResizeObserver,
+          });
         }
       },
     });
+    const notifyResize = (...targets: Element[]) => {
+      const observation = targets[0] ? observed.get(targets[0]) : undefined;
+      if (!observation) {
+        throw new Error("Expected observed resize target");
+      }
+      observation.callback(
+        targets.map(
+          (target) =>
+            ({
+              target,
+              contentRect: target.getBoundingClientRect(),
+            }) as ResizeObserverEntry,
+        ),
+        observation.observer,
+      );
+    };
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
       Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
@@ -1278,19 +1305,36 @@ describe("createWebStreamStrategy", () => {
     if (!(scrollContainer instanceof HTMLElement)) {
       throw new Error("Expected agent chat scroll container");
     }
+    const contentNode = scrollContainer.firstElementChild;
+    if (!(contentNode instanceof HTMLElement)) {
+      throw new Error("Expected agent chat content node");
+    }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
-    const viewportObserverDisconnect = observed.get(scrollContainer);
-    expect(viewportObserverDisconnect).toBeDefined();
+    const viewportObservation = observed.get(scrollContainer);
+    expect(viewportObservation).toBeDefined();
+    act(() => notifyResize(scrollContainer, contentNode));
 
     act(() => root?.render(renderWithActivity(false)));
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
-    expect(viewportObserverDisconnect).toHaveBeenCalledOnce();
+    expect(viewportObservation?.disconnect).toHaveBeenCalledOnce();
     scrollTo.mockClear();
     act(() => root?.render(renderWithActivity(true)));
+    act(() => notifyResize(scrollContainer, contentNode));
     expect(scrollTo).not.toHaveBeenCalled();
+
+    act(() => root?.render(renderWithActivity(false)));
+    scrollTo.mockClear();
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2200 });
+    act(() => root?.render(renderWithActivity(true)));
+    expect(scrollTo).not.toHaveBeenCalled();
+    act(() => notifyResize(scrollContainer, contentNode));
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 2200, behavior: "auto" });
 
     act(() => root?.render(renderWithActivity(false)));
     scrollTo.mockClear();
