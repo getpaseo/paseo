@@ -18,6 +18,7 @@ on:
       - "packages/client/**"
       - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
+      - "packages/plugin/**"
       - "packages/protocol/**"
       - "packages/relay/**"
       - "packages/server/**"

@@ -40,6 +40,12 @@ interface TimelineViewportSnapshot {
   scrollTop: number;
 }
 
+interface PersistedCanonicalTimelineRange {
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
+}
+
 export interface TimelinePresentationSnapshot {
   marker: string;
   position: TimelinePromptPositionSnapshot;
@@ -296,6 +302,32 @@ export async function reloadAgentTimelineFromPersistedReplica(
 
   await page.reload();
   await expectTimelinePromptVisible(page, agent.newestPrompt);
+}
+
+export async function waitForPersistedCanonicalTimelineRange(
+  page: Page,
+  agentId: string,
+): Promise<PersistedCanonicalTimelineRange> {
+  const readRange = async () => {
+    const cache = await readReplicaCache(page);
+    if (cache?.version !== 6) return null;
+    const range = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline?.range;
+    if (
+      typeof range?.epoch !== "string" ||
+      typeof range.startSeq !== "number" ||
+      typeof range.endSeq !== "number"
+    ) {
+      return null;
+    }
+    return { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq };
+  };
+
+  await expect.poll(readRange).not.toBeNull();
+  const range = await readRange();
+  if (!range) {
+    throw new Error(`Persisted canonical timeline range is missing for ${agentId}`);
+  }
+  return range;
 }
 
 export async function holdNextOlderTimelinePage(

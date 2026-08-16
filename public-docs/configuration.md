@@ -49,6 +49,28 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 `daemon.hostnames` is the primary field. The old `daemon.allowedHosts` name still works as a deprecated alias for backward compatibility.
 
+## Apply changes
+
+After saving `config.json`, reload it:
+
+```bash
+paseo reload
+```
+
+The daemon validates the complete file before applying anything. It applies runtime-safe changes and lists any settings that still need a restart. If it reports restart-required paths, run:
+
+```bash
+paseo daemon restart
+```
+
+Runtime-safe settings include relay enablement, MCP settings, browser tools, hostnames, CORS origins, trusted proxies, Git process limits, agent and terminal profiles, provider definitions, metadata generation, the app base URL, and provider catalog timeout. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
+
+New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
+
+Listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
+
+Environment variables and daemon start flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Remove the override and restart the daemon if you want the file value to become authoritative.
+
 ## Agent providers
 
 Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.
@@ -144,7 +166,7 @@ The easiest way to set a password is with the CLI:
 paseo daemon set-password
 ```
 
-This prompts for a password, writes the bcrypt hash to `config.json`, and tells you to restart the daemon.
+This prompts for a password, writes the bcrypt hash to `config.json`, and tells you to restart the daemon. Authentication is a startup setting, so `paseo reload` will also report it as restart-required.
 
 Alternatively, set the `PASEO_PASSWORD` environment variable (plaintext, hashed automatically at startup):
 

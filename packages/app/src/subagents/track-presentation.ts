@@ -1,6 +1,7 @@
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
+import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
 
 function presentationStatus(row: SubagentRow) {
@@ -55,7 +56,7 @@ export function formatHeaderLabel(rows: readonly SubagentRow[]): string {
 }
 
 export function countFinishedSubagents(rows: readonly SubagentRow[]): number {
-  return rows.filter((row) => row.kind === "provider" && row.status !== "running").length;
+  return rows.filter(isFinishedSubagent).length;
 }
 
 export function resolveRowLabel(title: string | null | undefined): string | null {

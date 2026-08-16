@@ -310,6 +310,50 @@ describe("shared messages attachments", () => {
     ]);
   });
 
+  it("preserves neutral external-resource presentation on text attachments", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-external-resource",
+      agentId: "agent-1",
+      text: "Implement this",
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          title: "ENG-123 Plugin attachments",
+          text: "Linear issue ENG-123: Plugin attachments",
+          externalResource: {
+            provider: "linear",
+            providerLabel: "Linear issue",
+            resourceType: "issue",
+            id: "issue-uuid",
+            identifier: "ENG-123",
+            title: "Plugin attachments",
+            url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "text",
+        mimeType: "text/plain",
+        title: "ENG-123 Plugin attachments",
+        text: "Linear issue ENG-123: Plugin attachments",
+        externalResource: {
+          provider: "linear",
+          providerLabel: "Linear issue",
+          resourceType: "issue",
+          id: "issue-uuid",
+          identifier: "ENG-123",
+          title: "Plugin attachments",
+          url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+        },
+      },
+    ]);
+  });
+
   it("keeps known firstAgentContext attachments and drops unknown ones", () => {
     const parsed = CreatePaseoWorktreeRequestSchema.parse({
       type: "create_paseo_worktree_request",

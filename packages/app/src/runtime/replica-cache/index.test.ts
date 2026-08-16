@@ -111,6 +111,31 @@ function message(id: string, text: string): StreamItem {
   };
 }
 
+function toolCall(): StreamItem {
+  return {
+    kind: "tool_call",
+    id: "tool-1",
+    timelineCursor: { epoch: "epoch-1", seq: 12 },
+    timestamp: new Date("2026-07-18T08:02:00.000Z"),
+    payload: {
+      source: "agent",
+      data: {
+        provider: "codex",
+        callId: "call-1",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "npm test",
+          output: "passed",
+          exitCode: 0,
+        },
+      },
+    },
+  };
+}
+
 function seedSession(): void {
   const store = useSessionStore.getState();
   store.initializeSession(SERVER_ID, null);
@@ -209,7 +234,7 @@ describe("ReplicaCache", () => {
     cache.setHosts([]);
   });
 
-  it("restores a displayable stale replica without claiming remote hydration", async () => {
+  it("restores the exact persisted canonical timeline window", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);
     writer.setHosts([SERVER_ID]);
@@ -237,11 +262,65 @@ describe("ReplicaCache", () => {
     expect(session.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session.workspaces.get("workspace-1")?.worktreeSlug).toBe("owned-worktree");
     expect(session.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
-    expect(session.agentAuthoritativeHistoryApplied).toEqual(new Map());
-    expect(session.agentTimelineCursor).toEqual(new Map());
-    expect(session.agentTimelineHasOlder).toEqual(new Map());
-    expect(session.agentTimelineHasNewer).toEqual(new Map());
+    expect(session.agentAuthoritativeHistoryApplied).toEqual(new Map([["agent-1", true]]));
+    expect(session.agentTimelineCursor).toEqual(
+      new Map([["agent-1", { epoch: "epoch-1", startSeq: 1, endSeq: 12 }]]),
+    );
+    expect(session.agentTimelineHasOlder).toEqual(new Map([["agent-1", true]]));
+    expect(session.agentTimelineHasNewer).toEqual(new Map([["agent-1", false]]));
     expect(session.agentHistorySyncGeneration).toEqual(new Map());
+    expect(selectAgentTimelineState(session, "agent-1")).toEqual({
+      status: "synced",
+      items: [message("message-1", "Cached")],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 12 },
+      older: "available",
+      newer: "none",
+    });
+  });
+
+  it("restores tool calls inside an authoritative cached window", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    useSessionStore.getState().setAgentStreamTail(SERVER_ID, new Map([["agent-1", [toolCall()]]]));
+    await writer.flush();
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(session?.agentStreamTail.get("agent-1")).toEqual([toolCall()]);
+    expect(session?.agentTimelineCursor.get("agent-1")).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 12,
+    });
+  });
+
+  it("restores display-only when retained items do not reach the stored range end", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    useSessionStore
+      .getState()
+      .setAgentTimelineCursor(
+        SERVER_ID,
+        new Map([["agent-1", { epoch: "epoch-1", startSeq: 1, endSeq: 13 }]]),
+      );
+    await writer.flush();
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(session?.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
+    expect(session?.agentTimelineCursor).toEqual(new Map());
     expect(selectAgentTimelineState(session, "agent-1")).toEqual({
       status: "painted",
       items: [message("message-1", "Cached")],
@@ -264,9 +343,10 @@ describe("ReplicaCache", () => {
         normalizeWorkspaceDescriptor(workspace("workspace-2", "project-2", "/repo/other")),
       ),
     );
-    const secondTimeline = Array.from({ length: 60 }, (_, index) =>
-      message(`message-${index}`, `Second ${index}`),
-    );
+    const secondTimeline = Array.from({ length: 60 }, (_, index) => ({
+      ...message(`message-${index}`, `Second ${index}`),
+      timelineCursor: { epoch: "epoch-2", seq: index + 1 },
+    }));
     store.setAgentStreamTail(
       SERVER_ID,
       new Map([
@@ -274,6 +354,12 @@ describe("ReplicaCache", () => {
         ["agent-2", secondTimeline],
       ]),
     );
+    store.setAgentTimelineCursor(
+      SERVER_ID,
+      new Map([["agent-2", { epoch: "epoch-2", startSeq: 1, endSeq: 60 }]]),
+    );
+    store.setAgentTimelineHasOlder(SERVER_ID, new Map([["agent-2", true]]));
+    store.setAgentAuthoritativeHistoryApplied(SERVER_ID, "agent-2", true);
     store.setFocusedAgentId(SERVER_ID, "agent-2");
     await cache.flush();
 
@@ -293,13 +379,23 @@ describe("ReplicaCache", () => {
     ]);
     expect(Array.from(timelines?.keys() ?? [])).toEqual(["agent-2"]);
     expect(timelines?.get("agent-2")).toEqual(secondTimeline.slice(-50));
+    expect(session?.agentTimelineCursor.has("agent-2")).toBe(false);
+    expect(selectAgentTimelineState(session, "agent-2")).toEqual({
+      status: "painted",
+      items: secondTimeline.slice(-50),
+    });
 
     const persisted = JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null") as {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(5);
-    expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
+    expect(persisted.version).toBe(6);
+    expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual([
+      "agentId",
+      "hasOlder",
+      "items",
+      "range",
+    ]);
   });
 
   it("persists reconciled rows without caching unreconciled local presentations", async () => {
@@ -404,12 +500,12 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects and clears version 4 cache data before overwriting it on flush", async () => {
+  it("rejects and clears version 5 cache data before overwriting it on flush", async () => {
     const storage = new MemoryStorage();
     storage.values.set(
       "@paseo:replica-cache",
       JSON.stringify({
-        version: 4,
+        version: 5,
         hosts: [
           {
             serverId: SERVER_ID,
@@ -435,7 +531,7 @@ describe("ReplicaCache", () => {
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
     expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 5,
+      version: 6,
       hosts: [],
     });
   });
