@@ -1256,9 +1256,11 @@ export class PiRpcAgentSession implements AgentSession {
   private interruptedTerminalError: { turnId: string; error: string } | null = null;
   // Client message ids of accepted steering prompts, consumed FIFO when Pi
   // delivers each message (message_start for a user entry) so the timeline echo
-  // carries the right clientMessageId. Multiple steers can be queued inside one
-  // turn, which the single activeClientMessageId slot cannot express.
-  private readonly steerClientMessageIds: string[] = [];
+  // carries the right clientMessageId. Every accepted steer reserves exactly
+  // one slot (null when it carried no client id) so echoes cannot steal the
+  // next steer's id. Multiple steers can be queued inside one turn, which the
+  // single activeClientMessageId slot cannot express.
+  private readonly steerClientMessageIds: Array<string | null> = [];
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1491,16 +1493,17 @@ export class PiRpcAgentSession implements AgentSession {
       );
       return { status: "unavailable" };
     }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
     // Pi steer does not accept extension commands; slash commands are handled
-    // by the out-of-band path in the daemon, so fall back to replace.
-    if (typeof prompt === "string" && this.parseSlashCommandInput(prompt) !== null) {
+    // by the out-of-band path in the daemon, so fall back to replace. The check
+    // runs on the converted text so structured prompts cannot bypass it.
+    if (this.parseSlashCommandInput(payload.text) !== null) {
       this.logger.info(
         { expectedTurnId: options.expectedTurnId },
         "pi.steer.unavailable.slash_command",
       );
       return { status: "unavailable" };
     }
-    const payload = convertPromptInput(prompt, { model: this.state.model });
     // Re-check after conversion: a finished turn cannot admit a steering message.
     if (this.activeTurnId !== options.expectedTurnId) {
       this.logger.warn(
@@ -1510,9 +1513,10 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     try {
-      if (options.clientMessageId) {
-        this.steerClientMessageIds.push(options.clientMessageId);
-      }
+      // Reserve the queue slot before delivery so a steer without a client id
+      // still consumes exactly one echo (null) instead of stealing the next
+      // steer's id.
+      this.steerClientMessageIds.push(options.clientMessageId ?? null);
       await this.runtimeSession.prompt(payload.text, payload.images, {
         streamingBehavior: "steer",
       });
@@ -1525,12 +1529,9 @@ export class PiRpcAgentSession implements AgentSession {
       );
       return { status: "accepted" };
     } catch (error) {
-      if (options.clientMessageId) {
-        const index = this.steerClientMessageIds.lastIndexOf(options.clientMessageId);
-        if (index !== -1) {
-          this.steerClientMessageIds.splice(index, 1);
-        }
-      }
+      // Admission is serialized per session, so the slot we just pushed is at
+      // the tail; drop it so a rejected steer never consumes an echo.
+      this.steerClientMessageIds.pop();
       if (isDefinitivePiSteerRejection(error)) {
         this.logger.info(
           {
@@ -1983,9 +1984,14 @@ export class PiRpcAgentSession implements AgentSession {
     }
     // Pi delivers accepted steering prompts as regular user entries; consume
     // the matching client id so the echo lands on the steered message rather
-    // than the turn's original prompt.
+    // than the turn's original prompt. Every accepted steer reserves one slot
+    // (null when it had no client id), so a steered echo is distinguishable
+    // from a plain turn prompt echo by queue non-emptiness.
+    const queuedClientMessageId = this.steerClientMessageIds.shift();
     const clientMessageId =
-      this.steerClientMessageIds.shift() ?? this.activeClientMessageId ?? undefined;
+      queuedClientMessageId === undefined
+        ? (this.activeClientMessageId ?? undefined)
+        : (queuedClientMessageId ?? undefined);
     this.emit({
       type: "timeline",
       provider: this.provider,

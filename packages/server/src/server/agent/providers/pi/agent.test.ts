@@ -1301,6 +1301,125 @@ describe("PiRpcAgentSession", () => {
 
       await session.close();
     });
+
+    test("matches mixed identified and unidentified steers to their echoes in order", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      // First steer carries a client id, second does not; Pi delivers in queue
+      // order, so the anonymous steer must consume a null slot instead of
+      // stealing the identified steer's id.
+      await session.steerActiveTurn("first", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-1",
+      });
+      await session.steerActiveTurn("second", { expectedTurnId: turnId });
+
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "first",
+          messageId: "entry-1",
+          clientMessageId: "client-1",
+        },
+        {
+          type: "user_message",
+          text: "second",
+          messageId: "entry-2",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("matches an unidentified steer before an identified one without stealing its id", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      await session.steerActiveTurn("first", { expectedTurnId: turnId });
+      await session.steerActiveTurn("second", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-2",
+      });
+
+      fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "first" });
+      fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "second" });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "first",
+          messageId: "entry-1",
+        },
+        {
+          type: "user_message",
+          text: "second",
+          messageId: "entry-2",
+          clientMessageId: "client-2",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("rejected steering leaves no queue slot for a later echo", async () => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt", {
+        clientMessageId: "turn-client",
+      });
+      fakeSession.promptError = new Error("connection reset");
+      await expect(
+        session.steerActiveTurn("follow up", {
+          expectedTurnId: turnId,
+          clientMessageId: "client-steer",
+        }),
+      ).rejects.toThrow("connection reset");
+      fakeSession.promptError = null;
+
+      // The rejected steer must not have reserved a queue slot: a plain turn
+      // prompt echo still falls back to the turn's activeClientMessageId.
+      fakeSession.finishSubmittedUserMessage({
+        id: "entry-1",
+        parentId: null,
+        text: "original prompt",
+      });
+
+      const userItems = userMessageItems(events);
+      expect(userItems).toEqual([
+        {
+          type: "user_message",
+          text: "original prompt",
+          messageId: "entry-1",
+          clientMessageId: "turn-client",
+        },
+      ]);
+
+      await session.close();
+    });
+
+    test("returns unavailable for structured prompts that contain a slash command", async () => {
+      const { pi, session } = await createSession();
+      const fakeSession = pi.latestSession();
+
+      const { turnId } = await session.startTurn("original prompt");
+      const result = await session.steerActiveTurn([{ type: "text", text: "/compact now" }], {
+        expectedTurnId: turnId,
+      });
+
+      expect(result).toEqual({ status: "unavailable" });
+      expect(fakeSession.prompts).toEqual([{ message: "original prompt", imageCount: 0 }]);
+
+      await session.close();
+    });
   });
 
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {
