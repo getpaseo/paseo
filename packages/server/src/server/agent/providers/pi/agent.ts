@@ -2247,7 +2247,14 @@ export class PiRpcAgentSession implements AgentSession {
           item: { type: "assistant_message", text },
         });
       }
-      this.completeTurn(turnId, []);
+      // Complete the turn only when this custom message is the whole turn: an
+      // extension command (e.g. `/show-status`) that never starts an agent
+      // turn, so no `agent_end` follows. During an active agent turn a custom
+      // message is side-channel output (an extension calling `pi.sendMessage`);
+      // the turn completes on `agent_end`.
+      if (!this.activeTurnStarted) {
+        this.completeTurn(turnId, []);
+      }
       return;
     }
   }

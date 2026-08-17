@@ -793,6 +793,43 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("does not complete an active agent turn on a mid-turn custom message", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("do work");
+    // An agent turn is running; a real `agent_end` will close it.
+    fakeSession.emit({ type: "agent_start" });
+
+    // An extension emits a custom message mid-turn via `pi.sendMessage`. It
+    // surfaces as a timeline item but must not complete the turn.
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "extension side-channel output" }],
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: { type: "assistant_message", text: "extension side-channel output" },
+      },
+    ]);
+
+    // Only the real terminal signal completes the turn.
+    fakeSession.emit({ type: "agent_end", messages: [] });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: { type: "assistant_message", text: "extension side-channel output" },
+      },
+      { type: "turn_completed" },
+    ]);
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
