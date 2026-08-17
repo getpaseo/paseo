@@ -7,6 +7,8 @@ import {
   Text,
   TextInput,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type PressableStateCallbackType,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -260,6 +262,7 @@ function getActiveLocale(language: string | undefined): SupportedLocale {
 }
 
 const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "external"];
+let desktopSidebarScrollOffset = 0;
 
 // ---------------------------------------------------------------------------
 // Section components
@@ -1007,6 +1010,7 @@ function SettingsSidebar({
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const scrollViewRef = useRef<ScrollView>(null);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1016,6 +1020,13 @@ function SettingsSidebar({
     [insets.top, isDesktop],
   );
   const selectedSectionId = view.kind === "section" ? view.section : null;
+  const handleSidebarScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    desktopSidebarScrollOffset = event.nativeEvent.contentOffset.y;
+  }, []);
+  useEffect(() => {
+    if (!isDesktop) return;
+    scrollViewRef.current?.scrollTo({ y: desktopSidebarScrollOffset, animated: false });
+  }, [isDesktop]);
   let selectedHostSection: HostSectionSlug | null = null;
   if (view.kind === "host") selectedHostSection = view.section;
   if (view.kind === "project") selectedHostSection = "projects";
@@ -1109,7 +1120,14 @@ function SettingsSidebar({
               testID="settings-back-to-workspace"
             />
           </View>
-          <ScrollView style={sidebarStyles.scrollBody} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            ref={scrollViewRef}
+            style={sidebarStyles.scrollBody}
+            showsVerticalScrollIndicator={false}
+            onScroll={handleSidebarScroll}
+            scrollEventThrottle={16}
+            testID="settings-sidebar-scroll"
+          >
             {sidebarBody}
           </ScrollView>
         </View>

@@ -74,6 +74,29 @@ test.describe("Settings sidebar navigation", () => {
     await expectAppearanceContent(page);
   });
 
+  test("sidebar scroll position survives section navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const sidebarScroll = page.getByTestId("settings-sidebar-scroll");
+    await sidebarScroll.evaluate((element) => {
+      element.scrollTo({ top: 160 });
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const scrollOffset = await sidebarScroll.evaluate((element) => element.scrollTop);
+    expect(scrollOffset).toBeGreaterThan(0);
+    await expect(sidebarScroll.getByRole("button", { name: "About", exact: true })).toBeVisible();
+
+    await openSettingsSection(page, "about");
+    await expectSettingsHeader(page, "About");
+    await expectAboutContent(page);
+
+    const replacementSidebarScroll = page.getByTestId("settings-sidebar-scroll");
+    await expect(replacementSidebarScroll).toBeVisible();
+    await expect(replacementSidebarScroll).toHaveJSProperty("scrollTop", scrollOffset);
+  });
+
   test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
