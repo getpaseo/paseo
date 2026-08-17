@@ -83,7 +83,7 @@ import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-d
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
-import { useToolCallSheet } from "./tool-call-sheet";
+import { useToolCallSheet, type ToolCallSheetData } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import {
   AssistantInlineCodePathLink,
@@ -3070,8 +3070,9 @@ export const ToolCall = memo(function ToolCall({
   forceInline = false,
   maxDetailHeight = 400,
 }: ToolCallProps) {
-  const { openToolCall } = useToolCallSheet();
+  const { openToolCall, syncToolCallData } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
+  const sheetTokenRef = useRef<object | null>(null);
 
   const isMobile = useIsCompactFormFactor();
   // The desktop shell renders tool details inline, but on native tablets that
@@ -3116,29 +3117,35 @@ export const ToolCall = memo(function ToolCall({
     return () => onOpenFilePath(openFilePath);
   }, [presentation.openFilePath, onOpenFilePath]);
 
+  const buildSheetData = useCallback(
+    (): ToolCallSheetData => ({
+      displayName: presentation.displayName,
+      summary: presentation.summary,
+      detail: effectiveDetail,
+      errorText: presentation.errorText,
+      icon: presentation.icon,
+      showLoadingSkeleton: presentation.isLoadingDetails,
+    }),
+    [presentation, effectiveDetail],
+  );
+
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
-      openToolCall({
-        displayName: presentation.displayName,
-        summary: presentation.summary,
-        detail: effectiveDetail,
-        errorText: presentation.errorText,
-        icon: presentation.icon,
-        showLoadingSkeleton: presentation.isLoadingDetails,
-      });
+      const token = {};
+      sheetTokenRef.current = token;
+      openToolCall(token, buildSheetData());
     } else {
       setIsExpanded((prev) => !prev);
     }
-  }, [
-    shouldRenderInline,
-    openToolCall,
-    presentation.displayName,
-    presentation.summary,
-    presentation.errorText,
-    presentation.icon,
-    presentation.isLoadingDetails,
-    effectiveDetail,
-  ]);
+  }, [shouldRenderInline, openToolCall, buildSheetData]);
+
+  // Re-sync the open sheet with the live tool call as stream updates arrive, so
+  // streaming output keeps growing instead of freezing at open time.
+  useEffect(() => {
+    if (sheetTokenRef.current) {
+      syncToolCallData(sheetTokenRef.current, buildSheetData());
+    }
+  }, [buildSheetData, syncToolCallData]);
 
   useEffect(() => {
     if (!onInlineDetailsHoverChange || !shouldRenderInline || isExpanded) {

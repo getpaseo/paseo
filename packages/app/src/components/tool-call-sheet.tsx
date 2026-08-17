@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useCallback, useMemo } from "react";
+import React, { createContext, useContext, useCallback, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
-import { View, Text, Pressable } from "react-native";
+import { BackHandler, View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
+import { isWeb } from "@/constants/platform";
 import {
   BottomSheetScrollView,
   BottomSheetBackdrop,
@@ -29,8 +30,9 @@ export interface ToolCallSheetData {
 }
 
 interface ToolCallSheetContextValue {
-  openToolCall: (data: ToolCallSheetData) => void;
+  openToolCall: (token: object, data: ToolCallSheetData) => void;
   closeToolCall: () => void;
+  syncToolCallData: (token: object, data: ToolCallSheetData) => void;
 }
 
 // ----- Context -----
@@ -62,21 +64,49 @@ interface ToolCallSheetProviderProps {
   children: ReactNode;
 }
 
+// The sheet renders live tool call data through a token-scoped sync: the caller
+// opens with an opaque token and re-syncs on every stream update, so the sheet
+// follows streaming output instead of freezing at the moment it was opened.
+interface ToolCallSheetSession {
+  token: object;
+  data: ToolCallSheetData;
+}
+
 export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) {
   const { theme } = useUnistyles();
-  const [sheetData, setSheetData] = React.useState<ToolCallSheetData | null>(null);
+  const [session, setSession] = React.useState<ToolCallSheetSession | null>(null);
   const [isSheetOpen, setIsSheetOpen] = React.useState(false);
 
   const snapPoints = useMemo(() => ["60%", "95%"], []);
 
-  const openToolCall = useCallback((data: ToolCallSheetData) => {
-    setSheetData(data);
+  const openToolCall = useCallback((token: object, data: ToolCallSheetData) => {
+    setSession({ token, data });
     setIsSheetOpen(true);
   }, []);
 
   const closeToolCall = useCallback(() => {
     setIsSheetOpen(false);
   }, []);
+
+  const syncToolCallData = useCallback((token: object, data: ToolCallSheetData) => {
+    setSession((current) =>
+      current !== null && current.token === token ? { ...current, data } : current,
+    );
+  }, []);
+
+  // Android's hardware back closes the sheet instead of exiting the app. Gorhom
+  // v5 mounts no native Modal, so no onRequestClose exists; a BackHandler is the
+  // only path. Web and desktop never see this handler.
+  useEffect(() => {
+    if (isWeb || !isSheetOpen) {
+      return;
+    }
+    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
+      closeToolCall();
+      return true;
+    });
+    return () => handler.remove();
+  }, [closeToolCall, isSheetOpen]);
 
   const {
     sheetRef: bottomSheetRef,
@@ -89,7 +119,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
 
   const handleToolCallSheetDismiss = useCallback(() => {
     handleSheetDismiss();
-    setSheetData(null);
+    setSession(null);
   }, [handleSheetDismiss]);
 
   const renderBackdrop = useCallback(
@@ -100,8 +130,8 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
   );
 
   const contextValue = useMemo(
-    () => ({ openToolCall, closeToolCall }),
-    [openToolCall, closeToolCall],
+    () => ({ openToolCall, closeToolCall, syncToolCallData }),
+    [openToolCall, closeToolCall, syncToolCallData],
   );
 
   const handleIndicatorStyle = useMemo(
@@ -125,7 +155,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
         backgroundComponent={CustomSheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
       >
-        {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
+        {session && <ToolCallSheetContent data={session.data} onClose={closeToolCall} />}
       </IsolatedBottomSheetModal>
     </ToolCallSheetContext.Provider>
   );

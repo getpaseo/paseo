@@ -1945,7 +1945,11 @@ function WorkspaceScreenContent({
   );
 
   useEffect(() => {
-    if (!isRouteFocused || isWeb || !isExplorerOpen) {
+    // Only the compact layout registers this handler: the mobile explorer panel
+    // is a full-screen overlay that back should dismiss. In the desktop shell
+    // the explorer is an inline pane with its own close button, so back exits
+    // the app directly like every other desktop window.
+    if (!isRouteFocused || isWeb || !isMobile || !isExplorerOpen) {
       return;
     }
 
@@ -1958,7 +1962,7 @@ function WorkspaceScreenContent({
     });
 
     return () => handler.remove();
-  }, [isExplorerOpen, isRouteFocused, showMobileAgent]);
+  }, [isExplorerOpen, isMobile, isRouteFocused, showMobileAgent]);
 
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
