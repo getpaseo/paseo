@@ -177,19 +177,36 @@ export interface SettingsDeps {
 
 const appSettingsSaveQueues = new WeakMap<QueryClient, Promise<void>>();
 
-export async function saveAppSettings(input: {
-  queryClient: QueryClient;
-  updates: Partial<AppSettings>;
-  deps: SettingsDeps;
-}): Promise<void> {
-  const previousSave = appSettingsSaveQueues.get(input.queryClient) ?? Promise.resolve();
+async function enqueueAppSettingsSave(
+  queryClient: QueryClient,
+  operation: () => Promise<void>,
+): Promise<void> {
+  const previousSave = appSettingsSaveQueues.get(queryClient) ?? Promise.resolve();
   const save = (async () => {
     try {
       await previousSave;
     } catch {
       // The previous caller receives its persistence error; this save must still run.
     }
+    await operation();
+  })();
+  appSettingsSaveQueues.set(queryClient, save);
 
+  try {
+    await save;
+  } finally {
+    if (appSettingsSaveQueues.get(queryClient) === save) {
+      appSettingsSaveQueues.delete(queryClient);
+    }
+  }
+}
+
+export async function saveAppSettings(input: {
+  queryClient: QueryClient;
+  updates: Partial<AppSettings>;
+  deps: SettingsDeps;
+}): Promise<void> {
+  await enqueueAppSettingsSave(input.queryClient, async () => {
     const storedCurrent =
       input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
       (await loadAppSettingsFromStorage(input.deps));
@@ -197,16 +214,18 @@ export async function saveAppSettings(input: {
     const next = { ...current, ...input.updates };
     await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
     input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-  })();
-  appSettingsSaveQueues.set(input.queryClient, save);
+  });
+}
 
-  try {
-    await save;
-  } finally {
-    if (appSettingsSaveQueues.get(input.queryClient) === save) {
-      appSettingsSaveQueues.delete(input.queryClient);
-    }
-  }
+export async function resetAppSettings(input: {
+  queryClient: QueryClient;
+  deps: SettingsDeps;
+}): Promise<void> {
+  await enqueueAppSettingsSave(input.queryClient, async () => {
+    const next = { ...DEFAULT_CLIENT_SETTINGS };
+    await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+    input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+  });
 }
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {

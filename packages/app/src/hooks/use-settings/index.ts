@@ -29,6 +29,7 @@ import {
   normalizeAppSettings,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  resetAppSettings as resetAppSettingsPure,
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppSettings,
@@ -141,9 +142,7 @@ export function useAppSettings(): UseAppSettingsReturn {
 
   const resetSettings = useCallback(async () => {
     try {
-      const next = { ...DEFAULT_CLIENT_SETTINGS };
-      queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      await resetAppSettings({ queryClient });
     } catch (err) {
       console.error("[AppSettings] Failed to reset settings:", err);
       throw err;
@@ -236,6 +235,16 @@ export async function saveAppSettings(input: {
   await saveAppSettingsPure({
     queryClient: input.queryClient,
     updates: input.updates,
+    deps: input.deps ?? productionDeps,
+  });
+}
+
+export async function resetAppSettings(input: {
+  queryClient: QueryClient;
+  deps?: SettingsDeps;
+}): Promise<void> {
+  await resetAppSettingsPure({
+    queryClient: input.queryClient,
     deps: input.deps ?? productionDeps,
   });
 }

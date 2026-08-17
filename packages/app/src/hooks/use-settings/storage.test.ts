@@ -11,6 +11,7 @@ import {
   loadSettingsFromStorage,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  resetAppSettings,
   saveAppSettings,
   type KeyValueStorage,
   type SettingsDeps,
@@ -433,6 +434,51 @@ describe("saveAppSettings", () => {
     };
     expect(JSON.parse(entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(expected);
     expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toEqual(expected);
+  });
+
+  it("serializes reset after an in-flight update", async () => {
+    const entries = new Map([[APP_SETTINGS_KEY, JSON.stringify(DEFAULT_CLIENT_SETTINGS)]]);
+    let releaseFirstWrite = () => {};
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let markFirstWriteStarted = () => {};
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      markFirstWriteStarted = resolve;
+    });
+    let writeCount = 0;
+    const storage: KeyValueStorage = {
+      async getItem(key) {
+        return entries.get(key) ?? null;
+      },
+      async setItem(key, value) {
+        writeCount += 1;
+        if (writeCount === 1) {
+          markFirstWriteStarted();
+          await firstWriteGate;
+        }
+        entries.set(key, value);
+      },
+    };
+    const deps = { storage, desktop: createFakeDesktopBridge() };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+
+    const save = saveAppSettings({
+      queryClient,
+      updates: { theme: "light" },
+      deps,
+    });
+    await firstWriteStarted;
+    const reset = resetAppSettings({ queryClient, deps });
+
+    await Promise.resolve();
+    expect(writeCount).toBe(1);
+    releaseFirstWrite();
+    await Promise.all([save, reset]);
+
+    expect(JSON.parse(entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(DEFAULT_CLIENT_SETTINGS);
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toEqual(DEFAULT_CLIENT_SETTINGS);
   });
 
   it("does not update the cache when persistence fails", async () => {
