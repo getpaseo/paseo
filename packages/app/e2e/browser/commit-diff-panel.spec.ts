@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
+import { openChangesPanel } from "../support/helpers/workspace-tabs";
 
 const COMMIT_SUBJECT = "Show commit timestamps";
 
@@ -13,7 +14,7 @@ test("commit history explains when the workspace has no commits ahead of its bas
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: workspace.repoPath, stdio: "ignore" });
   await workspace.navigateTo();
 
-  await page.getByRole("button", { name: "Open explorer" }).click();
+  await openChangesPanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -33,7 +34,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
 
-  await page.getByRole("button", { name: "Open explorer" }).click();
+  await openChangesPanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -57,6 +58,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("diff-code-row-0")).toHaveCount(0);
   await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
 
+  await page.getByTestId(/^workspace-tab-commit_diff_/).hover();
   await page.getByTestId(/^workspace-commit-diff-close-/).click();
   await expect(panel).toHaveCount(0);
   await commitRow.click();

@@ -80,6 +80,19 @@ describe("working diff tab identity", () => {
   });
 });
 
+describe("workspace utility panel identity", () => {
+  it.each(["files", "pull_request"] as const)(
+    "normalizes and deterministically keys %s",
+    (kind) => {
+      const target = { kind };
+
+      expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+      expect(buildDeterministicWorkspaceTabId(target)).toBe(kind);
+      expect(workspaceTabTargetsEqual(target, target)).toBe(true);
+    },
+  );
+});
+
 describe("commit diff tab identity", () => {
   it("keys a commit diff tab by its sha", () => {
     expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(

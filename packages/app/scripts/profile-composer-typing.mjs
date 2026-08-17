@@ -4,17 +4,28 @@ import { chromium } from "playwright";
 
 const baseUrl = process.env.PASEO_PROFILE_APP_URL ?? "http://localhost:19010";
 const cadenceMs = Number(process.env.PASEO_PROFILE_TYPING_CADENCE_MS ?? 16);
-const sampleCount = Number(process.env.PASEO_PROFILE_TYPING_KEYS ?? 300);
+const scenario = process.env.PASEO_PROFILE_TYPING_SCENARIO ?? "continuous-text";
+if (!["continuous-text", "height-growth"].includes(scenario)) {
+  throw new Error(
+    `Unknown PASEO_PROFILE_TYPING_SCENARIO: ${scenario}. Use continuous-text or height-growth.`,
+  );
+}
+const sampleCount = Number(
+  process.env.PASEO_PROFILE_TYPING_KEYS ?? (scenario === "height-growth" ? 24 : 300),
+);
 const repeatCount = Number(process.env.PASEO_PROFILE_TYPING_REPEATS ?? 3);
 const workspaceDigit = process.env.PASEO_PROFILE_WORKSPACE_DIGIT ?? "1";
 const headless = process.env.PASEO_PROFILE_HEADLESS !== "0";
 const cpuProfilePath = process.env.PASEO_PROFILE_CPU_PATH;
 const tracePath = process.env.PASEO_PROFILE_TRACE_PATH;
 const alphabet = "abcdefghijklmnopqrstuvwxyz";
-const measuredText = Array.from(
-  { length: sampleCount },
-  (_, index) => alphabet[index % alphabet.length],
-).join("");
+const measuredInput = Array.from({ length: sampleCount }, (_, index) => {
+  if (scenario === "height-growth" && index % 2 === 0) {
+    return { key: "Enter", text: "\n", shiftKey: true };
+  }
+  return { key: alphabet[index % alphabet.length], text: alphabet[index % alphabet.length] };
+});
+const measuredText = measuredInput.map((input) => input.text).join("");
 
 function round(value) {
   return Math.round(value * 100) / 100;
@@ -60,6 +71,29 @@ function keyCode(character) {
     code: `Key${upper}`,
     windowsVirtualKeyCode: upper.charCodeAt(0),
   };
+}
+
+function reactScope(id) {
+  if (
+    id.startsWith("AgentComposerSection:") ||
+    ["ComposerContent", "MessageInput", "ComposerTextSurface"].includes(id)
+  ) {
+    return "composer";
+  }
+  if (id.startsWith("AgentStreamSection:") || id.startsWith("AgentStreamView:")) {
+    return "stream";
+  }
+  return "ancestor/root (includes descendants)";
+}
+
+function measuredInputKind(sequence) {
+  if (measuredInput[sequence].key === "Enter") {
+    return "newline";
+  }
+  if (measuredInput[sequence - 1]?.key === "Enter") {
+    return "printable after newline";
+  }
+  return "printable";
 }
 
 async function installAppBootstrap(page) {
@@ -139,6 +173,13 @@ async function installTypingProbe(page, target) {
     if (!(element instanceof HTMLTextAreaElement)) {
       throw new Error(`Typing target ${probeTarget} was not found`);
     }
+    const composerRoot = element.closest('[data-testid="message-input-root"]');
+    const readLayout = () => ({
+      inputHeight: element.getBoundingClientRect().height,
+      composerHeight: composerRoot?.getBoundingClientRect().height ?? null,
+      valueLength: element.value.length,
+      lineCount: element.value.split("\n").length,
+    });
 
     let sequence = 0;
     let frameScheduled = false;
@@ -147,6 +188,7 @@ async function installTypingProbe(page, target) {
     const keydownAt = [];
     const inputAt = [];
     const paintedAt = [];
+    const paintedLayout = [];
     const longTasks = [];
     const eventTimings = [];
     const longTaskObserver = new PerformanceObserver((list) => {
@@ -171,7 +213,7 @@ async function installTypingProbe(page, target) {
     const onKeydown = (event) => {
       if (
         event.target !== element ||
-        event.key.length !== 1 ||
+        (event.key.length !== 1 && !(event.key === "Enter" && event.shiftKey)) ||
         event.metaKey ||
         event.ctrlKey ||
         event.altKey
@@ -195,6 +237,7 @@ async function installTypingProbe(page, target) {
         const frameAt = performance.now();
         for (const completedSequence of pending.splice(0)) {
           paintedAt[completedSequence] = frameAt;
+          paintedLayout[completedSequence] = readLayout();
         }
       });
     };
@@ -210,6 +253,8 @@ async function installTypingProbe(page, target) {
       keydownAt,
       inputAt,
       paintedAt,
+      initialLayout: readLayout(),
+      paintedLayout,
       longTasks,
       eventTimings,
       timeOrigin: performance.timeOrigin,
@@ -254,6 +299,116 @@ function summarizeReactComponents(samples) {
   return [...totals.values()].sort((left, right) => right.durationMs - left.durationMs);
 }
 
+function summarizeReactScopes(samples) {
+  const totals = new Map();
+  for (const sample of samples) {
+    const scope = reactScope(sample.id);
+    const current = totals.get(scope) ?? {
+      scope,
+      profilerCallbacks: 0,
+      renderingCallbacks: 0,
+      durationMs: 0,
+      components: new Set(),
+    };
+    current.profilerCallbacks += 1;
+    if (sample.actualDuration > 0.01) {
+      current.renderingCallbacks += 1;
+    }
+    current.durationMs += sample.actualDuration;
+    current.components.add(sample.id);
+    totals.set(scope, current);
+  }
+  return [...totals.values()]
+    .map((total) => ({
+      scope: total.scope,
+      profilerCallbacks: total.profilerCallbacks,
+      renderingCallbacks: total.renderingCallbacks,
+      durationMs: round(total.durationMs),
+      components: [...total.components].sort(),
+    }))
+    .sort((left, right) => right.durationMs - left.durationMs);
+}
+
+function summarizeReactByInputKind(samples, keydownAt, paintedAt) {
+  const totals = new Map();
+  for (const sample of samples) {
+    const sequence = keydownAt.findIndex(
+      (startedAt, index) =>
+        sample.commitTime >= startedAt &&
+        sample.commitTime < (keydownAt[index + 1] ?? paintedAt[index] + cadenceMs),
+    );
+    if (sequence === -1) continue;
+    const inputKind = measuredInputKind(sequence);
+    const scope = reactScope(sample.id);
+    const key = `${inputKind}:${scope}`;
+    const current = totals.get(key) ?? {
+      inputKind,
+      scope,
+      commits: new Set(),
+      renderingCommits: new Set(),
+      durationMs: 0,
+    };
+    current.commits.add(sample.commitTime);
+    if (sample.actualDuration > 0.01) {
+      current.renderingCommits.add(sample.commitTime);
+    }
+    current.durationMs += sample.actualDuration;
+    totals.set(key, current);
+  }
+  return [...totals.values()]
+    .map((total) => ({
+      inputKind: total.inputKind,
+      scope: total.scope,
+      commits: total.commits.size,
+      renderingCommits: total.renderingCommits.size,
+      durationMs: round(total.durationMs),
+    }))
+    .sort(
+      (left, right) =>
+        left.inputKind.localeCompare(right.inputKind) || left.scope.localeCompare(right.scope),
+    );
+}
+
+function summarizeHeightGrowth(initialLayout, layout) {
+  const changes = [];
+  const textAfterNewlineShifts = [];
+  for (let sequence = 0; sequence < layout.length; sequence += 1) {
+    const previous = sequence === 0 ? initialLayout : layout[sequence - 1];
+    const current = layout[sequence];
+    if (!previous || !current) continue;
+    const inputDelta = round(current.inputHeight - previous.inputHeight);
+    const composerDelta =
+      current.composerHeight === null || previous.composerHeight === null
+        ? null
+        : round(current.composerHeight - previous.composerHeight);
+    if (inputDelta !== 0 || (composerDelta !== null && composerDelta !== 0)) {
+      const change = {
+        sequence,
+        key: measuredInput[sequence].key,
+        inputDelta,
+        composerDelta,
+        inputHeight: current.inputHeight,
+        composerHeight: current.composerHeight,
+        lineCount: current.lineCount,
+      };
+      changes.push(change);
+      if (
+        sequence > 0 &&
+        measuredInput[sequence - 1].key === "Enter" &&
+        measuredInput[sequence].key !== "Enter"
+      ) {
+        textAfterNewlineShifts.push(change);
+      }
+    }
+  }
+  return {
+    initial: initialLayout,
+    final: layout.at(-1) ?? null,
+    changes,
+    textAfterNewlineShifts,
+  };
+}
+
 function summarizeReactCommitShapes(commits) {
   const shapes = new Map();
   for (const commit of commits) {
@@ -275,16 +430,16 @@ function summarizeReactCommitShapes(commits) {
   return [...shapes.values()].sort((left, right) => right.rootDurationMs - left.rootDurationMs);
 }
 
-async function dispatchMeasuredText(page, text) {
+async function dispatchMeasuredInput(page, inputs) {
   const session = await page.context().newCDPSession(page);
-  const dispatchedAt = Array.from({ length: text.length });
-  const scheduledAt = Array.from({ length: text.length });
+  const dispatchedAt = Array.from({ length: inputs.length });
+  const scheduledAt = Array.from({ length: inputs.length });
   const now = () => performance.timeOrigin + performance.now();
   const startedAt = now() + 100;
   const dispatches = [];
 
   await Promise.all(
-    Array.from(text, async (character, sequence) => {
+    inputs.map(async (input, sequence) => {
       const dueAt = startedAt + sequence * cadenceMs;
       scheduledAt[sequence] = dueAt;
       const waitMs = dueAt - now();
@@ -292,18 +447,22 @@ async function dispatchMeasuredText(page, text) {
         await new Promise((resolve) => setTimeout(resolve, waitMs));
       }
       dispatchedAt[sequence] = now();
-      const key = keyCode(character);
+      const key =
+        input.key === "Enter" ? { code: "Enter", windowsVirtualKeyCode: 13 } : keyCode(input.key);
+      const modifiers = input.shiftKey ? 8 : 0;
       dispatches.push(
         session.send("Input.dispatchKeyEvent", {
           type: "keyDown",
-          key: character,
-          text: character,
-          unmodifiedText: character,
+          key: input.key,
+          text: input.key === "Enter" ? "\r" : input.text,
+          unmodifiedText: input.key === "Enter" ? "\r" : input.text,
+          modifiers,
           ...key,
         }),
         session.send("Input.dispatchKeyEvent", {
           type: "keyUp",
-          key: character,
+          key: input.key,
+          modifiers,
           ...key,
         }),
       );
@@ -334,14 +493,18 @@ async function measureTarget(page, input, target, originalText) {
   await input.evaluate((element) => {
     element.setSelectionRange(element.value.length, element.value.length);
   });
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
   await installTypingProbe(page, target);
   await page.evaluate(() => globalThis.__PASEO_RESET_RENDER_PROFILE__?.());
-  const { dispatchedAt, scheduledAt } = await dispatchMeasuredText(page, measuredText);
+  const { dispatchedAt, scheduledAt } = await dispatchMeasuredInput(page, measuredInput);
   await waitForMeasurement(page, measuredText.length);
 
   const diagnostics = await page.evaluate(() => ({
     state: globalThis.__PASEO_TYPING_BENCHMARK__,
     commits: globalThis.__PASEO_RENDER_PROFILE__ ?? [],
+    renderReasons: globalThis.__PASEO_RENDER_PROFILE_REASONS__ ?? {},
     value: document.activeElement?.value ?? null,
   }));
   if (diagnostics.value !== `${originalText}${measuredText}`) {
@@ -398,7 +561,15 @@ async function measureTarget(page, input, target, originalText) {
     reactCommitCount: rootCommits.length,
     rootReactDurationMs: round(rootCommits.reduce((sum, commit) => sum + commit.rootDurationMs, 0)),
     reactComponents: summarizeReactComponents(diagnostics.commits),
+    reactScopes: summarizeReactScopes(diagnostics.commits),
+    reactByInputKind: summarizeReactByInputKind(
+      diagnostics.commits,
+      state.keydownAt,
+      state.paintedAt,
+    ),
+    reactRenderReasons: diagnostics.renderReasons,
     reactCommitShapes: summarizeReactCommitShapes(commits),
+    heightGrowth: summarizeHeightGrowth(state.initialLayout, state.paintedLayout),
     longTasks: state.longTasks,
     slowSamples,
   };
@@ -426,7 +597,7 @@ async function captureCpuProfile(page, input, originalText) {
   await session.send("Profiler.setSamplingInterval", { interval: 100 });
   await session.send("Profiler.start");
   try {
-    await dispatchMeasuredText(page, measuredText);
+    await dispatchMeasuredInput(page, measuredInput);
     await waitForMeasurement(page, measuredText.length);
   } finally {
     const { profile } = await session.send("Profiler.stop");
@@ -473,7 +644,7 @@ async function captureTrace(page, input, originalText) {
     transferMode: "ReturnAsStream",
   });
   try {
-    await dispatchMeasuredText(page, measuredText);
+    await dispatchMeasuredInput(page, measuredInput);
     await waitForMeasurement(page, measuredText.length);
   } finally {
     await session.send("Tracing.end");
@@ -520,9 +691,12 @@ async function main() {
       JSON.stringify(
         {
           appUrl: baseUrl,
+          scenario,
           cadenceMs,
           sampleCount,
           repeatCount,
+          reactScopeNote:
+            "Profiler boundaries are nested. Ancestor/root durations include descendant work and must not be added to composer or stream durations.",
           cpuProfilePath: cpuProfilePath ?? null,
           tracePath: tracePath ?? null,
           runs,

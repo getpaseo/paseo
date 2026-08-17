@@ -1586,7 +1586,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       setBoundedInputHeight(inputHeightRef.current);
     }, [setBoundedInputHeight]);
 
-    useComposerHeightMirror({
+    const measureComposerHeight = useComposerHeightMirror({
       value,
       textareaRef: webTextareaRef,
       minHeight: MIN_INPUT_HEIGHT,
@@ -1689,10 +1689,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const handleInputChange = useCallback(
       (nextValue: string) => {
         valueRef.current = nextValue;
+        measureComposerHeight(nextValue);
         updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [onChangeText, updateLiveTextPresence],
+      [measureComposerHeight, onChangeText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {

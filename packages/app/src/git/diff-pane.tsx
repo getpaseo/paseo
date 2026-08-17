@@ -12,6 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { DiffStat } from "@/components/diff-stat";
+import { TreeRail } from "@/components/tree-rail";
 import {
   View,
   Text,
@@ -1575,6 +1576,7 @@ interface GitDiffPaneProps {
   workspaceId?: string | null;
   cwd: string;
   enabled?: boolean;
+  host: "explorer" | "panel";
   onOpenFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
 }
@@ -1658,6 +1660,29 @@ interface ChangesTabToggleProps {
   isMobile: boolean;
   selected: boolean;
   onPress: () => void;
+}
+
+function resolveChangesTabOpen(host: "explorer" | "panel", changesTabOpen: boolean): boolean {
+  return host === "explorer" ? changesTabOpen : false;
+}
+
+function resolveChangesFilePress(
+  host: "explorer" | "panel",
+  onChangesFilePress: ((path?: string) => void) | undefined,
+): ((path?: string) => void) | undefined {
+  return host === "explorer" ? onChangesFilePress : undefined;
+}
+
+function ChangesTabToggleForHost({
+  host,
+  isMobile,
+  selected,
+  onPress,
+}: ChangesTabToggleProps & { host: "explorer" | "panel" }) {
+  if (host === "panel") {
+    return null;
+  }
+  return <ChangesTabToggle isMobile={isMobile} selected={selected} onPress={onPress} />;
 }
 
 interface DiffModeMenuProps {
@@ -1749,17 +1774,21 @@ function ChangesTabToggle({ isMobile, selected, onPress }: ChangesTabToggleProps
 interface DiffViewModeToggleProps {
   viewMode: "flat" | "tree";
   isMobile: boolean;
-  toggleStyle: PressableStyleFn;
+  toggleStyle?: PressableStyleFn;
   onToggle: () => void;
 }
 
-function DiffViewModeToggle({
+export function DiffViewModeToggle({
   viewMode,
   isMobile,
   toggleStyle,
   onToggle,
 }: DiffViewModeToggleProps) {
   const { t } = useTranslation();
+  const defaultToggleStyle = useMemo(
+    () => buildToggleButtonStyle(viewMode === "tree", styles.expandAllButton),
+    [viewMode],
+  );
   const label =
     viewMode === "flat"
       ? t("workspace.git.diff.showTreeView")
@@ -1771,7 +1800,7 @@ function DiffViewModeToggle({
           accessibilityRole="button"
           accessibilityLabel={label}
           testID="changes-toggle-view-mode"
-          style={toggleStyle}
+          style={toggleStyle ?? defaultToggleStyle}
           onPress={onToggle}
         >
           {viewMode === "flat" ? (
@@ -2139,6 +2168,8 @@ interface SharedDiffViewProps {
         kind: "commit";
       };
 }
+
+type WorkingTreeDiffMode = Extract<SharedDiffViewProps["mode"], { kind: "working_tree" }>;
 
 export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffViewProps) {
   const isCompact = useIsCompactFormFactor();
@@ -2929,6 +2960,81 @@ function useChangesTreeState({
   };
 }
 
+export function ChangedFilesTree({
+  workspaceId,
+  cwd,
+  files,
+  displayPreferences,
+  workingTreeMode,
+}: {
+  workspaceId?: string | null;
+  cwd: string;
+  files: ParsedDiffFile[];
+  displayPreferences: SharedDiffViewProps["displayPreferences"];
+  workingTreeMode: WorkingTreeDiffMode;
+}) {
+  const treeState = useChangesTreeState({
+    workspaceId,
+    cwd,
+    files,
+    viewMode: "tree",
+    changesTabOpen: false,
+    onViewModeChange: () => {},
+  });
+  const mode = useMemo(
+    () => ({
+      ...workingTreeMode,
+      viewMode: "tree" as const,
+      expandedPaths: EMPTY_PATH_LIST,
+      collapsedFolders: treeState.collapsedFolders,
+      onExpandedPathsChange: () => {},
+      onCollapsedFoldersChange: treeState.updateCollapsedFolders,
+    }),
+    [treeState.collapsedFolders, treeState.updateCollapsedFolders, workingTreeMode],
+  );
+  return <SharedDiffView files={files} displayPreferences={displayPreferences} mode={mode} />;
+}
+
+function GitDiffTreeRail({
+  shown,
+  children,
+  workspaceId,
+  cwd,
+  files,
+  displayPreferences,
+  workingTreeMode,
+}: {
+  shown: boolean;
+  children: ReactElement;
+  workspaceId?: string | null;
+  cwd: string;
+  files: ParsedDiffFile[];
+  displayPreferences: SharedDiffViewProps["displayPreferences"];
+  workingTreeMode: WorkingTreeDiffMode;
+}) {
+  if (!shown) return children;
+  return (
+    <TreeRail testID="changes-tree-rail">
+      {children}
+      <ChangedFilesTree
+        workspaceId={workspaceId}
+        cwd={cwd}
+        files={files}
+        displayPreferences={displayPreferences}
+        workingTreeMode={workingTreeMode}
+      />
+    </TreeRail>
+  );
+}
+
+function resolveWorkingTreeMode<T>(isMobile: boolean, mobileMode: T, desktopMode: T): T {
+  return isMobile ? mobileMode : desktopMode;
+}
+
+function shouldShowTreeRail(viewMode: "flat" | "tree", isMobile: boolean): boolean {
+  return viewMode === "tree" && !isMobile;
+}
+
 function useDiffTabNavigation({
   serverId,
   workspaceId,
@@ -3000,6 +3106,7 @@ export function GitDiffPane({
   workspaceId,
   cwd,
   enabled,
+  host,
   onOpenFile,
   onAddToChat,
 }: GitDiffPaneProps) {
@@ -3049,11 +3156,13 @@ export function GitDiffPane({
   });
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
   const {
-    changesTabOpen,
+    changesTabOpen: workspaceChangesTabOpen,
     toggleChanges: handleToggleChangesTab,
     openCommit: handleCommitPress,
-    onChangesFilePress,
+    onChangesFilePress: workspaceOnChangesFilePress,
   } = useDiffTabNavigation({ serverId, workspaceId, cwd, isMobile });
+  const changesTabOpen = resolveChangesTabOpen(host, workspaceChangesTabOpen);
+  const onChangesFilePress = resolveChangesFilePress(host, workspaceOnChangesFilePress);
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
   );
@@ -3283,7 +3392,16 @@ export function GitDiffPane({
     },
   );
 
-  const bodyContent: ReactElement = (
+  const flatWorkingTreeMode = useMemo(
+    () => ({ ...workingTreeMode, viewMode: "flat" as const }),
+    [workingTreeMode],
+  );
+  const primaryWorkingTreeMode = resolveWorkingTreeMode(
+    isMobile,
+    workingTreeMode,
+    flatWorkingTreeMode,
+  );
+  const diffContent: ReactElement = (
     <DiffBodyContent
       isStatusLoading={isStatusLoading}
       statusErrorMessage={statusErrorMessage}
@@ -3299,9 +3417,21 @@ export function GitDiffPane({
       <SharedDiffView
         files={files}
         displayPreferences={sharedDisplayPreferences}
-        mode={workingTreeMode}
+        mode={primaryWorkingTreeMode}
       />
     </DiffBodyContent>
+  );
+  const bodyContent = (
+    <GitDiffTreeRail
+      shown={shouldShowTreeRail(viewMode, isMobile)}
+      workspaceId={workspaceId}
+      cwd={cwd}
+      files={files}
+      displayPreferences={sharedDisplayPreferences}
+      workingTreeMode={workingTreeMode}
+    >
+      {diffContent}
+    </GitDiffTreeRail>
   );
 
   return (
@@ -3335,7 +3465,8 @@ export function GitDiffPane({
               onSelectBase={handleSelectBase}
             />
             <View style={styles.diffStatusButtons}>
-              <ChangesTabToggle
+              <ChangesTabToggleForHost
+                host={host}
                 isMobile={isMobile}
                 selected={changesTabOpen}
                 onPress={handleToggleChangesTab}

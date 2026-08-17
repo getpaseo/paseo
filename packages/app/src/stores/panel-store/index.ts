@@ -11,16 +11,16 @@ import { type ExplorerCheckoutContext } from "../explorer-checkout-context";
 import {
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
-  clampExplorerFilesSplitRatio,
+  clampTreeRailWidth,
   clampExplorerWidth,
   clampSidebarWidth,
-  DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+  DEFAULT_TREE_RAIL_WIDTH,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
-  MAX_EXPLORER_FILES_SPLIT_RATIO,
+  MAX_TREE_RAIL_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
-  MIN_EXPLORER_FILES_SPLIT_RATIO,
+  MIN_TREE_RAIL_WIDTH,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   migratePanelState,
@@ -51,15 +51,16 @@ export type {
   SortOption,
 } from "./state";
 export {
-  DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+  DEFAULT_TREE_RAIL_WIDTH,
   DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
-  MAX_EXPLORER_FILES_SPLIT_RATIO,
+  MAX_TREE_RAIL_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
-  MIN_EXPLORER_FILES_SPLIT_RATIO,
+  MIN_TREE_RAIL_WIDTH,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
+  clampTreeRailWidth,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   selectPanelVisibility,
@@ -88,7 +89,7 @@ export interface PanelState {
   explorerWidth: number;
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
-  explorerFilesSplitRatio: number;
+  treeRailWidth: number;
 
   // Actions
   toggleFocusMode: () => void;
@@ -117,7 +118,7 @@ export interface PanelState {
   setExplorerWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
-  setExplorerFilesSplitRatio: (ratio: number) => void;
+  setTreeRailWidth: (width: number) => void;
 }
 
 const DEFAULT_DESKTOP_OPEN = isWeb;
@@ -153,7 +154,7 @@ export const usePanelStore = create<PanelState>()(
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
-      explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+      treeRailWidth: DEFAULT_TREE_RAIL_WIDTH,
 
       toggleFocusMode: () =>
         set((state) => ({
@@ -303,16 +304,11 @@ export const usePanelStore = create<PanelState>()(
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       toggleExplorerShowHiddenFiles: () =>
         set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),
-      setExplorerFilesSplitRatio: (ratio) =>
-        set({
-          explorerFilesSplitRatio: Number.isFinite(ratio)
-            ? clampExplorerFilesSplitRatio(ratio)
-            : DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
-        }),
+      setTreeRailWidth: (width) => set({ treeRailWidth: clampTreeRailWidth(width) }),
     }),
     {
       name: "panel-state",
-      version: 12,
+      version: 13,
       storage: createValidatedPersistStorage(AsyncStorage, PanelPersistedStateSchema),
       migrate: (persistedState, version) => migratePanelState(persistedState, version, { isWeb }),
       partialize: (state) => ({
@@ -326,7 +322,7 @@ export const usePanelStore = create<PanelState>()(
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,
         explorerShowHiddenFiles: state.explorerShowHiddenFiles,
-        explorerFilesSplitRatio: state.explorerFilesSplitRatio,
+        treeRailWidth: state.treeRailWidth,
       }),
     },
   ),
@@ -356,7 +352,7 @@ export function usePanelState(isMobile: boolean) {
   const explorerTabByCheckout = usePanelStore((state) => state.explorerTabByCheckout);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const explorerSortOption = usePanelStore((state) => state.explorerSortOption);
-  const explorerFilesSplitRatio = usePanelStore((state) => state.explorerFilesSplitRatio);
+  const treeRailWidth = usePanelStore((state) => state.treeRailWidth);
   const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const activateExplorerTabForCheckout = usePanelStore(
@@ -364,7 +360,7 @@ export function usePanelState(isMobile: boolean) {
   );
   const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
   const setExplorerSortOption = usePanelStore((state) => state.setExplorerSortOption);
-  const setExplorerFilesSplitRatio = usePanelStore((state) => state.setExplorerFilesSplitRatio);
+  const setTreeRailWidth = usePanelStore((state) => state.setTreeRailWidth);
 
   return {
     isAgentListOpen,
@@ -377,12 +373,12 @@ export function usePanelState(isMobile: boolean) {
     explorerTabByCheckout,
     explorerWidth,
     explorerSortOption,
-    explorerFilesSplitRatio,
+    treeRailWidth,
     setExplorerTab,
     setExplorerTabForCheckout,
     activateExplorerTabForCheckout,
     setExplorerWidth,
     setExplorerSortOption,
-    setExplorerFilesSplitRatio,
+    setTreeRailWidth,
   };
 }

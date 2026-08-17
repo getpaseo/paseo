@@ -587,6 +587,7 @@ export const zhCN: TranslationResources = {
         renameAgent: "重命名 Agent",
       },
       actions: {
+        newTab: "新建标签页",
         newAgent: "新建 Agent",
         newTerminal: "新建 Terminal",
         preparingTerminal: "正在准备 Terminal 标签",
@@ -595,6 +596,9 @@ export const zhCN: TranslationResources = {
         exitFocusMode: "退出专注模式",
         splitRight: "向右拆分窗格",
         splitDown: "向下拆分窗格",
+        changes: "更改",
+        files: "文件",
+        pullRequest: "拉取请求",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "固定",
@@ -1637,6 +1641,17 @@ export const zhCN: TranslationResources = {
         reloadTitle: "从磁盘重新加载？",
         reloadMessage: "本地更改将丢失。",
       },
+    },
+    files: {
+      label: "文件",
+      subtitle: "工作区文件",
+      tooltip: "浏览工作区文件",
+    },
+    pullRequest: {
+      label: "拉取请求",
+      subtitle: "拉取请求详情",
+      emptyTitle: "尚无拉取请求",
+      emptyDescription: "为此检出创建拉取请求后，可在此处查看其详情。",
     },
     diff: {
       changesLabel: "更改",
