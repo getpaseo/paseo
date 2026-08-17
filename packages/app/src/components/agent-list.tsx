@@ -22,6 +22,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import type { AgentSearchMatch } from "@getpaseo/protocol/messages";
 import type { MatchRange } from "@getpaseo/protocol/search/text-match";
 
@@ -115,28 +116,10 @@ function SessionBadge({
   icon?: ReactElement;
   tone?: "neutral" | "warning" | "danger";
 }) {
-  const badgeStyle = useMemo(
-    () => [
-      styles.badge,
-      tone === "warning" && styles.badgeWarning,
-      tone === "danger" && styles.badgeDanger,
-    ],
-    [tone],
-  );
-  const badgeTextStyle = useMemo(
-    () => [
-      styles.badgeText,
-      tone === "warning" && styles.badgeTextWarning,
-      tone === "danger" && styles.badgeTextDanger,
-    ],
-    [tone],
-  );
-  return (
-    <View style={badgeStyle}>
-      {icon}
-      <Text style={badgeTextStyle}>{label}</Text>
-    </View>
-  );
+  let variant: StatusBadgeVariant = "muted";
+  if (tone === "warning") variant = "warning";
+  else if (tone === "danger") variant = "error";
+  return <StatusBadge label={label} variant={variant} leading={icon} />;
 }
 
 function WorkspaceTitlePrefix({
@@ -741,33 +724,6 @@ const styles = StyleSheet.create((theme) => ({
     width: 120,
     marginLeft: theme.spacing[4],
     textAlign: "right" as const,
-  },
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-  },
-  badgeWarning: {
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
-  },
-  badgeDanger: {
-    backgroundColor: "rgba(239, 68, 68, 0.14)",
-  },
-  badgeText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foregroundMuted,
-  },
-  badgeTextWarning: {
-    color: theme.colors.palette.amber[500],
-  },
-  badgeTextDanger: {
-    color: theme.colors.palette.red[300],
   },
   sheetOverlay: {
     flex: 1,

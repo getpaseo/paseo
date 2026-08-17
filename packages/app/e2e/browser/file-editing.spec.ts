@@ -38,10 +38,7 @@ function fitsViewportWidth(element: HTMLElement): boolean {
 }
 
 async function replaceEditorText(page: Page, content: string): Promise<void> {
-  const contentElement = editor(page);
-  await contentElement.click();
-  await contentElement.press("Control+A");
-  await contentElement.type(content);
+  await editor(page).fill(content);
 }
 
 async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
@@ -154,9 +151,8 @@ test.describe("CodeMirror workspace file editing", () => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await openAgentRoute(page, session);
 
-      await page.getByRole("button", { name: "Split pane right" }).first().click();
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
       await openWorkspaceFile(page, "target.ts");
+      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
 
       await page
         .getByTestId(`workspace-tab-agent_${session.agentId}`)
@@ -347,14 +343,13 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "const localWins = 5;\n");
     await writeFile(sourcePath, "const diskLoses = 6;\n", "utf8");
     await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
+    await page.getByRole("button", { name: "Overwrite", exact: true }).click();
+    await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const localWins = 5;\n");
     for (const fileName of ["one.ts", "two.ts", "three.ts", "four.ts"]) {
       await openWorkspaceFile(page, fileName);
     }
-    await page.getByTestId("workspace-tab-file_source.ts").filter({ visible: true }).click();
+    await openWorkspaceFile(page, "source.ts");
     await expect(editor(page)).toContainText("const localWins = 5;");
-    await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
-    await page.getByRole("button", { name: "Overwrite", exact: true }).click();
-    await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const localWins = 5;\n");
 
     await replaceEditorText(page, "const discarded = 7;\n");
     await writeFile(sourcePath, "const diskWins = 8;\n", "utf8");
@@ -441,20 +436,21 @@ test.describe("CodeMirror workspace file editing", () => {
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
 
-    await expect(page.getByText("First heading", { exact: true })).toBeVisible();
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(visibleFilePane.getByText("First heading", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
-    await expect(page.getByText("Updated heading", { exact: true })).toBeVisible();
+    await expect(visibleFilePane.getByText("Updated heading", { exact: true })).toBeVisible();
 
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await replaceEditorText(page, "# Saved from source\n");
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
     await selectFileView(page, "Preview");
-    await expect(page.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
 
     await openWorkspaceFile(page, "pixel.png");
-    const image = page.getByTestId("workspace-file-pane").locator("img");
+    const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);

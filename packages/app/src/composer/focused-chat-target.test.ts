@@ -46,4 +46,32 @@ describe("focused chat target", () => {
       }),
     ).toBeNull();
   });
+
+  it("targets a utility tab's parent chat", () => {
+    const layout = {
+      root: {
+        kind: "pane",
+        pane: {
+          id: "pane-1",
+          tabIds: ["agent-tab", "changes-tab"],
+          focusedTabId: "changes-tab",
+          tabs: [
+            {
+              tabId: "agent-tab",
+              target: { kind: "agent", agentId: "agent-1" },
+              createdAt: 1,
+            },
+            { tabId: "changes-tab", target: { kind: "working_diff" }, createdAt: 2 },
+          ],
+        },
+      },
+      focusedPaneId: "pane-1",
+      parentTabIdByTabId: { "changes-tab": "agent-tab" },
+    } as WorkspaceLayout;
+
+    expect(resolveFocusedChatTarget({ serverId: "server-1", layout })).toEqual({
+      tabId: "agent-tab",
+      draftKey: "agent:server-1:agent-1",
+    });
+  });
 });

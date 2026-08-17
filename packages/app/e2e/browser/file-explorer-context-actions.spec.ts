@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { openFileExplorer } from "../support/helpers/file-explorer";
+import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -437,7 +438,7 @@ test("hides unsupported file operations and revert actions", async ({ page }) =>
   await expect(filesMenu.getByText("Delete", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("explorer-tab-changes").click();
+  await openChangesPanel(page);
   await expect(page.getByTestId("diff-file-0")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-duplicate")).toHaveCount(0);

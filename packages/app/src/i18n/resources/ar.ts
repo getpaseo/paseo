@@ -587,6 +587,7 @@ export const ar: TranslationResources = {
         renameAgent: "إعادة تسمية الوكيل",
       },
       actions: {
+        newTab: "علامة تبويب جديدة",
         newAgent: "وكيل جديد",
         newTerminal: "محطة جديدة",
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
@@ -595,6 +596,9 @@ export const ar: TranslationResources = {
         exitFocusMode: "إنهاء وضع التركيز",
         splitRight: "تقسيم الجزء الأيمن",
         splitDown: "تقسيم الجزء لأسفل",
+        changes: "التغييرات",
+        files: "الملفات",
+        pullRequest: "طلب السحب",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "تثبيت",
@@ -1657,6 +1661,17 @@ export const ar: TranslationResources = {
         reloadTitle: "إعادة التحميل من القرص؟",
         reloadMessage: "ستفقد تغييراتك المحلية.",
       },
+    },
+    files: {
+      label: "الملفات",
+      subtitle: "ملفات مساحة العمل",
+      tooltip: "تصفح ملفات مساحة العمل",
+    },
+    pullRequest: {
+      label: "طلب السحب",
+      subtitle: "تفاصيل طلب السحب",
+      emptyTitle: "لا يوجد طلب سحب بعد",
+      emptyDescription: "أنشئ طلب سحب لنسخة العمل هذه لعرض تفاصيله هنا.",
     },
     diff: {
       changesLabel: "التغييرات",

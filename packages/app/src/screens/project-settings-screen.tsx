@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, TextInput, View } from "react-native";
-import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,7 +46,6 @@ import {
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
-import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import {
   getProjectHostEntry,
   getProjectSummaryForHostProject,
@@ -94,9 +92,16 @@ type ReadProjectConfigData = Awaited<ReturnType<DaemonClient["readProjectConfig"
 export interface ProjectSettingsScreenProps {
   serverId: string;
   projectId: string;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
-export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSettingsScreenProps) {
+export default function ProjectSettingsScreen({
+  serverId,
+  projectId,
+  onBackToProjects,
+  showBackToProjects,
+}: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
     () => getProjectSummaryForHostProject(projects, serverId, projectId),
@@ -116,7 +121,12 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
     selectedHost.repoRoot.trim().length > 0;
 
   if (!project || !selectedHost || !client || !canEdit) {
-    return <NoEditableTarget serverId={serverId} />;
+    return (
+      <NoEditableTarget
+        onBackToProjects={onBackToProjects}
+        showBackToProjects={showBackToProjects}
+      />
+    );
   }
 
   return (
@@ -125,41 +135,45 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
       selectedHost={selectedHost}
       client={client}
       isHostGone={isHostGone}
+      onBackToProjects={onBackToProjects}
+      showBackToProjects={showBackToProjects}
     />
   );
 }
 
-function navigateBackToProjects(serverId: string) {
-  router.navigate(buildProjectsSettingsRoute(serverId));
-}
-
-function NoEditableTarget({ serverId }: { serverId: string }) {
+function NoEditableTarget({
+  onBackToProjects,
+  showBackToProjects,
+}: {
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
+}) {
   const { t } = useTranslation();
-  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <View style={styles.noTargetContainer}>
-      <BackToProjectsButton serverId={serverId} />
+      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
       <Text style={styles.noTargetText}>{t("settings.project.noEditableTarget")}</Text>
-      <Button
-        testID="project-settings-back-button"
-        onPress={handleBack}
-        variant="secondary"
-        size="md"
-      >
-        {t("settings.project.backToProjects")}
-      </Button>
+      {showBackToProjects ? (
+        <Button
+          testID="project-settings-back-button"
+          onPress={onBackToProjects}
+          variant="secondary"
+          size="md"
+        >
+          {t("settings.project.backToProjects")}
+        </Button>
+      ) : null}
     </View>
   );
 }
 
-function BackToProjectsButton({ serverId }: { serverId: string }) {
+function BackToProjectsButton({ onPress }: { onPress: () => void }) {
   const { t } = useTranslation();
-  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <Button
       testID="project-settings-back-link"
       accessibilityLabel={t("settings.project.backToProjects")}
-      onPress={handleBack}
+      onPress={onPress}
       variant="ghost"
       size="sm"
       leftIcon={ArrowLeft}
@@ -175,6 +189,8 @@ interface ProjectSettingsBodyProps {
   selectedHost: ProjectHostEntry;
   client: DaemonClient;
   isHostGone: boolean;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
 function ProjectSettingsBody({
@@ -182,6 +198,8 @@ function ProjectSettingsBody({
   selectedHost,
   client,
   isHostGone,
+  onBackToProjects,
+  showBackToProjects,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -257,7 +275,7 @@ function ProjectSettingsBody({
 
   return (
     <View role="main" style={styles.body}>
-      <BackToProjectsButton serverId={selectedHost.serverId} />
+      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
 
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
@@ -306,6 +324,8 @@ function ProjectSettingsBody({
         client,
         onReload: handleReload,
         isHostGone,
+        onBackToProjects,
+        showBackToProjects,
       })}
     </View>
   );
@@ -322,6 +342,8 @@ interface RenderContentInput {
   client: DaemonClient;
   onReload: () => void;
   isHostGone: boolean;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
 function renderContent({
@@ -335,6 +357,8 @@ function renderContent({
   client,
   onReload,
   isHostGone,
+  onBackToProjects,
+  showBackToProjects,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -353,7 +377,12 @@ function renderContent({
   }
 
   if (isHostGone) {
-    return <NoEditableTarget serverId={selectedHost.serverId} />;
+    return (
+      <NoEditableTarget
+        onBackToProjects={onBackToProjects}
+        showBackToProjects={showBackToProjects}
+      />
+    );
   }
 
   if (!loadedConfig) {

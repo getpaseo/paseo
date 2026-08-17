@@ -10,6 +10,29 @@ export interface FocusedChatTarget {
   draftKey: string;
 }
 
+function resolveChatTab(
+  serverId: string,
+  tab: ReturnType<typeof collectAllTabs>[number] | undefined,
+): FocusedChatTarget | null {
+  if (tab?.target.kind === "agent") {
+    return {
+      tabId: tab.tabId,
+      draftKey: buildDraftStoreKey({ serverId, agentId: tab.target.agentId }),
+    };
+  }
+  if (tab?.target.kind === "draft") {
+    return {
+      tabId: tab.tabId,
+      draftKey: buildDraftStoreKey({
+        serverId,
+        agentId: tab.tabId,
+        draftId: tab.target.draftId,
+      }),
+    };
+  }
+  return null;
+}
+
 export function resolveFocusedChatTarget(input: {
   serverId: string;
   layout: WorkspaceLayout | undefined;
@@ -22,27 +45,15 @@ export function resolveFocusedChatTarget(input: {
   if (!focusedTabId) {
     return null;
   }
-  const tab = collectAllTabs(input.layout.root).find(
-    (candidate) => candidate.tabId === focusedTabId,
+  const tabs = collectAllTabs(input.layout.root);
+  const tab = tabs.find((candidate) => candidate.tabId === focusedTabId);
+  const focusedChat = resolveChatTab(input.serverId, tab);
+  if (focusedChat) {
+    return focusedChat;
+  }
+  const parentTabId = input.layout.parentTabIdByTabId?.[focusedTabId];
+  return resolveChatTab(
+    input.serverId,
+    tabs.find((candidate) => candidate.tabId === parentTabId),
   );
-  if (!tab) {
-    return null;
-  }
-  if (tab.target.kind === "agent") {
-    return {
-      tabId: tab.tabId,
-      draftKey: buildDraftStoreKey({ serverId: input.serverId, agentId: tab.target.agentId }),
-    };
-  }
-  if (tab.target.kind === "draft") {
-    return {
-      tabId: tab.tabId,
-      draftKey: buildDraftStoreKey({
-        serverId: input.serverId,
-        agentId: tab.tabId,
-        draftId: tab.target.draftId,
-      }),
-    };
-  }
-  return null;
 }

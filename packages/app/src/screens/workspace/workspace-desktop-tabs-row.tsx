@@ -20,13 +20,15 @@ import {
   CopyX,
   ArrowLeftToLine,
   ArrowRightToLine,
-  ChevronDown,
   Columns2,
   Copy,
   Pencil,
   RotateCw,
   Rows2,
   Globe,
+  FileDiff,
+  FolderTree,
+  GitPullRequest,
   Plus,
   SquarePen,
   SquareTerminal,
@@ -59,7 +61,7 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import {
@@ -75,6 +77,7 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import type { Theme } from "@/styles/theme";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -89,10 +92,25 @@ import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run
 import type { PinnedTabTarget } from "@/workspace-pins/target";
 import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
 import { PinnableMenuItem } from "@/workspace-pins/pinnable-menu-item";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 
 const DROPDOWN_WIDTH = 220;
-const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
+// Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
+// shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
+// the wrong width. Keep them together.
+const TAB_CHIP_HEIGHT = 26;
+const TAB_CHIP_HORIZONTAL_PADDING = 8;
+const TAB_CHIP_GAP = 4;
+const TAB_ROW_PADDING_HORIZONTAL = 4;
+const TAB_ICON_WIDTH = 14;
+const TAB_DROP_INDICATOR_WIDTH = 4;
+const TAB_MAX_WIDTH = 160;
+const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
@@ -104,21 +122,29 @@ const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedPlus = withUnistyles(Plus);
+const ThemedFileDiff = withUnistyles(FileDiff);
+const ThemedFolderTree = withUnistyles(FolderTree);
+const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
 const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
 const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
+const CHANGES_ICON = <ThemedFileDiff size={14} uniProps={mutedColorMapping} />;
+const FILES_ICON = <ThemedFolderTree size={14} uniProps={mutedColorMapping} />;
+const PULL_REQUEST_ICON = <ThemedGitPullRequest size={14} uniProps={mutedColorMapping} />;
 
 const DRAFT_TARGET: PinnedTabTarget = { kind: "draft" };
 const TERMINAL_TARGET: PinnedTabTarget = { kind: "terminal" };
 const BROWSER_TARGET: PinnedTabTarget = { kind: "browser" };
+const CHANGES_TARGET = { kind: "working_diff" } as const;
+const FILES_TARGET = { kind: "files" } as const;
+const PULL_REQUEST_TARGET = { kind: "pull_request" } as const;
 
 function newTabActionButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.newTabActionButton, (hovered || pressed) && styles.newTabActionButtonHovered];
@@ -169,67 +195,32 @@ function PinnableProfileMenuItem({ profile, disabled, onLaunch }: PinnableProfil
   );
 }
 
-interface WorkspaceInlineAddTabButtonProps {
-  shortcutKeys: ShortcutKey[][] | null;
-  onCreateAgentTab: () => void;
-  onLayout: (event: LayoutChangeEvent) => void;
-}
-
-function WorkspaceInlineAddTabButton({
-  shortcutKeys,
-  onCreateAgentTab,
-  onLayout,
-}: WorkspaceInlineAddTabButtonProps) {
-  const { t } = useTranslation();
-  const tooltipText = t("workspace.tabs.actions.newAgent");
-
-  return (
-    <View style={styles.inlineAddButton} onLayout={onLayout}>
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger
-          testID="workspace-new-agent-tab-inline"
-          onPress={onCreateAgentTab}
-          accessibilityRole="button"
-          accessibilityLabel={tooltipText}
-          style={inlineAddActionButtonStyle}
-        >
-          <ThemedPlus size={14} uniProps={mutedColorMapping} />
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <View style={styles.newTabTooltipRow}>
-            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
-            {shortcutKeys ? (
-              <Shortcut chord={shortcutKeys} style={styles.newTabTooltipShortcut} />
-            ) : null}
-          </View>
-        </TooltipContent>
-      </Tooltip>
-    </View>
-  );
-}
-
-interface WorkspaceTabRowExtrasProps {
+interface TabTargetLauncherOptions {
+  normalizedServerId: string;
   onCreateAgentTab: () => void;
   onCreateTerminal: () => void;
   onCreateBrowser: () => void;
+  onOpenChanges: () => void;
+  onOpenFiles: () => void;
+  onOpenPullRequest: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
-  onEditProfiles: () => void;
-  normalizedServerId: string;
-  showCreateBrowserTab: boolean;
-  terminalDisabled: boolean;
 }
 
-function WorkspaceTabRowExtras({
+/**
+ * The `+` menu and the pinned-targets row launch the same targets but sit in different parts of
+ * the row, so each owns its own subscription rather than re-rendering the whole row from a shared
+ * one. `useDaemonConfig` is a cached query, so the second caller is free.
+ */
+function useTabTargetLauncher({
+  normalizedServerId,
   onCreateAgentTab,
   onCreateTerminal,
   onCreateBrowser,
+  onOpenChanges,
+  onOpenFiles,
+  onOpenPullRequest,
   onCreateTerminalWithProfile,
-  onEditProfiles,
-  normalizedServerId,
-  showCreateBrowserTab,
-  terminalDisabled,
-}: WorkspaceTabRowExtrasProps) {
-  const { t } = useTranslation();
+}: TabTargetLauncherOptions) {
   const { config } = useDaemonConfig(normalizedServerId);
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
@@ -241,9 +232,20 @@ function WorkspaceTabRowExtras({
       createDraft: onCreateAgentTab,
       createTerminal: onCreateTerminal,
       createBrowser: onCreateBrowser,
+      openChanges: onOpenChanges,
+      openFiles: onOpenFiles,
+      openPullRequest: onOpenPullRequest,
       createTerminalWithProfile: onCreateTerminalWithProfile,
     }),
-    [onCreateAgentTab, onCreateBrowser, onCreateTerminal, onCreateTerminalWithProfile],
+    [
+      onCreateAgentTab,
+      onCreateBrowser,
+      onCreateTerminal,
+      onCreateTerminalWithProfile,
+      onOpenChanges,
+      onOpenFiles,
+      onOpenPullRequest,
+    ],
   );
 
   const onLaunch = useCallback(
@@ -253,32 +255,74 @@ function WorkspaceTabRowExtras({
     [handlers, profiles],
   );
 
-  const launchers = usePinnedLaunchers({ serverId: normalizedServerId, onLaunch });
+  return { profiles, onLaunch };
+}
+
+interface WorkspaceNewTabButtonProps extends TabTargetLauncherOptions {
+  shortcutKeys: ShortcutKey[][] | null;
+  onEditProfiles: () => void;
+  showCreateBrowserTab: boolean;
+  terminalDisabled: boolean;
+  isGit: boolean;
+  showPullRequest: boolean;
+  onLayout: (event: LayoutChangeEvent) => void;
+}
+
+function WorkspaceNewTabButton({
+  shortcutKeys,
+  onCreateAgentTab,
+  onCreateTerminal,
+  onCreateBrowser,
+  onOpenChanges,
+  onOpenFiles,
+  onOpenPullRequest,
+  onCreateTerminalWithProfile,
+  onEditProfiles,
+  normalizedServerId,
+  showCreateBrowserTab,
+  terminalDisabled,
+  isGit,
+  showPullRequest,
+  onLayout,
+}: WorkspaceNewTabButtonProps) {
+  const { t } = useTranslation();
+  const { profiles, onLaunch } = useTabTargetLauncher({
+    normalizedServerId,
+    onCreateAgentTab,
+    onCreateTerminal,
+    onCreateBrowser,
+    onCreateTerminalWithProfile,
+    onOpenChanges,
+    onOpenFiles,
+    onOpenPullRequest,
+  });
+  const tooltipText = t("workspace.tabs.actions.newTab");
 
   return (
-    <>
+    <View style={styles.inlineAddButton} onLayout={onLayout}>
       <DropdownMenu>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
             <DropdownMenuTrigger
               testID="workspace-new-tab-menu-trigger"
               accessibilityRole="button"
-              accessibilityLabel={t("workspace.tabs.actions.moreActions")}
-              style={newTabActionButtonStyle}
+              accessibilityLabel={tooltipText}
+              style={inlineAddActionButtonStyle}
             >
-              <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+              <ThemedPlus size={14} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <Text style={styles.newTabTooltipText}>{t("workspace.tabs.actions.moreActions")}</Text>
+            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
           </TooltipContent>
         </Tooltip>
-        <DropdownMenuContent side="bottom" align="end" offset={4} minWidth={200}>
+        <DropdownMenuContent side="bottom" align="start" offset={4} minWidth={200}>
           <PinnableMenuItem
             testID="workspace-new-tab-menu-agent"
             target={DRAFT_TARGET}
             label={t("workspace.tabs.actions.newAgent")}
             leading={AGENT_ICON}
+            shortcut={shortcutKeys}
             onSelect={onCreateAgentTab}
           />
           <PinnableMenuItem
@@ -298,6 +342,31 @@ function WorkspaceTabRowExtras({
               onSelect={onCreateBrowser}
             />
           ) : null}
+          {isGit ? (
+            <PinnableMenuItem
+              testID="workspace-new-tab-menu-changes"
+              target={CHANGES_TARGET}
+              label={t("workspace.tabs.actions.changes")}
+              leading={CHANGES_ICON}
+              onSelect={onOpenChanges}
+            />
+          ) : null}
+          <PinnableMenuItem
+            testID="workspace-new-tab-menu-files"
+            target={FILES_TARGET}
+            label={t("workspace.tabs.actions.files")}
+            leading={FILES_ICON}
+            onSelect={onOpenFiles}
+          />
+          {showPullRequest ? (
+            <PinnableMenuItem
+              testID="workspace-new-tab-menu-pull-request"
+              target={PULL_REQUEST_TARGET}
+              label={t("workspace.tabs.actions.pullRequest")}
+              leading={PULL_REQUEST_ICON}
+              onSelect={onOpenPullRequest}
+            />
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
           {profiles.map((profile) => (
@@ -314,9 +383,22 @@ function WorkspaceTabRowExtras({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <PinnedTargetsRow launchers={launchers} testIdPrefix="workspace-pinned-target" />
-    </>
+    </View>
   );
+}
+
+function WorkspacePinnedTargets(
+  options: TabTargetLauncherOptions & { isGit: boolean; showPullRequest: boolean },
+) {
+  const { onLaunch } = useTabTargetLauncher(options);
+  const launchers = usePinnedLaunchers({
+    serverId: options.normalizedServerId,
+    onLaunch,
+    isGit: options.isGit,
+    hasPullRequest: options.showPullRequest,
+  });
+
+  return <PinnedTargetsRow launchers={launchers} testIdPrefix="workspace-pinned-target" />;
 }
 
 function TabContextMenuItem({
@@ -445,7 +527,15 @@ interface WorkspaceDesktopTabsRowProps {
 
 function getFallbackTabLabel(
   tab: WorkspaceTabDescriptor,
-  labels: { newAgent: string; setup: string; terminal: string; agent: string; changes: string },
+  labels: {
+    newAgent: string;
+    setup: string;
+    terminal: string;
+    agent: string;
+    changes: string;
+    files: string;
+    pullRequest: string;
+  },
 ): string {
   if (tab.target.kind === "draft") {
     return labels.newAgent;
@@ -461,6 +551,12 @@ function getFallbackTabLabel(
   }
   if (tab.target.kind === "working_diff") {
     return labels.changes;
+  }
+  if (tab.target.kind === "files") {
+    return labels.files;
+  }
+  if (tab.target.kind === "pull_request") {
+    return labels.pullRequest;
   }
   return labels.agent;
 }
@@ -487,16 +583,30 @@ function useMiddleClickClose(onClose: () => void) {
   return ref;
 }
 
+/** The chip fill the running-status ring has to knock out of. Mirrors `styles.tab*` exactly. */
+function resolveChipBackdrop({
+  isActiveFocused,
+  isFilled,
+}: {
+  isActiveFocused: boolean;
+  isFilled: boolean;
+}): SurfaceBackdrop {
+  if (isActiveFocused) return "surface2";
+  return isFilled ? "surface1" : "surface0";
+}
+
 function TabHandleContent({
   presentation,
   isHighlighted,
   showLabel,
+  backdrop,
   tabLabelSkeletonStyle,
   tabLabelStyle,
 }: {
   presentation: WorkspaceTabPresentation;
   isHighlighted: boolean;
   showLabel: boolean;
+  backdrop: SurfaceBackdrop;
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
 }) {
@@ -508,7 +618,7 @@ function TabHandleContent({
   return (
     <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
       <View style={styles.tabIcon}>
-        <WorkspaceTabIcon presentation={presentation} active={isHighlighted} backdrop="surface0" />
+        <WorkspaceTabIcon presentation={presentation} active={isHighlighted} backdrop={backdrop} />
       </View>
       {showLabel && presentation.titleState === "loading" ? (
         <View style={tabLabelSkeletonStyle} />
@@ -562,9 +672,18 @@ function TabChip({
   const middleClickRef = useMiddleClickClose(
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
+  const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
-  const isHighlighted = isActive || hovered || isCloseHovered;
-  const showTrailingAffordance = showCloseButton || presentation.modified;
+  // An active tab in a pane that does not have focus stays legible but quiet: it keeps the fill of
+  // a hovered chip and the muted label, so only one chip in the window reads as the live one.
+  const isActiveFocused = isActive && isFocused;
+  const isHovered = hovered || isCloseHovered;
+  const isHighlighted = isActiveFocused || isHovered;
+  const chipBackdrop: SurfaceBackdrop = resolveChipBackdrop({
+    isActiveFocused,
+    isFilled: isActive || isHovered,
+  });
+  const showCloseControl = showCloseButton && (isHovered || isNative || isCompact || isClosingTab);
   const closeButtonDragBlockers = isWeb
     ? ({
         onPointerDown: (event: { stopPropagation?: () => void }) => {
@@ -579,6 +698,9 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
+      isActiveFocused && styles.tabActive,
+      isActive && !isFocused && styles.tabActiveUnfocused,
+      !isActive && isHovered && styles.tabHovered,
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
         minWidth: resolvedTabWidth,
@@ -586,14 +708,14 @@ function TabChip({
         maxWidth: resolvedTabWidth,
       },
     ],
-    [isDragging, resolvedTabWidth],
+    [isActive, isActiveFocused, isDragging, isFocused, isHovered, resolvedTabWidth],
   );
 
-  const handleTabHoverIn = useCallback(() => {
+  const handleTabPointerEnter = useCallback(() => {
     setHovered(true);
   }, []);
 
-  const handleTabHoverOut = useCallback(() => {
+  const handleTabPointerLeave = useCallback(() => {
     setHovered(false);
   }, []);
 
@@ -621,38 +743,20 @@ function TabChip({
     [onCloseTab, tab.tabId],
   );
 
-  const closeButtonStyle = useCallback(
-    ({ hovered: isButtonHovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.tabCloseButton,
-      styles.tabCloseButtonShown,
-      (Boolean(isButtonHovered) || pressed) && styles.tabCloseButtonActive,
-    ],
-    [],
-  );
-
   const tabAccessibilityState = useMemo(() => ({ selected: isActive }), [isActive]);
-  const tabFocusIndicatorStyle = useMemo(
-    () => [styles.tabFocusIndicator, !isFocused && styles.tabFocusIndicatorUnfocused],
-    [isFocused],
-  );
-  const tabLabelSkeletonStyle = useMemo(
-    () => [
-      styles.tabLabelSkeleton,
-      showTrailingAffordance && styles.tabLabelSkeletonWithCloseButton,
-    ],
-    [showTrailingAffordance],
-  );
+  const tabLabelSkeletonStyle = styles.tabLabelSkeleton;
   const tabLabelStyle = useMemo(
-    () => [
-      styles.tabLabel,
-      isHighlighted && styles.tabLabelActive,
-      showTrailingAffordance && styles.tabLabelWithCloseButton,
-    ],
-    [isHighlighted, showTrailingAffordance],
+    () => [styles.tabLabel, isHighlighted && styles.tabLabelActive],
+    [isHighlighted],
   );
 
   return (
-    <View ref={middleClickRef}>
+    <View
+      ref={middleClickRef}
+      style={styles.tabHoverFrame}
+      onPointerEnter={handleTabPointerEnter}
+      onPointerLeave={handleTabPointerLeave}
+    >
       <ContextMenu key={tab.key}>
         <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
@@ -663,8 +767,6 @@ function TabChip({
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               enabledOnMobile={false}
               style={tabChipStyle}
-              onHoverIn={handleTabHoverIn}
-              onHoverOut={handleTabHoverOut}
               onPressIn={handleNavigateTab}
               onPress={handleNavigateTab}
               accessibilityRole="button"
@@ -672,53 +774,22 @@ function TabChip({
               accessibilityState={tabAccessibilityState}
               aria-selected={isActive}
             >
-              {isActive && <View style={tabFocusIndicatorStyle} />}
               <TabHandleContent
                 presentation={presentation}
                 isHighlighted={isHighlighted}
                 showLabel={showLabel}
+                backdrop={chipBackdrop}
                 tabLabelSkeletonStyle={tabLabelSkeletonStyle}
                 tabLabelStyle={tabLabelStyle}
               />
-
-              {showTrailingAffordance ? (
-                <Pressable
-                  {...(closeButtonDragBlockers as object | undefined)}
-                  testID={closeButtonTestId}
-                  disabled={isClosingTab}
-                  onPressIn={handleCloseButtonPressIn}
-                  onHoverIn={handleCloseButtonHoverIn}
-                  onHoverOut={handleCloseButtonHoverOut}
-                  onPress={handleCloseButtonPress}
-                  style={closeButtonStyle}
+              {presentation.modified ? (
+                <View
+                  style={styles.tabModifiedIndicator}
+                  accessibilityLabel={t("workspace.tabs.modified")}
+                  testID={`workspace-tab-modified-${buildDeterministicWorkspaceTabId(tab.target)}`}
                 >
-                  {({ hovered: closeHovered, pressed }) => {
-                    const highlighted = closeHovered || pressed;
-                    if (isClosingTab) {
-                      return (
-                        <ThemedLoadingSpinner
-                          size={12}
-                          uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
-                        />
-                      );
-                    }
-                    if (highlighted || !presentation.modified) {
-                      return (
-                        <ThemedX
-                          size={12}
-                          uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
-                        />
-                      );
-                    }
-                    return (
-                      <View
-                        style={styles.tabModifiedDot}
-                        accessibilityLabel={t("workspace.tabs.modified")}
-                        testID={`workspace-tab-modified-${buildDeterministicWorkspaceTabId(tab.target)}`}
-                      />
-                    );
-                  }}
-                </Pressable>
+                  <View style={styles.tabModifiedDot} />
+                </View>
               ) : null}
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -739,6 +810,46 @@ function TabChip({
             )}
           </TooltipContent>
         </Tooltip>
+
+        {showCloseButton ? (
+          <View
+            pointerEvents={showCloseControl ? "auto" : "none"}
+            style={[
+              styles.tabTrailingOverlay,
+              showCloseControl ? styles.tabTrailingOverlayShown : styles.tabTrailingOverlayHidden,
+            ]}
+          >
+            <TrailingActionScrim backdrop={chipBackdrop} />
+            <Pressable
+              {...(closeButtonDragBlockers as object | undefined)}
+              testID={closeButtonTestId}
+              disabled={isClosingTab}
+              onPressIn={handleCloseButtonPressIn}
+              onHoverIn={handleCloseButtonHoverIn}
+              onHoverOut={handleCloseButtonHoverOut}
+              onPress={handleCloseButtonPress}
+              style={styles.tabCloseButton}
+            >
+              {({ hovered: closeHovered, pressed }) => {
+                const highlighted = closeHovered || pressed;
+                if (isClosingTab) {
+                  return (
+                    <ThemedLoadingSpinner
+                      size={12}
+                      uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
+                    />
+                  );
+                }
+                return (
+                  <ThemedX
+                    size={12}
+                    uniProps={highlighted ? foregroundColorMapping : mutedColorMapping}
+                  />
+                );
+              }}
+            </Pressable>
+          </View>
+        ) : null}
 
         <ContextMenuContent align="start" width={DROPDOWN_WIDTH} testID={contextMenuTestId}>
           {menuEntries.map((entry) =>
@@ -798,6 +909,19 @@ export function WorkspaceDesktopTabsRow({
   const [tabsActionsWidth, setTabsActionsWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
+  const workspaceRoot = useWorkspaceDirectory(normalizedServerId, normalizedWorkspaceId) ?? "";
+  const checkoutStatus = useCheckoutStatusQuery({
+    serverId: normalizedServerId,
+    cwd: workspaceRoot,
+  });
+  const isGit = checkoutStatus.status?.isGit === true;
+  const showPullRequest = isGit;
+  const workspaceKey = buildWorkspaceTabPersistenceKey({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
+  const focusPane = useWorkspaceLayoutStore((state) => state.focusPane);
+  const openTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -824,13 +948,13 @@ export function WorkspaceDesktopTabsRow({
           (inlineAddButtonWidth || DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH) +
           (focusModeEnabled ? exitFocusModeWidth : 0),
       ),
-      rowPaddingHorizontal: 0,
-      tabGap: 0,
-      maxTabWidth: 200,
-      tabIconWidth: 14,
-      tabHorizontalPadding: 12,
+      rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
+      tabGap: TAB_CHIP_GAP,
+      maxTabWidth: TAB_MAX_WIDTH,
+      tabIconWidth: TAB_ICON_WIDTH,
+      tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       estimatedCharWidth: 7,
-      closeButtonWidth: 22,
+      closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
     [exitFocusModeWidth, focusModeEnabled, inlineAddButtonWidth, tabsActionsWidth],
   );
@@ -842,6 +966,8 @@ export function WorkspaceDesktopTabsRow({
       terminal: t("workspace.tabs.fallback.terminal"),
       agent: t("workspace.tabs.fallback.agent"),
       changes: t("panels.diff.changesLabel"),
+      files: t("panels.files.label"),
+      pullRequest: t("panels.pullRequest.label"),
     }),
     [t],
   );
@@ -916,6 +1042,25 @@ export function WorkspaceDesktopTabsRow({
   const handleCreateBrowser = useCallback(() => {
     onCreateBrowserTab({ paneId });
   }, [onCreateBrowserTab, paneId]);
+
+  const openPanelTarget = useCallback(
+    (target: { kind: "working_diff" } | { kind: "files" } | { kind: "pull_request" }) => {
+      if (!workspaceKey) {
+        return;
+      }
+      if (paneId) {
+        focusPane(workspaceKey, paneId);
+      }
+      openTabFocused(workspaceKey, target);
+    },
+    [focusPane, openTabFocused, paneId, workspaceKey],
+  );
+  const handleOpenChanges = useCallback(() => openPanelTarget(CHANGES_TARGET), [openPanelTarget]);
+  const handleOpenFiles = useCallback(() => openPanelTarget(FILES_TARGET), [openPanelTarget]);
+  const handleOpenPullRequest = useCallback(
+    () => openPanelTarget(PULL_REQUEST_TARGET),
+    [openPanelTarget],
+  );
 
   const terminalDisabled = disableCreateTerminal || isWaitingOnTerminalReadiness;
 
@@ -1053,22 +1198,36 @@ export function WorkspaceDesktopTabsRow({
           getItemData={getTabDragData}
           renderItem={renderTab}
         />
-        <WorkspaceInlineAddTabButton
-          shortcutKeys={newTabKeys}
-          onCreateAgentTab={handleCreateAgentTab}
-          onLayout={handleInlineAddButtonLayout}
-        />
       </ScrollView>
+      <WorkspaceNewTabButton
+        shortcutKeys={newTabKeys}
+        onCreateAgentTab={handleCreateAgentTab}
+        onCreateTerminal={handleCreateTerminal}
+        onCreateBrowser={handleCreateBrowser}
+        onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+        onOpenChanges={handleOpenChanges}
+        onOpenFiles={handleOpenFiles}
+        onOpenPullRequest={handleOpenPullRequest}
+        onEditProfiles={handleEditProfiles}
+        normalizedServerId={normalizedServerId}
+        showCreateBrowserTab={showCreateBrowserTab}
+        terminalDisabled={terminalDisabled}
+        isGit={isGit}
+        showPullRequest={showPullRequest}
+        onLayout={handleInlineAddButtonLayout}
+      />
       <View style={styles.tabsActions} onLayout={handleTabsActionsLayout}>
-        <WorkspaceTabRowExtras
+        <WorkspacePinnedTargets
           onCreateAgentTab={handleCreateAgentTab}
           onCreateTerminal={handleCreateTerminal}
           onCreateBrowser={handleCreateBrowser}
           onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-          onEditProfiles={handleEditProfiles}
+          onOpenChanges={handleOpenChanges}
+          onOpenFiles={handleOpenFiles}
+          onOpenPullRequest={handleOpenPullRequest}
           normalizedServerId={normalizedServerId}
-          showCreateBrowserTab={showCreateBrowserTab}
-          terminalDisabled={terminalDisabled}
+          isGit={isGit}
+          showPullRequest={showPullRequest}
         />
         {showPaneSplitActions ? (
           <>
@@ -1251,7 +1410,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabsContent: {
     flexDirection: "row",
-    alignItems: "stretch",
+    alignItems: "center",
+    paddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
   },
   tabsActions: {
     flexDirection: "row",
@@ -1272,18 +1432,30 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
   },
   tab: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
+    height: TAB_CHIP_HEIGHT,
+    paddingHorizontal: TAB_CHIP_HORIZONTAL_PADDING,
+    borderRadius: theme.borderRadius.md,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
     userSelect: "none",
   },
+  tabHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  tabActive: {
+    backgroundColor: theme.colors.surface2,
+  },
+  tabActiveUnfocused: {
+    backgroundColor: theme.colors.surface1,
+  },
+  tabHoverFrame: {
+    position: "relative",
+  },
   tabSlot: {
     position: "relative",
     overflow: "visible",
+    marginHorizontal: TAB_CHIP_GAP / 2,
   },
   tabHandle: {
     flexDirection: "row",
@@ -1294,34 +1466,29 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   tabIcon: {
+    width: TAB_ICON_WIDTH,
+    height: TAB_ICON_WIDTH,
     flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  tabFocusIndicator: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 2,
-    backgroundColor: theme.colors.accent,
-  },
-  tabFocusIndicatorUnfocused: {
-    backgroundColor: theme.colors.borderAccent,
-  },
+  // The chip box stops at the slot's padding box, so the gap between two chips runs from
+  // -TAB_CHIP_GAP to 0. Centre a TAB_DROP_INDICATOR_WIDTH pill in it.
   tabDropIndicator: {
     position: "absolute",
-    top: theme.spacing[2],
-    bottom: theme.spacing[2],
-    width: 5,
+    top: theme.spacing[0.5],
+    bottom: theme.spacing[0.5],
+    width: TAB_DROP_INDICATOR_WIDTH,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.accent,
     zIndex: 10,
     pointerEvents: "none",
   },
   tabDropIndicatorBefore: {
-    left: -3,
+    left: -TAB_CHIP_GAP / 2 - TAB_DROP_INDICATOR_WIDTH / 2,
   },
   tabDropIndicatorAfter: {
-    right: -3,
+    right: -TAB_CHIP_GAP / 2 - TAB_DROP_INDICATOR_WIDTH / 2,
   },
   tabLabel: {
     flexShrink: 1,
@@ -1341,28 +1508,44 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface3,
     opacity: 0.9,
   },
-  tabLabelSkeletonWithCloseButton: {
-    width: LOADING_TAB_LABEL_SKELETON_WIDTH,
-  },
-  tabLabelWithCloseButton: {
-    paddingRight: 0,
-  },
   tabLabelActive: {
     color: theme.colors.foreground,
   },
+  tabTrailingOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 48,
+    borderTopRightRadius: theme.borderRadius.md,
+    borderBottomRightRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+  },
+  tabTrailingOverlayShown: {
+    opacity: 1,
+  },
+  tabTrailingOverlayHidden: {
+    opacity: 0,
+  },
   tabCloseButton: {
+    position: "absolute",
+    right: 4,
     width: 18,
     height: 18,
-    marginLeft: 0,
     borderRadius: theme.borderRadius.sm,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 1,
   },
-  tabCloseButtonShown: {
-    opacity: 1,
-  },
-  tabCloseButtonActive: {
-    backgroundColor: theme.colors.surface3,
+  tabModifiedIndicator: {
+    position: "absolute",
+    right: 8,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   tabModifiedDot: {
     width: 8,
