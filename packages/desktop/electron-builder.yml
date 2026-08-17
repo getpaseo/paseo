@@ -48,6 +48,8 @@ mac:
   extraResources:
     - from: bin/paseo
       to: bin/paseo
+    - from: bin/paseo-daemon-launcher
+      to: bin/paseo-daemon-launcher
     - from: assets/icon.png
       to: icon.png
   target:

@@ -2,7 +2,13 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import {
+  clearDaemonExplicitStopIntent,
+  loadConfig,
+  resolvePaseoHome,
+  spawnProcess,
+  writeDaemonExplicitStopIntent,
+} from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -489,8 +495,22 @@ async function waitForStopAfterRequest(args: {
       : await waitForDaemonUnreachable(state, timeoutMs);
 
   if (!stopped && force && state.running && pid !== null) {
-    await signalProcessTreeOrOwnerSafely(pid, "SIGKILL");
-    stopped = await waitForPidExit(pid, killTimeoutMs);
+    const persistExplicitStop = state.pidInfo?.desktopManaged === true;
+    if (persistExplicitStop) {
+      writeDaemonExplicitStopIntent(state.home, pid);
+    }
+    try {
+      await signalProcessTreeOrOwnerSafely(pid, "SIGKILL");
+      stopped = await waitForPidExit(pid, killTimeoutMs);
+    } catch (error) {
+      if (persistExplicitStop) {
+        clearDaemonExplicitStopIntent(state.home);
+      }
+      throw error;
+    }
+    if (!stopped && persistExplicitStop) {
+      clearDaemonExplicitStopIntent(state.home);
+    }
     return { stopped, forced: true };
   }
 
@@ -588,6 +608,7 @@ export async function startLocalDaemonDetached(
   const childEnv = buildChildEnv(options);
 
   const paseoHome = runtime.resolveHome(childEnv);
+  clearDaemonExplicitStopIntent(paseoHome);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
   const child = runtime.spawnDetached(
     process.execPath,
@@ -655,6 +676,7 @@ export function startLocalDaemonForeground(
 
   const daemonRunnerEntry = runtime.resolveRunnerEntry();
   const childEnv = buildChildEnv(options);
+  clearDaemonExplicitStopIntent(runtime.resolveHome(childEnv));
   const result = runtime.spawnForeground(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],

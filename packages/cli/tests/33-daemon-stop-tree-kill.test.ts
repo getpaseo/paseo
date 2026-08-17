@@ -120,6 +120,7 @@ try {
       pid: ownerProcess.pid,
       listen: "127.0.0.1:1",
       startedAt: new Date().toISOString(),
+      desktopManaged: true,
     }),
   );
 
@@ -171,6 +172,11 @@ try {
     () => !isProcessRunning(ownerPid ?? -1) && !isProcessRunning(descendantPid ?? -1),
     5000,
     `owner (${ownerPid}) or descendant (${descendantPid}) survived forced stop`,
+  );
+  assert.strictEqual(
+    await readFile(join(paseoHome, "daemon-explicit-stop"), "utf8"),
+    `${ownerPid}\n`,
+    "forced desktop daemon stop should persist its explicit stop intent",
   );
   console.log("✓ forced stop killed the full process tree\n");
 } finally {

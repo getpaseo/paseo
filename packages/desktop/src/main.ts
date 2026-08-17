@@ -82,6 +82,10 @@ import {
   stopDesktopDaemonViaCli,
 } from "./daemon/daemon-manager.js";
 import {
+  PaseoLaunchAgentOwnershipError,
+  reconcilePaseoLaunchAgent,
+} from "./daemon/launch-agent.js";
+import {
   createQuitLifecycle,
   registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
@@ -1034,6 +1038,23 @@ void runDesktopStartup({
   hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
+  reconcileLaunchAgent: () => {
+    if (!app.isPackaged || process.platform !== "darwin") return;
+    try {
+      const result = reconcilePaseoLaunchAgent({
+        home: app.getPath("home"),
+        resourcesPath: process.resourcesPath,
+      });
+      if (result?.changed) {
+        log.info("[desktop daemon] reconciled persistent LaunchAgent", { path: result.path });
+      }
+    } catch (error) {
+      if (!(error instanceof PaseoLaunchAgentOwnershipError)) {
+        throw error;
+      }
+      log.warn("[desktop daemon] could not reconcile persistent LaunchAgent", error);
+    }
+  },
   bootstrapGui: bootstrap,
   autoUpdateInstalledSkills: () => {
     void autoUpdateInstalledSkills().catch((error) => {

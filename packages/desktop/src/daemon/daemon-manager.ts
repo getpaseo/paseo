@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
-import { resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import { clearDaemonExplicitStopIntent, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,
@@ -365,6 +365,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     }
   }
 
+  clearDaemonExplicitStopIntent(getPaseoHome());
   const daemonRunner = resolveDaemonRunnerEntrypoint();
   const reclaimStalePidLock =
     current.status === "errored" && current.desktopManaged && current.error === null;
