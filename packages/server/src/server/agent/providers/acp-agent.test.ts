@@ -2849,22 +2849,22 @@ describe("ACPAgentSession", () => {
         cachedReadTokens: 5_000,
       },
     });
-    await Promise.resolve();
-    await Promise.resolve();
 
-    expect(events.find((event) => event.type === "turn_completed")).toEqual({
-      type: "turn_completed",
-      provider: "claude-acp",
-      turnId,
-      usage: {
-        inputTokens: 30_000,
-        outputTokens: 12_000,
-        cachedInputTokens: 5_000,
-        contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 45_000,
-        totalCostUsd: undefined,
-      },
-    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "turn_completed",
+        provider: "claude-acp",
+        turnId,
+        usage: {
+          inputTokens: 30_000,
+          outputTokens: 12_000,
+          cachedInputTokens: 5_000,
+          contextWindowMaxTokens: 200_000,
+          contextWindowUsedTokens: 45_000,
+          totalCostUsd: undefined,
+        },
+      }),
+    );
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
