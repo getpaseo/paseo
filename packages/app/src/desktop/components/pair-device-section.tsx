@@ -280,7 +280,7 @@ function PairingQr({ svg, isError }: { svg: string | null; isError: boolean }) {
 const styles = StyleSheet.create((theme) => ({
   stateLine: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
     paddingVertical: theme.spacing[6],
   },
@@ -309,8 +309,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   consentDescription: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.5,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.5,
   },
   actions: {
     flexDirection: "row",
@@ -331,15 +331,15 @@ const styles = StyleSheet.create((theme) => ({
   directHint: {
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.5,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
   },
   offer: {
     gap: theme.spacing[4],
   },
   offerHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   qrTile: {
@@ -375,13 +375,13 @@ const styles = StyleSheet.create((theme) => ({
   linkInput: {
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     outlineStyle: "none",
   } as object,
   hint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

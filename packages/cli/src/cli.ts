@@ -1,10 +1,10 @@
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
-import { createChatCommand } from "./commands/chat/index.js";
-import { createLoopCommand } from "./commands/loop/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
+import { createPluginCommand } from "./commands/plugin/index.js";
+import { createProjectCommand } from "./commands/project/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createScriptCommand } from "./commands/script/index.js";
@@ -17,6 +17,7 @@ import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
 import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
+import { runDaemonReloadCommand } from "./commands/daemon/reload.js";
 import { addLsOptions, runLsCommand } from "./commands/agent/ls.js";
 import { addRunOptions, runRunCommand } from "./commands/agent/run.js";
 import { addLogsOptions, runLogsCommand } from "./commands/agent/logs.js";
@@ -126,6 +127,10 @@ export function createCli(): Command {
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(withOutput(runDaemonStatusCommand));
 
+  addJsonAndDaemonHostOptions(
+    program.command("reload").description('Reload daemon config (alias for "paseo daemon reload")'),
+  ).action(withOutput(runDaemonReloadCommand));
+
   addJsonOption(
     program
       .command("restart")
@@ -168,16 +173,12 @@ export function createCli(): Command {
   program.addCommand(createHubCommand());
 
   // Chat commands
-  program.addCommand(createChatCommand());
 
   // Terminal commands
   program.addCommand(createTerminalCommand());
 
   // Workspace script commands
   program.addCommand(createScriptCommand());
-
-  // Loop commands
-  program.addCommand(createLoopCommand());
 
   // Schedule commands
   program.addCommand(createScheduleCommand());
@@ -188,11 +189,13 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
+  program.addCommand(createPluginCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());
 
   // Workspace commands
+  program.addCommand(createProjectCommand());
   program.addCommand(createWorkspaceCommand());
   // COMPAT(worktreeCli): legacy command alias added before workspace was the product unit.
   // Added in v0.2.0; remove after 2027-01-17.

@@ -47,12 +47,20 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
+  requests(): readonly JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
+  waitForRequest(method: string): Promise<JsonObject>;
+  disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
-  completeTurn(params?: { threadId?: string }): void;
+  completeTurn(params?: {
+    threadId?: string;
+    status?: "completed" | "failed" | "interrupted";
+    error?: { message: string } | null;
+  }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -200,6 +208,11 @@ export function createFakeCodexAppServer(
 
     Promise.resolve(handler(message.params))
       .then((result) => {
+        const rpcError = toJsonObject(result).__jsonRpcError;
+        if (rpcError) {
+          child.stdout.write(`${JSON.stringify({ id: message.id, error: rpcError })}\n`);
+          return undefined;
+        }
         child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
         return undefined;
       })
@@ -292,6 +305,9 @@ export function createFakeCodexAppServer(
   return {
     child,
     recordedRollbacks,
+    requests() {
+      return messages;
+    },
     assertNoErrors() {
       if (errors.length > 0) {
         throw errors[0];
@@ -303,6 +319,16 @@ export function createFakeCodexAppServer(
         "turn start request",
       );
       return toJsonObject(message.params);
+    },
+    async waitForRequest(method) {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === method,
+        `${method} request`,
+      );
+      return toJsonObject(message.params);
+    },
+    disconnect() {
+      child.emit("exit", null, "SIGTERM");
     },
     nextResponse() {
       return new Promise<string>((resolve) => {
@@ -319,6 +345,12 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    startsCompaction(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "contextCompaction", id: params.itemId },
+      });
     },
     updatesPlan(params) {
       child.stdout.write(
@@ -337,7 +369,10 @@ export function createFakeCodexAppServer(
           method: "turn/completed",
           params: {
             threadId: params.threadId ?? "thread-1",
-            turn: { status: "completed" },
+            turn: {
+              status: params.status ?? "completed",
+              error: params.error ?? null,
+            },
           },
         })}\n`,
       );

@@ -178,7 +178,7 @@ export function ContextMenuTrigger({
     [onContextMenu, openAtEvent],
   );
 
-  const pressableStyle = useCallback(
+  const resolveDynamicStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
         return style({ pressed, hovered, open: ctx.open });
@@ -198,7 +198,7 @@ export function ContextMenuTrigger({
       onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={handleContextMenu}
-      style={pressableStyle}
+      style={typeof style === "function" ? resolveDynamicStyle : style}
       highlightStyle={highlightStyle}
     >
       {children}

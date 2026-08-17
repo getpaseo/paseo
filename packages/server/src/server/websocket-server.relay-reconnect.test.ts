@@ -5,8 +5,6 @@ import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import type { FileBackedChatService } from "./chat/chat-service.js";
-import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
@@ -88,20 +86,12 @@ vi.mock("./session.js", () => ({
   Session: sessionMock.MockSession,
 }));
 
-vi.mock("./push/token-store.js", () => ({
-  PushTokenStore: class {
-    getAllTokens(): string[] {
-      return [];
-    }
-  },
-}));
-
-vi.mock("./push/push-service.js", () => ({
-  PushService: class {
-    async sendPush(): Promise<void> {
-      // no-op
-    }
-  },
+vi.mock("./push/index.js", () => ({
+  createPushNotifications: () => ({
+    renew: () => undefined,
+    revoke: () => undefined,
+    send: async () => undefined,
+  }),
 }));
 
 import { z } from "zod";
@@ -230,9 +220,11 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
+  startPaused?: boolean;
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
+    onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
   const logger = options?.logger ?? createLogger();
@@ -257,7 +249,7 @@ function createServer(options?: {
     "/tmp/paseo-test",
     createStub<DaemonConfigStore>(daemonConfigStore),
     null,
-    { allowedOrigins: new Set() },
+    { allowedOrigins: new Set(), startPaused: options?.startPaused },
     createWorkspaceAutoNameStub(),
     undefined,
     speechReadiness
@@ -281,8 +273,6 @@ function createServer(options?: {
     undefined,
     undefined,
     undefined,
-    createStub<FileBackedChatService>({}),
-    createStub<LoopService>({}),
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -514,6 +504,39 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("gives every plugin socket an exclusively owned session and cleans it immediately", async () => {
+    const server = createServer();
+    const firstSocket = new MockSocket();
+    const firstAttachment = await server.attachPluginSocket("exclusive", firstSocket);
+    firstSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
+
+    const secondSocket = new MockSocket();
+    const secondAttachment = await server.attachPluginSocket("exclusive", secondSocket);
+    secondSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
+
+    expect(sessionMock.instances).toHaveLength(2);
+    firstSocket.emit("close", 1000, "plugin stopped");
+    await firstAttachment.closed;
+    expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
+    expect(sessionMock.instances[1]?.cleanup).not.toHaveBeenCalled();
+
+    secondSocket.emit("close", 1000, "plugin stopped");
+    await secondAttachment.closed;
+    expect(sessionMock.instances[1]?.cleanup).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  test("rejects ordinary sockets that claim the reserved plugin client id", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await server.attachExternalSocket(socket, { transport: "relay" });
+    socket.emit("message", JSON.stringify(createHelloMessage("plugin:not-a-plugin")));
+
+    expect(socket.readyState).toBe(3);
+    expect(sessionMock.instances).toHaveLength(0);
+    await server.close();
+  });
+
   test("passes hello capabilities through to the created session", async () => {
     const server = createServer();
     const socket = new MockSocket();
@@ -564,6 +587,27 @@ describe("relay external socket reconnect behavior", () => {
       heldCleanup.finish();
       await closePromise;
     }
+  });
+
+  test("accepts plugin startup sessions while application sessions remain paused", async () => {
+    const server = createServer({ startPaused: true });
+    const applicationSocket = new MockSocket();
+    await server.attachExternalSocket(applicationSocket, { transport: "relay" });
+    expect(applicationSocket.readyState).toBe(3);
+
+    const pluginSocket = new MockSocket();
+    const attachment = await server.attachPluginSocket("startup", pluginSocket);
+    pluginSocket.emit("message", JSON.stringify(createHelloMessage("plugin:startup")));
+    expect(sessionMock.instances).toHaveLength(1);
+
+    server.beginAcceptingConnections();
+    const readySocket = new MockSocket();
+    await attachRelayAndHello({ server, socket: readySocket, clientId: "ready-client" });
+    expect(sessionMock.instances).toHaveLength(2);
+
+    pluginSocket.emit("close", 1000, "done");
+    await attachment.closed;
+    await server.close();
   });
 
   test("closes pending connection when hello timeout elapses", async () => {
@@ -934,6 +978,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
+    expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8,6 +9,7 @@ import {
   type ReactNode,
   createElement,
 } from "react";
+import { createPortal } from "react-dom";
 import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
 import {
   ArrowLeft,
@@ -45,6 +47,7 @@ import {
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { getOverlayRoot } from "@/lib/overlay-root";
 import {
   getDesktopHost,
   isElectronRuntime,
@@ -59,7 +62,6 @@ import {
 } from "@/desktop/browser/store";
 import {
   applyInactiveBrowserWebviewViewport,
-  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -67,6 +69,11 @@ import {
   removeResidentBrowserWebview,
   takeResidentBrowserWebview,
 } from "../resident-webviews";
+import {
+  createElementSelectorController,
+  type BrowserElementSelection,
+  type ElementSelectorOutcome,
+} from "./element-selector.electron";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -77,6 +84,7 @@ type ElectronWebview = HTMLElement & {
   stop?: () => void;
   loadURL?: (url: string) => Promise<void>;
   getURL?: () => string;
+  isLoading?: () => boolean;
   executeJavaScript?: (code: string) => Promise<unknown>;
   focus?: () => void;
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
@@ -85,10 +93,6 @@ type ElectronWebview = HTMLElement & {
 
 type WebTextInput = TextInput & {
   getNativeRef?: () => unknown;
-};
-
-type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted" | "comment"> & {
-  attributes?: Record<string, string>;
 };
 
 interface BrowserElementAnnotation {
@@ -315,20 +319,6 @@ function executeWebviewJavaScript(webview: ElectronWebview, code: string): Promi
 
 function ignoreWebviewJavaScriptError() {}
 
-function destroyWebviewSelector(webview: ElectronWebview): void {
-  void executeWebviewJavaScript(
-    webview,
-    "if(window.__paseoSelector) window.__paseoSelector.destroy();",
-  ).catch(ignoreWebviewJavaScriptError);
-}
-
-function clearWebviewSelector(webview: ElectronWebview): void {
-  void executeWebviewJavaScript(
-    webview,
-    "if(window.__paseoSelector) window.__paseoSelector.destroy(); window.__paseoSelectorResult = null;",
-  ).catch(ignoreWebviewJavaScriptError);
-}
-
 interface BrowserAnnotationMarker {
   index: number;
   selector: string;
@@ -435,38 +425,6 @@ function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrow
   }
   const event = payload as Partial<DesktopBrowserShortcutEvent>;
   return event.action === "focus-url";
-}
-
-function startSelectorResultPolling(input: {
-  webview: ElectronWebview;
-  onSelection: (selection: BrowserElementSelection) => void;
-  onDone: () => void;
-}): number {
-  const { webview, onSelection, onDone } = input;
-  const poll = window.setInterval(() => {
-    void (async () => {
-      try {
-        const raw = await executeWebviewJavaScript(
-          webview,
-          "JSON.stringify(window.__paseoSelectorResult || null)",
-        );
-        const result = typeof raw === "string" ? JSON.parse(raw) : null;
-        if (!result) {
-          return;
-        }
-        window.clearInterval(poll);
-        onDone();
-        await executeWebviewJavaScript(webview, "window.__paseoSelectorResult = null;");
-        if (!result.__cancelled) {
-          onSelection(result as BrowserElementSelection);
-        }
-      } catch {
-        // Keep polling; cross-origin/webview timing can make this transient.
-      }
-    })();
-  }, 200);
-
-  return poll;
 }
 
 function ToolbarButton({
@@ -655,13 +613,15 @@ export function BrowserPane({
   const browserRef = useRef(browser);
   browserRef.current = browser;
   const pendingNavigationUrlRef = useRef<string | null>(null);
-  const domReadyRef = useRef(false);
   const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
   const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
+  const selectorControllerRef = useRef<ReturnType<typeof createElementSelectorController> | null>(
+    null,
+  );
+  if (!selectorControllerRef.current) {
+    selectorControllerRef.current = createElementSelectorController();
+  }
   const selectorActive = selectorMode !== null;
-  // Which action the active selector performs on click: open the annotation card
-  // ("annotate") or copy a screenshot of the element to the clipboard ("screenshot").
-  const selectorModeRef = useRef<"annotate" | "screenshot">("annotate");
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -737,7 +697,7 @@ export function BrowserPane({
 
   const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
     const webview = webviewRef.current;
-    if (!webview || !domReadyRef.current) {
+    if (!webview) {
       return;
     }
 
@@ -776,7 +736,6 @@ export function BrowserPane({
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
     const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
-    domReadyRef.current = isResidentBrowserWebviewReady(webview);
     if (!residentWebview) {
       prepareBrowserWebview(webview, {
         browserId,
@@ -808,7 +767,7 @@ export function BrowserPane({
           });
 
     const handleStartLoading = () => {
-      domReadyRef.current = false;
+      selectorControllerRef.current?.stopForWebview(webview);
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
     };
@@ -875,7 +834,6 @@ export function BrowserPane({
       });
     };
     const handleDomReady = () => {
-      domReadyRef.current = true;
       syncNavigationState();
       // The previous page's overlay is gone after a load; re-apply markers for
       // the freshly loaded document.
@@ -940,10 +898,10 @@ export function BrowserPane({
       } else {
         removeResidentBrowserWebview(browserIdRef.current);
       }
+      selectorControllerRef.current?.stopForWebview(webview);
       if (webviewRef.current === webview) {
         webviewRef.current = null;
       }
-      domReadyRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browserId, onFocusPane]);
@@ -1196,8 +1154,8 @@ export function BrowserPane({
   );
 
   const handleSelectorResult = useCallback(
-    (selection: BrowserElementSelection) => {
-      if (selectorModeRef.current === "screenshot") {
+    (selection: BrowserElementSelection, mode: "annotate" | "screenshot") => {
+      if (mode === "screenshot") {
         void screenshotElementToClipboard(selection);
         return;
       }
@@ -1230,271 +1188,62 @@ export function BrowserPane({
     setPendingSelection(null);
   }, []);
 
+  const showSelectorFailure = useCallback(
+    (reason: "loading" | "timeout" | "unavailable") => {
+      const message =
+        reason === "loading"
+          ? t("workspace.browser.controls.selectorLoading")
+          : t("workspace.browser.controls.selectorFailed");
+      toastRef.current?.error(message);
+    },
+    [t],
+  );
+
+  const handleElementSelectorOutcome = useCallback(
+    (outcome: ElementSelectorOutcome) => {
+      setSelectorMode(null);
+      if (outcome.type === "selected") {
+        handleSelectorResult(outcome.selection, outcome.mode);
+      } else if (outcome.type === "failed") {
+        showSelectorFailure(outcome.reason);
+      }
+    },
+    [handleSelectorResult, showSelectorFailure],
+  );
+
   const startElementSelector = useCallback(
     (mode: "annotate" | "screenshot") => {
+      if (mode === "annotate" && !workspaceAttachmentScopeKey) {
+        showSelectorFailure("unavailable");
+        return;
+      }
       const webview = webviewRef.current;
-      if (!webview || !domReadyRef.current) return;
-      // Annotate needs a workspace scope to attach to; screenshot only copies.
-      if (mode === "annotate" && !workspaceAttachmentScopeKey) return;
-      selectorModeRef.current = mode;
+      const controller = selectorControllerRef.current;
+      if (!webview || !controller) {
+        showSelectorFailure("unavailable");
+        return;
+      }
+
+      const startResult = controller.start({
+        webview,
+        mode,
+        onFinish: handleElementSelectorOutcome,
+      });
+      if (startResult !== "started") {
+        showSelectorFailure(startResult);
+        return;
+      }
+
       pendingScreenshotRef.current = undefined;
       setPendingSelection(null);
       setSelectorMode(mode);
-
-      const js = `
-      (function() {
-        if (window.__paseoSelector) { window.__paseoSelector.destroy(); }
-        var overlay = null;
-        var style = document.createElement('style');
-        style.textContent = [
-          '.__paseo-hover { outline: 2px solid #3b82f6 !important; outline-offset: 2px !important; cursor: crosshair !important; }',
-          '.__paseo-select-mode, .__paseo-select-mode * { cursor: crosshair !important; pointer-events: auto !important; user-select: none !important; }',
-          '.__paseo-select-mode *, .__paseo-select-mode *::before, .__paseo-select-mode *::after { animation: none !important; transition: none !important; }',
-          '.__paseo-select-mode a, .__paseo-select-mode button, .__paseo-select-mode input, .__paseo-select-mode select, .__paseo-select-mode textarea, .__paseo-select-mode [role="button"], .__paseo-select-mode [onclick] { pointer-events: none !important; }',
-          '.__paseo-select-mode iframe, .__paseo-select-mode video, .__paseo-select-mode audio { pointer-events: none !important; }',
-          '.__paseo-hover-label { position: fixed; z-index: 2147483647; pointer-events: none; max-width: 360px; padding: 4px 8px; border-radius: 6px; background: rgba(24,24,27,0.96); color: #fff; font: 500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
-          '.__paseo-hover-label .__paseo-tag { color: #93c5fd; }',
-          '.__paseo-hover-label .__paseo-id { color: #fca5a5; }',
-          '.__paseo-hover-label .__paseo-cls { color: #fcd34d; }',
-          '.__paseo-hover-label .__paseo-dim { color: #a1a1aa; margin-left: 6px; }',
-          '.__paseo-hover-label .__paseo-comp { color: #86efac; margin-left: 6px; }',
-        ].join('\\n');
-        document.head.appendChild(style);
-        document.documentElement.classList.add('__paseo-select-mode');
-        var hoverLabel = document.createElement('div');
-        hoverLabel.className = '__paseo-hover-label';
-        hoverLabel.style.display = 'none';
-        document.documentElement.appendChild(hoverLabel);
-        var last = null;
-        function escapeHtml(value) {
-          return String(value).replace(/[&<>"]/g, function(ch) {
-            return ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;';
-          });
-        }
-        function describeElement(el) {
-          var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
-          var parts = ['<span class="__paseo-tag">' + escapeHtml(tag) + '</span>'];
-          if (el.id) {
-            parts.push('<span class="__paseo-id">#' + escapeHtml(el.id) + '</span>');
-          }
-          if (el.classList && el.classList.length) {
-            var cls = Array.prototype.slice.call(el.classList, 0, 2)
-              .filter(function(c) { return c.indexOf('__paseo') !== 0; })
-              .map(function(c) { return '.' + escapeHtml(c); })
-              .join('');
-            if (cls) parts.push('<span class="__paseo-cls">' + cls + '</span>');
-          }
-          var comp = getReactSource(el);
-          if (comp && comp.componentName) {
-            parts.push('<span class="__paseo-comp">&lt;' + escapeHtml(comp.componentName) + '&gt;</span>');
-          }
-          var rect = el.getBoundingClientRect();
-          parts.push('<span class="__paseo-dim">' + Math.round(rect.width) + '×' + Math.round(rect.height) + '</span>');
-          return { html: parts.join(''), rect: rect };
-        }
-        function positionLabel(rect, e) {
-          var pad = 12;
-          var lw = hoverLabel.offsetWidth || 0;
-          var lh = hoverLabel.offsetHeight || 0;
-          var top = rect.top - lh - 6;
-          if (top < 4) top = rect.bottom + 6;
-          if (top + lh > window.innerHeight - 4) top = Math.max(4, e.clientY - lh - 6);
-          var left = rect.left;
-          if (left + lw > window.innerWidth - 4) left = Math.max(4, window.innerWidth - lw - 4);
-          if (left < 4) left = 4;
-          hoverLabel.style.top = Math.round(top) + 'px';
-          hoverLabel.style.left = Math.round(left) + 'px';
-        }
-        function onMove(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (last) last.classList.remove('__paseo-hover');
-          var el = e.target;
-          el.classList.add('__paseo-hover');
-          last = el;
-          try {
-            var info = describeElement(el);
-            hoverLabel.innerHTML = info.html;
-            hoverLabel.style.display = 'block';
-            positionLabel(info.rect, e);
-          } catch (err) {
-            hoverLabel.style.display = 'none';
-          }
-        }
-        function buildSelector(el) {
-          if (el.id) return '#' + el.id;
-          var path = [];
-          while (el && el.nodeType === 1) {
-            var seg = el.tagName.toLowerCase();
-            if (el.id) { path.unshift('#' + el.id); break; }
-            var sib = el, nth = 1;
-            while (sib = sib.previousElementSibling) { if (sib.tagName === el.tagName) nth++; }
-            if (nth > 1) seg += ':nth-of-type(' + nth + ')';
-            path.unshift(seg);
-            el = el.parentElement;
-          }
-          return path.join(' > ');
-        }
-        function getReactSource(el) {
-          var keys = Object.keys(el);
-          for (var i = 0; i < keys.length; i++) {
-            if (keys[i].startsWith('__reactFiber$') || keys[i].startsWith('__reactInternalInstance$')) {
-              var fiber = el[keys[i]];
-              while (fiber) {
-                if (fiber._debugSource) {
-                  return {
-                    fileName: fiber._debugSource.fileName || null,
-                    lineNumber: fiber._debugSource.lineNumber || null,
-                    columnNumber: fiber._debugSource.columnNumber || null,
-                    componentName: (fiber.type && (typeof fiber.type === 'string' ? fiber.type : fiber.type.displayName || fiber.type.name)) || null
-                  };
-                }
-                if (fiber._debugOwner) { fiber = fiber._debugOwner; }
-                else if (fiber.return) { fiber = fiber.return; }
-                else break;
-              }
-            }
-          }
-          return null;
-        }
-        function getParentChain(el, depth) {
-          var chain = [];
-          var cur = el.parentElement;
-          for (var i = 0; i < (depth || 5) && cur; i++) {
-            var desc = cur.tagName.toLowerCase();
-            if (cur.id) desc += '#' + cur.id;
-            if (cur.className && typeof cur.className === 'string') { var cls = cur.className.trim().replace(/  +/g, ' ').split(' ').slice(0,2).join('.'); if (cls) desc += '.' + cls; }
-            chain.push(desc);
-            cur = cur.parentElement;
-          }
-          return chain;
-        }
-        function getChildSummary(el, max) {
-          var kids = [];
-          for (var i = 0; i < Math.min(el.children.length, max || 8); i++) {
-            var c = el.children[i];
-            var desc = c.tagName.toLowerCase();
-            if (c.id) desc += '#' + c.id;
-            kids.push(desc);
-          }
-          if (el.children.length > (max || 8)) kids.push('...(' + el.children.length + ' total)');
-          return kids;
-        }
-        function getRelevantStyles(el) {
-          var cs = window.getComputedStyle(el);
-          var pick = ['display','position','width','height','color','background-color','font-size','font-family','padding','margin','border','flex','grid-template-columns','gap','overflow','opacity','z-index'];
-          var out = {};
-          pick.forEach(function(p) {
-            var v = cs.getPropertyValue(p);
-            if (v && v !== 'none' && v !== 'normal' && v !== 'auto' && v !== '0px' && v !== 'rgba(0, 0, 0, 0)') out[p] = v;
-          });
-          return out;
-        }
-        function onClick(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          var el = e.target;
-          if (last) last.classList.remove('__paseo-hover');
-          hoverLabel.style.display = 'none';
-          var attrs = {};
-          for (var i = 0; i < el.attributes.length; i++) {
-            attrs[el.attributes[i].name] = el.attributes[i].value;
-          }
-          var rect = el.getBoundingClientRect();
-          var result = {
-            tag: el.tagName.toLowerCase(),
-            text: (el.innerText || '').substring(0, 500),
-            selector: buildSelector(el),
-            attributes: attrs,
-            url: location.href,
-            outerHTML: el.outerHTML.substring(0, 2000),
-            computedStyles: getRelevantStyles(el),
-            boundingRect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-            reactSource: getReactSource(el),
-            parentChain: getParentChain(el, 5),
-            children: getChildSummary(el, 8)
-          };
-          destroy();
-          window.__paseoSelectorResult = result;
-        }
-        function onKey(e) {
-          if (e.key === 'Escape') { destroy(); window.__paseoSelectorResult = { __cancelled: true }; }
-        }
-        function blockEvent(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-        }
-        function destroy() {
-          document.removeEventListener('mousemove', onMove, true);
-          document.removeEventListener('click', onClick, true);
-          document.removeEventListener('keydown', onKey, true);
-          document.removeEventListener('mousedown', blockEvent, true);
-          document.removeEventListener('mouseup', blockEvent, true);
-          document.removeEventListener('pointerdown', blockEvent, true);
-          document.removeEventListener('pointerup', blockEvent, true);
-          document.removeEventListener('touchstart', blockEvent, true);
-          document.removeEventListener('touchend', blockEvent, true);
-          document.removeEventListener('focus', blockEvent, true);
-          document.removeEventListener('submit', blockEvent, true);
-          document.documentElement.classList.remove('__paseo-select-mode');
-          if (last) last.classList.remove('__paseo-hover');
-          if (hoverLabel.parentNode) hoverLabel.parentNode.removeChild(hoverLabel);
-          style.remove();
-          window.__paseoSelector = null;
-        }
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('click', onClick, true);
-        document.addEventListener('keydown', onKey, true);
-        document.addEventListener('mousedown', blockEvent, true);
-        document.addEventListener('mouseup', blockEvent, true);
-        document.addEventListener('pointerdown', blockEvent, true);
-        document.addEventListener('pointerup', blockEvent, true);
-        document.addEventListener('touchstart', blockEvent, true);
-        document.addEventListener('touchend', blockEvent, true);
-        document.addEventListener('focus', blockEvent, true);
-        document.addEventListener('submit', blockEvent, true);
-        window.__paseoSelector = { destroy: destroy };
-      })()
-    `;
-
-      try {
-        void executeWebviewJavaScript(webview, js)
-          .then(() => {
-            const poll = startSelectorResultPolling({
-              webview,
-              onSelection: handleSelectorResult,
-              onDone: () => setSelectorMode(null),
-            });
-            window.setTimeout(() => {
-              window.clearInterval(poll);
-              setSelectorMode(null);
-              if (webviewRef.current !== webview || !domReadyRef.current) {
-                return;
-              }
-              destroyWebviewSelector(webview);
-            }, 30000);
-            return undefined;
-          })
-          .catch(() => {
-            setSelectorMode(null);
-          });
-      } catch {
-        setSelectorMode(null);
-      }
     },
-    [handleSelectorResult, workspaceAttachmentScopeKey],
+    [handleElementSelectorOutcome, showSelectorFailure, workspaceAttachmentScopeKey],
   );
 
   const cancelElementSelector = useCallback(() => {
-    const webview = webviewRef.current;
+    selectorControllerRef.current?.cancel();
     setSelectorMode(null);
-    if (webview && domReadyRef.current) {
-      try {
-        clearWebviewSelector(webview);
-      } catch {}
-    }
   }, []);
 
   const currentPageUrl = browser?.url ?? null;
@@ -1526,7 +1275,7 @@ export function BrowserPane({
       return;
     }
     const webview = webviewRef.current;
-    if (!webview || !domReadyRef.current) {
+    if (!webview) {
       return;
     }
     if (annotationMarkers.length === 0) {
@@ -1794,6 +1543,7 @@ export function BrowserPane({
         })}
         {pendingSelection ? (
           <BrowserElementAnnotationCard
+            anchor={webviewClipRef.current}
             selection={pendingSelection}
             onSubmit={submitAnnotation}
             onCancel={cancelAnnotation}
@@ -1805,15 +1555,18 @@ export function BrowserPane({
 }
 
 function BrowserElementAnnotationCard({
+  anchor,
   selection,
   onSubmit,
   onCancel,
 }: {
+  anchor: HTMLElement | null;
   selection: BrowserElementSelection;
   onSubmit: (annotation: BrowserElementAnnotation) => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
+  const bounds = useElementBounds(anchor);
   const [comment, setComment] = useState("");
   const commentRef = useRef(comment);
   commentRef.current = comment;
@@ -1845,8 +1598,12 @@ function BrowserElementAnnotationCard({
   const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
   const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
 
-  return (
-    <View style={styles.annotationOverlay} pointerEvents="box-none">
+  if (!bounds) {
+    return null;
+  }
+
+  return createPortal(
+    <View style={[styles.annotationOverlay, bounds]} pointerEvents="box-none">
       <View style={styles.annotationCard}>
         <View style={styles.annotationHeader}>
           <Text numberOfLines={1} style={styles.annotationTitle}>
@@ -1883,8 +1640,34 @@ function BrowserElementAnnotationCard({
           </Button>
         </View>
       </View>
-    </View>
+    </View>,
+    getOverlayRoot(),
   );
+}
+
+function useElementBounds(element: HTMLElement | null): ViewStyle | null {
+  const [bounds, setBounds] = useState<ViewStyle | null>(null);
+
+  useLayoutEffect(() => {
+    if (!element) {
+      setBounds(null);
+      return;
+    }
+    const update = () => {
+      const rect = element.getBoundingClientRect();
+      setBounds({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [element]);
+
+  return bounds;
 }
 
 const ThemedCloseIcon = withUnistyles(X);
@@ -1955,7 +1738,7 @@ const styles = StyleSheet.create((theme) => ({
   urlInput: {
     flex: 1,
     minWidth: 0,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: 0,
     paddingHorizontal: 0,
   },
@@ -1967,7 +1750,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   webviewWrap: {
     flex: 1,
@@ -1988,17 +1771,15 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   toolbarTooltipText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
   annotationOverlay: {
     position: "absolute",
     zIndex: 1,
-    left: 0,
-    right: 0,
-    bottom: 0,
     padding: theme.spacing[3],
     alignItems: "center",
+    justifyContent: "flex-end",
   },
   annotationCard: {
     width: "100%",
@@ -2022,7 +1803,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   annotationTitle: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "600",
     color: theme.colors.foreground,
   },
@@ -2034,13 +1815,13 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   annotationElement: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     marginBottom: theme.spacing[2],
   },
   annotationInput: {
     minHeight: 64,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
@@ -2063,10 +1844,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: 8,
   },
   unavailableTitle: {
-    fontSize: 16,
+    fontSize: theme.fontSize.base,
     fontWeight: "600",
   },
   unavailableSubtitle: {
-    fontSize: 12,
+    fontSize: theme.fontSize.sm,
   },
 }));

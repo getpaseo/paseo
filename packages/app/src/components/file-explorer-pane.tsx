@@ -27,22 +27,12 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import * as Clipboard from "expo-clipboard";
-import {
-  ChevronDown,
-  Eye,
-  EyeOff,
-  FilePlus,
-  Folder,
-  FolderPlus,
-  RotateCw,
-} from "lucide-react-native";
+import { ChevronDown, Eye, EyeOff, FilePlus, FolderPlus, RotateCw } from "lucide-react-native";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
   TreeChevron,
-  TreeIndentGuides,
   treeRowPaddingLeft,
-  WORKSPACE_FILE_ROW_TRAILING_PADDING,
-  WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+  workspaceTreeRowStyles,
   WORKSPACE_TREE_ICON_LABEL_GAP,
   WORKSPACE_TREE_ICON_SIZE,
   WORKSPACE_TREE_LOADING_ICON_SIZE,
@@ -89,7 +79,6 @@ const SORT_OPTIONS: { value: SortOption }[] = [
 ];
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const ThemedFolder = withUnistyles(Folder);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -210,15 +199,11 @@ function EntryNameInputRow({
   );
 
   return (
-    <View style={[styles.entryRow, { paddingLeft: treeRowPaddingLeft(depth) }]}>
-      <TreeIndentGuides depth={depth} />
+    <View style={[workspaceTreeRowStyles.row, { paddingLeft: treeRowPaddingLeft(depth) }]}>
       <View style={styles.entryInfo}>
-        <View style={styles.entryChevron}>
-          {kind === "directory" ? <TreeChevron expanded={false} /> : null}
-        </View>
         <View style={styles.entryIcon}>
           {kind === "directory" ? (
-            <ThemedFolder size={WORKSPACE_TREE_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
+            <TreeChevron expanded={false} />
           ) : (
             <MaterialFileIcon fileName={name || "untitled"} size={WORKSPACE_TREE_ICON_SIZE} />
           )}
@@ -237,6 +222,7 @@ function EntryNameInputRow({
           }
           autoCapitalize="none"
           autoCorrect={false}
+          placeholderTextColor={styles.draftPlaceholder.color}
           style={styles.draftInput}
           selectTextOnFocus={Boolean(initialName)}
           testID="file-explorer-name-input"
@@ -270,6 +256,9 @@ function TreeRowItem({
   testID,
 }: TreeRowItemProps) {
   const { t } = useTranslation();
+  const [isHovered, setIsHovered] = useState(false);
+  const showNameHover = useCallback(() => setIsHovered(true), []);
+  const hideNameHover = useCallback(() => setIsHovered(false), []);
   const isDirectory = entry.kind === "directory";
   const dragSourceRef = useWorkspaceFileDragSource({
     enabled: !isDirectory,
@@ -293,9 +282,9 @@ function TreeRowItem({
 
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.entryRow,
+      workspaceTreeRowStyles.row,
       { paddingLeft: treeRowPaddingLeft(depth) },
-      (Boolean(hovered) || pressed || isSelected) && styles.entryRowActive,
+      (Boolean(hovered) || pressed || isSelected) && workspaceTreeRowStyles.active,
     ],
     [depth, isSelected],
   );
@@ -375,26 +364,29 @@ function TreeRowItem({
         onLongPress={handleSelect}
         onContextMenu={handleSelect}
         style={pressableStyle}
+        onHoverIn={showNameHover}
+        onHoverOut={hideNameHover}
         accessibilityState={accessibilityState}
         aria-selected={isSelected}
         testID={testID}
       >
-        <TreeIndentGuides depth={depth} />
         <View ref={dragSourceRef} style={styles.entryInfo}>
-          <View style={styles.entryChevron}>
-            {isDirectory ? <DirectoryChevronIcon loading={loading} expanded={isExpanded} /> : null}
-          </View>
           <View style={styles.entryIcon}>
             {isDirectory ? (
-              <ThemedFolder
-                size={WORKSPACE_TREE_ICON_SIZE}
-                uniProps={foregroundMutedColorMapping}
-              />
+              <DirectoryChevronIcon loading={loading} expanded={isExpanded} />
             ) : (
               <MaterialFileIcon fileName={entry.name} size={WORKSPACE_TREE_ICON_SIZE} />
             )}
           </View>
-          <Text style={styles.entryName} numberOfLines={1}>
+          <Text
+            style={[
+              styles.entryName,
+              workspaceTreeRowStyles.name,
+              isHovered && workspaceTreeRowStyles.nameHovered,
+            ]}
+            numberOfLines={1}
+            testID={testID ? `${testID}-name` : undefined}
+          >
             {entry.name}
           </Text>
         </View>
@@ -1692,7 +1684,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   sortTriggerText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   headerActions: {
@@ -1722,7 +1714,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   loadingText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     color: theme.colors.destructive,
@@ -1738,7 +1730,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   retryButtonText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
   errorActions: {
@@ -1753,17 +1745,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   binaryMetaText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  entryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
-    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
-  },
-  entryRowActive: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
+    fontSize: theme.fontSize.base,
   },
   entryInfo: {
     flex: 1,
@@ -1771,13 +1753,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: WORKSPACE_TREE_ICON_LABEL_GAP,
     minWidth: 0,
-  },
-  entryChevron: {
-    width: WORKSPACE_TREE_ICON_SIZE,
-    height: WORKSPACE_TREE_ICON_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
   },
   entryIcon: {
     width: WORKSPACE_TREE_ICON_SIZE,
@@ -1789,15 +1764,18 @@ const styles = StyleSheet.create((theme) => ({
   entryName: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     userSelect: "none",
   },
   draftInput: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: 0,
     paddingHorizontal: 0,
+  },
+  draftPlaceholder: {
+    color: theme.colors.foregroundExtraMuted,
   },
   contextMetaBlock: {
     paddingVertical: theme.spacing[1],
@@ -1810,12 +1788,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
   },
   contextMetaLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
   },
   contextMetaValue: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
     flex: 1,
@@ -1825,7 +1803,7 @@ const styles = StyleSheet.create((theme) => ({
   previewHeaderText: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   iconButton: {
@@ -1892,7 +1870,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   sheetTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     flex: 1,

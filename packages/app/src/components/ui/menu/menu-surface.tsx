@@ -27,6 +27,7 @@ import { currentPageId, isSubPageOpen } from "./menu-navigation";
 import { AnchoredSurface, MenuOverlay } from "./menu-overlay";
 import { getMenuSheetBottomPadding } from "./menu-sheet-layout";
 import type { Alignment, Placement } from "./menu-anchor";
+import type { KeyboardFocusScope } from "@/keyboard/actions";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -105,6 +106,8 @@ export interface MenuSurfaceProps {
   horizontalPadding?: number;
   scrollable?: boolean;
   testID?: string;
+  /** Limits ordinary app shortcuts to the time this menu owns keyboard focus. */
+  keyboardFocusScope?: KeyboardFocusScope;
 }
 
 /**
@@ -188,6 +191,7 @@ function MenuPopoverSurface({
   horizontalPadding = 16,
   scrollable = false,
   testID,
+  keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue, getAnchor } = useSubAnchors();
@@ -208,7 +212,7 @@ function MenuPopoverSurface({
 
   return (
     <MenuSurfaceContext.Provider value={surfaceValue}>
-      <MenuOverlay visible={menu.open} onClose={handleClose}>
+      <MenuOverlay visible={menu.open} onClose={handleClose} restoreFocusRef={menu.triggerRef}>
         <>
           <AnchoredSurface
             open={menu.open}
@@ -226,6 +230,7 @@ function MenuPopoverSurface({
             horizontalPadding={horizontalPadding}
             scrollable={scrollable}
             testID={testID}
+            keyboardFocusScope={keyboardFocusScope}
           >
             <MenuPage depth={0}>{children}</MenuPage>
           </AnchoredSurface>
@@ -304,6 +309,7 @@ function MenuSheetSurface({
   pages = [],
   sheetTitle,
   testID,
+  keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
@@ -317,6 +323,10 @@ function MenuSheetSurface({
       }),
     }),
     [safeAreaInsets.bottom],
+  );
+  const sheetDataSet = useMemo(
+    () => (keyboardFocusScope ? { keyboardScope: keyboardFocusScope } : undefined),
+    [keyboardFocusScope],
   );
 
   const handleClose = useCallback(() => menu.setOpen(false), [menu]);
@@ -369,6 +379,7 @@ function MenuSheetSurface({
       keyboardBlurBehavior="restore"
     >
       <BottomSheetScrollView
+        dataSet={sheetDataSet}
         contentContainerStyle={sheetScrollContentStyle}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}

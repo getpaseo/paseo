@@ -7,7 +7,6 @@ import { AgentStorage } from "./agent-storage.js";
 import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
-  sendPromptToAgent,
   setupFinishNotification,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
@@ -46,8 +45,14 @@ interface FinishNotificationScenarioOptions {
 
 interface FinishNotificationScenario {
   startWatchingChild(): void;
+  requestChildPermission(requestId?: string): void;
+  resolveChildPermission(requestId?: string): void;
+  resolveChildPermissionFromState(requestId?: string): void;
+  resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
+  closeChildAndReadParentPrompt(): Promise<string>;
+  parentPrompts(): string[];
   wasParentPrompted(): boolean;
 }
 
@@ -57,11 +62,13 @@ function createFinishNotificationScenario(
   let subscriber: ((event: AgentManagerEvent) => void) | null = null;
   let resolveParentPrompt: ((prompt: string) => void) | null = null;
   let parentPrompted = false;
+  const parentPrompts: string[] = [];
 
   const childAgent: ManagedAgent = Object.create(null);
   Reflect.set(childAgent, "id", "child-agent");
   Reflect.set(childAgent, "lifecycle", "idle");
   Reflect.set(childAgent, "config", { title: "Child Agent" });
+  Reflect.set(childAgent, "pendingPermissions", new Map());
 
   const callerAgent: ManagedAgent = Object.create(null);
   Reflect.set(callerAgent, "id", "caller-agent");
@@ -91,6 +98,7 @@ function createFinishNotificationScenario(
   Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
   Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
     parentPrompted = true;
+    parentPrompts.push(prompt);
     resolveParentPrompt?.(prompt);
     return (async function* noop() {})();
   });
@@ -123,6 +131,65 @@ function createFinishNotificationScenario(
         logger: options?.logger ?? createTestLogger(),
       });
     },
+    requestChildPermission(requestId = "permission-1") {
+      childAgent.lifecycle = "running";
+      childAgent.pendingPermissions.set(requestId, {
+        id: requestId,
+        provider: "claude",
+        kind: "tool",
+        name: "Run command",
+        description: "Write the QA sentinel",
+        input: {
+          file_path: "/tmp/permission-qa.txt",
+          content: "PASEO_PERMISSION_NOTIFY_QA_OK\n",
+        },
+      });
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+      subscriber?.({
+        type: "agent_stream",
+        agentId: "child-agent",
+        event: {
+          type: "permission_requested",
+          provider: "codex",
+          request: childAgent.pendingPermissions.get(requestId)!,
+        },
+      });
+    },
+    resolveChildPermission(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
+      subscriber?.({
+        type: "agent_stream",
+        agentId: "child-agent",
+        event: {
+          type: "permission_resolved",
+          provider: "codex",
+          requestId,
+          resolution: { behavior: "allow" },
+        },
+      });
+    },
+    resolveChildPermissionFromState(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
+      subscriber?.({ type: "agent_state", agent: childAgent });
+    },
+    resolveChildPermissionWhileIdle(requestId = "permission-1") {
+      childAgent.pendingPermissions.delete(requestId);
+      childAgent.lifecycle = "idle";
+      subscriber?.({ type: "agent_state", agent: childAgent });
+      subscriber?.({
+        type: "agent_stream",
+        agentId: "child-agent",
+        event: {
+          type: "permission_resolved",
+          provider: "codex",
+          requestId,
+          resolution: { behavior: "allow" },
+        },
+      });
+    },
     finishChild() {
       childAgent.lifecycle = "running";
       subscriber?.({
@@ -144,6 +211,28 @@ function createFinishNotificationScenario(
 
       return parentPrompt;
     },
+    async closeChildAndReadParentPrompt() {
+      const parentPrompt = new Promise<string>((resolve) => {
+        resolveParentPrompt = resolve;
+      });
+
+      childAgent.lifecycle = "running";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      childAgent.lifecycle = "closed";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      return parentPrompt;
+    },
+    parentPrompts() {
+      return parentPrompts;
+    },
     wasParentPrompted() {
       return parentPrompted;
     },
@@ -153,45 +242,6 @@ function createFinishNotificationScenario(
 test("isSystemInjectedEnvelope matches the envelope formatSystemNotificationPrompt produces", () => {
   expect(isSystemInjectedEnvelope(formatSystemNotificationPrompt("child finished"))).toBe(true);
   expect(isSystemInjectedEnvelope("hello world")).toBe(false);
-});
-
-test("sendPromptToAgent forwards the client message id as run options", async () => {
-  const agent: ManagedAgent = Object.create(null);
-  Reflect.set(agent, "id", "agent-1");
-  Reflect.set(agent, "provider", "codex");
-
-  const streamAgentSpy = vi.fn(() => (async function* noop() {})());
-  const agentManager: AgentManager = Object.create(AgentManager.prototype);
-  Reflect.set(
-    agentManager,
-    "getAgent",
-    vi.fn(() => agent),
-  );
-  Reflect.set(agentManager, "tryRunOutOfBand", vi.fn().mockReturnValue(false));
-  Reflect.set(agentManager, "hasInFlightRun", vi.fn().mockReturnValue(false));
-  Reflect.set(agentManager, "streamAgent", streamAgentSpy);
-
-  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
-  Reflect.set(
-    agentStorage,
-    "get",
-    vi.fn(async () => null),
-  );
-
-  await sendPromptToAgent({
-    agentManager,
-    agentStorage,
-    agentId: "agent-1",
-    prompt: "hello",
-    messageId: "msg-client-1",
-    runOptions: { outputSchema: { type: "object" } },
-    logger: createTestLogger(),
-  });
-
-  expect(streamAgentSpy).toHaveBeenCalledWith("agent-1", "hello", {
-    outputSchema: { type: "object" },
-    clientMessageId: "msg-client-1",
-  });
 });
 
 test("finish notifications tell the parent the child's last assistant message", async () => {
@@ -207,6 +257,135 @@ test("finish notifications tell the parent the child's last assistant message", 
       "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
+});
+
+test("finish notifications truncate oversized child responses", async () => {
+  const included = "x".repeat(4000);
+  const omitted = "TAIL-MARKER".repeat(50);
+  const scenario = createFinishNotificationScenario({
+    childLastAssistantMessage: included + omitted,
+  });
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+
+  expect(parentPrompt).toContain(included);
+  expect(parentPrompt).toContain(
+    `[truncated ${omitted.length} chars; use get_agent_activity for the full response]`,
+  );
+  expect(parentPrompt).not.toContain("TAIL-MARKER");
+});
+
+test("closing a watched child notifies the caller", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  const parentPrompt = await scenario.closeChildAndReadParentPrompt();
+
+  expect(parentPrompt).toEqual(
+    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
+  );
+});
+
+test("finish notifications survive permission responses", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.requestChildPermission();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(1);
+  });
+  expect(scenario.parentPrompts()[0]).toContain("needs permission.");
+  const permissionPayload = scenario
+    .parentPrompts()[0]
+    .match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
+  expect(permissionPayload).toBeDefined();
+  expect(JSON.parse(permissionPayload!)).toEqual({
+    agentId: "child-agent",
+    requestId: "permission-1",
+    request: {
+      id: "permission-1",
+      provider: "claude",
+      kind: "tool",
+      name: "Run command",
+      description: "Write the QA sentinel",
+      input: {
+        file_path: "/tmp/permission-qa.txt",
+        content: "PASEO_PERMISSION_NOTIFY_QA_OK\n",
+      },
+    },
+  });
+
+  scenario.resolveChildPermission();
+  scenario.finishChild();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(2);
+  });
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
+});
+
+test("an idle permission resolution waits for the resumed run to finish", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.requestChildPermission();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+
+  scenario.resolveChildPermissionWhileIdle();
+  scenario.requestChildPermission("permission-2");
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(scenario.parentPrompts().every((prompt) => prompt.includes("needs permission."))).toBe(
+    true,
+  );
+
+  scenario.resolveChildPermission("permission-2");
+  scenario.finishChild();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  expect(scenario.parentPrompts()[2]).toContain("finished.");
+});
+
+test("finish notifications report every concurrently pending permission", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.requestChildPermission("permission-1");
+  scenario.requestChildPermission("permission-2");
+
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  expect(
+    scenario.parentPrompts().map((prompt) => {
+      const payload = prompt.match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
+      return JSON.parse(payload!).requestId;
+    }),
+  ).toEqual(["permission-1", "permission-2"]);
+
+  scenario.resolveChildPermission("permission-1");
+  scenario.resolveChildPermission("permission-2");
+  scenario.finishChild();
+
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  expect(scenario.parentPrompts()[2]).toContain("finished.");
+});
+
+test("finish notifications survive repeated permission cycles", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.requestChildPermission();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+  scenario.resolveChildPermissionFromState();
+
+  scenario.requestChildPermission();
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  scenario.resolveChildPermission();
+  scenario.finishChild();
+
+  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  expect(
+    scenario.parentPrompts().map((prompt) => prompt.match(/(needs permission|finished)\./)?.[1]),
+  ).toEqual(["needs permission", "needs permission", "finished"]);
 });
 
 test("detaching a child ends its parent-owned finish notification", async () => {
@@ -258,6 +437,7 @@ it("does not notify archived callers", async () => {
   Reflect.set(childAgent, "id", "child-agent");
   Reflect.set(childAgent, "lifecycle", "idle");
   Reflect.set(childAgent, "config", { title: "Child Agent" });
+  Reflect.set(childAgent, "pendingPermissions", new Map());
 
   const callerAgent: ManagedAgent = Object.create(null);
   Reflect.set(callerAgent, "id", "caller-agent");

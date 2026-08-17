@@ -23,7 +23,7 @@ When the desktop app finds installed Paseo skills, it keeps the bundled skills u
 
 ## `/paseo`, Paseo Reference
 
-The foundational skill. Paseo reference for managing agents and workspaces. Load it when an agent needs to create agents, send them prompts, or manage workspace isolation.
+The foundational skill. Paseo reference for managing projects, workspaces, and agents. Load it when an agent needs to register a project, create agents, send them prompts, or manage workspace isolation.
 
 Not typically invoked directly by users, it's a reference that other skills depend on.
 
@@ -40,17 +40,6 @@ The receiving agent gets a self-contained briefing with the task, context, relev
 ```
 /paseo-handoff hand off the auth fix to codex in a worktree-isolated workspace
 /paseo-handoff hand this to claude opus for review
-```
-
-## `/paseo-loop`, Iterative Loops
-
-Runs an agent loop until an exit condition is met. Use it when you say "loop", "babysit", "keep trying until", "check every X", "watch", or want iterative autonomous execution.
-
-A loop is a worker/verifier cycle: launch a worker, check verification, repeat until done or limits hit. It can use a shell check, a verifier prompt, or both. Set a sensible `--max-iterations` or `--max-time`.
-
-```
-/paseo-loop keep trying until the changed test file passes, max 5 iterations
-/paseo-loop babysit PR 123 until checks are green, check every 2m, max-time 1h
 ```
 
 ## `/paseo-committee`, Committee Planning

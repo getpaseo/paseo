@@ -316,7 +316,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   input: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     padding: 0,
     outlineStyle: "none",
   } as object,
@@ -353,11 +353,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowSubtitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
   },

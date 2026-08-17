@@ -207,7 +207,6 @@ export function MenuItem({
   tooltip,
 }: PropsWithChildren<MenuItemProps>): ReactElement {
   const { selectItem } = useMenuContext("MenuItem");
-
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
@@ -230,12 +229,17 @@ export function MenuItem({
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
   const itemPressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+    ({
+      pressed,
+      hovered = false,
+      focused = false,
+    }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
       hovered && !pressed && !isDisabled ? styles.itemHovered : null,
+      focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
     [active, isDisabled, muted],
@@ -250,11 +254,17 @@ export function MenuItem({
     ],
     [destructive, isSuccess, muted, isDisabled],
   );
+  const itemDataSet = useMemo(
+    () => ({ menuItem: "true", menuDisabled: isDisabled ? "true" : "false" }),
+    [isDisabled],
+  );
 
   const content = (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
+      accessibilityRole="menuitem"
+      tabIndex={-1}
+      dataSet={itemDataSet}
       disabled={isDisabled}
       onPress={handleItemPress}
       style={itemPressableStyle}
@@ -304,7 +314,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
   },
   labelText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   // `border` sits between surface1 and surface2, which put it within a hair of the hover fill and
@@ -333,12 +343,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   hintText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   // The fill is inset from the surface's edges and rounded, so a hovered row reads as a chip
@@ -362,6 +372,8 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: "transparent",
     borderRadius: theme.borderRadius.md,
+    outlineWidth: 0,
+    outlineColor: "transparent",
   },
   itemHovered: {
     backgroundColor: theme.colors.surface2,
@@ -380,7 +392,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.72,
   },
   itemText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: MENU_ITEM_LINE_HEIGHT,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
@@ -396,7 +408,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemDescription: {
     marginTop: 2,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   checkSlot: {

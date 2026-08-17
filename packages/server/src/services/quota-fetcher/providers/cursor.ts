@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { ProviderUsage, ProviderUsageBalance } from "../../../server/messages.js";
@@ -16,8 +14,25 @@ import {
   unavailableUsage,
 } from "../usage.js";
 
-const execFileAsync = promisify(execFile);
-const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
+// Cursor stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep the
+// access token as a plain JWT string under `cursorAuth/accessToken`; older builds
+// kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
+// depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
+// Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
+const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
+const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+
+// @types/node@20 predates the node:sqlite typings; declare the slice we use.
+interface CursorStateStatement {
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+}
+interface CursorStateDatabase {
+  prepare(sql: string): CursorStateStatement;
+  close(): void;
+}
+interface NodeSqliteModule {
+  DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => CursorStateDatabase;
+}
 
 const CursorBillingCycleTimestampSchema = z.preprocess(
   (value) => (typeof value === "string" || typeof value === "number" ? value : null),
@@ -47,6 +62,7 @@ type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
 interface CursorQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  homeDir?: string;
 }
 
 function parseCursorBillingCycleTimestamp(
@@ -70,14 +86,38 @@ function centsToDollars(value: number | null): number | null {
   return value === null ? null : value / 100;
 }
 
-async function readCursorTokenFromSqlite(): Promise<string | null> {
+function readItemTableValue(db: CursorStateDatabase, key: string): string | null {
+  const row = db.prepare("SELECT value FROM ItemTable WHERE key = ?").get(key);
+  const value = row?.["value"];
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
+  return null;
+}
+
+function cursorTokenFromDb(db: CursorStateDatabase): string | null {
+  const modern = readItemTableValue(db, CURSOR_ACCESS_TOKEN_KEY)?.trim();
+  if (modern) return modern;
+
+  const legacy = readItemTableValue(db, CURSOR_LEGACY_AUTH_KEY);
+  if (legacy) {
+    try {
+      const parsed = CursorAuthStatusSchema.parse(JSON.parse(legacy));
+      if (parsed.accessToken) return parsed.accessToken;
+    } catch {
+      // ignore a malformed legacy blob
+    }
+  }
+  return null;
+}
+
+async function readCursorTokenFromSqlite(homeDir: string, logger: Logger): Promise<string | null> {
   const dbPaths: string[] = [];
   if (process.env["APPDATA"]) {
     dbPaths.push(join(process.env["APPDATA"], "Cursor", "User", "globalStorage", "state.vscdb"));
   }
   dbPaths.push(
     join(
-      homedir(),
+      homeDir,
       "Library",
       "Application Support",
       "Cursor",
@@ -86,22 +126,32 @@ async function readCursorTokenFromSqlite(): Promise<string | null> {
       "state.vscdb",
     ),
   );
-  dbPaths.push(join(homedir(), ".config", "Cursor", "User", "globalStorage", "state.vscdb"));
+  dbPaths.push(join(homeDir, ".config", "Cursor", "User", "globalStorage", "state.vscdb"));
+
+  // Held in a variable so TypeScript skips module resolution: @types/node@20 has no
+  // node:sqlite typings yet, while the runtime (Node 22+ / Electron) provides it.
+  const sqliteSpecifier: string = "node:sqlite";
+  let sqlite: NodeSqliteModule;
+  try {
+    sqlite = (await import(sqliteSpecifier)) as unknown as NodeSqliteModule;
+  } catch (err) {
+    logger.debug({ err }, "node:sqlite unavailable; cannot read Cursor state.vscdb");
+    return null; // runtime without node:sqlite
+  }
 
   for (const path of dbPaths) {
     if (!existsSync(path)) continue;
+    let db: CursorStateDatabase | undefined;
     try {
-      const { stdout } = await execFileAsync(
-        "sqlite3",
-        [path, "SELECT value FROM ItemTable WHERE key = 'cursorAuthStatus'"],
-        { timeout: CURSOR_SQLITE_TIMEOUT_MS },
-      );
-      if (stdout) {
-        const parsed = CursorAuthStatusSchema.parse(JSON.parse(stdout.trim()));
-        if (parsed.accessToken) return parsed.accessToken;
-      }
-    } catch {
-      continue;
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+      const token = cursorTokenFromDb(db);
+      if (token) return token;
+    } catch (err) {
+      // Locked/permission/corrupt/schema failures all land here; log so an
+      // unavailable Cursor card is diagnosable, then try the next candidate.
+      logger.debug({ err, path }, "Failed to read Cursor token from state.vscdb");
+    } finally {
+      db?.close();
     }
   }
   return null;
@@ -113,17 +163,19 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly homeDir: string;
 
   constructor(options: CursorQuotaProviderOptions) {
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
+    this.homeDir = options.homeDir ?? homedir();
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
     const token =
       process.env["CURSOR_ACCESS_TOKEN"] ||
       process.env["CURSOR_TOKEN"] ||
-      (await readCursorTokenFromSqlite());
+      (await readCursorTokenFromSqlite(this.homeDir, this.logger));
 
     if (!token) return unavailableUsage(this);
 

@@ -108,6 +108,6 @@ const styles = StyleSheet.create((theme) => ({
     // native, so this needs neither a cast nor a platform branch.
     outlineWidth: 0,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

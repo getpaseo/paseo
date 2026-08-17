@@ -194,7 +194,7 @@ export function resolveEquivalentHostProjectCandidate(input: {
     (project) => project.projectKey === input.candidate.projectKey,
   );
   if (equivalents.length === 0) return null;
-  return equivalents.toSorted((left, right) =>
+  return equivalents.sort((left, right) =>
     compareHostProjectsForServer(left, right, input.serverId),
   )[0]!;
 }

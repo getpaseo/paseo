@@ -27,6 +27,8 @@ my-app
 
 Each workspace is a separate place to work. You can keep one for your main checkout, create another for a feature, or open a GitHub PR as another workspace.
 
+Use the [CLI project commands](/docs/cli#projects) to register, list, rename, or delete projects.
+
 ## Workspaces contain sessions
 
 Agents run inside a workspace as sessions. A workspace can have one agent session, several agent sessions, terminals, browsers, and diffs open at the same time.

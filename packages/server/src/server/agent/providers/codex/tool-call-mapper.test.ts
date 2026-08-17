@@ -379,6 +379,28 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    ["shutdown", "canceled"],
+    ["notFound", "failed"],
+  ] as const)("maps terminal child state %s to %s", (childStatus, expectedStatus) => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: `call-sub-agent-${childStatus}`,
+      tool: "closeAgent",
+      status: "completed",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: childStatus, message: null },
+      },
+    });
+
+    expect(item).toMatchObject({
+      type: "tool_call",
+      callId: `call-sub-agent-${childStatus}`,
+      status: expectedStatus,
+    });
+  });
+
   it("maps mcp read_file completion with detail", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem(

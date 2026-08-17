@@ -1087,7 +1087,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(dedupedRemoteBranch.status).toBe(1);
     });
 
-    test("derives a deduped PR lookup target from git config when metadata has no target", async () => {
+    test("does not derive a deduped PR lookup target when managed metadata has no target", async () => {
       const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
       execFileSync("git", ["remote", "set-url", "origin", `file://${remoteDir}`], {
@@ -1145,7 +1145,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(facts).toMatchObject({
         isGit: true,
         currentBranch: "daemon-shutdown-diagnostics-1",
-        pullRequestLookupTarget: { headRef: "daemon-shutdown-diagnostics" },
+        pullRequestLookupTarget: null,
       });
     });
 
@@ -1438,8 +1438,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.worktree.branchName).toBe("agent-worktree");
     });
 
-    // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
-    test("reuses an existing branch-off worktree for the same slug", async () => {
+    test("creates a suffixed branch-off worktree for the same slug", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);
       const deps = createCoreDeps();
@@ -1454,12 +1453,12 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       );
 
       expect(first.created).toBe(true);
-      expect(second.created).toBe(false);
-      expect(second.worktree).toEqual(first.worktree);
+      expect(second.created).toBe(true);
+      expect(path.basename(second.worktree.worktreePath)).toBe("reused-worktree-1");
+      expect(second.worktree.branchName).toBe("reused-worktree-1");
     });
 
-    // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
-    test("reuses an existing GitHub PR worktree for the resolved slug", async () => {
+    test("creates a suffixed GitHub PR worktree for the resolved slug", async () => {
       const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
       const deps = createCoreDeps();
@@ -1475,8 +1474,9 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       const second = await createCoreWorktree(input, deps);
 
       expect(first.created).toBe(true);
-      expect(second.created).toBe(false);
-      expect(second.worktree).toEqual(first.worktree);
+      expect(second.created).toBe(true);
+      expect(path.basename(second.worktree.worktreePath)).toBe("feature-review-pr-1");
+      expect(second.worktree.branchName).toBe("feature/review-pr-1");
     });
 
     test("uses an injectable ForgeService dependency for missing PR head refs", async () => {

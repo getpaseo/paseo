@@ -384,12 +384,12 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: theme.spacing[3],
   },
   leading: {
     width: PROVIDER_ICON_SIZE,
-    height: PROVIDER_ICON_SIZE,
+    height: 20,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -400,7 +400,7 @@ const styles = StyleSheet.create((theme) => ({
   target: {
     marginTop: theme.spacing[1],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   trailing: {
     flexDirection: "row",

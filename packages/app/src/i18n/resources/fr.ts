@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   common: {
@@ -67,6 +68,8 @@ export const fr: TranslationResources = {
       newAgent: "Nouvel agent",
       addProject: "Ajouter un projet",
       home: "Accueil",
+      groupByProject: "Grouper par projet",
+      groupByStatus: "Grouper par statut",
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
@@ -98,6 +101,7 @@ export const fr: TranslationResources = {
       interruptAgent: "Interrompre l’agent",
       queueMessage: "Mettre le message en file d’attente",
       sendAndInterrupt: "Envoyer et interrompre",
+      sendAndSteer: "Envoyer et guider",
       sendMessage: "Envoyer un message",
       queue: "File d’attente",
       send: "Envoyer",
@@ -283,6 +287,14 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    diagram: {
+      diagram: "Diagramme",
+      zoomIn: "Zoomer",
+      zoomOut: "Dézoomer",
+      resetZoom: "Réinitialiser la vue",
+      viewSource: "Afficher la source",
+      viewDiagram: "Afficher le diagramme",
+    },
     actions: {
       copyCode: "Copier le code",
       copyTurn: "Copier l’échange",
@@ -334,6 +346,14 @@ export const fr: TranslationResources = {
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l’instant.",
+      tasksProgress: "{{completed}}/{{total}} tâches",
+      activity: {
+        created: "{{count}} tâches créées",
+        added: "Ajoutée",
+        started: "Commencée",
+        completed: "Terminée",
+        reopened: "Rouverte",
+      },
     },
     compaction: {
       loading: "Compactage…",
@@ -521,6 +541,8 @@ export const fr: TranslationResources = {
         screenshotCopied: "Capture d’écran copiée dans le presse-papiers",
         elementCopied: "Élément copié dans le presse-papiers",
         screenshotFailed: "Impossible de copier la capture",
+        selectorLoading: "Attendez la fin du chargement de la page",
+        selectorFailed: "Impossible de démarrer le sélecteur d’élément",
       },
       annotate: {
         title: "Annoter l’élément",
@@ -583,18 +605,22 @@ export const fr: TranslationResources = {
         renameAgent: "Renommer l’agent",
       },
       actions: {
+        newTab: "Nouvel onglet",
         newAgent: "Nouvel agent",
         newTerminal: "Nouveau terminal",
         preparingTerminal: "Préparation de l’onglet du terminal",
         preparingTerminalTooltip: "Préparation du terminal…",
         newBrowser: "Nouveau navigateur",
+        maximizePane: "Agrandir le volet",
+        restorePane: "Restaurer le volet",
         exitFocusMode: "Quitter le mode concentration",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
+        changes: "Modifications",
+        files: "Fichiers",
+        pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Profils de terminal",
         editTerminalProfiles: "Modifier les profils…",
-        pinTarget: "Épingler",
-        unpinTarget: "Désépingler",
       },
       explorer: {
         open: "Ouvrir l’explorateur",
@@ -614,6 +640,7 @@ export const fr: TranslationResources = {
         reloadingAgent: "Rechargement de l’agent…",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Échec du rechargement de l’agent",
+        failedToCloseAgent: "Échec de la fermeture de l’agent",
       },
       confirmations: {
         unsavedTitle: "Modifications non enregistrées",
@@ -882,22 +909,21 @@ export const fr: TranslationResources = {
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
         showTreeView: "Afficher l’arborescence des dossiers",
-        showFlatView: "Afficher la liste de fichiers à plat",
+        hideTreeView: "Masquer l’arborescence des dossiers",
         options: "Options du diff",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
         wrapLongLines: "Renvoyer les longues lignes à la ligne",
-        collapseAll: "Réduire tous les fichiers",
-        expandAll: "Développer tous les fichiers",
         collapseAllFolders: "Réduire tous les dossiers",
         expandAllFolders: "Développer tous les dossiers",
+        collapseAllFiles: "Réduire tous les fichiers",
+        expandAllFiles: "Développer tous les fichiers",
         refreshing: "Actualisation",
         refresh: "Actualiser",
         refreshState: "Actualiser l’état de Git et de {{brand}}",
         failedRefresh: "Échec de l’actualisation de l’état Git.",
-        emptyHiddenWhitespace:
-          "Aucun changement visible après avoir masqué les espaces",
+        emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
         emptyAgainstBase: "Aucune modification par rapport à {{baseRef}}",
         checkingRepository: "Vérification du dépôt…",
@@ -909,6 +935,7 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
+        modifiedFile: "Modifié",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits de l’espace de travail",
@@ -1007,6 +1034,8 @@ export const fr: TranslationResources = {
       },
       show: {
         label: "Afficher",
+        branch: "Branche",
+        project: "Projet",
         host: "Hôte",
         changeRequest: "Pull request",
         checks: "Vérifications",
@@ -1420,8 +1449,8 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
-    currentBranch:
-      "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
+    triggerTooltip: "Changer la branche de l’espace de travail",
+    currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",
     searchPlaceholder: "Filtrer les branches…",
     empty: "Aucune branche trouvée.",
@@ -1487,14 +1516,19 @@ export const fr: TranslationResources = {
     loadingSelector: "Chargement du sélecteur de modèle…",
     error: "Erreur",
     defaultModel: "Par défaut",
-    favorites: "Favoris",
-    favoriteModel: "Ajouter le modèle aux favoris",
-    unfavoriteModel: "Retirer le modèle des favoris",
+    profiles: "Profils",
+    providers: "Fournisseurs",
+    model: "Modèle",
+    editProfiles: "Modifier",
+    editProfilesLabel: "Modifier les profils d’agent",
+    createProfile: "Créer un profil",
     modelCount: "{{count}} modèle",
     modelCountPlural: "{{count}} modèles",
     retry: "Réessayer",
     retrying: "Nouvelle tentative…",
     noMatches: "Aucun modèle ne correspond à votre recherche",
+    noMatchesForQuery: "Aucun modèle ne correspond à « {{query}} »",
+    searchAllPlaceholder: "Rechercher dans tous les modèles…",
     searchPlaceholder: "Rechercher des modèles…",
     openProviderSettings: "Ouvrir les paramètres de {{provider}}",
   },
@@ -1696,12 +1730,15 @@ export const fr: TranslationResources = {
     backdrop: "Arrière-plan du menu",
   },
   subagents: {
+    title: "Sous-agents",
+    pillLabelOne: "1 sous-agent",
+    pillLabelMany: "{{count}} sous-agents",
     detachAction: "Détacher {{label}}",
     detachTooltip: "Détacher le sous-agent",
     archiveAction: "Archiver {{label}}",
     archiveTooltip: "Archiver le sous-agent",
     archiveFinishedAction: "Archiver les sous-agents terminés",
-    archiveFinishedTooltip: "Archiver les sous-agents terminés",
+    archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1737,6 +1774,18 @@ export const fr: TranslationResources = {
         reloadTitle: "Recharger depuis le disque ?",
         reloadMessage: "Vos modifications locales seront perdues.",
       },
+    },
+    files: {
+      label: "Fichiers",
+      subtitle: "Fichiers de l’espace de travail",
+      tooltip: "Parcourir les fichiers de l’espace de travail",
+    },
+    pullRequest: {
+      label: "Demande de fusion",
+      subtitle: "Détails de la demande de fusion",
+      emptyTitle: "Aucune demande de fusion pour le moment",
+      emptyDescription:
+        "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
     },
     diff: {
       changesLabel: "Modifications",
@@ -1870,11 +1919,28 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Connexions",
       agents: "Agents",
+      metadata: "Métadonnées",
       workspaces: "Espaces de travail",
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminaux",
+      plugins: "Plugins",
       host: "Aperçu",
+    },
+    plugins: pluginSettings.fr,
+    metadataGeneration: {
+      title: "Génération de métadonnées",
+      description:
+        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+      selection: "Sélection du modèle",
+      automatic: "Automatique",
+      preferred: "Manuel",
+      automaticHint: "Paseo choisit un modèle rapide disponible",
+      preferredHint: "Choisissez le modèle utilisé par Paseo",
+      model: "Modèle",
+      fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
+      docs: "Documentation",
+      saveError: "Impossible de mettre à jour la génération de métadonnées",
     },
     general: {
       title: "Général",
@@ -1896,11 +1962,14 @@ export const fr: TranslationResources = {
         descriptions: {
           interrupt:
             "Lorsque l’agent est en cours d’exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d’attente.",
+          steer:
+            "Lorsque l’agent est en cours d’exécution, Entrée oriente le tour actif. Commande/Ctrl+Entrée met en file d’attente.",
           queue:
             "Lorsque l’agent est en cours d’exécution, Entrée met en file d’attente. Commande/Ctrl+Entrée envoie.",
         },
         options: {
           interrupt: "Interrompre",
+          steer: "Orienter",
           queue: "File d’attente",
         },
       },
@@ -2041,8 +2110,8 @@ export const fr: TranslationResources = {
         interfaceFontHint:
           "Utilisée dans toute l’application. Laissez vide pour employer la police système",
         interfaceFontAccessibility: "Famille de polices d’interface",
-        interfaceSize: "Taille de l’interface",
-        interfaceSizeAccessibility: "Taille de la police de l’interface",
+        baseSize: "Taille de base",
+        baseSizeAccessibility: "Taille de base de la police",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisée dans le code, les diffs et la sortie du terminal. Laissez vide pour employer la police système",
@@ -2117,6 +2186,7 @@ export const fr: TranslationResources = {
         toggleBothSidebars: "Afficher ou masquer les deux barres latérales",
         toggleSettings: "Afficher ou masquer les paramètres",
         toggleFocusMode: "Activer ou désactiver le mode concentration",
+        toggleExplorerPaneMaximization: "Agrandir ou réduire le volet de l’explorateur",
         cycleTheme: "Changer de thème",
         focusMessageInput: "Activer le champ de message",
         cycleAgentMode: "Parcourir les modes de l’agent",
@@ -2305,6 +2375,46 @@ export const fr: TranslationResources = {
         emptyState:
           "Aucun profil pour le moment. Ajoutez-en un pour lancer un terminal avec une commande particulière.",
       },
+      agentProfiles: {
+        sectionTitle: "Profils d'agent",
+        unavailable: "Connectez-vous à cet hôte pour gérer les profils d'agent",
+        unsupported:
+          "Cet hôte exécute un daemon qui ne prend pas encore en charge les profils d'agent",
+        emptyState:
+          "Aucun profil pour le moment. Ajoutez-en un pour démarrer des agents à partir d'un fournisseur et d'un modèle enregistrés.",
+        addProfileTitle: "Ajouter un profil d'agent",
+        newProfile: "Nouveau profil",
+        editProfile: "Modifier le profil",
+        editProfileTitle: "Modifier le profil d'agent",
+        nameLabel: "Nom",
+        namePlaceholder: "Travail sur l'UI",
+        iconLabel: "Icône",
+        noIcon: "Aucune",
+        providerLabel: "Fournisseur",
+        providerPlaceholder: "Sélectionner un fournisseur",
+        noProviders: "Aucun fournisseur n'est disponible sur cet hôte",
+        modelLabel: "Modèle",
+        noModels: "Ce fournisseur n'a aucun modèle à choisir",
+        modeLabel: "Mode",
+        noModes: "Ce fournisseur n'a aucun mode à choisir",
+        thinkingLabel: "Pensée",
+        noThinkingOptions: "Ce modèle n'a aucun niveau de pensée",
+        featuresLabel: "Caractéristiques",
+        featureCount: "{{count}} caractéristiques",
+        featureCountOne: "{{count}} caractéristique",
+        notesLabel: "Notes pour les agents",
+        notesPlaceholder:
+          "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
+        notesHint:
+          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        save: "Enregistrer",
+        saving: "Enregistrement...",
+        remove: "Supprimer",
+        removeConfirmTitle: "Supprimer le profil ?",
+        removeConfirmMessage: "Supprimer « {{name}} » ?",
+        moveUp: "Déplacer vers le haut",
+        moveDown: "Déplacer vers le bas",
+      },
       daemon: {
         rename: {
           editLabel: "Modifier l’étiquette",
@@ -2480,6 +2590,9 @@ export const fr: TranslationResources = {
           "Voir la documentation pour plus de détails et les variables d’environnement disponibles pour ces commandes",
         setup: "Installation",
         setupAccessibility: "Commandes de configuration du worktree",
+        uncommittedTitle: "Validez les modifications de paseo.json",
+        uncommittedDescription:
+          "Les nouveaux worktrees utilisent le script de configuration de la branche de base sélectionnée.",
         teardown: "Nettoyage",
         teardownAccessibility: "Commandes de nettoyage du worktree",
       },

@@ -10,7 +10,7 @@ import {
   resolveShortcutKeysForAction,
   type ShortcutOverrides,
 } from "@/keyboard/keyboard-shortcuts";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -55,6 +55,7 @@ function resolveWorkspaceShortcuts(overrides: ShortcutOverrides): WorkspaceComma
 }
 
 export function useWorkspaceCommandCenterActions(): void {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const selection = useActiveWorkspaceSelection();
   const serverId = selection?.serverId ?? null;
@@ -96,7 +97,7 @@ export function useWorkspaceCommandCenterActions(): void {
         },
         runGitAction,
       }),
-    [gitActions, isCompact, overrides, runGitAction, t],
+    [gitActions, isCompact, keyboardActionDispatcher, overrides, runGitAction, t],
   );
 
   useCommandCenterActions({

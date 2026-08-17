@@ -7,6 +7,7 @@ import {
 import {
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
+  DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
@@ -117,6 +118,30 @@ describe("panel-store migration", () => {
     });
 
     expect(state.diffCollapsedFoldersByWorkspace).toEqual({ ws: ["src/app"] });
+  });
+
+  it("initializes and preserves collapsed diff file paths by workspace", () => {
+    expect(migratePanelState({}, 14, { isWeb: false }).collapsedFilePathsByWorkspace).toEqual({});
+    expect(
+      migratePanelState({ collapsedFilePathsByWorkspace: { ws: ["src/app.ts"] } }, 14, {
+        isWeb: false,
+      }).collapsedFilePathsByWorkspace,
+    ).toEqual({ ws: ["src/app.ts"] });
+  });
+
+  it("drops the retired per-file diff expansion state", () => {
+    const state = migratePanelState({ diffExpandedPathsByWorkspace: { ws: ["src/app.ts"] } }, 13, {
+      isWeb: false,
+    });
+
+    expect(state.diffExpandedPathsByWorkspace).toBeUndefined();
+  });
+
+  it("replaces the dead explorer split ratio with the shared tree rail width", () => {
+    const state = migratePanelState({ explorerFilesSplitRatio: 0.5 }, 12, { isWeb: false });
+
+    expect(state.explorerFilesSplitRatio).toBeUndefined();
+    expect(state.treeRailWidth).toBe(DEFAULT_TREE_RAIL_WIDTH);
   });
 
   it("drops persisted compact panel state so cold starts return to content", () => {

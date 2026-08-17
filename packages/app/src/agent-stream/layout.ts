@@ -2,6 +2,7 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
+import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -26,6 +27,7 @@ export interface StreamLayoutItem {
   isLastInUserGroup: boolean;
   isLastInToolSequence: boolean;
   frameOrder: StreamFrameChildOrder;
+  phase: "streaming" | "complete";
 }
 
 export interface StreamLayout {
@@ -53,6 +55,7 @@ interface LayoutSegmentInput {
   boundaryBelowItem: StreamItem | null;
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
+  phase: "streaming" | "complete";
 }
 
 interface AssistantFooterSource {
@@ -75,7 +78,7 @@ function createTurnFooterHost(input: {
   };
 }
 
-function findLatestAssistantInTurn(input: {
+function findLatestAssistantInResponse(input: {
   strategy: StreamStrategy;
   items: StreamItem[];
   startIndex: number;
@@ -85,6 +88,7 @@ function findLatestAssistantInTurn(input: {
   let items = input.items;
   let index = input.startIndex;
   let canCrossBoundary = true;
+  let laterItem: StreamItem | null = null;
 
   while (true) {
     for (
@@ -93,12 +97,13 @@ function findLatestAssistantInTurn(input: {
       index = input.strategy.getNeighborIndex(index, "above")
     ) {
       const item = items[index];
-      if (!item || item.kind === "user_message") {
+      if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return null;
       }
       if (item.kind === "assistant_message") {
         return { item, items, index };
       }
+      laterItem = item;
     }
 
     if (
@@ -127,7 +132,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: footerItems,
     startIndex: latestIndex,
@@ -155,11 +160,11 @@ function resolveCompletedFooter(input: {
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
 }): TurnFooterHost | null {
-  if (input.item.kind === "user_message" || input.belowItem?.kind !== "user_message") {
+  if (input.item.kind === "user_message" || !isResponseBoundary(input.item, input.belowItem)) {
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: input.items,
     startIndex: input.index,
@@ -192,8 +197,10 @@ function getToolSequence(input: {
     return "none";
   }
 
-  const hasAbove = isToolSequenceItem(input.aboveItem);
-  const hasBelow = isToolSequenceItem(input.belowItem);
+  const hasAbove =
+    isToolSequenceItem(input.aboveItem) && continuesTurn(input.aboveItem, input.item);
+  const hasBelow =
+    isToolSequenceItem(input.belowItem) && continuesTurn(input.item, input.belowItem);
   if (hasAbove && hasBelow) {
     return "middle";
   }
@@ -271,8 +278,11 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
       toolSequence: getToolSequence({ item, aboveItem, belowItem }),
       isFirstInUserGroup: item.kind === "user_message" && aboveItem?.kind !== "user_message",
       isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
-      isLastInToolSequence: isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
+      isLastInToolSequence:
+        isToolSequenceItem(item) &&
+        !(isToolSequenceItem(belowItem) && continuesTurn(item, belowItem)),
       frameOrder: input.frameOrder,
+      phase: input.phase,
     };
   });
 }
@@ -294,14 +304,14 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
 
   let history: StreamLayoutItem[];
   if (input.history.length > 0) {
-    // The cache key encodes every input that can change history layout. liveHeadBoundaryItem.id
-    // and .kind are stable across text-only flushes (text growth doesn't change what kind of
-    // item borders history), so cached layout stays valid between flushes.
+    // The cache key encodes every input that can change history layout. The boundary turn ID
+    // is membership, so changing it must not reuse a layout from the adjacent turn.
     const historyCacheKey = [
       frameOrder,
       historyBoundaryIndex ?? "null",
       liveHeadBoundaryItem?.id ?? "null",
       liveHeadBoundaryItem?.kind ?? "null",
+      liveHeadBoundaryItem?.turnId ?? "null",
       auxiliaryTurnFooter?.itemId ?? "null",
     ].join(":");
     let byKey = historyLayoutCache.get(input.history);
@@ -324,6 +334,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
         boundaryBelowItem: liveHeadBoundaryItem,
         boundaryAboveItems: null,
         boundaryAboveIndex: null,
+        phase: "complete",
       });
       byKey.set(historyCacheKey, history);
     }
@@ -342,6 +353,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     boundaryBelowItem: null,
     boundaryAboveItems: input.history,
     boundaryAboveIndex: historyBoundaryIndex,
+    phase: input.isTurnActive ? "streaming" : "complete",
   });
 
   return {

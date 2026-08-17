@@ -21,6 +21,7 @@ import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../ag
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+  close(): Promise<void>;
 }
 
 afterEach(() => {
@@ -828,6 +829,54 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("pushes a steer into the exact active Claude query without starting another turn", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      const { turnId } = await session.startTurn("first turn");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      const iterator = input[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
+
+      await expect(
+        session.steerActiveTurn?.("same turn follow-up", {
+          expectedTurnId: turnId,
+          clientMessageId: "steer-client-id",
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      await expect(iterator.next()).resolves.toMatchObject({
+        value: {
+          type: "user",
+          priority: "next",
+          message: { content: [{ type: "text", text: "same turn follow-up" }] },
+        },
+      });
+      expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+
+      await expect(
+        session.steerActiveTurn?.("/rewind submitted-message-id", { expectedTurnId: turnId }),
+      ).resolves.toEqual({ status: "unavailable" });
+      let rewindReachedLiveInput = false;
+      void iterator.next().then(() => {
+        rewindReachedLiveInput = true;
+        return undefined;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(rewindReachedLiveInput).toBe(false);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
@@ -1387,6 +1436,52 @@ describe("ClaudeAgentSession context window usage", () => {
       model: options?.model,
     });
   }
+
+  test("emits canonical task snapshots from Claude TaskCreate results", async () => {
+    const session = await createSessionForTest();
+    try {
+      session.translateMessageToEvents({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "task-create-1",
+              name: "TaskCreate",
+              input: { subject: "Inspect provider", activeForm: "Inspecting provider" },
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = session.translateMessageToEvents({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "task-create-1", content: "created" }],
+        },
+        toolUseResult: { task: { id: "1", subject: "Inspect provider" } },
+      } as unknown as SDKMessage);
+
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "todo",
+          items: [
+            {
+              id: "1",
+              text: "Inspect provider",
+              activeForm: "Inspecting provider",
+              status: "pending",
+              completed: false,
+            },
+          ],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
 
   async function collectStreamEvents(session: AgentSession, prompt = "turn") {
     const events: AgentStreamEvent[] = [];

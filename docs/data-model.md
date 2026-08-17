@@ -54,10 +54,6 @@ $PASEO_HOME/
 │       └── {agentId}.json               # One file per agent
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
-├── chat/
-│   └── rooms.json                       # All rooms + messages
-├── loops/
-│   └── loops.json                       # All loop records
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
@@ -89,7 +85,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                                                                                                                                                                                                                                                                                                                             |
 | `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                                                                                                                                                                                                                                         |
 | `title`              | `string?`                                | User-visible title                                                                                                                                                                                                                                                                                                                                                                  |
-| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` is set automatically for agent-scoped creation and removed by detach — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                                                                      |
+| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). Paseo uses `paseo.parent-agent-id` for parentage and client-scoped `paseo.open-agent-tab.*` labels while managed subagent tabs are open — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                           |
 | `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`. `closed` means the record is resumable but has no live provider runtime; archive remains represented separately by `archivedAt`.                                                                                                                                                                            |
 | `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                                                                                                                                                                                                                                 |
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
@@ -100,7 +96,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `requiresAttention`  | `boolean?`                               | Whether the agent needs user attention                                                                                                                                                                                                                                                                                                                                              |
 | `attentionReason`    | `"finished" \| "error" \| "permission"?` | Why attention is needed                                                                                                                                                                                                                                                                                                                                                             |
 | `attentionTimestamp` | `string?` (ISO 8601)                     | When attention was flagged                                                                                                                                                                                                                                                                                                                                                          |
-| `internal`           | `boolean?`                               | Whether this is a system-internal agent (loop workers, etc.)                                                                                                                                                                                                                                                                                                                        |
+| `internal`           | `boolean?`                               | Whether this is a system-internal agent                                                                                                                                                                                                                                                                                                                                             |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Nested: SerializableConfig
@@ -179,6 +175,13 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 Single file, validated with `PersistedConfigSchema`.
 
+`paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
+classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
+fields and their removal/default semantics; session handlers and the CLI only relay the structured
+result. Normal config patches persist only the requested fields, so launch overrides and resolved
+defaults never leak into the file. Startup-only fields remain compared with the daemon's launch
+snapshot so a mixed edit can apply its live subset and still name the paths that require restart.
+
 ```
 {
   version: 1,
@@ -189,6 +192,8 @@ Single file, validated with `PersistedConfigSchema`.
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
+    terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
+    agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
     auth: { password: string }    // bcrypt hash, optional
@@ -221,6 +226,8 @@ Single file, validated with `PersistedConfigSchema`.
       providers: [{ provider, model?, thinkingOptionId? }]
     }
   },
+  pluginsEnabled: boolean,
+  plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
     dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
     voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
@@ -234,6 +241,21 @@ Single file, validated with `PersistedConfigSchema`.
 ```
 
 All fields are optional with sensible defaults.
+
+### Profile lists
+
+`terminalProfiles` and `agentProfiles` are both whole-list fields: a config patch replaces the
+array, never merges entries, so a client sends the complete next list on every add, edit, reorder
+and remove. List order is the display order.
+
+Absent and empty mean different things for terminal profiles — omitting the key falls back to
+`DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Agent profiles have no
+defaults, so both mean none.
+
+`PersistedConfigSchema` parses strictly, so a daemon that predates a field drops it on write
+rather than storing something it cannot describe. That is why the client gates the agent profiles
+UI on `server_info.features.agentProfiles` instead of letting a save appear to succeed against an
+older daemon.
 
 ### Git process limits
 
@@ -265,9 +287,9 @@ Environment variables override `config.json`:
 | `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
 | `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
 
-`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Restart the
-daemon after changing the file or environment. Run `paseo daemon restart` for a standalone daemon.
-For a desktop-managed daemon, fully quit and reopen Paseo Desktop.
+`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
+after changing `config.json`. Environment changes require a daemon restart; the launch environment
+remains authoritative during reload.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
@@ -358,133 +380,7 @@ One file per schedule. ID is 8 hex characters.
 
 ---
 
-## 4. Chat
-
-**Path:** `$PASEO_HOME/chat/rooms.json`
-
-Single file containing all rooms and messages.
-
-```json
-{
-  "rooms": [ ... ],
-  "messages": [ ... ]
-}
-```
-
-### ChatRoom
-
-| Field       | Type                | Description                         |
-| ----------- | ------------------- | ----------------------------------- |
-| `id`        | `string` (UUID)     |                                     |
-| `name`      | `string`            | Unique room name (case-insensitive) |
-| `purpose`   | `string?`           | Room description                    |
-| `createdAt` | `string` (ISO 8601) |                                     |
-| `updatedAt` | `string` (ISO 8601) | Updated on each new message         |
-
-### ChatMessage
-
-| Field              | Type                | Description                         |
-| ------------------ | ------------------- | ----------------------------------- |
-| `id`               | `string` (UUID)     |                                     |
-| `roomId`           | `string`            | FK to ChatRoom.id                   |
-| `authorAgentId`    | `string`            | Agent ID of the author              |
-| `body`             | `string`            | Message text (supports `@mentions`) |
-| `replyToMessageId` | `string?`           | FK to another ChatMessage.id        |
-| `mentionAgentIds`  | `string[]`          | Extracted `@mention` agent IDs      |
-| `createdAt`        | `string` (ISO 8601) |                                     |
-
----
-
-## 5. Loop
-
-**Path:** `$PASEO_HOME/loops/loops.json`
-
-Single file containing an array of all loop records. Writes are direct (not atomic) and serialized through an in-memory queue. On daemon startup any record with `status: "running"` is recovered as `"stopped"` with an interruption log entry.
-
-| Field                   | Type                                                | Description                                |
-| ----------------------- | --------------------------------------------------- | ------------------------------------------ |
-| `id`                    | `string`                                            | 8-char UUID prefix                         |
-| `name`                  | `string?`                                           | Human-readable name                        |
-| `prompt`                | `string`                                            | Worker prompt                              |
-| `cwd`                   | `string`                                            | Working directory                          |
-| `provider`              | `string`                                            | Default provider                           |
-| `model`                 | `string?`                                           | Default model                              |
-| `modeId`                | `string?`                                           | Default mode ID                            |
-| `workerProvider`        | `string?`                                           | Override provider for workers              |
-| `workerModel`           | `string?`                                           | Override model for workers                 |
-| `verifierProvider`      | `string?`                                           | Override provider for verifiers            |
-| `verifierModel`         | `string?`                                           | Override model for verifiers               |
-| `verifierModeId`        | `string?`                                           | Override mode ID for verifiers             |
-| `verifyPrompt`          | `string?`                                           | LLM verification prompt                    |
-| `verifyChecks`          | `string[]`                                          | Shell commands to run as checks            |
-| `archive`               | `boolean`                                           | Whether to archive worker agents after use |
-| `sleepMs`               | `number`                                            | Delay between iterations (ms)              |
-| `maxIterations`         | `number?`                                           | Cap on iterations                          |
-| `maxTimeMs`             | `number?`                                           | Total time budget (ms)                     |
-| `status`                | `"running" \| "succeeded" \| "failed" \| "stopped"` |                                            |
-| `createdAt`             | `string` (ISO 8601)                                 |                                            |
-| `updatedAt`             | `string` (ISO 8601)                                 |                                            |
-| `startedAt`             | `string` (ISO 8601)                                 |                                            |
-| `completedAt`           | `string?` (ISO 8601)                                |                                            |
-| `stopRequestedAt`       | `string?` (ISO 8601)                                |                                            |
-| `iterations`            | `LoopIteration[]`                                   |                                            |
-| `logs`                  | `LoopLogEntry[]`                                    |                                            |
-| `nextLogSeq`            | `number`                                            | Monotonic log sequence counter             |
-| `activeIteration`       | `number?`                                           | Currently executing iteration index        |
-| `activeWorkerAgentId`   | `string?`                                           | Currently running worker agent             |
-| `activeVerifierAgentId` | `string?`                                           | Currently running verifier agent           |
-
-### Nested: LoopIteration
-
-| Field               | Type                                                | Description              |
-| ------------------- | --------------------------------------------------- | ------------------------ |
-| `index`             | `number`                                            | 1-based iteration index  |
-| `workerAgentId`     | `string?`                                           | Agent ID of the worker   |
-| `workerStartedAt`   | `string` (ISO 8601)                                 |                          |
-| `workerCompletedAt` | `string?` (ISO 8601)                                |                          |
-| `verifierAgentId`   | `string?`                                           | Agent ID of the verifier |
-| `status`            | `"running" \| "succeeded" \| "failed" \| "stopped"` |                          |
-| `workerOutcome`     | `"completed" \| "failed" \| "canceled"?`            |                          |
-| `failureReason`     | `string?`                                           |                          |
-| `verifyChecks`      | `LoopVerifyCheckResult[]`                           | Shell check results      |
-| `verifyPrompt`      | `LoopVerifyPromptResult?`                           | LLM verification result  |
-
-### Nested: LoopLogEntry
-
-| Field       | Type                                                 |
-| ----------- | ---------------------------------------------------- |
-| `seq`       | `number` (monotonic)                                 |
-| `timestamp` | `string` (ISO 8601)                                  |
-| `iteration` | `number?`                                            |
-| `source`    | `"loop" \| "worker" \| "verifier" \| "verify-check"` |
-| `level`     | `"info" \| "error"`                                  |
-| `text`      | `string`                                             |
-
-### Nested: LoopVerifyCheckResult
-
-| Field         | Type                |
-| ------------- | ------------------- |
-| `command`     | `string`            |
-| `exitCode`    | `number`            |
-| `passed`      | `boolean`           |
-| `stdout`      | `string`            |
-| `stderr`      | `string`            |
-| `startedAt`   | `string` (ISO 8601) |
-| `completedAt` | `string` (ISO 8601) |
-
-### Nested: LoopVerifyPromptResult
-
-| Field             | Type                |
-| ----------------- | ------------------- |
-| `passed`          | `boolean`           |
-| `reason`          | `string`            |
-| `verifierAgentId` | `string?`           |
-| `startedAt`       | `string` (ISO 8601) |
-| `completedAt`     | `string` (ISO 8601) |
-
----
-
-## 6. Project Registry
+## 4. Project Registry
 
 **Path:** `$PASEO_HOME/projects/projects.json`
 
@@ -519,7 +415,7 @@ workspace together with its owning project.
 
 ---
 
-## 7. Workspace Registry
+## 5. Workspace Registry
 
 **Path:** `$PASEO_HOME/projects/workspaces.json`
 
@@ -553,7 +449,7 @@ than treating it as valid.
 
 ---
 
-## 8. Push Token Store
+## 6. Push Token Store
 
 **Path:** `$PASEO_HOME/push-tokens.json`
 
@@ -567,7 +463,7 @@ Simple set of Expo push notification tokens. Loaded with permissive parsing (fil
 
 ---
 
-## 9. Daemon meta files
+## 7. Daemon meta files
 
 These small files are not validated as full Zod schemas but are persisted under `$PASEO_HOME` for daemon identity and runtime coordination.
 
