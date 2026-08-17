@@ -1404,6 +1404,54 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("passes an agent-scoped system prompt through createAgent", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+      config: { systemPrompt: "Parent instructions must not be inherited." },
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      provider: "codex",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "System prompt test", systemPrompt: "Child instructions." },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+
+    await tool.handler({
+      ...subagentCurrentWorkspace(),
+      title: "System prompt test",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      systemPrompt: "Child instructions.",
+      notifyOnFinish: false,
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: "Child instructions.",
+      }),
+      undefined,
+      expect.objectContaining({ workspaceId: "wks_parent" }),
+    );
+  });
+
   it("returns create_agent structured content with full provider modes", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({

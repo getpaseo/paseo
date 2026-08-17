@@ -646,6 +646,20 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return { providerOptions: callerAgent.config.providerOptions };
   };
 
+  const resolveCreateAgentConfig = (
+    selectedProvider: string,
+    systemPrompt: string | undefined,
+  ): Pick<AgentSessionConfig, "providerOptions" | "systemPrompt"> | undefined => {
+    const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+    if (!inheritedConfig && !systemPrompt) {
+      return undefined;
+    }
+    return {
+      ...inheritedConfig,
+      ...(systemPrompt ? { systemPrompt } : {}),
+    };
+  };
+
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
@@ -991,6 +1005,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    systemPrompt: z
+      .string()
+      .trim()
+      .min(1, "systemPrompt cannot be empty")
+      .optional()
+      .describe("Optional system instructions for the new agent."),
   };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
@@ -1430,7 +1450,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const createConfig = resolveCreateAgentConfig(selectedProvider, parsedArgs.systemPrompt);
       const {
         snapshot,
         background: createdInBackground,
@@ -1454,7 +1474,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
+          config: createConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
