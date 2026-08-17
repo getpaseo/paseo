@@ -2417,7 +2417,11 @@ export const ru: TranslationResources = {
       },
     },
     project: {
-      commandFormat: { single: "Одна команда", platform: "Команды для платформ" },
+      commandFormat: {
+        title: "Формат команды",
+        single: "Все платформы",
+        platform: "Для каждой платформы",
+      },
       noEditableTarget: "Этот проект нельзя редактировать на этом хосте.",
       backToProjects: "Вернуться к проектам",
       edit: {

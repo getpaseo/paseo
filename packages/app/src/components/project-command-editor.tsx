@@ -1,9 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Switch, Text, TextInput, View } from "react-native";
+import { Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { PASEO_PLATFORMS, type PaseoPlatform } from "@getpaseo/protocol/paseo-config-schema";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   changeCommandFormat,
   type CommandDraft,
@@ -59,6 +60,11 @@ export function ProjectCommandEditor({
 
   return (
     <>
+      <CommandFormatSelector
+        format={command.format}
+        onChange={handleFormatChange}
+        testID={formatTestID}
+      />
       {command.format === "single" ? (
         <SingleCommandInput
           variant={variant}
@@ -83,12 +89,6 @@ export function ProjectCommandEditor({
           {errorMessage}
         </Text>
       ) : null}
-      <CommandFormatToggle
-        format={command.format}
-        onChange={handleFormatChange}
-        accessibilityLabel={accessibilityLabel}
-        testID={formatTestID}
-      />
     </>
   );
 }
@@ -224,37 +224,38 @@ function PlatformCommandInput({
   );
 }
 
-interface CommandFormatToggleProps {
+interface CommandFormatSelectorProps {
   format: CommandFormat;
   onChange: (format: CommandFormat) => void;
-  accessibilityLabel: string;
   testID: string;
 }
 
-function CommandFormatToggle({
-  format,
-  onChange,
-  accessibilityLabel,
-  testID,
-}: CommandFormatToggleProps) {
+function CommandFormatSelector({ format, onChange, testID }: CommandFormatSelectorProps) {
   const { t } = useTranslation();
-  const isPlatform = format === "platform";
-  const handleChange = useCallback(
-    (next: boolean) => onChange(next ? "platform" : "single"),
-    [onChange],
+  const options = useMemo(
+    () => [
+      {
+        value: "single" as const,
+        label: t("settings.project.commandFormat.single"),
+        testID: `${testID}-single`,
+      },
+      {
+        value: "platform" as const,
+        label: t("settings.project.commandFormat.platform"),
+        testID: `${testID}-platform`,
+      },
+    ],
+    [t, testID],
   );
 
   return (
-    <View style={styles.formatToggleRow}>
-      <Text style={styles.modalHint}>
-        {isPlatform
-          ? t("settings.project.commandFormat.platform")
-          : t("settings.project.commandFormat.single")}
-      </Text>
-      <Switch
-        value={isPlatform}
-        onValueChange={handleChange}
-        accessibilityLabel={accessibilityLabel}
+    <View style={styles.formatSelector}>
+      <Text style={styles.formatLabel}>{t("settings.project.commandFormat.title")}</Text>
+      <SegmentedControl
+        options={options}
+        value={format}
+        onValueChange={onChange}
+        size="sm"
         testID={testID}
       />
     </View>
@@ -268,11 +269,12 @@ export function formatPlatformLabel(platform: PaseoPlatform): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  formatToggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
+  formatSelector: {
+    gap: theme.spacing[2],
+  },
+  formatLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   platformFields: {
     gap: theme.spacing[3],
@@ -295,10 +297,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
     minHeight: 100,
     textAlignVertical: "top",
-  },
-  modalHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
   fieldError: {
     color: theme.colors.palette.red[300],

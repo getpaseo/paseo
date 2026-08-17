@@ -2399,7 +2399,11 @@ export const ja: TranslationResources = {
       },
     },
     project: {
-      commandFormat: { single: "単一コマンド", platform: "プラットフォーム別コマンド" },
+      commandFormat: {
+        title: "コマンド形式",
+        single: "すべてのプラットフォーム",
+        platform: "プラットフォーム別",
+      },
       noEditableTarget: "このホストではこのプロジェクトを編集できません。",
       backToProjects: "プロジェクトに戻る",
       edit: {

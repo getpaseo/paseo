@@ -2435,7 +2435,11 @@ export const fr: TranslationResources = {
       },
     },
     project: {
-      commandFormat: { single: "Commande unique", platform: "Commandes par plateforme" },
+      commandFormat: {
+        title: "Format de commande",
+        single: "Toutes les plateformes",
+        platform: "Par plateforme",
+      },
       noEditableTarget: "Ce projet n'est pas modifiable sur cet hôte.",
       backToProjects: "Retour aux projets",
       edit: {

@@ -2388,7 +2388,11 @@ export const en = {
       },
     },
     project: {
-      commandFormat: { single: "Single command", platform: "Platform-specific commands" },
+      commandFormat: {
+        title: "Command format",
+        single: "All platforms",
+        platform: "Per platform",
+      },
       noEditableTarget: "This project isn't editable on this host.",
       backToProjects: "Back to projects",
       edit: {
