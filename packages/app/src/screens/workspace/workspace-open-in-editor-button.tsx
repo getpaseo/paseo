@@ -27,6 +27,7 @@ import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -284,9 +285,10 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
+    height: buttonControlHeight.xs,
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
@@ -294,14 +296,12 @@ const styles = StyleSheet.create((theme) => ({
   splitButtonPrimary: {
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
   },
   splitButtonPrimaryIconOnly: {
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
   },

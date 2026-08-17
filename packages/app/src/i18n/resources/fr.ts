@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   common: {
@@ -98,6 +99,7 @@ export const fr: TranslationResources = {
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
       sendAndInterrupt: "Envoyer et interrompre",
+      sendAndSteer: "Envoyer et guider",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
       send: "Envoyer",
@@ -338,7 +340,6 @@ export const fr: TranslationResources = {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",
       tasksProgress: "{{completed}}/{{total}} tâches",
-      tasksProgressCurrent: "{{completed}}/{{total}} tâches · {{task}}",
       activity: {
         created: "{{count}} tâches créées",
         added: "Ajoutée",
@@ -590,18 +591,22 @@ export const fr: TranslationResources = {
         renameAgent: "Renommer l'agent",
       },
       actions: {
+        newTab: "Nouvel onglet",
         newAgent: "Nouvel agent",
         newTerminal: "Nouveau terminal",
         preparingTerminal: "Préparation de l'onglet du terminal",
         preparingTerminalTooltip: "Préparation du terminal...",
         newBrowser: "Nouveau navigateur",
+        maximizePane: "Agrandir le volet",
+        restorePane: "Restaurer le volet",
         exitFocusMode: "Quitter le mode concentration",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
+        changes: "Modifications",
+        files: "Fichiers",
+        pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
-        pinTarget: "Épingler",
-        unpinTarget: "Détacher",
       },
       explorer: {
         open: "Ouvrir l'explorateur",
@@ -880,16 +885,16 @@ export const fr: TranslationResources = {
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
         showTreeView: "Afficher l'arborescence des dossiers",
-        showFlatView: "Afficher la liste de fichiers à plat",
+        hideTreeView: "Masquer l'arborescence des dossiers",
         options: "Options du diff",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
         wrapLongLines: "Enroulez les longues lignes",
-        collapseAll: "Réduire tous les fichiers",
-        expandAll: "Développer tous les fichiers",
         collapseAllFolders: "Réduire tous les dossiers",
         expandAllFolders: "Développer tous les dossiers",
+        collapseAllFiles: "Réduire tous les fichiers",
+        expandAllFiles: "Développer tous les fichiers",
         refreshing: "Rafraîchissant",
         refresh: "Rafraîchir",
         refreshState: "Actualiser l'état de git et de {{brand}}",
@@ -906,6 +911,7 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
+        modifiedFile: "Modifié",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits de l’espace de travail",
@@ -999,6 +1005,8 @@ export const fr: TranslationResources = {
       },
       show: {
         label: "Afficher",
+        branch: "Branche",
+        project: "Projet",
         host: "Hôte",
         changeRequest: "Pull request",
         checks: "Vérifications",
@@ -1390,6 +1398,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
+    triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle:{{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche...",
     searchPlaceholder: "Filtrer les branches...",
@@ -1455,6 +1464,7 @@ export const fr: TranslationResources = {
     defaultModel: "Défaut",
     profiles: "Profils",
     providers: "Fournisseurs",
+    model: "Modèle",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d'agent",
     createProfile: "Créer un profil",
@@ -1658,12 +1668,15 @@ export const fr: TranslationResources = {
     backdrop: "Toile de fond du menu",
   },
   subagents: {
+    title: "Sous-agents",
+    pillLabelOne: "1 sous-agent",
+    pillLabelMany: "{{count}} sous-agents",
     detachAction: "Detacher {{label}}",
     detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
-    archiveFinishedTooltip: "Archiver les terminés",
+    archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1698,6 +1711,18 @@ export const fr: TranslationResources = {
         reloadTitle: "Recharger depuis le disque ?",
         reloadMessage: "Vos modifications locales seront perdues.",
       },
+    },
+    files: {
+      label: "Fichiers",
+      subtitle: "Fichiers de l’espace de travail",
+      tooltip: "Parcourir les fichiers de l’espace de travail",
+    },
+    pullRequest: {
+      label: "Demande de fusion",
+      subtitle: "Détails de la demande de fusion",
+      emptyTitle: "Aucune demande de fusion pour le moment",
+      emptyDescription:
+        "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
     },
     diff: {
       changesLabel: "Modifications",
@@ -1832,8 +1857,10 @@ export const fr: TranslationResources = {
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Aperçu",
     },
+    plugins: pluginSettings.fr,
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
@@ -1867,11 +1894,14 @@ export const fr: TranslationResources = {
         descriptions: {
           interrupt:
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
+          steer:
+            "Lorsque l’agent est en cours d’exécution, Entrée oriente le tour actif. Commande/Ctrl+Entrée met en file d’attente.",
           queue:
             "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
         },
         options: {
           interrupt: "Interrompre",
+          steer: "Orienter",
           queue: "File d'attente",
         },
       },
@@ -2078,6 +2108,7 @@ export const fr: TranslationResources = {
         toggleBothSidebars: "Basculer les deux barres latérales",
         toggleSettings: "Basculer les paramètres",
         toggleFocusMode: "Basculer le mode de mise au point",
+        toggleExplorerPaneMaximization: "Basculer l’agrandissement du volet Explorateur",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
         cycleAgentMode: "Parcourir les modes de l'agent",

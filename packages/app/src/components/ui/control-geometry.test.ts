@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buttonControlHeight,
   createControlGeometry,
   getControlInteractionPhase,
 } from "@/components/ui/control-geometry";
@@ -29,6 +30,7 @@ const theme = {
   },
   spacing: {
     0: 0,
+    2: 8,
     3: 12,
     4: 16,
     6: 24,
@@ -103,15 +105,15 @@ describe("control geometry", () => {
     expect(geometry.formTextInputMd.paddingVertical).toBe(11);
   });
 
-  it("keeps segmented controls ghost with fully rounded segments in a button-sized track", () => {
+  it("keeps segmented controls ghost with button-radius segments in a button-sized track", () => {
     const geometry = createControlGeometry(theme);
 
     expect(geometry.segmentedContainerXs.padding).toBe(0);
     expect(geometry.segmentedContainerSm.padding).toBe(0);
     expect(geometry.segmentedContainerMd.padding).toBe(0);
-    expect(geometry.segmentedSegmentXs.borderRadius).toBe(9999);
-    expect(geometry.segmentedSegmentSm.borderRadius).toBe(9999);
-    expect(geometry.segmentedSegmentMd.borderRadius).toBe(9999);
+    expect(geometry.segmentedSegmentXs.borderRadius).toBe(geometry.buttonXs.borderRadius);
+    expect(geometry.segmentedSegmentSm.borderRadius).toBe(geometry.buttonSm.borderRadius);
+    expect(geometry.segmentedSegmentMd.borderRadius).toBe(geometry.buttonMd.borderRadius);
     expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight);
     expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight);
     expect(geometry.segmentedContainerMd.minHeight).toBe(geometry.buttonMd.minHeight);
@@ -127,6 +129,9 @@ describe("control geometry", () => {
     expect(geometry.buttonXs.minHeight).toBe(28);
     expect(geometry.buttonSm.minHeight).toBe(32);
     expect(geometry.buttonMd.minHeight).toBe(44);
+    expect(geometry.buttonXs.minHeight).toBe(buttonControlHeight.xs);
+    expect(geometry.buttonSm.minHeight).toBe(buttonControlHeight.sm);
+    expect(geometry.buttonMd.minHeight).toBe(buttonControlHeight.md);
 
     // Same size name means the same label size on every control kind.
     expect(geometry.segmentedLabelXs.fontSize).toBe(12);
@@ -135,9 +140,16 @@ describe("control geometry", () => {
     expect(geometry.segmentedLabelSm.fontSize).toBe(geometry.buttonText.fontSize);
     expect(geometry.segmentedLabelMd.fontSize).toBe(geometry.buttonText.fontSize);
 
-    // Same size name means the same horizontal padding on every control kind.
-    expect(geometry.segmentedSegmentXs.paddingHorizontal).toBe(geometry.buttonXs.paddingHorizontal);
-    expect(geometry.segmentedSegmentSm.paddingHorizontal).toBe(geometry.buttonSm.paddingHorizontal);
-    expect(geometry.segmentedSegmentMd.paddingHorizontal).toBe(geometry.buttonMd.paddingHorizontal);
+    // Segments sit inside a track, so they run one padding step tighter than a
+    // standalone button of the same size — the gap between segments reads as the padding.
+    expect(geometry.segmentedSegmentXs.paddingHorizontal).toBeLessThan(
+      geometry.buttonXs.paddingHorizontal,
+    );
+    expect(geometry.segmentedSegmentSm.paddingHorizontal).toBeLessThan(
+      geometry.buttonSm.paddingHorizontal,
+    );
+    expect(geometry.segmentedSegmentMd.paddingHorizontal).toBeLessThan(
+      geometry.buttonMd.paddingHorizontal,
+    );
   });
 });

@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const ko: TranslationResources = {
       interruptAgent: "에이전트 중단",
       queueMessage: "메시지 대기열에 추가",
       sendAndInterrupt: "보내고 중단",
+      sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
       queue: "대기열",
       send: "보내기",
@@ -335,7 +337,6 @@ export const ko: TranslationResources = {
       title: "작업",
       empty: "아직 작업이 없습니다.",
       tasksProgress: "작업 {{completed}}/{{total}}개",
-      tasksProgressCurrent: "작업 {{completed}}/{{total}}개 · {{task}}",
       activity: {
         created: "작업 {{count}}개 생성",
         added: "추가됨",
@@ -587,18 +588,22 @@ export const ko: TranslationResources = {
         renameAgent: "에이전트 이름 변경",
       },
       actions: {
+        newTab: "새 탭",
         newAgent: "새 에이전트",
         newTerminal: "새 터미널",
         preparingTerminal: "터미널 탭 준비 중",
         preparingTerminalTooltip: "터미널 준비 중...",
         newBrowser: "새 브라우저",
+        maximizePane: "창 최대화",
+        restorePane: "창 복원",
         exitFocusMode: "집중 모드 종료",
         splitRight: "창을 오른쪽으로 분할",
         splitDown: "창을 아래로 분할",
+        changes: "변경 사항",
+        files: "파일",
+        pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
         editTerminalProfiles: "프로필 편집…",
-        pinTarget: "고정",
-        unpinTarget: "고정 해제",
       },
       explorer: {
         open: "탐색기 열기",
@@ -857,16 +862,16 @@ export const ko: TranslationResources = {
         switchToUnified: "통합 diff로 전환",
         switchToSplit: "나란히 보기 diff로 전환",
         showTreeView: "폴더 트리 표시",
-        showFlatView: "플랫 파일 목록 표시",
+        hideTreeView: "폴더 트리 숨기기",
         options: "Diff 옵션",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
         scrollLongLines: "긴 줄 스크롤",
         wrapLongLines: "긴 줄 줄바꿈",
-        collapseAll: "모든 파일 접기",
-        expandAll: "모든 파일 펼치기",
         collapseAllFolders: "모든 폴더 축소",
         expandAllFolders: "모든 폴더 확장",
+        collapseAllFiles: "모든 파일 축소",
+        expandAllFiles: "모든 파일 확장",
         refreshing: "새로고침 중",
         refresh: "새로고침",
         refreshState: "Git 및 {{brand}} 상태 새로고침",
@@ -883,6 +888,7 @@ export const ko: TranslationResources = {
         base: "기준",
         newFile: "신규",
         deletedFile: "삭제됨",
+        modifiedFile: "수정됨",
         commits: {
           title: "커밋",
           countLabel: "워크스페이스 커밋 {{count}}개",
@@ -976,6 +982,8 @@ export const ko: TranslationResources = {
       },
       show: {
         label: "표시 항목",
+        branch: "브랜치",
+        project: "프로젝트",
         host: "호스트",
         changeRequest: "풀 리퀘스트",
         checks: "검사",
@@ -1356,6 +1364,7 @@ export const ko: TranslationResources = {
     openPath: "경로 열기",
   },
   branchSwitcher: {
+    triggerTooltip: "워크스페이스 브랜치 전환",
     currentBranch: "현재 브랜치: {{branchName}}. 브랜치를 전환하려면 누르세요.",
     placeholder: "브랜치 전환...",
     searchPlaceholder: "브랜치 필터...",
@@ -1420,6 +1429,7 @@ export const ko: TranslationResources = {
     defaultModel: "기본값",
     profiles: "프로필",
     providers: "제공자",
+    model: "모델",
     editProfiles: "편집",
     editProfilesLabel: "에이전트 프로필 편집",
     createProfile: "프로필 만들기",
@@ -1621,12 +1631,15 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    title: "하위 에이전트",
+    pillLabelOne: "하위 에이전트 1개",
+    pillLabelMany: "하위 에이전트 {{count}}개",
     detachAction: "{{label}} 분리",
     detachTooltip: "하위 에이전트 분리",
     archiveAction: "{{label}} 보관",
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
-    archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1661,6 +1674,17 @@ export const ko: TranslationResources = {
         reloadTitle: "디스크에서 다시 로드하시겠습니까?",
         reloadMessage: "로컬 변경사항이 손실됩니다.",
       },
+    },
+    files: {
+      label: "파일",
+      subtitle: "워크스페이스 파일",
+      tooltip: "워크스페이스 파일 탐색",
+    },
+    pullRequest: {
+      label: "풀 리퀘스트",
+      subtitle: "풀 리퀘스트 세부 정보",
+      emptyTitle: "아직 풀 리퀘스트가 없습니다",
+      emptyDescription: "이 체크아웃에 풀 리퀘스트를 만들면 세부 정보가 여기에 표시됩니다.",
     },
     diff: {
       changesLabel: "변경 사항",
@@ -1795,8 +1819,10 @@ export const ko: TranslationResources = {
       providers: "프로바이더",
       usage: "사용량",
       terminals: "터미널",
+      plugins: "플러그인",
       host: "개요",
     },
+    plugins: pluginSettings.ko,
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
@@ -1829,11 +1855,14 @@ export const ko: TranslationResources = {
         descriptions: {
           interrupt:
             "에이전트가 실행 중일 때 Enter는 중단합니다. Command/Ctrl+Enter는 대기열에 추가합니다.",
+          steer:
+            "에이전트가 실행 중일 때 Enter는 현재 턴에 지시합니다. Command/Ctrl+Enter는 대기열에 추가합니다.",
           queue:
             "에이전트가 실행 중일 때 Enter는 대기열에 추가합니다. Command/Ctrl+Enter는 제출합니다.",
         },
         options: {
           interrupt: "중단",
+          steer: "지시",
           queue: "대기열",
         },
       },
@@ -2038,6 +2067,7 @@ export const ko: TranslationResources = {
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
+        toggleExplorerPaneMaximization: "탐색기 창 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",

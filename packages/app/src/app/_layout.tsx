@@ -25,6 +25,7 @@ import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
+import { PluginCommandCenterActions } from "@/plugins/command-center/registration";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
@@ -45,7 +46,6 @@ import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
   getIsElectronRuntime,
-  getIsElectronRuntimeMac,
   HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
 } from "@/constants/layout";
@@ -92,7 +92,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { I18nProvider } from "@/i18n/provider";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  KeyboardActionDispatcherProvider,
+  useKeyboardActionDispatcher,
+} from "@/keyboard/keyboard-action-dispatcher-context";
 import { polyfillCrypto } from "@/polyfills/crypto";
 import { polyfillNavigator } from "@/polyfills/navigator";
 import { queryClient } from "@/data/query-client";
@@ -127,6 +130,7 @@ import {
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { PluginCatalogSync } from "@/plugins";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -270,6 +274,7 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   return (
     <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
       <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
+      <PluginCatalogSync serverId={daemon.serverId} client={client} />
     </SessionProvider>
   );
 }
@@ -452,6 +457,7 @@ interface AppContainerProps {
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
@@ -493,7 +499,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           scope: "sidebar",
         }),
     });
-  }, [closeDesktopAgentList, closeDesktopFileExplorer, openDesktopAgentList]);
+  }, [
+    closeDesktopAgentList,
+    closeDesktopFileExplorer,
+    keyboardActionDispatcher,
+    openDesktopAgentList,
+  ]);
   // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
   // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
   // global concerns like keyboard shortcuts. Split those out so settings (and
@@ -588,6 +599,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <WorktreeSetupCalloutSource />
       <CommandCenterRootActions />
       <CommandCenterWorkspaceActions />
+      <PluginCommandCenterActions />
       <WorkspacePinShortcutHandler />
       <CommandCenter />
       <AddProjectFlowHost />
@@ -700,23 +712,17 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
-  const pathname = usePathname();
-  const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
-  const liftTrafficLights =
-    getIsElectronRuntimeMac() &&
-    isFocusModeEnabled &&
-    parseHostWorkspaceRouteFromPathname(pathname) !== null;
 
   useEffect(() => {
     if (!enabled || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
-      trafficLightOffsetY: liftTrafficLights ? -5 : 0.5,
+      trafficLightOffsetY: -5,
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground, liftTrafficLights]);
+  }, [enabled, surface0, foreground]);
 
   return null;
 }
@@ -977,17 +983,19 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 // context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <WindowChromeProvider>
-      <KeyboardProvider>
-        <KeyboardShiftProvider>
-          <ToastProvider>
-            <PortalProvider>
-              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-            </PortalProvider>
-          </ToastProvider>
-        </KeyboardShiftProvider>
-      </KeyboardProvider>
-    </WindowChromeProvider>
+    <KeyboardActionDispatcherProvider>
+      <WindowChromeProvider>
+        <KeyboardProvider>
+          <KeyboardShiftProvider>
+            <ToastProvider>
+              <PortalProvider>
+                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+              </PortalProvider>
+            </ToastProvider>
+          </KeyboardShiftProvider>
+        </KeyboardProvider>
+      </WindowChromeProvider>
+    </KeyboardActionDispatcherProvider>
   );
 }
 

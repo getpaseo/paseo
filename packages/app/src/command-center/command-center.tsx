@@ -44,7 +44,7 @@ import {
   type CommandCenterScope,
 } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
@@ -220,6 +220,7 @@ interface CommandCenterState {
 }
 
 function useCommandCenterState(): CommandCenterState {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
   const scope = useKeyboardShortcutsStore((state) => state.commandCenterScope);
@@ -321,7 +322,7 @@ function useCommandCenterState(): CommandCenterState {
         keyboardActionDispatcher.dispatch({ id: "message-input.focus", scope: "message-input" }),
     });
     return cancel;
-  }, [open]);
+  }, [keyboardActionDispatcher, open]);
 
   return {
     open,

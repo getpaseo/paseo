@@ -13,6 +13,7 @@ import {
   ShutdownRequestedStatusPayloadSchema,
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
+  type ActiveTurnBehavior,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -84,6 +85,7 @@ import type {
   ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
+  DaemonConfigReloadResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
@@ -101,6 +103,8 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  PluginListItem,
+  PluginLogEntry,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -333,6 +337,7 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
+  activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
@@ -2944,6 +2949,7 @@ export class DaemonClient {
       agentId,
       text,
       ...(messageId ? { messageId } : {}),
+      ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
     });
@@ -4551,6 +4557,14 @@ export class DaemonClient {
     });
   }
 
+  async reloadDaemonConfig(requestId?: string): Promise<DaemonConfigReloadResponse["payload"]> {
+    this.requireDaemonConfigReloadSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: { type: "daemon.config.reload.request" },
+    });
+  }
+
   async connectHub(hubUrl: string, token: string, requestId?: string) {
     this.requireHubRelationshipSupport();
     return this.sendCorrelatedSessionRequest({
@@ -4720,6 +4734,105 @@ export class DaemonClient {
       requestId,
       response,
     });
+  }
+
+  async getPluginCatalog(): Promise<Array<{ id: string; clientBundle: string }>> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.catalog.get.request", requestId },
+      responseType: "plugin.catalog.get.response",
+    });
+    return payload.plugins;
+  }
+
+  async listPlugins(): Promise<PluginListItem[]> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.list.request", requestId },
+      responseType: "plugin.list.response",
+    });
+    return payload.plugins;
+  }
+
+  async getPluginLogs(pluginId: string): Promise<PluginLogEntry[]> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.logs.get.request", requestId, pluginId },
+      responseType: "plugin.logs.get.response",
+    });
+    return payload.entries;
+  }
+
+  async installDirectoryPlugin(path: string, id?: string): Promise<PluginListItem> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.directory.install.request", requestId, path, ...(id ? { id } : {}) },
+      responseType: "plugin.directory.install.response",
+    });
+    return payload.plugin;
+  }
+
+  async inspectDirectoryPlugin(path: string): Promise<{ id: string }> {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.directory.inspect.request", requestId, path },
+      responseType: "plugin.directory.inspect.response",
+    });
+  }
+
+  async reloadPlugin(pluginId: string): Promise<PluginListItem> {
+    return this.managePlugin("reload", pluginId);
+  }
+
+  async enablePlugin(pluginId: string): Promise<PluginListItem> {
+    return this.managePlugin("enable", pluginId);
+  }
+
+  async disablePlugin(pluginId: string): Promise<PluginListItem> {
+    return this.managePlugin("disable", pluginId);
+  }
+
+  async removePlugin(pluginId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.remove.request", requestId, pluginId },
+      responseType: "plugin.remove.response",
+    });
+  }
+
+  private async managePlugin(
+    action: "reload" | "enable" | "disable",
+    pluginId: string,
+  ): Promise<PluginListItem> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: `plugin.${action}.request`, requestId, pluginId },
+      responseType: `plugin.${action}.response`,
+    });
+    return payload.plugin;
+  }
+
+  async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "plugin.rpc.invoke.request",
+        requestId,
+        pluginId,
+        method,
+        input,
+      },
+      responseType: "plugin.rpc.invoke.response",
+    });
+    return payload.output;
   }
 
   async respondToPermissionAndWait(
@@ -5240,6 +5353,13 @@ export class DaemonClient {
     // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
     if (this.lastServerInfoMessage?.features?.hubRelationship !== true) {
       throw new Error("Update the host to use Hub relationship management.");
+    }
+  }
+
+  private requireDaemonConfigReloadSupport(): void {
+    // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
+    if (this.lastServerInfoMessage?.features?.daemonConfigReload !== true) {
+      throw new Error("Update the host to reload daemon configuration.");
     }
   }
 

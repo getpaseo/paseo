@@ -390,6 +390,41 @@ async function selectDeviceSize(page, label) {
   return !openPixels.equals(closedPixels);
 }
 
+async function selectElementAndReadAnnotationPaint({ page, client, browserId, artifactDir }) {
+  await clickGuestElement(page, client, browserId, "#bridge-target");
+  const comment = page.getByRole("textbox", {
+    name: "Message to the agent about this element…",
+  });
+  await comment.waitFor({ state: "visible", timeout: timeoutMs });
+  const bounds = await comment.boundingBox();
+  assert(bounds, "Element annotation comment box had no bounds");
+  const receivesInput = await comment.evaluate((element) => {
+    const elementBounds = element.getBoundingClientRect();
+    const target = document.elementFromPoint(
+      elementBounds.left + elementBounds.width / 2,
+      elementBounds.top + elementBounds.height / 2,
+    );
+    return target === element || element.contains(target);
+  });
+  const clip = {
+    x: Math.max(0, bounds.x),
+    y: Math.max(0, bounds.y),
+    width: bounds.width,
+    height: bounds.height,
+  };
+  const openPixels = await page.screenshot({
+    clip,
+    path: path.join(artifactDir, "element-annotation-open.png"),
+  });
+  await page.keyboard.press("Escape");
+  await comment.waitFor({ state: "hidden", timeout: timeoutMs });
+  const closedPixels = await page.screenshot({
+    clip,
+    path: path.join(artifactDir, "element-annotation-closed.png"),
+  });
+  return receivesInput && !openPixels.equals(closedPixels);
+}
+
 function recordViewportMismatch(failures, label, actual, expected) {
   if (actual.width === expected.width && actual.height === expected.height) {
     return;
@@ -771,6 +806,35 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   }
   await page.screenshot({ path: path.join(artifactDir, "local-page-screenshot-selector.png") });
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
+
+  await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
+  await page.getByRole("button", { name: "Open command center" }).click();
+  await page.getByTestId("command-center-input").fill("Split pane right");
+  await page.getByText("Split pane right", { exact: true }).click();
+  assert(
+    (await originalDeck.getByTestId("workspace-tabs-row").filter({ visible: true }).count()) === 2,
+    "Split pane command did not produce two visible panes",
+  );
+  await originalDeck.getByTestId(`workspace-tab-browser_${browserId}`).last().click();
+  await originalDeck
+    .getByTestId(`browser-webview-clip-${browserId}`)
+    .waitFor({ state: "visible", timeout: timeoutMs });
+
+  const splitAnnotateButton = originalDeck.getByRole("button", { name: "Annotate element" });
+  await splitAnnotateButton.click();
+  assert(
+    await waitForGuestSelector(client, browserId),
+    "Element selector did not start in the split browser pane",
+  );
+  assert(
+    await selectElementAndReadAnnotationPaint({
+      page,
+      client,
+      browserId,
+      artifactDir,
+    }),
+    "Element annotation comment box did not paint or receive input above the browser surface",
+  );
 
   if (failures.length > 0) {
     throw new Error(`Browser viewport regressions:\n- ${failures.join("\n- ")}`);

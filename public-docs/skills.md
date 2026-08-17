@@ -23,7 +23,7 @@ When the desktop app finds installed Paseo skills, it keeps the bundled skills u
 
 ## `/paseo`, Paseo Reference
 
-The foundational skill. Paseo reference for managing agents and workspaces. Load it when an agent needs to create agents, send them prompts, or manage workspace isolation.
+The foundational skill. Paseo reference for managing projects, workspaces, and agents. Load it when an agent needs to register a project, create agents, send them prompts, or manage workspace isolation.
 
 Not typically invoked directly by users, it's a reference that other skills depend on.
 

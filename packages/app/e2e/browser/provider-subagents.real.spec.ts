@@ -133,6 +133,8 @@ test.describe("real provider subagent timelines", () => {
         await expect(
           page.getByTestId("assistant-message").filter({ hasText: "ROOT_DONE" }).last(),
         ).toBeVisible({ timeout: 60_000 });
+        // Opening the subagent's tab closed the panel with the parent's pane.
+        await openSubagentsTrack(page);
         const archiveFinished = page.getByTestId("subagents-track-archive-finished");
         await expect(archiveFinished).toBeVisible({ timeout: 30_000 });
         await archiveFinished.click();

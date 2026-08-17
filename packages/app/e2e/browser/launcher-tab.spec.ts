@@ -4,7 +4,8 @@ import {
   assertNewChatTileVisible,
   assertNewTabMenuTriggerVisible,
   assertSingleNewTabButton,
-  pressNewTabShortcut,
+  openNewTabMenuWithShortcut,
+  pressDirectNewTabShortcut,
   clickNewChat,
   clickNewTerminal,
   countTabsOfKind,
@@ -12,6 +13,7 @@ import {
   waitForTabWithTitle,
   measureTileTransition,
   sampleTabsDuringTransition,
+  expectTabTitleFits,
   terminalSurfaceLocator,
 } from "../support/helpers/launcher";
 import { expectComposerVisible, composerLocator } from "../support/helpers/composer";
@@ -38,12 +40,32 @@ test.afterAll(async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe("Tab creation", () => {
-  test("Cmd+T opens a new agent tab with composer", async ({ page }) => {
+  test("retained inactive workspaces cannot own New tab shortcuts", async ({ page }) => {
     await gotoWorkspace(page, workspace.workspaceId);
+    const workspaceUrl = page.url();
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
 
-    await pressNewTabShortcut(page);
+    await page.keyboard.press(`${modifier}+Comma`);
+    await expect(page.getByRole("navigation", { name: "Settings" })).toBeVisible();
 
-    await expectComposerVisible(page);
+    await page.keyboard.press(`${modifier}+t`);
+    await expect(page.getByRole("menuitem", { name: /New agent/ })).toHaveCount(0);
+
+    await page.goto(workspaceUrl);
+    await assertNewTabMenuTriggerVisible(page);
+    const countBefore = await countTabsOfKind(page, "draft");
+    await pressDirectNewTabShortcut(page, "a");
+    await expect.poll(() => countTabsOfKind(page, "draft")).toBe(countBefore + 1);
+  });
+
+  test("Cmd+T opens the New tab menu without creating an agent", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+    const countBefore = await countTabsOfKind(page, "draft");
+
+    await openNewTabMenuWithShortcut(page);
+
+    await expect.poll(() => countTabsOfKind(page, "draft")).toBe(countBefore);
+    await expect(page.getByRole("button", { name: "New tab", expanded: true })).toBeVisible();
   });
 
   test("opening two new tabs creates two draft tabs", async ({ page }) => {
@@ -51,18 +73,43 @@ test.describe("Tab creation", () => {
 
     const countBefore = await countTabsOfKind(page, "draft");
 
-    await pressNewTabShortcut(page);
+    await pressDirectNewTabShortcut(page, "a");
     await expect
       .poll(() => countTabsOfKind(page, "draft"), { timeout: 15_000 })
       .toBe(countBefore + 1);
     const countAfterFirst = await countTabsOfKind(page, "draft");
 
-    // Blur the composer so the second shortcut isn't swallowed by the focused input
-    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur?.());
-    await pressNewTabShortcut(page);
+    await pressDirectNewTabShortcut(page, "a");
     await expect
       .poll(() => countTabsOfKind(page, "draft"), { timeout: 15_000 })
       .toBe(countAfterFirst + 1);
+  });
+
+  test("New tab menu exposes shortcuts and supports arrow navigation", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await openNewTabMenuWithShortcut(page);
+
+    const agent = page.getByRole("menuitem", { name: /New agent/ });
+    const terminal = page.getByRole("menuitem", { name: /New terminal/ });
+    const changes = page.getByRole("menuitem", { name: /Changes/ });
+    const files = page.getByRole("menuitem", { name: /Files/ });
+    const shortcutPrefix = process.platform === "darwin" ? /⇧⌘/ : /Ctrl.*Shift/;
+    await expect(agent).toContainText(new RegExp(`${shortcutPrefix.source}.*A`));
+    await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
+    await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*C`));
+    await expect(files).toContainText(new RegExp(`${shortcutPrefix.source}.*E`));
+    await expect(agent).toBeFocused();
+
+    await page.keyboard.press("ArrowDown");
+    await expect(terminal).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(agent).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "New tab" })).toBeFocused();
+    await expect(page.getByRole("button", { name: "New tab" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   test("clicking new agent tab creates a draft tab", async ({ page }) => {
@@ -95,6 +142,22 @@ test.describe("Tab creation", () => {
     await assertSingleNewTabButton(page);
     await assertNewChatTileVisible(page);
     await assertNewTabMenuTriggerVisible(page);
+  });
+
+  test("never shades the New tab button", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+
+    const tabRow = page.getByTestId("workspace-tabs-row").filter({ visible: true }).first();
+    const scrollArea = tabRow.getByTestId("workspace-tabs-scroll");
+    const newTabButtonInScroll = await scrollArea
+      .getByTestId("workspace-new-tab-menu-trigger")
+      .count();
+    const scrollShades = await tabRow
+      .locator('[data-testid^="workspace-tabs-scroll-shade-"]')
+      .count();
+
+    expect(newTabButtonInScroll === 0 || scrollShades === 0).toBe(true);
+    await expect(tabRow.getByTestId("workspace-new-tab-menu-trigger")).toBeVisible();
   });
 });
 
@@ -197,7 +260,7 @@ test.describe("Tab transitions (no flash)", () => {
     await gotoWorkspace(page, workspace.workspaceId);
 
     // Sample tabs at high frequency across the transition
-    const snapshots = await sampleTabsDuringTransition(page, () => clickNewChat(page), 2_000, 30);
+    const snapshots = await sampleTabsDuringTransition(page, () => clickNewChat(page));
 
     // Every snapshot should have at least one tab — no blank/zero-tab frames
     for (const snapshot of snapshots) {
@@ -207,11 +270,15 @@ test.describe("Tab transitions (no flash)", () => {
     // Tab count should never spike excessively (no duplicate flash from add-then-remove).
     // When running in-suite, previous tests may have created tabs on the shared workspace,
     // so we allow +2 tolerance for accumulated state and React render batching.
-    const counts = snapshots.map((s) => s.length);
+    const counts = snapshots.map((snapshot) => snapshot.length);
     const maxCount = Math.max(...counts);
     const initialCount = counts[0] ?? 0;
 
     expect(maxCount).toBeLessThanOrEqual(initialCount + 2);
+    expect(new Set(snapshots.map((snapshot) => JSON.stringify(snapshot))).size).toBeLessThanOrEqual(
+      2,
+    );
+    await expectTabTitleFits(page, "New Agent", { min: 96, max: 160 });
   });
 
   test("Terminal transition completes within visual budget", async ({ page }) => {

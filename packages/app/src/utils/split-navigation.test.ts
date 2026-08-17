@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { SplitNode } from "@/stores/workspace-layout-store";
 import { findAdjacentPane } from "./split-navigation";
 
-function createPaneNode(id: string): SplitNode {
+function createPaneNode(id: string, hidden = false): SplitNode {
   return {
     kind: "pane",
     pane: {
       id,
       tabIds: [],
       focusedTabId: null,
+      ...(hidden ? { hidden: true } : {}),
     },
   };
 }
@@ -79,5 +80,16 @@ describe("findAdjacentPane", () => {
 
     expect(findAdjacentPane(root, "top", "down")).toBe("bottom-left");
     expect(findAdjacentPane(root, "bottom-right", "up")).toBe("top");
+  });
+
+  it("skips hidden panes", () => {
+    const root = createGroupNode({
+      direction: "horizontal",
+      sizes: [0.3, 0.3, 0.4],
+      children: [createPaneNode("left"), createPaneNode("hidden", true), createPaneNode("right")],
+    });
+
+    expect(findAdjacentPane(root, "left", "right")).toBe("right");
+    expect(findAdjacentPane(root, "hidden", "right")).toBeNull();
   });
 });

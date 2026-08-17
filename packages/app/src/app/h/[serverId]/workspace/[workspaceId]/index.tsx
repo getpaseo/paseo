@@ -13,14 +13,15 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import {
-  areWorkspaceSelectionListsEqual,
+  areRetainedWorkspaceSelectionListsEqual,
   areWorkspaceSelectionsEqual,
+  getNextWorkspaceDeckExpirationDelay,
   getWorkspaceSelectionKey,
   orderWorkspaceSelectionsForStableRender,
-  pruneMountedWorkspaceSelections,
+  reconcileRetainedWorkspaceSelections,
+  type RetainedWorkspaceSelection,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
-  WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
 } from "@/screens/workspace/workspace-deck-retention";
 import {
   decodeWorkspaceIdFromPathSegment,
@@ -33,6 +34,7 @@ import {
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { isWeb } from "@/constants/platform";
+import { RenderProfile } from "@/utils/render-profiler";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -199,29 +201,31 @@ function WorkspaceDeck({
   recoveryAgentId: string | null;
 }) {
   const activeSelection = useActiveWorkspaceSelection();
-  const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
-    activeSelection ? [activeSelection] : [],
+  const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
+    activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
   );
   const unmountWorkspaceSelection = useCallback((selection: ActiveWorkspaceSelection) => {
-    setMountedSelections((current) =>
-      current.filter(
-        (mountedSelection) => !areWorkspaceSelectionsEqual(mountedSelection, selection),
-      ),
+    setRetainedSelections((current) =>
+      current.filter((entry) => !areWorkspaceSelectionsEqual(entry.selection, selection)),
     );
   }, []);
 
-  const nextMountedSelections = useMemo(
+  const reconciliationNow = Date.now();
+  const nextRetainedSelections = useMemo(
     () =>
-      pruneMountedWorkspaceSelections({
-        currentSelections: mountedSelections,
+      reconcileRetainedWorkspaceSelections({
+        currentEntries: retainedSelections,
         activeSelection,
-        maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+        now: reconciliationNow,
       }),
-    [activeSelection, mountedSelections],
+    [activeSelection, reconciliationNow, retainedSelections],
   );
   const renderedSelections = useMemo(
-    () => orderWorkspaceSelectionsForStableRender(nextMountedSelections),
-    [nextMountedSelections],
+    () =>
+      orderWorkspaceSelectionsForStableRender(
+        nextRetainedSelections.map((entry) => entry.selection),
+      ),
+    [nextRetainedSelections],
   );
   const renderedEntries = useMemo(
     () => resolveWorkspaceDeckEntries({ selections: renderedSelections, activeSelection }),
@@ -229,26 +233,49 @@ function WorkspaceDeck({
   );
 
   useLayoutEffect(() => {
-    if (!areWorkspaceSelectionListsEqual(mountedSelections, nextMountedSelections)) {
-      setMountedSelections(nextMountedSelections);
+    if (!areRetainedWorkspaceSelectionListsEqual(retainedSelections, nextRetainedSelections)) {
+      setRetainedSelections(nextRetainedSelections);
     }
-  }, [mountedSelections, nextMountedSelections]);
+  }, [nextRetainedSelections, retainedSelections]);
+
+  useEffect(() => {
+    const expirationDelay = getNextWorkspaceDeckExpirationDelay({
+      entries: nextRetainedSelections,
+      activeSelection,
+      now: reconciliationNow,
+    });
+    if (expirationDelay === null) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setRetainedSelections((current) =>
+        reconcileRetainedWorkspaceSelections({
+          currentEntries: current,
+          activeSelection,
+          now: Date.now(),
+        }),
+      );
+    }, expirationDelay + 1);
+    return () => clearTimeout(timeout);
+  }, [activeSelection, nextRetainedSelections, reconciliationNow]);
 
   return (
-    <View style={styles.deck}>
-      {renderedEntries.map(({ selection, active }) => {
-        return (
-          <WorkspaceDeckEntry
-            key={getWorkspaceSelectionKey(selection)}
-            selection={selection}
-            active={active}
-            recoveryRequested={recoveryRequested}
-            recoveryAgentId={recoveryAgentId}
-            onUnmountInactive={unmountWorkspaceSelection}
-          />
-        );
-      })}
-    </View>
+    <RenderProfile id="WorkspaceDeck">
+      <View style={styles.deck}>
+        {renderedEntries.map(({ selection, active }) => {
+          return (
+            <WorkspaceDeckEntry
+              key={getWorkspaceSelectionKey(selection)}
+              selection={selection}
+              active={active}
+              recoveryRequested={recoveryRequested}
+              recoveryAgentId={recoveryAgentId}
+              onUnmountInactive={unmountWorkspaceSelection}
+            />
+          );
+        })}
+      </View>
+    </RenderProfile>
   );
 }
 

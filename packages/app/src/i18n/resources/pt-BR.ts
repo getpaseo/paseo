@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const ptBR: TranslationResources = {
       interruptAgent: "Interromper agente",
       queueMessage: "Enfileirar mensagem",
       sendAndInterrupt: "Enviar e interromper",
+      sendAndSteer: "Enviar e orientar",
       sendMessage: "Enviar mensagem",
       queue: "Fila",
       send: "Enviar",
@@ -337,7 +339,6 @@ export const ptBR: TranslationResources = {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",
       tasksProgress: "{{completed}}/{{total}} tarefas",
-      tasksProgressCurrent: "{{completed}}/{{total}} tarefas · {{task}}",
       activity: {
         created: "{{count}} tarefas criadas",
         added: "Adicionada",
@@ -589,18 +590,22 @@ export const ptBR: TranslationResources = {
         renameAgent: "Renomear agente",
       },
       actions: {
+        newTab: "Nova aba",
         newAgent: "Novo agente",
         newTerminal: "Novo terminal",
         preparingTerminal: "Preparando aba de terminal",
         preparingTerminalTooltip: "Preparando terminal...",
         newBrowser: "Novo navegador",
+        maximizePane: "Maximizar painel",
+        restorePane: "Restaurar painel",
         exitFocusMode: "Sair do modo de foco",
         splitRight: "Dividir painel à direita",
         splitDown: "Dividir painel abaixo",
+        changes: "Alterações",
+        files: "Arquivos",
+        pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
         editTerminalProfiles: "Editar perfis…",
-        pinTarget: "Fixar",
-        unpinTarget: "Desafixar",
       },
       explorer: {
         open: "Abrir explorador",
@@ -872,16 +877,16 @@ export const ptBR: TranslationResources = {
         switchToUnified: "Alternar para diff unificado",
         switchToSplit: "Alternar para diff lado a lado",
         showTreeView: "Mostrar árvore de pastas",
-        showFlatView: "Mostrar lista plana de arquivos",
+        hideTreeView: "Ocultar árvore de pastas",
         options: "Opções do diff",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
         wrapLongLines: "Quebrar linhas longas",
-        collapseAll: "Recolher todos os arquivos",
-        expandAll: "Expandir todos os arquivos",
         collapseAllFolders: "Recolher todas as pastas",
         expandAllFolders: "Expandir todas as pastas",
+        collapseAllFiles: "Recolher todos os arquivos",
+        expandAllFiles: "Expandir todos os arquivos",
         refreshing: "Atualizando",
         refresh: "Atualizar",
         refreshState: "Atualizar estado do git e do {{brand}}",
@@ -898,6 +903,7 @@ export const ptBR: TranslationResources = {
         base: "base",
         newFile: "Novo",
         deletedFile: "Excluído",
+        modifiedFile: "Modificado",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits do espaço de trabalho",
@@ -991,6 +997,8 @@ export const ptBR: TranslationResources = {
       },
       show: {
         label: "Mostrar",
+        branch: "Branch",
+        project: "Projeto",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Verificações",
@@ -1373,6 +1381,7 @@ export const ptBR: TranslationResources = {
     openPath: "Abrir caminho",
   },
   branchSwitcher: {
+    triggerTooltip: "Trocar branch do workspace",
     currentBranch: "Branch atual: {{branchName}}. Pressione para trocar de branch.",
     placeholder: "Trocar branch...",
     searchPlaceholder: "Filtrar branches...",
@@ -1437,6 +1446,7 @@ export const ptBR: TranslationResources = {
     defaultModel: "Padrão",
     profiles: "Perfis",
     providers: "Provedores",
+    model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfis de agente",
     createProfile: "Criar perfil",
@@ -1640,12 +1650,15 @@ export const ptBR: TranslationResources = {
     backdrop: "Fundo do menu",
   },
   subagents: {
+    title: "Subagentes",
+    pillLabelOne: "1 subagente",
+    pillLabelMany: "{{count}} subagentes",
     detachAction: "Desanexar {{label}}",
     detachTooltip: "Desanexar subagente",
     archiveAction: "Arquivar {{label}}",
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
-    archiveFinishedTooltip: "Arquivar concluídos",
+    archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1680,6 +1693,17 @@ export const ptBR: TranslationResources = {
         reloadTitle: "Recarregar do disco?",
         reloadMessage: "Suas alterações locais serão perdidas.",
       },
+    },
+    files: {
+      label: "Arquivos",
+      subtitle: "Arquivos do espaço de trabalho",
+      tooltip: "Explorar arquivos do espaço de trabalho",
+    },
+    pullRequest: {
+      label: "Pull request",
+      subtitle: "Detalhes do pull request",
+      emptyTitle: "Ainda não há pull request",
+      emptyDescription: "Crie um pull request para este checkout para ver os detalhes aqui.",
     },
     diff: {
       changesLabel: "Alterações",
@@ -1814,8 +1838,10 @@ export const ptBR: TranslationResources = {
       providers: "Provedores",
       usage: "Uso",
       terminals: "Terminais",
+      plugins: "Plugins",
       host: "Visão geral",
     },
+    plugins: pluginSettings["pt-BR"],
     metadataGeneration: {
       title: "Geração de metadados",
       description:
@@ -1849,10 +1875,13 @@ export const ptBR: TranslationResources = {
         descriptions: {
           interrupt:
             "Quando o agente está em execução, Enter interrompe. Command/Ctrl+Enter enfileira.",
+          steer:
+            "Quando o agente está em execução, Enter orienta o turno ativo. Command/Ctrl+Enter enfileira.",
           queue: "Quando o agente está em execução, Enter enfileira. Command/Ctrl+Enter envia.",
         },
         options: {
           interrupt: "Interromper",
+          steer: "Orientar",
           queue: "Fila",
         },
       },
@@ -2058,6 +2087,7 @@ export const ptBR: TranslationResources = {
         toggleBothSidebars: "Alternar ambas as barras laterais",
         toggleSettings: "Alternar Configurações",
         toggleFocusMode: "Alternar modo de foco",
+        toggleExplorerPaneMaximization: "Alternar maximização do painel Explorador",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
         cycleAgentMode: "Alternar modo do agente",

@@ -17,6 +17,7 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import type { GitAction, GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -210,16 +211,16 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
+    height: buttonControlHeight.xs,
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
   },
   splitButtonPrimary: {
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
   },
@@ -249,11 +250,11 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.colors.borderAccent,
   },
   iconButton: {
-    width: 32,
-    height: 32,
+    width: buttonControlHeight.xs,
+    height: buttonControlHeight.xs,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
   },
   overflowMenuButton: {
     marginRight: -theme.spacing[2],

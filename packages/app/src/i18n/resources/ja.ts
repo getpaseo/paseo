@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const ja: TranslationResources = {
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
       sendAndInterrupt: "送信して中断",
+      sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
       queue: "キュー",
       send: "送信",
@@ -337,7 +339,6 @@ export const ja: TranslationResources = {
       title: "タスク",
       empty: "タスクがまだありません。",
       tasksProgress: "{{completed}}/{{total}}タスク",
-      tasksProgressCurrent: "{{completed}}/{{total}}タスク · {{task}}",
       activity: {
         created: "{{count}}件のタスクを作成",
         added: "追加",
@@ -590,18 +591,22 @@ export const ja: TranslationResources = {
         renameAgent: "エージェントの名前を変更",
       },
       actions: {
+        newTab: "新しいタブ",
         newAgent: "新しいエージェント",
         newTerminal: "新しいターミナル",
         preparingTerminal: "ターミナルタブを準備中",
         preparingTerminalTooltip: "ターミナルを準備中...",
         newBrowser: "新しいブラウザ",
+        maximizePane: "ペインを最大化",
+        restorePane: "ペインを元に戻す",
         exitFocusMode: "フォーカスモードを終了",
         splitRight: "右にペインを分割",
         splitDown: "下にペインを分割",
+        changes: "変更",
+        files: "ファイル",
+        pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
         editTerminalProfiles: "プロファイルを編集…",
-        pinTarget: "ピン留め",
-        unpinTarget: "ピン留めを解除",
       },
       explorer: {
         open: "エクスプローラーを開く",
@@ -861,16 +866,16 @@ export const ja: TranslationResources = {
         switchToUnified: "ユニファイド差分に切り替え",
         switchToSplit: "左右比較差分に切り替え",
         showTreeView: "フォルダツリーを表示",
-        showFlatView: "フラットなファイル一覧を表示",
+        hideTreeView: "フォルダツリーを非表示",
         options: "差分オプション",
         hideWhitespace: "空白を非表示",
         showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
-        collapseAll: "すべて折りたたむ",
-        expandAll: "すべて展開",
         collapseAllFolders: "すべてのフォルダを折りたたむ",
         expandAllFolders: "すべてのフォルダを展開",
+        collapseAllFiles: "すべてのファイルを折りたたむ",
+        expandAllFiles: "すべてのファイルを展開",
         refreshing: "更新中",
         refresh: "更新",
         refreshState: "gitと{{brand}}の状態を更新",
@@ -887,6 +892,7 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
+        modifiedFile: "変更済み",
         commits: {
           title: "コミット",
           countLabel: "ワークスペースのコミット数: {{count}}",
@@ -980,6 +986,8 @@ export const ja: TranslationResources = {
       },
       show: {
         label: "表示項目",
+        branch: "ブランチ",
+        project: "プロジェクト",
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
@@ -1360,6 +1368,7 @@ export const ja: TranslationResources = {
     openPath: "パスを開く",
   },
   branchSwitcher: {
+    triggerTooltip: "ワークスペースのブランチを切り替え",
     currentBranch: "現在のブランチ: {{branchName}}。押してブランチを切り替えてください。",
     placeholder: "ブランチを切り替え...",
     searchPlaceholder: "ブランチをフィルタ...",
@@ -1424,6 +1433,7 @@ export const ja: TranslationResources = {
     defaultModel: "デフォルト",
     profiles: "プロファイル",
     providers: "プロバイダー",
+    model: "モデル",
     editProfiles: "編集",
     editProfilesLabel: "エージェントプロファイルを編集",
     createProfile: "プロファイルを作成",
@@ -1627,12 +1637,15 @@ export const ja: TranslationResources = {
     backdrop: "メニューの背景",
   },
   subagents: {
+    title: "サブエージェント",
+    pillLabelOne: "サブエージェント 1 件",
+    pillLabelMany: "サブエージェント {{count}} 件",
     detachAction: "{{label}}を切り離す",
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
-    archiveFinishedTooltip: "完了した項目をアーカイブ",
+    archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1667,6 +1680,18 @@ export const ja: TranslationResources = {
         reloadTitle: "ディスクから再読み込みしますか？",
         reloadMessage: "ローカルの変更は失われます。",
       },
+    },
+    files: {
+      label: "ファイル",
+      subtitle: "ワークスペースのファイル",
+      tooltip: "ワークスペースのファイルを参照",
+    },
+    pullRequest: {
+      label: "プルリクエスト",
+      subtitle: "プルリクエストの詳細",
+      emptyTitle: "プルリクエストはまだありません",
+      emptyDescription:
+        "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
     },
     diff: {
       changesLabel: "変更",
@@ -1801,8 +1826,10 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
+      plugins: "プラグイン",
       host: "概要",
     },
+    plugins: pluginSettings.ja,
     metadataGeneration: {
       title: "メタデータ生成",
       description:
@@ -1834,10 +1861,13 @@ export const ja: TranslationResources = {
         label: "デフォルトの送信",
         descriptions: {
           interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
+          steer:
+            "エージェント実行中、Enterで現在のターンに指示を送ります。Command/Ctrl+Enterでキューに追加。",
           queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
         },
         options: {
           interrupt: "中断",
+          steer: "指示",
           queue: "キュー",
         },
       },
@@ -2043,6 +2073,7 @@ export const ja: TranslationResources = {
         toggleBothSidebars: "両方のサイドバーを切り替え",
         toggleSettings: "設定を切り替え",
         toggleFocusMode: "フォーカスモードを切り替え",
+        toggleExplorerPaneMaximization: "エクスプローラーペインの最大化を切り替え",
         cycleTheme: "テーマを順に切り替え",
         focusMessageInput: "メッセージ入力にフォーカス",
         cycleAgentMode: "エージェントモードを順に切り替え",

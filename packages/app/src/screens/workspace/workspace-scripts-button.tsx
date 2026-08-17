@@ -36,6 +36,7 @@ import {
 } from "@/utils/workspace-script-links";
 import type { Theme } from "@/styles/theme";
 import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
@@ -742,9 +743,10 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
+    height: buttonControlHeight.xs,
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
@@ -766,7 +768,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButtonPrimary: {
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
   },
   splitButtonPrimaryHovered: {

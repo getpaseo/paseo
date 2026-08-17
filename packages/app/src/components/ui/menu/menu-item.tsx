@@ -207,7 +207,6 @@ export function MenuItem({
   tooltip,
 }: PropsWithChildren<MenuItemProps>): ReactElement {
   const { selectItem } = useMenuContext("MenuItem");
-
   const isPending = status === "pending" || loading;
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
@@ -230,12 +229,17 @@ export function MenuItem({
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
   const itemPressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+    ({
+      pressed,
+      hovered = false,
+      focused = false,
+    }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
       hovered && !pressed && !isDisabled ? styles.itemHovered : null,
+      focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
     [active, isDisabled, muted],
@@ -250,11 +254,17 @@ export function MenuItem({
     ],
     [destructive, isSuccess, muted, isDisabled],
   );
+  const itemDataSet = useMemo(
+    () => ({ menuItem: "true", menuDisabled: isDisabled ? "true" : "false" }),
+    [isDisabled],
+  );
 
   const content = (
     <Pressable
       testID={testID}
-      accessibilityRole="button"
+      accessibilityRole="menuitem"
+      tabIndex={-1}
+      dataSet={itemDataSet}
       disabled={isDisabled}
       onPress={handleItemPress}
       style={itemPressableStyle}
@@ -362,6 +372,8 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: "transparent",
     borderRadius: theme.borderRadius.md,
+    outlineWidth: 0,
+    outlineColor: "transparent",
   },
   itemHovered: {
     backgroundColor: theme.colors.surface2,

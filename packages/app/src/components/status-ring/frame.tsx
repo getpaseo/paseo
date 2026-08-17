@@ -50,6 +50,8 @@ function getBackdropStyle(backdrop: SurfaceBackdrop | null | undefined) {
       return styles.backdropSurfaceSidebar;
     case "surfaceSidebarHover":
       return styles.backdropSurfaceSidebarHover;
+    case "surfaceSidebarSelected":
+      return styles.backdropSurfaceSidebarSelected;
     case "surface2":
       return styles.backdropSurface2;
     default:
@@ -91,6 +93,7 @@ export const styles = StyleSheet.create((theme) => {
     backdropSurface1: { backgroundColor: theme.colors.surface1 },
     backdropSurfaceSidebar: { backgroundColor: theme.colors.surfaceSidebar },
     backdropSurfaceSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
+    backdropSurfaceSidebarSelected: { backgroundColor: theme.colors.surfaceSidebarSelected },
     backdropSurface2: { backgroundColor: theme.colors.surface2 },
 
     // The closed ring the quarter runs on. Same colour rather than a grey so the indicator is one

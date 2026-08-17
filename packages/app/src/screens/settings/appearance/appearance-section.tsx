@@ -464,7 +464,7 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
-  const showFontFamilyRows = !isNative;
+  const showInterfaceFontFamilyRow = !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
 
@@ -616,7 +616,7 @@ export function AppearanceSection() {
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
-          {showFontFamilyRows ? (
+          {showInterfaceFontFamilyRow ? (
             <FontFamilyRow
               title={t("settings.appearance.fonts.interfaceFont")}
               hint={t("settings.appearance.fonts.interfaceFontHint")}
@@ -633,23 +633,21 @@ export function AppearanceSection() {
             title={t("settings.appearance.fonts.interfaceSize")}
             accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
             draft={uiSizeDraft}
-            withBorder={showFontFamilyRows}
+            withBorder={showInterfaceFontFamilyRow}
             onChangeDraft={handleUiSizeChange}
             onCommit={commitUiSize}
           />
-          {showFontFamilyRows ? (
-            <FontFamilyRow
-              title={t("settings.appearance.fonts.codeFont")}
-              hint={t("settings.appearance.fonts.codeFontHint")}
-              accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
-              placeholder={monoFontPlaceholder}
-              value={settings.monoFontFamily}
-              draft={monoFontDraft}
-              withBorder
-              onChangeDraft={setMonoFontDraft}
-              onCommit={commitMonoFontFamily}
-            />
-          ) : null}
+          <FontFamilyRow
+            title={t("settings.appearance.fonts.codeFont")}
+            hint={t("settings.appearance.fonts.codeFontHint")}
+            accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
+            placeholder={monoFontPlaceholder}
+            value={settings.monoFontFamily}
+            draft={monoFontDraft}
+            withBorder
+            onChangeDraft={setMonoFontDraft}
+            onCommit={commitMonoFontFamily}
+          />
           <FontSizeRow
             title={t("settings.appearance.fonts.codeSize")}
             accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}

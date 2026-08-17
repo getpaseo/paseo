@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const zhCN: TranslationResources = {
       interruptAgent: "中断 Agent",
       queueMessage: "消息排队",
       sendAndInterrupt: "发送并中断",
+      sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
       queue: "排队",
       send: "发送",
@@ -334,7 +336,6 @@ export const zhCN: TranslationResources = {
       title: "任务",
       empty: "还没有任务。",
       tasksProgress: "{{completed}}/{{total}} 项任务",
-      tasksProgressCurrent: "{{completed}}/{{total}} 项任务 · {{task}}",
       activity: {
         created: "已创建 {{count}} 项任务",
         added: "已添加",
@@ -585,18 +586,22 @@ export const zhCN: TranslationResources = {
         renameAgent: "重命名 Agent",
       },
       actions: {
+        newTab: "新建标签页",
         newAgent: "新建 Agent",
         newTerminal: "新建 Terminal",
         preparingTerminal: "正在准备 Terminal 标签",
         preparingTerminalTooltip: "正在准备 Terminal...",
         newBrowser: "新建浏览器",
+        maximizePane: "最大化窗格",
+        restorePane: "还原窗格",
         exitFocusMode: "退出专注模式",
         splitRight: "向右拆分窗格",
         splitDown: "向下拆分窗格",
+        changes: "更改",
+        files: "文件",
+        pullRequest: "拉取请求",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
-        pinTarget: "固定",
-        unpinTarget: "取消固定",
       },
       explorer: {
         open: "打开 explorer",
@@ -842,16 +847,16 @@ export const zhCN: TranslationResources = {
         switchToUnified: "切换到统一差异视图",
         switchToSplit: "切换到并排差异视图",
         showTreeView: "显示文件夹树",
-        showFlatView: "显示平铺文件列表",
+        hideTreeView: "隐藏文件夹树",
         options: "Diff 选项",
         hideWhitespace: "隐藏空白差异",
         showWhitespace: "显示空白差异",
         scrollLongLines: "滚动长行",
         wrapLongLines: "自动换行长行",
-        collapseAll: "折叠所有文件",
-        expandAll: "展开所有文件",
         collapseAllFolders: "折叠所有文件夹",
         expandAllFolders: "展开所有文件夹",
+        collapseAllFiles: "折叠所有文件",
+        expandAllFiles: "展开所有文件",
         refreshing: "正在刷新",
         refresh: "刷新",
         refreshState: "刷新 git 和 {{brand}} 状态",
@@ -868,6 +873,7 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
+        modifiedFile: "已修改",
         commits: {
           title: "提交",
           countLabel: "{{count}} 个工作区提交",
@@ -961,6 +967,8 @@ export const zhCN: TranslationResources = {
       },
       show: {
         label: "显示",
+        branch: "分支",
+        project: "项目",
         host: "主机",
         changeRequest: "拉取请求",
         checks: "检查",
@@ -1330,6 +1338,7 @@ export const zhCN: TranslationResources = {
     openPath: "打开路径",
   },
   branchSwitcher: {
+    triggerTooltip: "切换工作区分支",
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
     placeholder: "切换分支...",
     searchPlaceholder: "筛选分支...",
@@ -1393,6 +1402,7 @@ export const zhCN: TranslationResources = {
     defaultModel: "默认",
     profiles: "配置文件",
     providers: "提供方",
+    model: "模型",
     editProfiles: "编辑",
     editProfilesLabel: "编辑智能体配置文件",
     createProfile: "创建配置文件",
@@ -1591,12 +1601,15 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    title: "Subagent",
+    pillLabelOne: "1 个 subagent",
+    pillLabelMany: "{{count}} 个 subagent",
     detachAction: "分离 {{label}}",
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
     archiveFinishedAction: "归档已完成的 subagent",
-    archiveFinishedTooltip: "归档已完成项",
+    archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1631,6 +1644,17 @@ export const zhCN: TranslationResources = {
         reloadTitle: "从磁盘重新加载？",
         reloadMessage: "本地更改将丢失。",
       },
+    },
+    files: {
+      label: "文件",
+      subtitle: "工作区文件",
+      tooltip: "浏览工作区文件",
+    },
+    pullRequest: {
+      label: "拉取请求",
+      subtitle: "拉取请求详情",
+      emptyTitle: "尚无拉取请求",
+      emptyDescription: "为此检出创建拉取请求后，可在此处查看其详情。",
     },
     diff: {
       changesLabel: "更改",
@@ -1765,8 +1789,10 @@ export const zhCN: TranslationResources = {
       providers: "Providers",
       usage: "使用情况",
       terminals: "Terminals",
+      plugins: "插件",
       host: "概览",
     },
+    plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
       title: "元数据生成",
       description: "选择 Paseo 用于工作区标题、分支名称、提交消息和拉取请求草稿的模型",
@@ -1797,10 +1823,12 @@ export const zhCN: TranslationResources = {
         label: "默认发送",
         descriptions: {
           interrupt: "Agent 运行时，Enter 会中断。Command/Ctrl+Enter 会排队。",
+          steer: "Agent 运行时，Enter 会引导当前回合。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
         },
         options: {
           interrupt: "中断",
+          steer: "引导",
           queue: "排队",
         },
       },
@@ -2004,6 +2032,7 @@ export const zhCN: TranslationResources = {
         toggleBothSidebars: "切换两侧边栏",
         toggleSettings: "切换设置",
         toggleFocusMode: "切换专注模式",
+        toggleExplorerPaneMaximization: "切换资源管理器窗格最大化",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",

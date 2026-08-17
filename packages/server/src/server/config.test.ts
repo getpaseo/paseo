@@ -4,7 +4,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadConfig, resolveBundledWebUiDistDir } from "./config.js";
+import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
+import { loadPersistedConfig } from "./persisted-config.js";
 
 const roots: string[] = [];
 
@@ -37,6 +38,118 @@ describe("server config", () => {
     const config = loadConfig(paseoHome, { env: {} });
 
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
+  });
+
+  test("resolves reload state from the supplied validated snapshot", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
+    roots.push(paseoHome);
+    const snapshot = loadPersistedConfig(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        ...snapshot,
+        daemon: { ...snapshot.daemon, browserTools: { enabled: true } },
+      }),
+    );
+
+    expect(resolveConfigFromPersisted(paseoHome, snapshot, { env: {} }).browserToolsEnabled).toBe(
+      false,
+    );
+    expect(loadConfig(paseoHome, { env: {} }).browserToolsEnabled).toBe(true);
+  });
+
+  test("records mutable and startup launch overrides by persisted leaf", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-overrides-"));
+    roots.push(paseoHome);
+    const config = loadConfig(paseoHome, {
+      env: {
+        PASEO_LISTEN: "127.0.0.1:7000",
+        PASEO_PASSWORD: "secret",
+        PASEO_RELAY_ENDPOINT: "relay.example.test:443",
+        PASEO_TRUSTED_PROXIES: "true",
+        PASEO_WEB_UI_ENABLED: "true",
+        PASEO_LOG_FILE_PATH: "custom.log",
+        PASEO_VOICE_LLM_PROVIDER: "codex",
+      },
+      cli: { relayUseTls: false },
+    });
+
+    expect(config.configReload?.overrideControlledPaths).toEqual([
+      "daemon.auth.password",
+      "daemon.listen",
+      "daemon.relay.endpoint",
+      "daemon.relay.useTls",
+      "daemon.trustedProxies",
+      "features.voiceMode.llm.provider",
+      "features.webUi.enabled",
+      "log.file.path",
+    ]);
+    expect(config.listen).toBe("127.0.0.1:7000");
+    expect(config.trustedProxies).toBe(true);
+    expect(config.log?.file?.path).toBe("custom.log");
+    expect(config.voiceLlmProvider).toBe("codex");
+  });
+
+  test.each([
+    {
+      name: "local speech providers",
+      providers: { dictation: "local", voiceStt: "local", voiceTts: "local" },
+      expected: [
+        "features.dictation.stt.model",
+        "features.voiceMode.stt.model",
+        "features.voiceMode.tts.model",
+      ],
+    },
+    {
+      name: "OpenAI speech providers",
+      providers: { dictation: "openai", voiceStt: "openai", voiceTts: "openai" },
+      expected: [
+        "features.dictation.stt.confidenceThreshold",
+        "features.dictation.stt.model",
+        "features.voiceMode.stt.model",
+        "features.voiceMode.tts.model",
+        "features.voiceMode.tts.voice",
+      ],
+    },
+    {
+      name: "mixed local and OpenAI speech providers",
+      providers: { dictation: "local", voiceStt: "openai", voiceTts: "local" },
+      expected: [
+        "features.dictation.stt.confidenceThreshold",
+        "features.dictation.stt.model",
+        "features.voiceMode.stt.model",
+        "features.voiceMode.tts.model",
+      ],
+    },
+  ])("classifies speech overrides for $name", ({ providers, expected }) => {
+    const config = resolveConfigFromPersisted(
+      "/tmp/paseo-speech-override-classification",
+      {
+        version: 1,
+        features: {
+          dictation: { enabled: true, stt: { provider: providers.dictation } },
+          voiceMode: {
+            enabled: true,
+            stt: { provider: providers.voiceStt },
+            tts: { provider: providers.voiceTts },
+          },
+        },
+      },
+      {
+        env: {
+          OPENAI_API_KEY: "test-api-key",
+          PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
+          PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
+          PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-en-v0_19",
+          STT_CONFIDENCE_THRESHOLD: "0.5",
+          STT_MODEL: "whisper-1",
+          TTS_MODEL: "tts-1",
+          TTS_VOICE: "alloy",
+        },
+      },
+    );
+
+    expect(config.configReload?.overrideControlledPaths).toEqual(expected);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

@@ -110,6 +110,8 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
@@ -2021,6 +2023,9 @@ class ClaudeAgentSession implements AgentSession {
   private query: Query | null = null;
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
+  /** The exact SDK query/input pair that owns the current foreground turn. */
+  private activeForegroundQuery: Query | null = null;
+  private activeForegroundInput: AsyncMessageInput<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
@@ -2236,6 +2241,8 @@ class ClaudeAgentSession implements AgentSession {
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
       }
+      this.activeForegroundQuery = this.query;
+      this.activeForegroundInput = this.input;
       this.startQueryPump();
       this.input.push(sdkMessage);
       setTimeout(() => {
@@ -2250,6 +2257,39 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.resolveSlashCommandInvocation(prompt)) {
+      return { status: "unavailable" };
+    }
+    if (this.compacting || this.activeForegroundTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+
+    // Capture both ends of the live SDK stream before creating or delivering the message. There
+    // is deliberately no await below: a finished A cannot make this input point at a later B.
+    const query = this.activeForegroundQuery;
+    const input = this.activeForegroundInput;
+    if (!query || !input || this.query !== query || this.input !== input) {
+      return { status: "unavailable" };
+    }
+    const message = this.toSdkUserMessage(prompt);
+    message.priority = "next";
+    if (
+      this.activeForegroundTurnId !== options.expectedTurnId ||
+      this.activeForegroundQuery !== query ||
+      this.activeForegroundInput !== input ||
+      this.query !== query ||
+      this.input !== input
+    ) {
+      return { status: "unavailable" };
+    }
+    input.push(message);
+    return { status: "accepted" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2527,6 +2567,8 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.autonomousTurn = null;
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
@@ -2640,7 +2682,10 @@ class ClaudeAgentSession implements AgentSession {
     if (!parsed) {
       return null;
     }
-    return parsed.commandName === REWIND_COMMAND_NAME ? parsed : null;
+    return parsed.commandName === REWIND_COMMAND_NAME ||
+      CLAUDE_ROOT_ONLY_COMMANDS.has(parsed.commandName)
+      ? parsed
+      : null;
   }
 
   private parseSlashCommandInput(text: string): SlashCommandInvocation | null {
@@ -3410,6 +3455,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("foreground turn terminal");
@@ -3425,6 +3472,8 @@ class ClaudeAgentSession implements AgentSession {
     if (terminalSeen) {
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
+        this.activeForegroundQuery = null;
+        this.activeForegroundInput = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
@@ -3800,6 +3849,8 @@ class ClaudeAgentSession implements AgentSession {
     this.queryRestartNeeded = false;
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.syncTurnState("missing resumed conversation");
     return true;
   }

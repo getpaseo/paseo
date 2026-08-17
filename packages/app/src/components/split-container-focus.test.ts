@@ -34,4 +34,26 @@ describe("split focus root", () => {
       resolveSplitContainerRoot({ root, focusedPaneId: "right", focusModeEnabled: false }),
     ).toEqual({ root, usesFallbackStrip: false });
   });
+
+  it("renders only a maximized pane without entering focus mode", () => {
+    expect(
+      resolveSplitContainerRoot({
+        root,
+        focusedPaneId: "left",
+        focusModeEnabled: false,
+        maximizedPaneId: "right",
+      }),
+    ).toEqual({ root: pane("right"), usesFallbackStrip: false });
+  });
+
+  it("keeps normal splits when the maximized pane is unavailable", () => {
+    expect(
+      resolveSplitContainerRoot({
+        root,
+        focusedPaneId: "left",
+        focusModeEnabled: false,
+        maximizedPaneId: "missing",
+      }),
+    ).toEqual({ root, usesFallbackStrip: false });
+  });
 });

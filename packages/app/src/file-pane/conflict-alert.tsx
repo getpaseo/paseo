@@ -57,6 +57,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
@@ -66,6 +67,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   message: {
     flex: 1,
+    flexBasis: 180,
     minWidth: 0,
     gap: theme.spacing[1],
   },
@@ -80,6 +82,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   actions: {
     flexShrink: 0,
+    marginLeft: "auto",
     flexDirection: "row",
     gap: theme.spacing[2],
   },

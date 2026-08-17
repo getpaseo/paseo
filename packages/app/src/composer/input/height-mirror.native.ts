@@ -8,6 +8,7 @@ interface Args {
   onHeight: (height: number) => void;
 }
 
-export function useComposerHeightMirror(_args: Args): void {
+export function useComposerHeightMirror(_args: Args): (_value: string) => void {
   // No-op on native: onContentSizeChange drives height natively.
+  return () => undefined;
 }

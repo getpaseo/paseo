@@ -139,6 +139,16 @@ describe("flattenDiffTree", () => {
     const rows = flattenDiffTree(root, new Set(["src"]));
     expect(rows[0]).toMatchObject({ kind: "folder", additions: 7, deletions: 1 });
   });
+
+  it("keeps each file's original index when tree ordering differs from diff ordering", () => {
+    const rows = flattenDiffTree(compressed(["src/a.ts", "src/nested/b.ts"]), new Set());
+    const fileRows = rows.filter((row) => row.kind === "file");
+
+    expect(fileRows.map((row) => [row.file.path, row.fileIndex])).toEqual([
+      ["src/nested/b.ts", 1],
+      ["src/a.ts", 0],
+    ]);
+  });
 });
 
 describe("collectDirPaths", () => {

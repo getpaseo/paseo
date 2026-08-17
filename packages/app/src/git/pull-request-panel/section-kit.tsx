@@ -9,6 +9,7 @@ import {
   CircleSlash,
   CircleX,
 } from "lucide-react-native";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 import type { CheckStatus } from "./check-status";
 
@@ -149,8 +150,11 @@ export const sectionKitStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    minHeight: 32,
+    // Fixed, not minHeight plus padding. A row's trailing slot holds an xs Button
+    // (28pt), which stacked on the vertical padding and made rows with an
+    // "Add to chat" button taller than rows without one. The row is single-line by
+    // construction, so it declares a height the button fits inside instead.
+    height: CONTROL_HEIGHTS.compact,
   },
   checkName: {
     fontSize: theme.fontSize.sm,
