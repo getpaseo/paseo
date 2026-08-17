@@ -6,11 +6,11 @@ const metrics = {
   actionsReservedWidth: 120,
   rowPaddingHorizontal: 8,
   tabGap: 4,
-  maxTabWidth: 200,
+  maxTabWidth: 160,
   tabIconWidth: 14,
-  tabHorizontalPadding: 12,
+  tabHorizontalPadding: 8,
   estimatedCharWidth: 7,
-  closeButtonWidth: 22,
+  closeButtonWidth: 0,
 };
 
 describe("computeWorkspaceTabLayout", () => {
@@ -25,7 +25,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(result.items).toHaveLength(3);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([200, 200, 200]);
+    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160]);
   });
 
   it("shrinks equal-width tabs proportionally to fit the pane", () => {
@@ -41,7 +41,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
-  it("uses the split width for evenly sized tabs when space is available", () => {
+  it("keeps evenly sized tabs at the cap when the split width exceeds it", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 743,
       tabLabelLengths: [8, 8, 8, 8],
@@ -55,32 +55,32 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([175, 175, 175, 175]);
+    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160, 160]);
   });
 
   it("collapses to icon-only before allowing horizontal scroll fallback", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 388,
+      viewportWidth: 268,
       tabLabelLengths: [14, 14, 14, 14],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([60, 60, 60, 60]);
+    expect(result.items.map((item) => item.width)).toEqual([30, 30, 30, 30]);
     expect(result.items.every((item) => !item.showLabel)).toBe(true);
   });
 
   it("allows horizontal scroll only when icon-only tabs still cannot fit", () => {
     const result = computeWorkspaceTabLayout({
-      viewportWidth: 300,
+      viewportWidth: 267,
       tabLabelLengths: [14, 14, 14, 14],
       metrics,
     });
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([60, 60, 60, 60]);
+    expect(result.items.map((item) => item.width)).toEqual([30, 30, 30, 30]);
     expect(result.items.every((item) => !item.showLabel)).toBe(true);
   });
 

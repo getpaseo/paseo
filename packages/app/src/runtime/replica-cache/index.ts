@@ -1,6 +1,6 @@
 import { Buffer } from "buffer";
 import { z } from "zod";
-import { AgentStatusSchema } from "@getpaseo/protocol/messages";
+import { AgentStatusSchema, AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import {
   normalizeProjectDescriptor,
@@ -9,6 +9,7 @@ import {
   useSessionStore,
   type Agent,
   type SessionReplica,
+  type SessionReplicaTimeline,
   type SessionState,
   type ProjectDescriptor,
   type WorkspaceDescriptor,
@@ -17,7 +18,7 @@ import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream"
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
@@ -30,6 +31,8 @@ const TimelinePositionSchema = z.strictObject({
 const TimelineItemBaseShape = {
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
+  // COMPAT(active-turn-membership): absent on caches written before turn membership.
+  turnId: z.string().optional(),
   timestamp: IsoDateSchema,
 };
 
@@ -90,6 +93,12 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().nonnegative().optional(),
+  }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
+    kind: z.literal("tool_call"),
+    provider: AgentProviderSchema,
+    item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
   }),
 ]);
 
@@ -246,6 +255,14 @@ const StoredProjectSchema = z.strictObject({
 const StoredTimelineSchema = z.strictObject({
   agentId: z.string(),
   items: z.array(StoredTimelineItemSchema),
+  range: z
+    .strictObject({
+      epoch: z.string(),
+      startSeq: z.number().int().nonnegative(),
+      endSeq: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  hasOlder: z.boolean(),
 });
 
 const StoredHostSchema = z.strictObject({
@@ -275,6 +292,8 @@ interface ReplicaInput {
   projects: ReadonlyMap<string, ProjectDescriptor>;
   focusedAgent: Agent | undefined;
   timelineItems: StreamItem[] | undefined;
+  timelineRange: SessionReplicaTimeline["range"];
+  timelineHasOlder: boolean;
 }
 
 export interface ReplicaCacheStorage {
@@ -294,6 +313,8 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
   return {
     agentId: stored.agentId,
     items: stored.items.map(deserializeTimelineItem),
+    range: stored.range,
+    hasOlder: stored.hasOlder,
   };
 }
 
@@ -301,6 +322,7 @@ function timelineBase(item: StreamItem) {
   return {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
 }
@@ -351,7 +373,23 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
     case "tool_call":
-      return null;
+      if (item.payload.source !== "agent") return null;
+      const storedTool = AgentTimelineItemPayloadSchema.safeParse({
+        type: "tool_call",
+        callId: item.payload.data.callId,
+        name: item.payload.data.name,
+        status: item.payload.data.status,
+        error: item.payload.data.error,
+        detail: item.payload.data.detail,
+        ...(item.payload.data.metadata ? { metadata: item.payload.data.metadata } : {}),
+      });
+      if (!storedTool.success || storedTool.data.type !== "tool_call") return null;
+      return {
+        ...base,
+        kind: item.kind,
+        provider: item.payload.data.provider,
+        item: storedTool.data,
+      };
   }
 }
 
@@ -359,6 +397,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
   switch (item.kind) {
@@ -404,6 +443,28 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "tool_call": {
+      const tool = item.item;
+      if (tool.type !== "tool_call") {
+        throw new Error("Stored tool call contains a non-tool timeline item");
+      }
+      return {
+        ...base,
+        kind: item.kind,
+        payload: {
+          source: "agent",
+          data: {
+            provider: item.provider,
+            callId: tool.callId,
+            name: tool.name,
+            status: tool.status,
+            error: tool.error,
+            detail: tool.detail,
+            ...(tool.metadata ? { metadata: tool.metadata } : {}),
+          },
+        },
+      };
+    }
   }
 }
 
@@ -529,13 +590,28 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
   };
 }
 
+function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
+  switch (item.kind) {
+    case "user_message":
+      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+    case "activity_log":
+      return item.metadata === undefined;
+    case "tool_call":
+      return item.payload.source === "agent";
+    default:
+      return true;
+  }
+}
+
 function replicaInputsEqual(left: ReplicaInput, right: ReplicaInput): boolean {
   return (
     left.agents === right.agents &&
     left.workspaces === right.workspaces &&
     left.projects === right.projects &&
     left.focusedAgent === right.focusedAgent &&
-    left.timelineItems === right.timelineItems
+    left.timelineItems === right.timelineItems &&
+    left.timelineRange === right.timelineRange &&
+    left.timelineHasOlder === right.timelineHasOlder
   );
 }
 
@@ -550,14 +626,33 @@ function selectReplicaInput(session: SessionState, agentId: string | null): Repl
     projects: session.projects,
     focusedAgent: agent,
     timelineItems: timeline.status === "cold" ? undefined : timeline.items,
+    timelineRange: timeline.status === "synced" ? timeline.range : null,
+    timelineHasOlder: timeline.status === "synced" && timeline.older === "available",
   };
 }
 
 function serializeHost(serverId: string, input: ReplicaInput, directorySync?: unknown): StoredHost {
-  const items = input.timelineItems
-    ?.filter((item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item))
-    .map(serializeTimelineItem)
-    .filter((item) => item !== null);
+  const canonicalItems = input.timelineItems?.filter(
+    (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
+  );
+  const items = canonicalItems
+    ? canonicalItems.map(serializeTimelineItem).filter((item) => item !== null)
+    : undefined;
+  const range = input.timelineRange;
+  const canPersistCoverage =
+    range !== null &&
+    range.retainedRanges === undefined &&
+    canonicalItems !== undefined &&
+    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
+    items?.length === canonicalItems.length &&
+    canonicalItems.every(
+      (item) =>
+        isTimelineItemStoredLosslessly(item) &&
+        item.timelineCursor?.epoch === range.epoch &&
+        item.timelineCursor.seq >= range.startSeq &&
+        item.timelineCursor.seq <= range.endSeq,
+    ) &&
+    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
   return {
     serverId,
     agents: Array.from(input.agents.values(), serializeAgent),
@@ -569,6 +664,10 @@ function serializeHost(serverId: string, input: ReplicaInput, directorySync?: un
         ? {
             agentId: input.focusedAgent.id,
             items: items.slice(-MAX_TIMELINE_ITEMS),
+            range: canPersistCoverage
+              ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+              : null,
+            hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
           }
         : null,
     ...(directorySync ? { directorySync } : {}),
@@ -783,8 +882,21 @@ export class ReplicaCache {
     if (session.focusedAgentId) {
       this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
     }
-    const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
+    const focusedAgentId = this.lastFocusedAgentIds.get(serverId) ?? null;
     const previous = this.capturedInputs.get(serverId);
+    const selected = selectReplicaInput(session, focusedAgentId);
+    const hasTimelineHead =
+      focusedAgentId !== null && (session.agentStreamHead.get(focusedAgentId)?.length ?? 0) > 0;
+    let input = selected;
+    if (hasTimelineHead && previous && selected.timelineItems === previous.timelineItems) {
+      input = {
+        ...selected,
+        timelineRange: previous.timelineRange,
+        timelineHasOlder: previous.timelineHasOlder,
+      };
+    } else if (hasTimelineHead) {
+      input = { ...selected, timelineRange: null, timelineHasOlder: false };
+    }
     if (previous && replicaInputsEqual(previous, input)) return false;
 
     this.capturedInputs.set(serverId, input);

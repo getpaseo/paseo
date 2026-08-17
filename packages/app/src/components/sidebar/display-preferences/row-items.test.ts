@@ -3,14 +3,17 @@ import {
   DEFAULT_SIDEBAR_ROW_ITEMS,
   isChecksHiddenByLegacyRowItem,
   parseSidebarRowItems,
-  SIDEBAR_ROW_ITEMS,
 } from "./row-items";
 
 describe("parseSidebarRowItems", () => {
-  it("shows everything by default", () => {
-    for (const item of SIDEBAR_ROW_ITEMS) {
-      expect(DEFAULT_SIDEBAR_ROW_ITEMS[item]).toBe(true);
-    }
+  it("shows operational metadata but hides identity badges by default", () => {
+    expect(DEFAULT_SIDEBAR_ROW_ITEMS).toEqual({
+      branch: false,
+      project: false,
+      host: true,
+      changeRequest: true,
+      services: true,
+    });
   });
 
   it("applies stored overrides", () => {
@@ -21,7 +24,7 @@ describe("parseSidebarRowItems", () => {
   });
 
   it("leaves items absent from storage at their default", () => {
-    // A newly added item must ship visible rather than inheriting "missing means off".
+    // An absent key takes the item's explicit product default.
     expect(parseSidebarRowItems({ host: false })).toEqual({
       ...DEFAULT_SIDEBAR_ROW_ITEMS,
       host: false,

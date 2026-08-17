@@ -19,10 +19,10 @@ export function createMarkdownStyles(theme: Theme) {
     body: {
       ...webSelectableTextStyle,
       color: theme.colors.foreground,
-      fontSize: theme.fontSize.base,
-      // Prose line-height scales with the UI ramp (≈22 at base 16), NOT the
+      fontSize: theme.fontSize.sm,
+      // Prose line-height scales with the UI ramp, not the
       // code-size-coupled lineHeight.diff token used by code/diff surfaces.
-      lineHeight: Math.round(theme.fontSize.base * 1.4),
+      lineHeight: Math.round(theme.fontSize.sm * 1.4),
       flexShrink: 1,
       minWidth: 0,
       width: "100%" as const,
@@ -30,7 +30,6 @@ export function createMarkdownStyles(theme: Theme) {
 
     text: {
       ...webSelectableTextStyle,
-      color: theme.colors.foreground,
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
@@ -283,17 +282,17 @@ export function createMarkdownStyles(theme: Theme) {
       ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
-      fontSize: theme.fontSize.base,
-      lineHeight: 22,
+      fontSize: theme.fontSize.sm,
+      lineHeight: Math.round(theme.fontSize.sm * 1.4),
     },
 
     ordered_list_icon: {
       ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
-      fontSize: theme.fontSize.base,
+      fontSize: theme.fontSize.sm,
       fontWeight: theme.fontWeight.normal,
-      lineHeight: 22,
+      lineHeight: Math.round(theme.fontSize.sm * 1.4),
       minWidth: 12,
     },
 
@@ -302,13 +301,17 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     blockquote: {
-      backgroundColor: theme.colors.surface2,
+      backgroundColor: theme.colors.surface1,
+      color: `${theme.colors.foreground}cc`,
       borderLeftWidth: 4,
-      borderLeftColor: theme.colors.primary,
+      borderLeftColor: theme.colors.surface2,
       paddingHorizontal: theme.spacing[4],
-      paddingVertical: theme.spacing[3],
+      paddingTop: theme.spacing[3],
+      paddingBottom: 0,
       marginVertical: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
+      borderTopLeftRadius: 0,
+      borderBottomLeftRadius: 0,
     },
 
     // =========================================================================

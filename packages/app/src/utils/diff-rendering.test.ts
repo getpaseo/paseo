@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compactHighlightTokens,
   formatDiffContentText,
   formatDiffGutterText,
   hasVisibleDiffTokens,
@@ -27,5 +28,24 @@ describe("diff-rendering", () => {
     expect(hasVisibleDiffTokens([])).toBe(false);
     expect(hasVisibleDiffTokens([{ text: "" }])).toBe(false);
     expect(hasVisibleDiffTokens([{ text: "const value = 1;" }])).toBe(true);
+  });
+
+  it("compacts adjacent syntax tokens without changing their text or styles", () => {
+    expect(
+      compactHighlightTokens([
+        { text: "const", style: "keyword" },
+        { text: " ", style: null },
+        { text: "value", style: null },
+        { text: " ", style: null },
+        { text: "=", style: "operator" },
+        { text: "", style: "operator" },
+        { text: " 1", style: "number" },
+      ]),
+    ).toEqual([
+      { text: "const", style: "keyword" },
+      { text: " value ", style: null },
+      { text: "=", style: "operator" },
+      { text: " 1", style: "number" },
+    ]);
   });
 });

@@ -22,6 +22,8 @@ import {
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady } from "@/stores/draft-store/state";
+import { AfterPaintPublication } from "@/composer/after-paint-publication";
+import { isWeb } from "@/constants/platform";
 
 type AttachmentUpdater =
   | UserComposerAttachment[]
@@ -52,7 +54,9 @@ type DraftComposerState = UseAgentFormStateResult & {
 
 export interface AgentInputDraft {
   text: string;
-  setText: (text: string) => void;
+  editText: (text: string) => void;
+  replaceText: (text: string) => void;
+  textReplacementKey: string;
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
@@ -84,6 +88,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (state) => state.attachmentFocusRequestByDraftKey[draftKey] ?? 0,
   );
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
+  const [textReplacementRevision, setTextReplacementRevision] = useState(0);
   const text = draft?.text ?? "";
   const attachments = draft?.attachments ?? [];
   const isHydrated = hydratedDraftKey === draftKey;
@@ -107,11 +112,32 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
-  const setText = useCallback(
-    (nextText: string) => {
-      saveDraft((current) => ({ ...current, text: nextText }));
-    },
+  const textPublication = useMemo(
+    () =>
+      new AfterPaintPublication<string>((nextText) => {
+        saveDraft((current) => ({ ...current, text: nextText }));
+      }),
     [saveDraft],
+  );
+
+  const editText = useCallback(
+    (nextText: string) => {
+      if (isWeb) {
+        textPublication.stage(nextText);
+      } else {
+        saveDraft((current) => ({ ...current, text: nextText }));
+      }
+    },
+    [saveDraft, textPublication],
+  );
+
+  const replaceText = useCallback(
+    (nextText: string) => {
+      textPublication.cancel();
+      saveDraft((current) => ({ ...current, text: nextText }));
+      setTextReplacementRevision((revision) => revision + 1);
+    },
+    [saveDraft, textPublication],
   );
 
   const setAttachments = useCallback(
@@ -126,16 +152,42 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
+      textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
     },
-    [draftKey],
+    [draftKey, textPublication],
   );
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") textPublication.flush();
+    };
+    const flush = () => textPublication.flush();
+    const canListenForPageHide =
+      isWeb && typeof window !== "undefined" && typeof window.addEventListener === "function";
+    if (isWeb && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", flushWhenHidden);
+    }
+    if (canListenForPageHide) {
+      window.addEventListener("pagehide", flush);
+    }
+    return () => {
+      if (isWeb && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", flushWhenHidden);
+      }
+      if (canListenForPageHide) {
+        window.removeEventListener("pagehide", flush);
+      }
+      textPublication.flush();
+    };
+  }, [textPublication]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await useDraftStore.getState().hydrateDraftInput({ draftKey });
       if (!cancelled) {
+        setTextReplacementRevision((revision) => revision + 1);
         setHydratedDraftKey(draftKey);
       }
     })();
@@ -264,7 +316,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
 
   return {
     text,
-    setText,
+    editText,
+    replaceText,
+    textReplacementKey: `${draftKey}:${textReplacementRevision}`,
     attachments,
     setAttachments,
     clear,

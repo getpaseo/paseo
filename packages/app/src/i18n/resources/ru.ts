@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const ru: TranslationResources = {
       interruptAgent: "Агент прерываний",
       queueMessage: "Сообщение в очереди",
       sendAndInterrupt: "Отправить и прервать",
+      sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
       queue: "Очередь",
       send: "Отправлять",
@@ -527,6 +529,8 @@ export const ru: TranslationResources = {
         screenshotCopied: "Снимок скопирован в буфер обмена",
         elementCopied: "Элемент скопирован в буфер обмена",
         screenshotFailed: "Не удалось скопировать снимок",
+        selectorLoading: "Дождитесь окончания загрузки страницы",
+        selectorFailed: "Не удалось запустить выбор элемента",
       },
       annotate: {
         title: "Аннотировать элемент",
@@ -587,6 +591,7 @@ export const ru: TranslationResources = {
         renameAgent: "Переименовать агента",
       },
       actions: {
+        newTab: "Новая вкладка",
         newAgent: "Новый агент",
         newTerminal: "Новый терминал",
         preparingTerminal: "Подготовка вкладки терминала",
@@ -595,6 +600,9 @@ export const ru: TranslationResources = {
         exitFocusMode: "Выйти из режима фокусировки",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
+        changes: "Изменения",
+        files: "Файлы",
+        pullRequest: "Запрос на слияние",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "Закрепить",
@@ -989,6 +997,8 @@ export const ru: TranslationResources = {
       },
       show: {
         label: "Показывать",
+        branch: "Ветка",
+        project: "Проект",
         host: "Хост",
         changeRequest: "Pull request",
         checks: "Проверки",
@@ -1440,6 +1450,7 @@ export const ru: TranslationResources = {
     defaultModel: "По умолчанию",
     profiles: "Профили",
     providers: "Провайдеры",
+    model: "Модель",
     editProfiles: "Изменить",
     editProfilesLabel: "Изменить профили агентов",
     createProfile: "Создать профиль",
@@ -1649,6 +1660,7 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedTooltip: "Архивировать завершенные",
+    archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1683,6 +1695,18 @@ export const ru: TranslationResources = {
         reloadTitle: "Перезагрузить с диска?",
         reloadMessage: "Локальные изменения будут потеряны.",
       },
+    },
+    files: {
+      label: "Файлы",
+      subtitle: "Файлы рабочего пространства",
+      tooltip: "Просмотр файлов рабочего пространства",
+    },
+    pullRequest: {
+      label: "Запрос на слияние",
+      subtitle: "Сведения о запросе на слияние",
+      emptyTitle: "Запроса на слияние пока нет",
+      emptyDescription:
+        "Создайте запрос на слияние для этой рабочей копии, чтобы увидеть здесь его сведения.",
     },
     diff: {
       changesLabel: "Изменения",
@@ -1817,8 +1841,10 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Обзор",
     },
+    plugins: pluginSettings.ru,
     metadataGeneration: {
       title: "Создание метаданных",
       description:
@@ -1851,10 +1877,13 @@ export const ru: TranslationResources = {
         label: "Отправка по умолчанию",
         descriptions: {
           interrupt: "Когда агент работает, Enter прерывает. Command/Ctrl+Enter ставит в очередь.",
+          steer:
+            "Когда агент работает, Enter направляет текущий ход. Command/Ctrl+Enter ставит в очередь.",
           queue: "Когда агент работает, Enter ставит в очередь. Command/Ctrl+Enter отправляет.",
         },
         options: {
           interrupt: "Прерывать",
+          steer: "Направить",
           queue: "Очередь",
         },
       },

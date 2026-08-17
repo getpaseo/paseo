@@ -38,6 +38,24 @@ function assistantMessage(id: string, text: string, seed: number): StreamItem {
   };
 }
 
+function toolCall(id: string, seed: number): StreamItem {
+  return {
+    kind: "tool_call",
+    id,
+    timestamp: createTimestamp(seed),
+    payload: {
+      source: "orchestrator",
+      data: {
+        toolCallId: id,
+        toolName: "Shell",
+        arguments: "echo hi",
+        result: null,
+        status: "completed",
+      },
+    },
+  };
+}
+
 describe("resolveStreamRenderStrategy", () => {
   it("uses forward_stream on web", () => {
     const strategy = resolveStreamRenderStrategy({
@@ -194,6 +212,23 @@ describe("neighbor and traversal semantics", () => {
         startIndex: invertedStartIndex,
       }),
     ).toBe("assistant-1\n\nassistant-2");
+  });
+
+  it("does not collect copy or fork content across an adjacent tagged turn", () => {
+    const chronological: StreamItem[] = [
+      { ...assistantMessage("a1", "first turn", 1), turnId: "turn-1" },
+      { ...toolCall("tool", 2), turnId: "turn-2" },
+      { ...assistantMessage("a2", "second turn", 3), turnId: "turn-2" },
+    ];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantTurnContentForStreamRenderStrategy({
+        strategy,
+        items: chronological,
+        startIndex: 2,
+      }),
+    ).toBe("second turn");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {

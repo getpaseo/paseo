@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const es: TranslationResources = {
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
       sendAndInterrupt: "Enviar e interrumpir",
+      sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
       queue: "Cola",
       send: "Enviar",
@@ -527,6 +529,8 @@ export const es: TranslationResources = {
         screenshotCopied: "Captura copiada al portapapeles",
         elementCopied: "Elemento copiado al portapapeles",
         screenshotFailed: "No se pudo copiar la captura",
+        selectorLoading: "Espera a que la página termine de cargar",
+        selectorFailed: "No se pudo iniciar el selector de elementos",
       },
       annotate: {
         title: "Anotar elemento",
@@ -588,6 +592,7 @@ export const es: TranslationResources = {
         renameAgent: "Cambiar nombre del agente",
       },
       actions: {
+        newTab: "Nueva pestaña",
         newAgent: "Nuevo agente",
         newTerminal: "Nueva terminal",
         preparingTerminal: "Preparando la pestaña del terminal",
@@ -596,6 +601,9 @@ export const es: TranslationResources = {
         exitFocusMode: "Salir del modo de concentración",
         splitRight: "Panel dividido a la derecha",
         splitDown: "Dividir panel hacia abajo",
+        changes: "Cambios",
+        files: "Archivos",
+        pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
         pinTarget: "Fijar",
@@ -998,6 +1006,8 @@ export const es: TranslationResources = {
       },
       show: {
         label: "Mostrar",
+        branch: "Rama",
+        project: "Proyecto",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Comprobaciones",
@@ -1449,6 +1459,7 @@ export const es: TranslationResources = {
     defaultModel: "Por defecto",
     profiles: "Perfiles",
     providers: "Proveedores",
+    model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfiles de agente",
     createProfile: "Crear perfil",
@@ -1658,6 +1669,7 @@ export const es: TranslationResources = {
     archiveTooltip: "Subagente de archivo",
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedTooltip: "Archivar finalizados",
+    archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1692,6 +1704,17 @@ export const es: TranslationResources = {
         reloadTitle: "¿Recargar desde el disco?",
         reloadMessage: "Se perderán tus cambios locales.",
       },
+    },
+    files: {
+      label: "Archivos",
+      subtitle: "Archivos del espacio de trabajo",
+      tooltip: "Explorar archivos del espacio de trabajo",
+    },
+    pullRequest: {
+      label: "Solicitud de extracción",
+      subtitle: "Detalles de la solicitud de extracción",
+      emptyTitle: "Aún no hay ninguna solicitud de extracción",
+      emptyDescription: "Crea una solicitud para este checkout y consulta aquí sus detalles.",
     },
     diff: {
       changesLabel: "Cambios",
@@ -1826,8 +1849,10 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Resumen",
     },
+    plugins: pluginSettings.es,
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
@@ -1862,11 +1887,14 @@ export const es: TranslationResources = {
         descriptions: {
           interrupt:
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          steer:
+            "Cuando el agente se está ejecutando, Enter dirige el turno activo. Command/Ctrl+Enter pone en cola.",
           queue:
             "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
         },
         options: {
           interrupt: "Interrumpir",
+          steer: "Dirigir",
           queue: "Cola",
         },
       },

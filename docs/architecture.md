@@ -92,6 +92,10 @@ facade. App and CLI may import the low-level driver from
 `@getpaseo/client/internal/daemon-client` during migration, while new SDK-shaped
 code imports from `@getpaseo/client`.
 
+`PaseoApi` is the capability-only boundary over workspaces, agents, providers, and config.
+`PaseoClient` adds connection lifecycle. App plugin surfaces borrow an API over their selected
+host's client; plugin subprocesses use the same facade over a host-owned IPC transport.
+
 ### `packages/app` — Mobile + web client (Expo)
 
 Cross-platform React Native app that connects to one or more daemons.
@@ -130,6 +134,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo script ls/start/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`
+- `paseo project create/ls/rename/delete`
 - `paseo workspace create/ls/rename/archive`
 - `paseo permit allow/deny/ls`
 - `paseo provider ls/models`

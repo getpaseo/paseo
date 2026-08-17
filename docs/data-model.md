@@ -175,6 +175,13 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 Single file, validated with `PersistedConfigSchema`.
 
+`paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
+classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
+fields and their removal/default semantics; session handlers and the CLI only relay the structured
+result. Normal config patches persist only the requested fields, so launch overrides and resolved
+defaults never leak into the file. Startup-only fields remain compared with the daemon's launch
+snapshot so a mixed edit can apply its live subset and still name the paths that require restart.
+
 ```
 {
   version: 1,
@@ -219,6 +226,8 @@ Single file, validated with `PersistedConfigSchema`.
       providers: [{ provider, model?, thinkingOptionId? }]
     }
   },
+  pluginsEnabled: boolean,
+  plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
     dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
     voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
@@ -278,9 +287,9 @@ Environment variables override `config.json`:
 | `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
 | `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
 
-`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Restart the
-daemon after changing the file or environment. Run `paseo daemon restart` for a standalone daemon.
-For a desktop-managed daemon, fully quit and reopen Paseo Desktop.
+`PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
+after changing `config.json`. Environment changes require a daemon restart; the launch environment
+remains authoritative during reload.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
