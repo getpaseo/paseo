@@ -1,4 +1,5 @@
-import { test } from "../support/fixtures";
+import type { Locator } from "@playwright/test";
+import { expect, test } from "../support/fixtures";
 import {
   closeModelPicker,
   expectModelSearchEmptyState,
@@ -50,6 +51,14 @@ const LARGE_CATALOG = {
   })),
 };
 
+function readBackground(locator: Locator): Promise<string> {
+  return locator.evaluate((element) => getComputedStyle(element).backgroundColor);
+}
+
+async function expectBackground(locator: Locator, expected: string): Promise<void> {
+  await expect.poll(() => readBackground(locator)).toBe(expected);
+}
+
 test.describe("Cross-provider model search", () => {
   test("one query over the picker root reaches every provider and names each result's provider", async ({
     page,
@@ -96,6 +105,23 @@ test.describe("Cross-provider model search", () => {
 
       await test.step("results replace the pinned profiles", async () => {
         await expectPinnedProfilesHidden(page);
+      });
+
+      await test.step("Ctrl+N and Ctrl+P move the model highlight", async () => {
+        await searchAllModels(page, "ten second stream");
+        const first = page.getByTestId("model-row-mock-ten-second-stream");
+        const second = page.getByTestId(`model-row-${STUDIO.id}-studio-fast`);
+        const inactiveBackground = await readBackground(first);
+
+        await page.keyboard.press("Control+n");
+        const activeBackground = await readBackground(first);
+        expect(activeBackground).not.toBe(inactiveBackground);
+
+        await page.keyboard.press("Control+n");
+        await expectBackground(second, activeBackground);
+
+        await page.keyboard.press("Control+p");
+        await expectBackground(first, activeBackground);
       });
 
       // Search falls back to subsequence matching, so "no matches" needs letters

@@ -74,6 +74,20 @@ test("opens troubleshooting, support, and release destinations", async ({ page }
   });
 });
 
+test("navigates shared menus with Ctrl+N and Ctrl+P", async ({ page }) => {
+  await gotoAppShell(page);
+  await openHelpMenu(page);
+
+  await page.keyboard.press("Control+n");
+  await expect(page.getByTestId("sidebar-help-shortcuts")).toBeFocused();
+
+  await page.keyboard.press("Control+n");
+  await expect(page.getByTestId("sidebar-help-changelog")).toBeFocused();
+
+  await page.keyboard.press("Control+p");
+  await expect(page.getByTestId("sidebar-help-shortcuts")).toBeFocused();
+});
+
 test("searches keyboard shortcuts from the sidebar help menu", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });

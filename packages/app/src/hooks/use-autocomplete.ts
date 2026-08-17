@@ -4,9 +4,9 @@ import {
   getAutocompleteNextIndex,
   type AutocompleteOptionsPosition,
 } from "@/components/ui/autocomplete-utils";
+import { resolveListSearchKeyAction, type ListSearchKeyEvent } from "@/keyboard/list-search-keys";
 
-interface AutocompleteKeyPressEvent {
-  key: string;
+export interface AutocompleteKeyPressEvent extends ListSearchKeyEvent {
   preventDefault: () => void;
 }
 
@@ -70,25 +70,14 @@ export function useAutocomplete<
         return false;
       }
 
-      if (event.key === "ArrowUp") {
+      const movement = resolveListSearchKeyAction(event);
+      if (movement === "next" || movement === "previous") {
         event.preventDefault();
         setSelectedIndex((current) =>
           getAutocompleteNextIndex({
             currentIndex: current,
             itemCount: input.options.length,
-            key: "ArrowUp",
-          }),
-        );
-        return true;
-      }
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSelectedIndex((current) =>
-          getAutocompleteNextIndex({
-            currentIndex: current,
-            itemCount: input.options.length,
-            key: "ArrowDown",
+            key: movement === "next" ? "ArrowDown" : "ArrowUp",
           }),
         );
         return true;
