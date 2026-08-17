@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { createLiveVoiceHoldMuteController } from "@/live-voice/live-voice-hold-mute";
 
 /**
@@ -36,44 +36,42 @@ export function LiveVoiceMuteShortcut() {
     }
   }, [liveVoice?.phase]);
 
-  useEffect(() => {
-    return keyboardActionDispatcher.registerHandler({
-      handlerId: "live-voice-mute",
-      actions: ["live-voice.mute-toggle"],
-      enabled: true,
-      priority: 0,
-      handle: () => {
-        const current = liveVoiceRef.current;
-        if (!current || current.phase !== "active") {
-          return false;
-        }
-        current.toggleMute();
-        return true;
-      },
-    });
-  }, []);
+  useKeyboardActionHandler({
+    handlerId: "live-voice-mute",
+    actions: ["live-voice.mute-toggle"],
+    enabled: true,
+    priority: 0,
+    handle: () => {
+      const current = liveVoiceRef.current;
+      if (!current || current.phase !== "active") {
+        return false;
+      }
+      current.toggleMute();
+      return true;
+    },
+  });
+
+  const hold = holdRef.current;
+  useKeyboardActionHandler({
+    handlerId: "live-voice-mute-hold-invert",
+    actions: ["live-voice.mute-hold-invert"],
+    enabled: true,
+    priority: 0,
+    handle: (action) => {
+      if (action.id !== "live-voice.mute-hold-invert") {
+        return false;
+      }
+      return action.phase === "press" ? hold.press() : hold.release();
+    },
+  });
 
   useEffect(() => {
-    const hold = holdRef.current;
-    const unregister = keyboardActionDispatcher.registerHandler({
-      handlerId: "live-voice-mute-hold-invert",
-      actions: ["live-voice.mute-hold-invert"],
-      enabled: true,
-      priority: 0,
-      handle: (action) => {
-        if (action.id !== "live-voice.mute-hold-invert") {
-          return false;
-        }
-        return action.phase === "press" ? hold.press() : hold.release();
-      },
-    });
     return () => {
-      unregister();
       // Unmounting mid-hold would otherwise leave the call inverted with no
       // handler left to receive the release.
       hold.release();
     };
-  }, []);
+  }, [hold]);
 
   return null;
 }
