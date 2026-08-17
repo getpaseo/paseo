@@ -173,6 +173,11 @@ foreground control ownership remains a separate daemon concern. Cancellation req
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
 
+Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
+the Paseo timeline, so one visible response can span several canonical turns without a user message
+between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
+fork positions retain the canonical `turnId` boundaries.
+
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
 does not combine anonymous lifecycle events, timestamps, timeline rows, and resume coverage to infer a

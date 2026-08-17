@@ -2,7 +2,7 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
-import { continuesTurn, isTurnBoundary } from "./turn-membership";
+import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -78,7 +78,7 @@ function createTurnFooterHost(input: {
   };
 }
 
-function findLatestAssistantInTurn(input: {
+function findLatestAssistantInResponse(input: {
   strategy: StreamStrategy;
   items: StreamItem[];
   startIndex: number;
@@ -97,7 +97,7 @@ function findLatestAssistantInTurn(input: {
       index = input.strategy.getNeighborIndex(index, "above")
     ) {
       const item = items[index];
-      if (!item || (laterItem && !continuesTurn(item, laterItem))) {
+      if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return null;
       }
       if (item.kind === "assistant_message") {
@@ -132,7 +132,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: footerItems,
     startIndex: latestIndex,
@@ -160,11 +160,11 @@ function resolveCompletedFooter(input: {
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
 }): TurnFooterHost | null {
-  if (input.item.kind === "user_message" || !isTurnBoundary(input.item, input.belowItem)) {
+  if (input.item.kind === "user_message" || !isResponseBoundary(input.item, input.belowItem)) {
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: input.items,
     startIndex: input.index,

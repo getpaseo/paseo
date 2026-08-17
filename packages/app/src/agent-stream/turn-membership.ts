@@ -12,8 +12,21 @@ export function continuesTurn(previous: StreamItem | null, next: StreamItem | nu
   return next.kind !== "user_message";
 }
 
+/**
+ * A visible response can span multiple canonical turns when their prompts are
+ * system-injected and therefore absent from the Paseo timeline.
+ */
+export function continuesResponse(previous: StreamItem | null, next: StreamItem | null): boolean {
+  if (!previous || !next) return false;
+  return continuesTurn(previous, next) || next.kind !== "user_message";
+}
+
 export function isTurnBoundary(previous: StreamItem | null, next: StreamItem | null): boolean {
   return previous !== null && next !== null && !continuesTurn(previous, next);
+}
+
+export function isResponseBoundary(previous: StreamItem | null, next: StreamItem | null): boolean {
+  return previous !== null && next !== null && !continuesResponse(previous, next);
 }
 
 /** Whether `item` begins a new chronological turn after `previous`. */
