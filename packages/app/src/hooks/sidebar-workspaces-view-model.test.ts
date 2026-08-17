@@ -70,15 +70,26 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
 });
 
 describe("createSidebarWorkspaceEntry activity", () => {
-  it("keeps workspace activity separate from status-entry time", () => {
+  it("keeps workspace activity separate from newer status-entry time", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
-    descriptor.statusEnteredAt = new Date("2026-05-12T09:30:00.000Z");
+    descriptor.statusEnteredAt = new Date("2026-05-12T11:30:00.000Z");
     descriptor.activityAt = new Date("2026-05-12T10:30:00.000Z");
 
     const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
 
-    expect(entry.statusEnteredAt).toEqual(new Date("2026-05-12T09:30:00.000Z"));
+    expect(entry.statusEnteredAt).toEqual(new Date("2026-05-12T11:30:00.000Z"));
     expect(entry.activityAt).toEqual(new Date("2026-05-12T10:30:00.000Z"));
+  });
+
+  it("leaves activity empty when only a status-entry time exists", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.statusEnteredAt = new Date("2026-05-12T11:30:00.000Z");
+    descriptor.activityAt = null;
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.statusEnteredAt).toEqual(new Date("2026-05-12T11:30:00.000Z"));
+    expect(entry.activityAt).toBeNull();
   });
 
   it("uses live agent activity when the daemon omits workspace activity", () => {

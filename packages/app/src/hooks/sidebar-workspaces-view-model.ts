@@ -149,7 +149,7 @@ function resolveWorkspaceActivityAt(
   workspace: WorkspaceDescriptor,
   agentActivity: WorkspaceAgentActivity | undefined,
 ): Date | null {
-  const candidates = [workspace.activityAt, agentActivity?.activityAt, workspace.statusEnteredAt];
+  const candidates = [workspace.activityAt, agentActivity?.activityAt];
   let latest: Date | null = null;
   for (const candidate of candidates) {
     if (candidate && (!latest || candidate > latest)) {
