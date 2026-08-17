@@ -2033,6 +2033,7 @@ export const ko: TranslationResources = {
         agentInput: "에이전트 입력",
       },
       help: {
+        cycleGroupMode: "사이드바 그룹화 순환",
         openProject: "프로젝트 열기",
         newWorkspace: "새 워크스페이스",
         newWorktree: "새 워크트리",

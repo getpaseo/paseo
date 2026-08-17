@@ -3,6 +3,7 @@ import type { StateStorage } from "zustand/middleware";
 import {
   createSidebarViewStorage,
   migrateSidebarViewState,
+  nextGroupMode,
   useSidebarViewStore,
 } from "./sidebar-view-store";
 
@@ -34,6 +35,20 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
     },
   };
 }
+
+describe("nextGroupMode", () => {
+  it("advances project to status", () => {
+    expect(nextGroupMode("project")).toBe("status");
+  });
+
+  it("advances status back to project", () => {
+    expect(nextGroupMode("status")).toBe("project");
+  });
+
+  it("wraps around so cycling twice returns to the start", () => {
+    expect(nextGroupMode(nextGroupMode("project"))).toBe("project");
+  });
+});
 
 describe("sidebar view store", () => {
   beforeEach(() => {

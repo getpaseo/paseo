@@ -2074,6 +2074,7 @@ export const fr: TranslationResources = {
         agentInput: "EntréeAgent",
       },
       help: {
+        cycleGroupMode: "Changer le regroupement de la barre latérale",
         openProject: "Projet ouvert",
         newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouvel arbre de travail",

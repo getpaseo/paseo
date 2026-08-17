@@ -1137,3 +1137,81 @@ describe("unassigned shortcuts", () => {
     });
   });
 });
+
+describe("cycle sidebar grouping shortcut", () => {
+  const platforms = [
+    {
+      context: { isMac: true, isDesktop: true },
+      bindingId: "sidebar-group-mode-cycle-cmd-shift-g-mac",
+    },
+    {
+      context: { isMac: false, isDesktop: false },
+      bindingId: "sidebar-group-mode-cycle-ctrl-shift-g-non-mac",
+    },
+  ];
+
+  function findHelpRow(context: { isMac: boolean; isDesktop: boolean }, id: string) {
+    for (const section of buildKeyboardShortcutHelpSections(context)) {
+      const row = section.rows.find((candidate) => candidate.id === id);
+      if (row) return { row, sectionId: section.id };
+    }
+    return null;
+  }
+
+  it("fires on Cmd+Shift+G on Mac", () => {
+    expectShortcutResolution({
+      event: { key: "G", code: "KeyG", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "sidebar.cycle.group-mode",
+    });
+  });
+
+  it("fires on Ctrl+Shift+G off Mac", () => {
+    expectShortcutResolution({
+      event: { key: "G", code: "KeyG", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
+      action: "sidebar.cycle.group-mode",
+    });
+  });
+
+  it("does not fire on the other platform's modifier", () => {
+    expectNoShortcutResolution({
+      event: { key: "G", code: "KeyG", ctrlKey: true, shiftKey: true },
+      context: { isMac: true },
+    });
+  });
+
+  it.each([
+    { isMac: true, focusScope: "terminal" },
+    { isMac: true, commandCenterOpen: true },
+  ] satisfies Partial<KeyboardShortcutContext>[])(
+    "stays out of the terminal and the command center (%j)",
+    (context) => {
+      expectNoShortcutResolution({
+        event: { key: "G", code: "KeyG", metaKey: true, shiftKey: true },
+        context,
+      });
+    },
+  );
+
+  it.each(platforms)("shows one Panels help row on $context.isMac", ({ context, bindingId }) => {
+    const found = findHelpRow(context, "cycle-group-mode");
+    expect(found?.sectionId).toBe("panels");
+    expect(found?.row.keys).toEqual(["mod", "shift", "G"]);
+    expect(found?.row.labelKey).toBe("settings.shortcuts.help.cycleGroupMode");
+    expect(getBindingIdForAction("cycle-group-mode", context)).toBe(bindingId);
+    expect(getDefaultKeysForAction("cycle-group-mode", context)).toEqual(["mod", "shift", "G"]);
+  });
+
+  it("stays rebindable to a user-chosen combo", () => {
+    const bindings = buildEffectiveBindings({
+      "sidebar-group-mode-cycle-cmd-shift-g-mac": "Cmd+J",
+    });
+    const result = resolveShortcut({
+      event: { key: "j", code: "KeyJ", metaKey: true },
+      context: { isMac: true },
+      bindings,
+    });
+    expect(result.match?.action).toBe("sidebar.cycle.group-mode");
+  });
+});

@@ -2022,6 +2022,7 @@ export const ar: TranslationResources = {
         agentInput: "إدخال Agent",
       },
       help: {
+        cycleGroupMode: "تبديل تجميع الشريط الجانبي",
         openProject: "مشروع مفتوح",
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",

@@ -6,6 +6,20 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 export type SidebarGroupMode = "project" | "status";
 
+/** Ordered grouping modes the "Cycle sidebar grouping" shortcut steps through. */
+export const GROUP_MODE_ORDER: readonly SidebarGroupMode[] = ["project", "status"];
+
+/**
+ * The next grouping mode in the cycle — used by the cycle-grouping keyboard
+ * shortcut. Wraps around GROUP_MODE_ORDER, so adding a mode there is all that's
+ * needed to include it (future-proof for a third grouping). Falls back to the
+ * first mode for an unrecognized input.
+ */
+export function nextGroupMode(mode: SidebarGroupMode): SidebarGroupMode {
+  const index = GROUP_MODE_ORDER.indexOf(mode);
+  return GROUP_MODE_ORDER[(index + 1) % GROUP_MODE_ORDER.length];
+}
+
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
 const SIDEBAR_VIEW_STORE_VERSION = 2;

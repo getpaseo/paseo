@@ -2053,6 +2053,7 @@ export const ptBR: TranslationResources = {
         agentInput: "Entrada do agente",
       },
       help: {
+        cycleGroupMode: "Alternar agrupamento da barra lateral",
         openProject: "Abrir projeto",
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",

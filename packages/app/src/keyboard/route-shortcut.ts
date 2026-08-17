@@ -49,6 +49,7 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.terminal.new": { id: "workspace.terminal.new", scope: "workspace" },
   "workspace.tab.close.current": { id: "workspace.tab.close-current", scope: "workspace" },
   "sidebar.toggle.right": { id: "sidebar.toggle.right", scope: "sidebar" },
+  "sidebar.cycle.group-mode": { id: "sidebar.cycle.group-mode", scope: "sidebar" },
   "workspace.pane.split.right": { id: "workspace.pane.split.right", scope: "workspace" },
   "workspace.pane.split.down": { id: "workspace.pane.split.down", scope: "workspace" },
   "workspace.pane.focus.left": { id: "workspace.pane.focus.left", scope: "workspace" },

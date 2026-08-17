@@ -2039,6 +2039,7 @@ export const ja: TranslationResources = {
         agentInput: "エージェント入力",
       },
       help: {
+        cycleGroupMode: "サイドバーのグループ化を切り替え",
         openProject: "プロジェクトを開く",
         newWorkspace: "新しいワークスペース",
         newWorktree: "新しいワークツリー",

@@ -2061,6 +2061,7 @@ export const ru: TranslationResources = {
         agentInput: "Вход Agent",
       },
       help: {
+        cycleGroupMode: "Переключить группировку боковой панели",
         openProject: "Открыть проект",
         newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новое рабочее дерево",

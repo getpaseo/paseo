@@ -2086,6 +2086,7 @@ export const en = {
         agentInput: "Agent Input",
       },
       help: {
+        cycleGroupMode: "Cycle sidebar grouping",
         openProject: "Open project",
         newWorkspace: "New workspace",
         newWorktree: "New worktree",

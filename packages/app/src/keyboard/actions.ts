@@ -39,6 +39,7 @@ export type KeyboardActionId =
   | "sidebar.toggle.left"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
+  | "sidebar.cycle.group-mode"
   | "settings.toggle"
   | "command-center.toggle"
   | "command-center.files"
