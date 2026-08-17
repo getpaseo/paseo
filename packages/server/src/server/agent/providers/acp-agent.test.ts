@@ -1234,6 +1234,70 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("maps Grok _x.ai/ask_user_question onto a question permission", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const result = session.extMethod("_x.ai/ask_user_question", {
+      sessionId: "session-1",
+      toolCallId: "call-question-1",
+      questions: [
+        {
+          question: "S-13 hosting",
+          options: [{ label: "Azure Container Apps (Recommended)" }, { label: "This Mac Studio" }],
+        },
+      ],
+    });
+
+    await Promise.resolve();
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        id: "call-question-1",
+        kind: "question",
+        name: "ask_user_question",
+        title: "S-13 hosting",
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { "S-13 hosting": "Azure Container Apps (Recommended)" } },
+    });
+
+    await expect(result).resolves.toEqual({
+      outcome: "accepted",
+      answers: { "S-13 hosting": "Azure Container Apps (Recommended)" },
+      annotations: {},
+    });
+  });
+
+  test("cancels a Grok ask_user_question when the question is dismissed", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const result = session.extMethod("x.ai/ask_user_question", {
+      questions: [{ question: "Ship it?", options: [{ label: "Yes" }] }],
+    });
+    await Promise.resolve();
+    const pending = session.getPendingPermissions();
+    expect(pending).toHaveLength(1);
+    await session.respondToPermission(pending[0]!.id, { behavior: "deny" });
+    await expect(result).resolves.toEqual({ outcome: "cancelled" });
+  });
+
+  test("returns method-not-found for unrelated ACP extension requests", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    await expect(session.extMethod("_x.ai/session/update", {})).rejects.toMatchObject({
+      code: -32601,
+    });
+  });
+
   test("preserves ACP permission requests after invalid selected actions", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];

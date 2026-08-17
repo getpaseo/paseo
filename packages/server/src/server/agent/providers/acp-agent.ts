@@ -16,6 +16,7 @@ import {
   PROTOCOL_VERSION,
   type AgentCapabilities as ACPAgentCapabilities,
   type Error as ACPError,
+  RequestError,
   type AnyMessage,
   type Client as ACPClient,
   type ClientCapabilities as ACPClientCapabilities,
@@ -114,6 +115,15 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
+import {
+  buildGrokAskUserQuestionAnswers,
+  formatGrokAskUserQuestionDetail,
+  formatGrokAskUserQuestionTitle,
+  isGrokAskUserQuestionMethod,
+  parseGrokAskUserQuestionParams,
+  type GrokAskUserQuestionPrompt,
+  type GrokAskUserQuestionResult,
+} from "./grok-ask-user-question.js";
 import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnvOverlay,
@@ -505,6 +515,13 @@ interface PendingPermission {
   options: PermissionOption[];
   resolve: (response: RequestPermissionResponse) => void;
   reject: (error: Error) => void;
+  turnId: string | null;
+}
+
+interface PendingExtensionQuestion {
+  request: AgentPermissionRequest;
+  questions: GrokAskUserQuestionPrompt[];
+  resolve: (result: GrokAskUserQuestionResult) => void;
   turnId: string | null;
 }
 
@@ -1428,6 +1445,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
+  private readonly pendingExtensionQuestions = new Map<string, PendingExtensionQuestion>();
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
@@ -2110,10 +2128,38 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return Array.from(this.pendingPermissions.values(), (entry) => entry.request);
+    return [
+      ...Array.from(this.pendingPermissions.values(), (entry) => entry.request),
+      ...Array.from(this.pendingExtensionQuestions.values(), (entry) => entry.request),
+    ];
   }
 
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+    const extensionQuestion = this.pendingExtensionQuestions.get(requestId);
+    if (extensionQuestion) {
+      this.pendingExtensionQuestions.delete(requestId);
+      if (response.behavior === "allow") {
+        extensionQuestion.resolve({
+          outcome: "accepted",
+          answers: buildGrokAskUserQuestionAnswers(
+            extensionQuestion.questions,
+            response.updatedInput?.answers,
+          ),
+          annotations: {},
+        });
+      } else {
+        extensionQuestion.resolve({ outcome: "cancelled" });
+      }
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: response,
+        turnId: extensionQuestion.turnId ?? undefined,
+      });
+      return;
+    }
+
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
@@ -2175,6 +2221,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
+    this.cancelPendingExtensionQuestions();
 
     if (this.activeForegroundTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
@@ -2194,6 +2241,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       pending.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.pendingPermissions.clear();
+    this.cancelPendingExtensionQuestions();
 
     if (this.connection && this.sessionId) {
       try {
@@ -2317,6 +2365,66 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     for (const event of events) {
       this.pushEvent(event);
     }
+  }
+
+  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!isGrokAskUserQuestionMethod(method)) {
+      throw RequestError.methodNotFound(method);
+    }
+
+    const parsed = parseGrokAskUserQuestionParams(params);
+    if (
+      parsed.sessionId !== undefined &&
+      this.sessionId !== null &&
+      parsed.sessionId !== this.sessionId
+    ) {
+      throw RequestError.invalidParams({ reason: "sessionId does not match this session" });
+    }
+
+    const requestId = parsed.toolCallId ?? randomUUID();
+    const request: AgentPermissionRequest = {
+      id: requestId,
+      provider: this.provider,
+      name: "ask_user_question",
+      kind: "question",
+      title: formatGrokAskUserQuestionTitle(parsed.questions),
+      detail: {
+        type: "plain_text",
+        text: formatGrokAskUserQuestionDetail(parsed.questions),
+        icon: "brain",
+      },
+      input: {
+        questions: parsed.questions,
+      },
+      metadata: {
+        method,
+        toolCallId: parsed.toolCallId ?? null,
+      },
+    };
+
+    const result = await new Promise<GrokAskUserQuestionResult>((resolve) => {
+      this.pendingExtensionQuestions.set(requestId, {
+        request,
+        questions: parsed.questions,
+        resolve,
+        turnId: this.activeForegroundTurnId,
+      });
+      this.pushEvent({
+        type: "permission_requested",
+        provider: this.provider,
+        request,
+        turnId: this.activeForegroundTurnId ?? undefined,
+      });
+    });
+
+    return result;
+  }
+
+  private cancelPendingExtensionQuestions(): void {
+    for (const pending of this.pendingExtensionQuestions.values()) {
+      pending.resolve({ outcome: "cancelled" });
+    }
+    this.pendingExtensionQuestions.clear();
   }
 
   async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
