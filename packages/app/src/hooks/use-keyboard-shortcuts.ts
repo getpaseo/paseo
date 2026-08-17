@@ -32,7 +32,6 @@ import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
 import { keyboardShortcutsAvailable } from "@/keyboard/availability";
-import { shortcutKeyFromCode } from "@/keyboard/shortcut-string";
 import { requestComposerAutoFocus } from "@/keyboard/composer-auto-focus";
 import {
   addHardwareKeyDownListener,
@@ -49,6 +48,8 @@ import {
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
+import { listSearchDispatcher } from "@/keyboard/list-search-dispatcher";
+import { routeNativeListSearchBeforeShortcut } from "@/keyboard/native-list-search-routing";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -366,18 +367,11 @@ export function useKeyboardShortcuts({
         const focusScope: KeyboardFocusScope = TextInput.State.currentlyFocusedInput()
           ? "editable"
           : "other";
-        resolveAndPerformShortcut({
-          event: {
-            key: shortcutKeyFromCode(nativeEvent.code, nativeEvent.shiftKey) ?? nativeEvent.code,
-            code: nativeEvent.code,
-            altKey: nativeEvent.altKey,
-            ctrlKey: nativeEvent.ctrlKey,
-            metaKey: nativeEvent.metaKey,
-            shiftKey: nativeEvent.shiftKey,
-            repeat: nativeEvent.repeat ?? false,
-          },
-          focusScope,
-          domEvent: null,
+        routeNativeListSearchBeforeShortcut({
+          event: nativeEvent,
+          dispatchList: (event) => listSearchDispatcher.dispatch(event),
+          dispatchShortcut: (event) =>
+            resolveAndPerformShortcut({ event, focusScope, domEvent: null }),
         });
       });
       // Bare modifier presses drive the workspace-number badges, mirroring the
