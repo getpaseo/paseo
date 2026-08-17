@@ -8,11 +8,11 @@ import {
   getWorktreeTeardownCommands,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
-  readPaseoConfig,
   slugify,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
+import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
 import { execFileSync } from "child_process";
 import {
   mkdtempSync,
@@ -98,50 +98,50 @@ describe("paseo worktree manager", () => {
       darwin: ["npm ci", "npm run prepare:mac"],
       win32: ["npm.cmd ci"],
     });
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        worktree: {
-          setup: {
-            linux: ["npm ci", "npm run prepare:linux"],
-            darwin: ["npm ci", "npm run prepare:mac"],
-            win32: "npm.cmd ci",
-          },
-          teardown: {
-            linux: "npm run clean:linux",
-            darwin: ["npm run clean:mac"],
-            win32: ["npm.cmd run clean"],
+    const config = PaseoConfigSchema.parse({
+      worktree: {
+        setup: {
+          linux: ["npm ci", "npm run prepare:linux"],
+          darwin: ["npm ci", "npm run prepare:mac"],
+          win32: "npm.cmd ci",
+        },
+        teardown: {
+          linux: "npm run clean:linux",
+          darwin: ["npm run clean:mac"],
+          win32: ["npm.cmd run clean"],
+        },
+      },
+      scripts: {
+        dev: {
+          command: {
+            linux: "npm run dev:linux",
+            darwin: "npm run dev:mac",
+            win32: "npm.cmd run dev:win",
           },
         },
-        scripts: {
-          dev: {
-            command: {
-              linux: "npm run dev:linux",
-              darwin: "npm run dev:mac",
-              win32: "npm.cmd run dev:win",
-            },
-          },
-        },
+      },
+    });
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(config));
+
+    expect(getScriptConfigs(config).get("dev")).toEqual({ command: expectedScript });
+    expect(getWorktreeSetupCommands(repoDir)).toEqual(expectedSetup);
+    expect(getWorktreeTeardownCommands(repoDir)).toEqual(
+      currentPlatformValue({
+        linux: ["npm run clean:linux"],
+        darwin: ["npm run clean:mac"],
+        win32: ["npm.cmd run clean"],
       }),
     );
-
-    const configResult = readPaseoConfig(repoDir);
-    if (!configResult.ok) throw new Error("expected paseo.json to parse");
-    expect(getScriptConfigs(configResult.config).get("dev")).toEqual({ command: expectedScript });
-    expect(getWorktreeSetupCommands(repoDir)).toEqual(expectedSetup);
-    expect(getWorktreeTeardownCommands(repoDir)).toHaveLength(1);
   });
 
   it("reports the script and platform when no platform command is configured", () => {
     const configuredPlatform = process.platform === "win32" ? "linux" : "win32";
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({ scripts: { dev: { command: { [configuredPlatform]: "npm run dev" } } } }),
-    );
+    const config = PaseoConfigSchema.parse({
+      scripts: { dev: { command: { [configuredPlatform]: "npm run dev" } } },
+    });
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(config));
 
-    const configResult = readPaseoConfig(repoDir);
-    if (!configResult.ok) throw new Error("expected paseo.json to parse");
-    expect(() => getScriptConfigs(configResult.config)).toThrow(
+    expect(() => getScriptConfigs(config)).toThrow(
       `Script 'dev' has no command for platform '${process.platform}' in paseo.json`,
     );
   });

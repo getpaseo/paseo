@@ -242,6 +242,18 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
   await page.getByRole("button", { name: "Remove" }).click();
 }
 
+export async function editProjectScript(page: Page, scriptName: string): Promise<void> {
+  const row = page
+    .getByTestId("scripts-list")
+    .locator('[data-testid^="script-row-"]:not([data-testid*="-menu-"])')
+    .filter({ hasText: scriptName })
+    .first();
+  const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
+  await page.getByTestId(`script-row-menu-${id}`).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByTestId("script-edit-modal")).toBeVisible();
+}
+
 // --- File manipulation ---
 
 export async function corruptPaseoConfig(repoPath: string): Promise<void> {

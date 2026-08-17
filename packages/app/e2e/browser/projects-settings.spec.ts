@@ -12,6 +12,7 @@ import {
   commitPaseoConfig,
   corruptPaseoConfig,
   editWorktreeSetup,
+  editProjectScript,
   expectEmptyScriptList,
   expectProjectHostContextHidden,
   expectNoEditableTarget,
@@ -485,5 +486,25 @@ test.describe("Projects settings — error UX", () => {
     await expectEmptyScriptList(page);
     await clickSaveProjectSettings(page);
     await expectNoUncommittedSetupWarning(page);
+  });
+
+  test("canceling script edits does not persist command format changes", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await editProjectScript(page, "dev");
+
+    await page.getByTestId("script-edit-command-format-toggle-platform").click();
+    await expect(page.getByTestId("script-edit-command-linux")).toHaveValue("npm run dev");
+    await page.getByTestId("script-edit-cancel").click();
+
+    await clickSaveProjectSettings(page);
+    await expect
+      .poll(async () => JSON.parse(await readProjectConfigFile(editableProject)), {
+        timeout: 30_000,
+      })
+      .toMatchObject({ scripts: { dev: { command: "npm run dev" } } });
   });
 });

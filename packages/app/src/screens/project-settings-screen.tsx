@@ -646,9 +646,13 @@ function ProjectConfigForm({
     setEditingScriptId(null);
   }, [editingScriptId, updateDraft]);
 
-  const handleSaveEditing = useCallback(() => {
-    setEditingScriptId(null);
-  }, []);
+  const handleSaveEditing = useCallback(
+    (next: ProjectScriptDraft) => {
+      handleEditingDraftChange(next);
+      setEditingScriptId(null);
+    },
+    [handleEditingDraftChange],
+  );
 
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);
 
@@ -858,7 +862,6 @@ function ProjectConfigForm({
       {editingScript ? (
         <ScriptEditModal
           script={editingScript}
-          onChange={handleEditingDraftChange}
           onCancel={handleCancelEditing}
           onSave={handleSaveEditing}
         />
@@ -1018,9 +1021,8 @@ function isOpaqueCommand(value: unknown): boolean {
 
 interface ScriptEditModalProps {
   script: ProjectScriptDraft;
-  onChange: (next: ProjectScriptDraft) => void;
   onCancel: () => void;
-  onSave: () => void;
+  onSave: (next: ProjectScriptDraft) => void;
 }
 
 interface ScriptFieldsTouched {
@@ -1031,54 +1033,56 @@ interface ScriptFieldsTouched {
 const ALL_TOUCHED: ScriptFieldsTouched = { name: true, command: true };
 const NONE_TOUCHED: ScriptFieldsTouched = { name: false, command: false };
 
-function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModalProps) {
+function ScriptEditModal({ script, onCancel, onSave }: ScriptEditModalProps) {
   const { t } = useTranslation();
+  const [draft, setDraft] = useState<ProjectScriptDraft>(() => script);
   const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
 
   useEffect(() => {
+    setDraft(script);
     setTouched(NONE_TOUCHED);
-  }, [script.id]);
+  }, [script]);
 
   const markTouched = useCallback((field: keyof ScriptFieldsTouched) => {
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
   }, []);
 
   const handleNameChange = useCallback(
-    (text: string) => onChange({ ...script, name: text }),
-    [onChange, script],
+    (text: string) => setDraft((prev) => ({ ...prev, name: text })),
+    [],
   );
   const handleCommandChange = useCallback(
-    (command: CommandDraft) => onChange({ ...script, command }),
-    [onChange, script],
+    (command: CommandDraft) => setDraft((prev) => ({ ...prev, command })),
+    [],
   );
   const handleServiceToggle = useCallback(
-    (next: boolean) => onChange({ ...script, type: next ? SCRIPT_SERVICE_TYPE : "" }),
-    [onChange, script],
+    (next: boolean) => setDraft((prev) => ({ ...prev, type: next ? SCRIPT_SERVICE_TYPE : "" })),
+    [],
   );
 
   const handleNameBlur = useCallback(() => markTouched("name"), [markTouched]);
   const handleCommandBlur = useCallback(() => markTouched("command"), [markTouched]);
 
-  const validation = validateScript(script, t);
+  const validation = validateScript(draft, t);
 
   const handleSavePress = useCallback(() => {
     if (validation.hasErrors) {
       setTouched(ALL_TOUCHED);
       return;
     }
-    onSave();
-  }, [validation.hasErrors, onSave]);
+    onSave(draft);
+  }, [draft, validation.hasErrors, onSave]);
 
   const showNameError = touched.name && validation.nameError;
   const showCommandError = touched.command && validation.commandError;
-  const isService = script.type === SCRIPT_SERVICE_TYPE;
+  const isService = draft.type === SCRIPT_SERVICE_TYPE;
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
-      title: script.name
-        ? t("settings.project.scripts.editScript", { name: script.name })
+      title: draft.name
+        ? t("settings.project.scripts.editScript", { name: draft.name })
         : t("settings.project.scripts.newScript"),
     }),
-    [script.name, t],
+    [draft.name, t],
   );
 
   return (
@@ -1094,7 +1098,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
         <TextInput
           testID="script-edit-name"
           accessibilityLabel={t("settings.project.scripts.nameAccessibility")}
-          value={script.name}
+          value={draft.name}
           onChangeText={handleNameChange}
           onBlur={handleNameBlur}
           placeholder="dev"
@@ -1110,7 +1114,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
       <View style={styles.modalSection}>
         <Text style={styles.modalLabel}>{t("settings.project.scripts.command")}</Text>
         <ProjectCommandEditor
-          command={script.command}
+          command={draft.command}
           onChange={handleCommandChange}
           variant="modal"
           inputTestID="script-edit-command"
