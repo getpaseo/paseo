@@ -606,6 +606,14 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
   };
 }
 
+function mapACPUsageUpdate(update: UsageUpdate): AgentUsage {
+  return {
+    contextWindowMaxTokens: update.size,
+    contextWindowUsedTokens: update.used,
+    totalCostUsd: update.cost?.currency === "USD" ? update.cost.amount : undefined,
+  };
+}
+
 export function resolveACPModeSelection({
   modeId,
   availableModes,
@@ -1623,6 +1631,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.currentTurnUsage = undefined;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -2681,8 +2690,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -2842,12 +2850,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent {
+    const usage = mapACPUsageUpdate(update);
+    if (this.activeForegroundTurnId) {
+      this.currentTurnUsage = { ...this.currentTurnUsage, ...usage };
+    }
+    return {
+      type: "usage_updated",
+      provider: this.provider,
+      usage,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    };
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    const responseUsage = mapACPUsage(response.usage);
+    if (responseUsage) {
+      this.currentTurnUsage = { ...this.currentTurnUsage, ...responseUsage };
+    }
 
     switch (response.stopReason) {
       case "cancelled":

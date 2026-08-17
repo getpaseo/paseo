@@ -2780,6 +2780,93 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("emits ACP context window usage updates and keeps them on turn completion", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 42_000,
+        size: 200_000,
+        cost: { amount: 0.25, currency: "USD" },
+      },
+    });
+
+    expect(events.find((event) => event.type === "usage_updated")).toEqual({
+      type: "usage_updated",
+      provider: "claude-acp",
+      turnId,
+      usage: {
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 42_000,
+        totalCostUsd: 0.25,
+      },
+    });
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 45_000,
+        size: 200_000,
+        cost: { amount: 0.2, currency: "EUR" },
+      },
+    });
+
+    expect(events.findLast((event) => event.type === "usage_updated")).toEqual({
+      type: "usage_updated",
+      provider: "claude-acp",
+      turnId,
+      usage: {
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 45_000,
+        totalCostUsd: undefined,
+      },
+    });
+
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 30_000,
+        outputTokens: 12_000,
+        totalTokens: 42_000,
+        cachedReadTokens: 5_000,
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events.find((event) => event.type === "turn_completed")).toEqual({
+      type: "turn_completed",
+      provider: "claude-acp",
+      turnId,
+      usage: {
+        inputTokens: 30_000,
+        outputTokens: 12_000,
+        cachedInputTokens: 5_000,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 45_000,
+        totalCostUsd: undefined,
+      },
+    });
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
