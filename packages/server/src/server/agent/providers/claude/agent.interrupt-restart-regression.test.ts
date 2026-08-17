@@ -123,13 +123,14 @@ function createScriptedQuery(params: {
   prompt: AsyncIterable<unknown>;
   sessionId: string;
   handlePrompt?: PromptHandler;
+  interrupt?: () => Promise<void>;
 }): ScriptedQuery {
   const output = createAsyncQueue<Record<string, unknown>>();
   const prompts: PromptRecord[] = [];
 
   const scriptedQuery = {
     next: vi.fn(() => output.next()),
-    interrupt: vi.fn(async () => undefined),
+    interrupt: vi.fn(params.interrupt ?? (async () => undefined)),
     return: vi.fn(async () => {
       output.end();
     }),
@@ -238,6 +239,17 @@ async function waitFor(
   }
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolvePromise: (() => void) | null = null;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: () => resolvePromise?.(),
+  };
+}
+
 afterEach(() => {
   queryFactory.mockReset();
 });
@@ -282,6 +294,121 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
     reason: "Interrupted",
   });
 
+  await session.close();
+});
+
+test("does not report cancellation before Claude acknowledges the interrupt", async () => {
+  const interruptAcknowledgement = deferred();
+  let query: ScriptedQuery | null = null;
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-acknowledgement-session",
+      interrupt: () => interruptAcknowledgement.promise,
+    });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => observed.push(event));
+
+  await session.startTurn("long running prompt");
+  await waitFor(() => query?.prompts.length === 1);
+  const cancellation = session.interrupt();
+  await waitFor(() => query?.interrupt.mock.calls.length === 1);
+
+  expect(observed.some((event) => event.type === "turn_canceled")).toBe(false);
+
+  interruptAcknowledgement.resolve();
+  await cancellation;
+
+  expect(observed.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+  unsubscribe();
+  await session.close();
+});
+
+test("settles cancellation when Claude emits an abort result before interrupt returns", async () => {
+  const interruptAcknowledgement = deferred();
+  let query: ScriptedQuery | null = null;
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-result-acknowledgement-session",
+      interrupt: () => interruptAcknowledgement.promise,
+    });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => observed.push(event));
+
+  await session.startTurn("long running prompt");
+  await waitFor(() => query?.prompts.length === 1);
+  const cancellation = session.interrupt();
+  await waitFor(() => query?.interrupt.mock.calls.length === 1);
+  query?.emit({
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["Request was aborted"],
+    session_id: "interrupt-result-acknowledgement-session",
+  });
+  await waitFor(() => observed.some((event) => event.type === "turn_canceled"));
+
+  interruptAcknowledgement.resolve();
+  await cancellation;
+
+  expect(observed.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+  expect(observed.some((event) => event.type === "turn_failed")).toBe(false);
+  unsubscribe();
+  await session.close();
+});
+
+test("does not replace a completed turn with cancellation while interrupt is pending", async () => {
+  const interruptAcknowledgement = deferred();
+  let query: ScriptedQuery | null = null;
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-completed-session",
+      interrupt: () => interruptAcknowledgement.promise,
+    });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => observed.push(event));
+
+  await session.startTurn("quick prompt");
+  await waitFor(() => query?.prompts.length === 1);
+  const cancellation = session.interrupt();
+  await waitFor(() => query?.interrupt.mock.calls.length === 1);
+  query?.emit(buildSuccessResult("interrupt-completed-session"));
+  await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+
+  interruptAcknowledgement.resolve();
+  await cancellation;
+
+  expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+  expect(observed.some((event) => event.type === "turn_canceled")).toBe(false);
+  unsubscribe();
   await session.close();
 });
 
