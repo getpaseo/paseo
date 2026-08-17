@@ -2090,8 +2090,8 @@ export const ja: TranslationResources = {
     integrations: {
       title: "連携",
       docs: {
-        cli: "CLIドキュメント",
-        skills: "スキルドキュメント",
+        cli: "詳細を見る",
+        skills: "詳細を見る",
         openCli: "CLIドキュメントを開く",
         openSkills: "スキルドキュメントを開く",
       },
@@ -2100,8 +2100,8 @@ export const ja: TranslationResources = {
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
       },
       skills: {
-        title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        title: "Paseoスキル",
+        description: "エージェントが他のエージェントを起動・調整できるようにします。",
         updateAvailable: "更新が利用可能",
         updateTitle: "Paseoスキルを更新しますか？",
         updateFallback: "バンドルされたスキルをマシンに同期します。",

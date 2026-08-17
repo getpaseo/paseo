@@ -240,14 +240,14 @@ export async function startSkillsSandbox(
 export async function openSkillsIntegrations(page: Page): Promise<void> {
   await openSettings(page);
   await openSettingsSection(page, "integrations");
-  await expect(page.getByText("Orchestration skills", { exact: true })).toBeVisible();
+  await expect(page.getByText("Paseo skills", { exact: true })).toBeVisible();
 }
 
 /** Settings on a compact form factor stacks list and detail, so it needs the menu first. */
 export async function openCompactSkillsIntegrations(page: Page): Promise<void> {
   await openCompactSettings(page, buildOpenProjectRoute());
   await openSettingsSection(page, "integrations");
-  await expect(page.getByText("Orchestration skills", { exact: true })).toBeVisible();
+  await expect(page.getByText("Paseo skills", { exact: true })).toBeVisible();
 }
 
 export async function openSkillSelection(page: Page): Promise<void> {

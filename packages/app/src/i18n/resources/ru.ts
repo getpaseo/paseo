@@ -2111,8 +2111,8 @@ export const ru: TranslationResources = {
     integrations: {
       title: "Интеграции",
       docs: {
-        cli: "Документация CLI",
-        skills: "Документы по навыкам",
+        cli: "Подробнее",
+        skills: "Подробнее",
         openCli: "Открыть документацию CLI",
         openSkills: "Открытая документация по навыкам",
       },
@@ -2121,8 +2121,8 @@ export const ru: TranslationResources = {
         description: "Агенты управления и сценариев с вашего терминала",
       },
       skills: {
-        title: "Навыки оркестровки",
-        description: "Научите своих агентов организовывать работу через CLI",
+        title: "Навыки Paseo",
+        description: "Научите своих агентов запускать и координировать других агентов",
         updateAvailable: "Доступно обновление",
         updateTitle: "Обновить навыки Paseo?",
         updateFallback: "Синхронизируйте связанные навыки с вашим компьютером.",

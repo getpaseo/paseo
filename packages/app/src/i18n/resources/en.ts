@@ -2136,8 +2136,8 @@ export const en = {
     integrations: {
       title: "Integrations",
       docs: {
-        cli: "CLI docs",
-        skills: "Skills docs",
+        cli: "Learn more",
+        skills: "Learn more",
         openCli: "Open CLI documentation",
         openSkills: "Open skills documentation",
       },
@@ -2146,8 +2146,8 @@ export const en = {
         description: "Control and script agents from your terminal",
       },
       skills: {
-        title: "Orchestration skills",
-        description: "Teach your agents to orchestrate through the CLI",
+        title: "Paseo skills",
+        description: "Teach your agents to spawn and coordinate other agents",
         updateAvailable: "Update available",
         updateTitle: "Update Paseo skills?",
         updateFallback: "Sync bundled skills to your machine.",

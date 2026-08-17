@@ -2104,8 +2104,8 @@ export const ptBR: TranslationResources = {
     integrations: {
       title: "Integrações",
       docs: {
-        cli: "Docs da CLI",
-        skills: "Docs das skills",
+        cli: "Saiba mais",
+        skills: "Saiba mais",
         openCli: "Abrir documentação da CLI",
         openSkills: "Abrir documentação das skills",
       },
@@ -2114,8 +2114,8 @@ export const ptBR: TranslationResources = {
         description: "Controle agentes e execute scripts pelo terminal",
       },
       skills: {
-        title: "Skills de orquestração",
-        description: "Ensine seus agentes a orquestrar pela CLI",
+        title: "Paseo skills",
+        description: "Ensine seus agentes a criar e coordenar outros agentes",
         updateAvailable: "Atualização disponível",
         updateTitle: "Atualizar Paseo skills?",
         updateFallback: "Sincronize as skills incluídas com sua máquina.",

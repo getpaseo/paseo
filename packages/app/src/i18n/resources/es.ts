@@ -2120,8 +2120,8 @@ export const es: TranslationResources = {
     integrations: {
       title: "Integraciones",
       docs: {
-        cli: "DocumentosCLI",
-        skills: "Documentos de habilidades",
+        cli: "Más información",
+        skills: "Más información",
         openCli: "Abrir la documentación deCLI",
         openSkills: "Documentación de habilidades abiertas",
       },
@@ -2130,8 +2130,8 @@ export const es: TranslationResources = {
         description: "Agentes de control y script desde tu terminal",
       },
       skills: {
-        title: "Habilidades de orquestación",
-        description: "Enseñe a sus agentes a orquestar a través delCLI",
+        title: "Habilidades de Paseo",
+        description: "Enseñe a sus agentes a crear y coordinar otros agentes",
         updateAvailable: "Actualización disponible",
         updateTitle: "¿Actualizar las habilidades dePaseo?",
         updateFallback: "Sincronice las habilidades incluidas con su máquina.",

@@ -2125,8 +2125,8 @@ export const fr: TranslationResources = {
     integrations: {
       title: "Intégrations",
       docs: {
-        cli: "DocumentsCLI",
-        skills: "Documents de compétences",
+        cli: "En savoir plus",
+        skills: "En savoir plus",
         openCli: "Ouvrir la documentationCLI",
         openSkills: "Documentation des compétences ouvertes",
       },
@@ -2135,8 +2135,8 @@ export const fr: TranslationResources = {
         description: "Agents de contrôle et de script depuis votre terminal",
       },
       skills: {
-        title: "Compétences en orchestration",
-        description: "Apprenez à vos agents à orchestrer via leCLI",
+        title: "Compétences Paseo",
+        description: "Apprenez à vos agents à lancer et coordonner d'autres agents",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les compétencesPaseo?",
         updateFallback: "Synchronisez les compétences regroupées sur votre machine.",

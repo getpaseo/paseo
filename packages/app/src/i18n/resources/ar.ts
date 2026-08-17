@@ -2072,8 +2072,8 @@ export const ar: TranslationResources = {
     integrations: {
       title: "التكامل",
       docs: {
-        cli: "مستندات CLI",
-        skills: "وثائق المهارات",
+        cli: "معرفة المزيد",
+        skills: "معرفة المزيد",
         openCli: "افتح وثائق CLI",
         openSkills: "فتح وثائق المهارات",
       },
@@ -2082,8 +2082,8 @@ export const ar: TranslationResources = {
         description: "وكلاء التحكم والبرنامج النصي من المحطة الطرفية الخاصة بك",
       },
       skills: {
-        title: "مهارات التنسيق",
-        description: "قم بتعليم عملائك كيفية التنسيق من خلال CLI",
+        title: "مهارات Paseo",
+        description: "قم بتعليم عملائك كيفية إنشاء عملاء آخرين وتنسيقهم",
         updateAvailable: "التحديث متاح",
         updateTitle: "تحديث مهارات Paseo ؟",
         updateFallback: "مزامنة المهارات المجمعة لجهازك.",

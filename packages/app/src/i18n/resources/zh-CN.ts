@@ -2048,8 +2048,8 @@ export const zhCN: TranslationResources = {
     integrations: {
       title: "集成",
       docs: {
-        cli: "CLI 文档",
-        skills: "Skills 文档",
+        cli: "了解更多",
+        skills: "了解更多",
         openCli: "打开 CLI 文档",
         openSkills: "打开 skills 文档",
       },
@@ -2058,8 +2058,8 @@ export const zhCN: TranslationResources = {
         description: "从终端控制 Agent 并运行脚本",
       },
       skills: {
-        title: "编排 skills",
-        description: "教会 Agent 通过 CLI 编排任务",
+        title: "Paseo skills",
+        description: "教会 Agent 启动并协调其他 Agent",
         updateAvailable: "有更新可用",
         updateTitle: "更新 Paseo skills？",
         updateFallback: "将内置 skills 同步到你的机器。",
