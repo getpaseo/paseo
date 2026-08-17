@@ -44,9 +44,9 @@ import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-short
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
+  DESKTOP_TRAFFIC_LIGHT_CENTER_Y,
+  DESKTOP_TRAFFIC_LIGHT_OFFSET_Y,
   getIsElectronRuntime,
-  getIsElectronRuntimeMac,
-  HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import {
@@ -116,6 +116,7 @@ import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   useHasWindowChromeObstruction,
+  useNativeChromeScale,
   WindowChromeProvider,
   WindowChromeRegion,
   WindowChromeSafeArea,
@@ -572,14 +573,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       {workspaceChrome}
       {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
         <WindowChromeRegion corners="top-left">
-          <WindowChromeSafeArea
-            placement="inline"
-            horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
-            pointerEvents="box-none"
-            style={layoutStyles.windowSidebarToggle}
-          >
-            <WindowSidebarMenuToggle />
-          </WindowChromeSafeArea>
+          <WindowSidebarToggleOverlay />
         </WindowChromeRegion>
       ) : null}
       <FloatingPanelPortalHost />
@@ -609,6 +603,35 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 
   return <CommandCenterProvider>{content}</CommandCenterProvider>;
+}
+
+/**
+ * The sidebar toggle that sits beside the macOS window buttons, drawn at the buttons' own
+ * scale. Page zoom multiplies every length here and cannot touch native window furniture,
+ * so without undoing it the toggle would drift off the traffic lights' line and outgrow
+ * them. Scaling the whole row keeps its padding, height and icon in one system: the numbers
+ * below are the points the shell pins the buttons in.
+ */
+function WindowSidebarToggleOverlay() {
+  const nativeScale = useNativeChromeScale();
+  const style = useMemo(
+    () =>
+      nativeScale === 1
+        ? layoutStyles.windowSidebarToggle
+        : [layoutStyles.windowSidebarToggle, { transform: [{ scale: nativeScale }] }],
+    [nativeScale],
+  );
+
+  return (
+    <WindowChromeSafeArea
+      placement="inline"
+      horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
+      pointerEvents="box-none"
+      style={style}
+    >
+      <WindowSidebarMenuToggle />
+    </WindowChromeSafeArea>
+  );
 }
 
 function SidebarChrome({
@@ -702,23 +725,17 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
-  const pathname = usePathname();
-  const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
-  const liftTrafficLights =
-    getIsElectronRuntimeMac() &&
-    isFocusModeEnabled &&
-    parseHostWorkspaceRouteFromPathname(pathname) !== null;
 
   useEffect(() => {
     if (!enabled || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
-      trafficLightOffsetY: liftTrafficLights ? -5 : 0.5,
+      trafficLightOffsetY: DESKTOP_TRAFFIC_LIGHT_OFFSET_Y,
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground, liftTrafficLights]);
+  }, [enabled, surface0, foreground]);
 
   return null;
 }
@@ -1037,14 +1054,17 @@ const layoutStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   windowSidebarToggle: {
+    // The toggle sits next to the traffic lights, so it centers on their line rather than on
+    // the header row. A row twice the center line tall puts its own center on that line
+    // whatever the button slot measures at the current breakpoint. WindowSidebarToggleOverlay
+    // scales the row from this corner, so the corner is where the measurements start.
     position: "absolute",
-    top: 1,
+    top: 0,
     left: 0,
+    transformOrigin: "top left",
     zIndex: 20,
-    height: HEADER_INNER_HEIGHT,
+    height: DESKTOP_TRAFFIC_LIGHT_CENTER_Y * 2,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: "transparent",
   },
 }));

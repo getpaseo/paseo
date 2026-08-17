@@ -27,6 +27,30 @@ export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
 export const DESKTOP_TRAFFIC_LIGHT_WIDTH = 78;
 export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
 
+// Where the macOS traffic lights sit, and the line anything beside them aligns to.
+//
+// CENTER_Y is one line for every mode. The buttons are window furniture: they hold the position
+// a macOS user aims at whatever the app draws behind them. Two rows can own the top-left corner
+// and they disagree, because the header row centers its content at 24 and the shorter tab strip
+// that focus mode puts in its place centers its own at 18. One line has to serve both, so it
+// sits between them, a little high for the header row and a little low for the tab strip.
+//
+// BASE_TOP mirrors MAC_TRAFFIC_LIGHT_POSITION in packages/desktop/src/window/window-manager.ts,
+// where the shell pins the buttons before the renderer is up. Keeping the two equal makes
+// OFFSET_Y come out at 0, so the buttons are already in place at startup and the renderer's
+// update moves nothing. Change one without the other and they visibly jump as the app loads.
+//
+// BUTTON_HEIGHT is the vertical measure, and the buttons are wider than they are tall. Electron
+// exposes no API for it, so it is measured from a build. The macOS 26 SDK makes them bigger:
+// raise it when Electron rebuilds against that SDK, or they drift off the line.
+export const DESKTOP_TRAFFIC_LIGHT_BASE_TOP = 13;
+export const DESKTOP_TRAFFIC_LIGHT_BUTTON_HEIGHT = 14;
+export const DESKTOP_TRAFFIC_LIGHT_CENTER_Y = 20;
+export const DESKTOP_TRAFFIC_LIGHT_OFFSET_Y =
+  DESKTOP_TRAFFIC_LIGHT_CENTER_Y -
+  DESKTOP_TRAFFIC_LIGHT_BUTTON_HEIGHT / 2 -
+  DESKTOP_TRAFFIC_LIGHT_BASE_TOP;
+
 // Windows/Linux window controls (minimize/maximize/close) — top-right
 export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
 export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 48;

@@ -13,7 +13,11 @@ import {
 import type { WindowState, WindowStateStore } from "../settings/window-state.js";
 
 const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
-const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 14 } as const;
+// Where the buttons are pinned when the window is created, before the renderer is up. Mirrors
+// DESKTOP_TRAFFIC_LIGHT_BASE_TOP in packages/app/src/constants/layout.ts, which the renderer
+// measures its offset from. Keep the two equal: when they agree the renderer sends an offset
+// of 0 and the buttons never move, and when they disagree you see them jump on startup.
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 16, y: 13 } as const;
 const MAX_TRAFFIC_LIGHT_OFFSET_Y = 10;
 
 export function readBadgeCount(input: unknown): number {
@@ -231,6 +235,11 @@ export function registerWindowManager(): void {
     BrowserWindow.fromWebContents(event.sender)?.setFullScreen(fullscreen);
   });
 
+  ipcMain.handle("paseo:window:getZoomFactor", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return win?.webContents.getZoomFactor() ?? 1;
+  });
+
   ipcMain.handle("paseo:window:setBadgeCount", (_event, count?: unknown) => {
     if (process.platform === "darwin" || process.platform === "linux") {
       const badgeCount = readBadgeCount(count);
@@ -275,6 +284,47 @@ export function registerWindowManager(): void {
     });
     overlayStateByWindow.set(win, nextState);
   });
+}
+
+/**
+ * Tell the renderer the zoom factor changed. The renderer reads the new value back over
+ * IPC rather than taking it from a payload here, because Chromium emits `zoom-changed`
+ * around the change and the level it reports mid-event is not dependable. A round trip
+ * lands after the change either way, and the next zoom step corrects a stale read.
+ */
+interface ZoomNotifiableWindow {
+  isDestroyed(): boolean;
+  webContents: {
+    isDestroyed(): boolean;
+    send(channel: string, payload: unknown): void;
+  };
+}
+
+export function notifyWindowZoomChanged(win: ZoomNotifiableWindow): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) {
+    return;
+  }
+  win.webContents.send("paseo:window:zoom-changed", {});
+}
+
+/**
+ * Page zoom moves everything the renderer draws and leaves the native window buttons
+ * where they are, so the renderer needs the zoom factor to keep the chrome beside them
+ * at their scale. Chromium only emits `zoom-changed` for wheel zoom, so every other
+ * caller has to announce its own change — route menu zoom through setWindowZoomLevel.
+ */
+export function setupWindowZoomEvents(win: BrowserWindow): void {
+  win.webContents.on("zoom-changed", () => {
+    notifyWindowZoomChanged(win);
+  });
+}
+
+export function setWindowZoomLevel(
+  win: ZoomNotifiableWindow & { webContents: { setZoomLevel(level: number): void } },
+  level: number,
+): void {
+  win.webContents.setZoomLevel(level);
+  notifyWindowZoomChanged(win);
 }
 
 export function setupWindowResizeEvents(win: BrowserWindow): void {

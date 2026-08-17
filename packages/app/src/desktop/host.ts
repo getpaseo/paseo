@@ -105,6 +105,10 @@ export interface DesktopWindowBridge {
   setFullscreen?: (fullscreen: boolean) => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
   updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;
+  getZoomFactor?: () => Promise<number>;
+  onZoomChanged?: <TEvent = unknown>(
+    handler: (event: TEvent) => void,
+  ) => Promise<() => void> | (() => void);
   onResized?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);

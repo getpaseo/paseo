@@ -8,11 +8,13 @@ import {
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
   getTitleBarOverlayOptions,
+  notifyWindowZoomChanged,
   readBadgeCount,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
   resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
+  setWindowZoomLevel,
 } from "./window-manager";
 
 describe("window-manager", () => {
@@ -162,8 +164,40 @@ describe("window-manager", () => {
         update: { trafficLightOffsetY: 0.5 },
       });
 
-      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(1, { x: 16, y: 9 });
-      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(2, { x: 16, y: 14.5 });
+      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(1, { x: 16, y: 8 });
+      expect(setWindowButtonPosition).toHaveBeenNthCalledWith(2, { x: 16, y: 13.5 });
+    });
+  });
+
+  describe("setWindowZoomLevel", () => {
+    function createZoomWindow(destroyed = false) {
+      const setZoomLevel = vi.fn();
+      const send = vi.fn();
+      return {
+        setZoomLevel,
+        send,
+        win: {
+          isDestroyed: () => destroyed,
+          webContents: { isDestroyed: () => destroyed, send, setZoomLevel },
+        },
+      };
+    }
+
+    it("announces the change so the renderer can re-read the applied factor", () => {
+      const { win, setZoomLevel, send } = createZoomWindow();
+
+      setWindowZoomLevel(win, 1.5);
+
+      expect(setZoomLevel).toHaveBeenCalledWith(1.5);
+      expect(send).toHaveBeenCalledWith("paseo:window:zoom-changed", {});
+    });
+
+    it("sends nothing to a window that is tearing down", () => {
+      const { win, send } = createZoomWindow(true);
+
+      notifyWindowZoomChanged(win);
+
+      expect(send).not.toHaveBeenCalled();
     });
   });
 
@@ -213,7 +247,7 @@ describe("window-manager", () => {
       ).toEqual({
         titleBarStyle: "hidden",
         titleBarOverlay: true,
-        trafficLightPosition: { x: 16, y: 14 },
+        trafficLightPosition: { x: 16, y: 13 },
       });
     });
   });

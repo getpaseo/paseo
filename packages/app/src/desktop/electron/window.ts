@@ -32,6 +32,28 @@ export async function isDesktopFullscreen(): Promise<boolean> {
   return await win.isFullscreen();
 }
 
+/** The window's page zoom factor, or null when the host cannot report one. */
+export async function readDesktopZoomFactor(): Promise<number | null> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.getZoomFactor !== "function") {
+    return null;
+  }
+  const zoomFactor = await win.getZoomFactor();
+  return typeof zoomFactor === "number" && Number.isFinite(zoomFactor) && zoomFactor > 0
+    ? zoomFactor
+    : null;
+}
+
+export async function subscribeToDesktopZoomChanged(
+  handler: () => void,
+): Promise<(() => void) | null> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.onZoomChanged !== "function") {
+    return null;
+  }
+  return await win.onZoomChanged(handler);
+}
+
 export async function updateDesktopWindowControls(
   update: DesktopWindowControlsOverlayUpdate,
 ): Promise<void> {

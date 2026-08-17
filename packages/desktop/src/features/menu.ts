@@ -1,5 +1,6 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
 import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
+import { setWindowZoomLevel } from "../window/window-manager.js";
 
 interface ShowContextMenuInput {
   kind?: "terminal";
@@ -122,7 +123,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+=",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+            setWindowZoomLevel(win, win.webContents.getZoomLevel() + 0.5);
           }),
         },
         {
@@ -130,7 +131,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+-",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+            setWindowZoomLevel(win, win.webContents.getZoomLevel() - 0.5);
           }),
         },
         {
@@ -138,7 +139,7 @@ function buildApplicationMenuTemplate(
           accelerator: "CmdOrCtrl+0",
           enabled: zoomEnabled,
           click: withBrowserWindow((win) => {
-            win.webContents.setZoomLevel(0);
+            setWindowZoomLevel(win, 0);
           }),
         },
         { type: "separator" },

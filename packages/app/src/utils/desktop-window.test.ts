@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   intersectWindowChromeCorners,
   resolveHasOwnedWindowChromeObstruction,
+  resolveNativeChromeScale,
   resolveWindowChromeObstruction,
   resolveWindowChromeSafeArea,
 } from "@/utils/desktop-window";
@@ -39,6 +40,19 @@ describe("window chrome", () => {
     expect(
       resolveWindowChromeSafeArea({ obstruction, corners: "top-right", placement: "inline" }),
     ).toEqual({ paddingLeft: 0, paddingRight: 48 });
+  });
+
+  it("undoes page zoom so chrome draws at the native controls' scale", () => {
+    expect(resolveNativeChromeScale(1)).toBe(1);
+    expect(resolveNativeChromeScale(2)).toBe(0.5);
+    expect(resolveNativeChromeScale(0.5)).toBe(2);
+  });
+
+  it("draws chrome unscaled when the host reports no usable zoom factor", () => {
+    expect(resolveNativeChromeScale(0)).toBe(1);
+    expect(resolveNativeChromeScale(-1)).toBe(1);
+    expect(resolveNativeChromeScale(Number.NaN)).toBe(1);
+    expect(resolveNativeChromeScale(Number.POSITIVE_INFINITY)).toBe(1);
   });
 
   it("intersects identical and empty corner claims", () => {

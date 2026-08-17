@@ -8,7 +8,11 @@ import {
   getIsElectronRuntime,
   getIsElectronRuntimeMac,
 } from "@/constants/layout";
-import { getDesktopWindow } from "@/desktop/electron/window";
+import {
+  getDesktopWindow,
+  readDesktopZoomFactor,
+  subscribeToDesktopZoomChanged,
+} from "@/desktop/electron/window";
 import { isNative } from "@/constants/platform";
 
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
@@ -31,6 +35,7 @@ type WindowChromeSafeAreaStyle = { height: number } | { paddingLeft: number; pad
 const EMPTY_OBSTRUCTION: WindowChromeObstruction = { topLeft: null, topRight: null };
 const WindowChromeContext = createContext<WindowChromeObstruction>(EMPTY_OBSTRUCTION);
 const WindowChromeCornersContext = createContext<WindowChromeCorners>("none");
+const WindowChromeZoomContext = createContext(1);
 
 function windowChromeCornersFromFlags(topLeft: boolean, topRight: boolean): WindowChromeCorners {
   if (topLeft && topRight) return "both";
@@ -107,6 +112,72 @@ export function resolveWindowChromeSafeArea(input: {
     return { height: Math.max(topLeft?.height ?? 0, topRight?.height ?? 0) };
   }
   return { paddingLeft: topLeft?.width ?? 0, paddingRight: topRight?.width ?? 0 };
+}
+
+/**
+ * What to scale a surface by so it renders at the size the native window controls are drawn
+ * at. Page zoom multiplies every length the renderer declares and leaves the native buttons
+ * alone, so anything that has to stay on their line has to divide the zoom back out.
+ */
+export function resolveNativeChromeScale(zoomFactor: number): number {
+  if (!Number.isFinite(zoomFactor) || zoomFactor <= 0) {
+    return 1;
+  }
+  return 1 / zoomFactor;
+}
+
+/**
+ * The window's page zoom factor, 1 outside Electron. The value is read back over the bridge
+ * on every change rather than carried in the event, so it is always the applied one. Takes
+ * the provider's readiness rather than probing for the bridge itself, because the desktop
+ * bridge can land after the first render.
+ */
+function useDesktopZoomFactor(enabled: boolean): number {
+  const [zoomFactor, setZoomFactor] = useState(1);
+
+  useEffect(() => {
+    if (!enabled || isNative) return;
+    let active = true;
+    let dispose: (() => void) | undefined;
+
+    function sync() {
+      void (async () => {
+        try {
+          const next = await readDesktopZoomFactor();
+          if (active && next !== null) setZoomFactor(next);
+        } catch (error) {
+          if (active) console.warn("[DesktopWindow] Failed to read the zoom factor", error);
+        }
+      })();
+    }
+
+    void (async () => {
+      try {
+        const nextDispose = await subscribeToDesktopZoomChanged(sync);
+        if (!nextDispose) return;
+        if (!active) {
+          nextDispose();
+          return;
+        }
+        dispose = nextDispose;
+      } catch (error) {
+        if (active) console.warn("[DesktopWindow] Failed to subscribe to zoom changes", error);
+      }
+    })();
+    sync();
+
+    return () => {
+      active = false;
+      dispose?.();
+    };
+  }, [enabled]);
+
+  return zoomFactor;
+}
+
+/** @see resolveNativeChromeScale */
+export function useNativeChromeScale(): number {
+  return resolveNativeChromeScale(useContext(WindowChromeZoomContext));
 }
 
 export function WindowChromeProvider({ children }: { children: ReactNode }) {
@@ -190,11 +261,14 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
       }),
     [isElectronReady, isFullscreen],
   );
+  const zoomFactor = useDesktopZoomFactor(isElectronReady);
   return (
     <WindowChromeContext.Provider value={obstruction}>
-      <WindowChromeCornersContext.Provider value="both">
-        {children}
-      </WindowChromeCornersContext.Provider>
+      <WindowChromeZoomContext.Provider value={zoomFactor}>
+        <WindowChromeCornersContext.Provider value="both">
+          {children}
+        </WindowChromeCornersContext.Provider>
+      </WindowChromeZoomContext.Provider>
     </WindowChromeContext.Provider>
   );
 }

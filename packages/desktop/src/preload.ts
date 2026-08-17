@@ -55,6 +55,16 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         foregroundColor?: string;
         trafficLightOffsetY?: number;
       }) => ipcRenderer.invoke("paseo:window:updateWindowControls", update),
+      getZoomFactor: () => ipcRenderer.invoke("paseo:window:getZoomFactor"),
+      onZoomChanged: (handler: EventHandler): (() => void) => {
+        const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
+          handler(payload);
+        };
+        ipcRenderer.on("paseo:window:zoom-changed", listener);
+        return () => {
+          ipcRenderer.removeListener("paseo:window:zoom-changed", listener);
+        };
+      },
       onResized: (handler: EventHandler): (() => void) => {
         const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {
           handler(payload);
