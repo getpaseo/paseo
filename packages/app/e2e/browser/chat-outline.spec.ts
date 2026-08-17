@@ -78,10 +78,16 @@ test.describe("desktop chat outline", () => {
 
   test.describe("with the whole conversation loaded", () => {
     let agent: LongTimelineAgent;
+    let promptTimestamps: string[];
 
     test.beforeAll(async () => {
       test.setTimeout(120_000);
       agent = await seedLongMockAgentTimeline({ turns: LOADED_TURNS });
+      const promptIndex = await agent.client.listAgentTimelinePrompts(agent.agentId);
+      promptTimestamps = [];
+      for (const prompt of promptIndex.prompts) {
+        promptTimestamps.push(prompt.timestamp);
+      }
     });
 
     test.afterAll(async () => {
@@ -96,10 +102,10 @@ test.describe("desktop chat outline", () => {
 
     test("previews the prompt under the pointer, anywhere across its row", async ({ page }) => {
       await hoverChatOutlinePrompt(page, 2);
-      await expectChatOutlinePreview(page, agent.prompts[1]);
+      await expectChatOutlinePreview(page, agent.prompts[1], promptTimestamps[1]);
 
       await pointAtChatOutlineRowEdge(page, 7);
-      await expectChatOutlinePreview(page, agent.prompts[6]);
+      await expectChatOutlinePreview(page, agent.prompts[6], promptTimestamps[6]);
 
       await movePointerOffChatOutline(page);
       await expectNoChatOutlinePreview(page);
@@ -118,7 +124,7 @@ test.describe("desktop chat outline", () => {
 
     test("previews and jumps to the focused prompt from the keyboard", async ({ page }) => {
       await focusChatOutlinePrompt(page, 1);
-      await expectChatOutlinePreview(page, agent.prompts[0]);
+      await expectChatOutlinePreview(page, agent.prompts[0], promptTimestamps[0]);
 
       await pressEnterOnFocusedPrompt(page);
       await expectTimelinePromptLandedBelowTop(page, agent.oldestPrompt);
