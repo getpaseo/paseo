@@ -4654,6 +4654,10 @@ export const CheckoutPrStatusSchema = z.object({
         status: z.string(),
         url: z.string().nullable(),
         workflow: z.string().optional(),
+        /**
+         * Formatted by the forge adapter: how long a finished check took, or how long a
+         * running one has been going. Raw timestamps stay off the wire.
+         */
         duration: z.string().optional(),
         checkRunId: z.number().optional(),
         workflowRunId: z.number().optional(),
