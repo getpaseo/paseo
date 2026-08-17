@@ -47,6 +47,7 @@
     "@lezer/yaml": "^1.0.4",
     "@replit/codemirror-lang-csharp": "^6.2.0",
     "@replit/codemirror-lang-nix": "^6.0.1",
+    "@replit/codemirror-lang-svelte": "^6.0.0",
     "lezer-elixir": "^1.1.2"
   },
   "devDependencies": {
