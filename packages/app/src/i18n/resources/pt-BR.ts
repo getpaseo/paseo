@@ -339,7 +339,6 @@ export const ptBR: TranslationResources = {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",
       tasksProgress: "{{completed}}/{{total}} tarefas",
-      tasksProgressCurrent: "{{completed}}/{{total}} tarefas · {{task}}",
       activity: {
         created: "{{count}} tarefas criadas",
         added: "Adicionada",
@@ -1649,12 +1648,14 @@ export const ptBR: TranslationResources = {
     backdrop: "Fundo do menu",
   },
   subagents: {
+    title: "Subagentes",
+    pillLabelOne: "1 subagente",
+    pillLabelMany: "{{count}} subagentes",
     detachAction: "Desanexar {{label}}",
     detachTooltip: "Desanexar subagente",
     archiveAction: "Arquivar {{label}}",
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
-    archiveFinishedTooltip: "Arquivar concluídos",
     archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
   },
   panels: {

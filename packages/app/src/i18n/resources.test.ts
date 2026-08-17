@@ -402,7 +402,7 @@ describe("translation resources", () => {
     expect(en.message.question.otherPlaceholder).toBe("Other...");
     expect(en.message.todo.title).toBe("Tasks");
     expect(en.message.todo.empty).toBe("No tasks yet.");
-    expect(en.message.todo.tasksProgressCurrent).toBe("{{completed}}/{{total}} tasks · {{task}}");
+    expect(en.message.todo.tasksProgress).toBe("{{completed}}/{{total}} tasks");
     expect(en.message.todo.activity).toEqual({
       created: "Created {{count}} tasks",
       added: "Added",

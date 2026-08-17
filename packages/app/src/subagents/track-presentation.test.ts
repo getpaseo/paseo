@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
+  aggregateSubagentStatusBucket,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
-  formatHeaderLabel,
   resolveRowLabel,
 } from "./track-presentation";
 
@@ -23,55 +23,28 @@ function row(
   };
 }
 
-describe("formatHeaderLabel", () => {
-  it("uses singular 'subagent' for a single row", () => {
-    expect(formatHeaderLabel([row({ id: "a" })])).toBe("1 subagent");
+describe("aggregateSubagentStatusBucket", () => {
+  it("has no bucket without rows", () => {
+    expect(aggregateSubagentStatusBucket([])).toBeNull();
   });
 
-  it("uses plural 'subagents' for two rows with no running rows", () => {
-    expect(formatHeaderLabel([row({ id: "a" }), row({ id: "b" })])).toBe("2 subagents");
+  it("has no bucket when every child is done", () => {
+    expect(aggregateSubagentStatusBucket([row({ id: "a" }), row({ id: "b" })])).toBeNull();
   });
 
-  it("appends the running count when at least one row is running", () => {
+  it("reports running when any child is running", () => {
     expect(
-      formatHeaderLabel([row({ id: "a", status: "running" }), row({ id: "b" }), row({ id: "c" })]),
-    ).toBe("3 subagents · 1 running");
+      aggregateSubagentStatusBucket([row({ id: "a" }), row({ id: "b", status: "running" })]),
+    ).toBe("running");
   });
 
-  it("counts every running row in the suffix", () => {
+  it("ranks a failed child above a running one", () => {
     expect(
-      formatHeaderLabel([
+      aggregateSubagentStatusBucket([
         row({ id: "a", status: "running" }),
-        row({ id: "b", status: "running" }),
-        row({ id: "c", requiresAttention: true }),
-        row({ id: "d" }),
-        row({ id: "e" }),
+        row({ id: "b", status: "error", requiresAttention: true }),
       ]),
-    ).toBe("5 subagents · 2 running");
-  });
-
-  it("ignores requiresAttention on non-running rows in the header copy", () => {
-    expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: false }),
-        row({ id: "b", status: "idle", requiresAttention: false }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
-      ]),
-    ).toBe("3 subagents");
-  });
-
-  it("still counts running rows even when they require attention", () => {
-    expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: true }),
-        row({ id: "b", status: "running", requiresAttention: true }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
-      ]),
-    ).toBe("3 subagents · 1 running");
-  });
-
-  it("uses singular 'subagent' for a single row that requires attention upstream", () => {
-    expect(formatHeaderLabel([row({ id: "a", requiresAttention: true })])).toBe("1 subagent");
+    ).toBe("failed");
   });
 });
 

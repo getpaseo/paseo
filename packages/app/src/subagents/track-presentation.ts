@@ -1,5 +1,8 @@
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import {
+  aggregateSidebarStateBuckets,
+  deriveSidebarStateBucket,
+} from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
@@ -40,19 +43,25 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
   };
 }
 
-export function formatHeaderLabel(rows: readonly SubagentRow[]): string {
-  let runningCount = 0;
-  for (const row of rows) {
-    if (row.status === "running") {
-      runningCount += 1;
-    }
+/**
+ * The one state the collapsed pill can show. The pill has room for a dot and a count, so the
+ * children collapse into the most urgent bucket among them — the same rule a collapsed project
+ * row in the sidebar uses, and for the same reason.
+ *
+ * `null` when every child is done: a finished fan-out is not worth a colour above the composer.
+ */
+export function aggregateSubagentStatusBucket(
+  rows: readonly SubagentRow[],
+): SidebarStateBucket | null {
+  if (rows.length === 0) {
+    return null;
   }
-
-  const parts = [`${rows.length} ${rows.length === 1 ? "subagent" : "subagents"}`];
-  if (runningCount > 0) {
-    parts.push(`${runningCount} running`);
-  }
-  return parts.join(" · ");
+  const buckets = rows.flatMap((row) => {
+    const bucket = buildSubagentRowPresentationData(row).statusBucket;
+    return bucket ? [bucket] : [];
+  });
+  const aggregate = aggregateSidebarStateBuckets(buckets);
+  return aggregate === "done" ? null : aggregate;
 }
 
 export function countFinishedSubagents(rows: readonly SubagentRow[]): number {

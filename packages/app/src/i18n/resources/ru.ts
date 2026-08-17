@@ -338,7 +338,6 @@ export const ru: TranslationResources = {
       title: "Задачи",
       empty: "Заданий пока нет.",
       tasksProgress: "{{completed}}/{{total}} задач",
-      tasksProgressCurrent: "{{completed}}/{{total}} задач · {{task}}",
       activity: {
         created: "Создано задач: {{count}}",
         added: "Добавлена",
@@ -1654,12 +1653,14 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    title: "Субагенты",
+    pillLabelOne: "1 субагент",
+    pillLabelMany: "{{count}} субагентов",
     detachAction: "Отсоединить {{label}}",
     detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
     archiveFinishedAction: "Архивировать завершенные субагенты",
-    archiveFinishedTooltip: "Архивировать завершенные",
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
   },
   panels: {

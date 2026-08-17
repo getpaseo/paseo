@@ -1,11 +1,9 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { View } from "react-native";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { Button } from "@/components/ui/button";
+import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { TaskListRow } from "@/components/task-list-row";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { useSessionStore } from "@/stores/session-store";
 import type { TodoEntry } from "@/types/stream";
 
@@ -23,94 +21,38 @@ export const AgentTaskList = memo(function AgentTaskList({
 
 const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
   const completed = useMemo(
     () => tasks.filter((task) => task.completed || task.status === "completed").length,
     [tasks],
   );
-  const currentTask = useMemo(
-    () =>
-      tasks.find((task) => task.status === "in_progress") ??
-      tasks.find((task) => !task.completed && task.status !== "completed"),
-    [tasks],
-  );
-  const currentTaskText =
-    currentTask?.status === "in_progress" && currentTask.activeForm
-      ? currentTask.activeForm
-      : currentTask?.text;
-  const label = currentTaskText
-    ? t("message.todo.tasksProgressCurrent", {
-        completed,
-        total: tasks.length,
-        task: currentTaskText,
-      })
-    : t("message.todo.tasksProgress", { completed, total: tasks.length });
-  const toggle = useCallback(() => setExpanded((current) => !current), []);
-  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  // Counts only. The active task used to ride along in the header, where it was the first thing
+  // truncated on a phone; the panel shows it in full, in place, with the rest of the list.
+  const label = t("message.todo.tasksProgress", { completed, total: tasks.length });
 
   return (
-    <View style={styles.container} accessibilityLabel={t("message.todo.title")}>
-      <View style={styles.track}>
-        <View style={styles.card}>
-          <Button
-            variant="ghost"
-            size="xs"
-            onPress={toggle}
-            accessibilityLabel={label}
-            accessibilityState={accessibilityState}
-            leftIcon={expanded ? ChevronDown : ChevronRight}
-            style={styles.header}
-            textStyle={styles.headerText}
-          >
-            {label}
-          </Button>
-          {expanded ? (
-            <View style={styles.list}>
-              {tasks.map((task, index) => (
-                <TaskListRow key={task.id ?? `${index}:${task.text}`} task={task} />
-              ))}
-            </View>
-          ) : null}
-        </View>
-      </View>
-    </View>
+    <ComposerTrackPill
+      testID="agent-task-list-header"
+      label={label}
+      panelTitle={t("message.todo.title")}
+    >
+      {tasks.map((task, index) => (
+        <ComposerTrackRow key={task.id ?? `${index}:${task.text}`}>
+          <View style={styles.taskRow}>
+            <TaskListRow task={task} />
+          </View>
+        </ComposerTrackRow>
+      ))}
+    </ComposerTrackPill>
   );
 });
 
-const styles = StyleSheet.create((theme) => ({
-  container: {
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[4],
-  },
-  track: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    marginBottom: -theme.spacing[4],
-  },
-  card: {
-    backgroundColor: theme.colors.surface1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-    overflow: "hidden",
-    paddingBottom: theme.spacing[4],
-  },
-  header: {
-    width: "100%",
-    justifyContent: "flex-start",
-    borderRadius: 0,
-    paddingHorizontal: theme.spacing[3],
-  },
-  headerText: {
-    color: theme.colors.foregroundMuted,
-  },
-  list: {
-    borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[3],
-    paddingTop: theme.spacing[2],
-    gap: theme.spacing[1],
+const styles = StyleSheet.create(() => ({
+  // The task row draws its own icon and text; this only lets it span the shared row frame.
+  // Basis stays `auto` so the text's width reaches the panel's measurement — see track.tsx.
+  taskRow: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "auto",
+    minWidth: 0,
   },
 }));

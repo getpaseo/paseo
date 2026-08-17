@@ -339,7 +339,6 @@ export const es: TranslationResources = {
       title: "Tareas",
       empty: "Aún no hay tareas.",
       tasksProgress: "{{completed}}/{{total}} tareas",
-      tasksProgressCurrent: "{{completed}}/{{total}} tareas · {{task}}",
       activity: {
         created: "Se crearon {{count}} tareas",
         added: "Añadida",
@@ -1663,12 +1662,14 @@ export const es: TranslationResources = {
     backdrop: "Fondo del menú",
   },
   subagents: {
+    title: "Subagentes",
+    pillLabelOne: "1 subagente",
+    pillLabelMany: "{{count}} subagentes",
     detachAction: "Separar {{label}}",
     detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
     archiveFinishedAction: "Archivar subagentes finalizados",
-    archiveFinishedTooltip: "Archivar finalizados",
     archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
   panels: {

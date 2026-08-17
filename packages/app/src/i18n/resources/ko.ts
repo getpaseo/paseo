@@ -337,7 +337,6 @@ export const ko: TranslationResources = {
       title: "작업",
       empty: "아직 작업이 없습니다.",
       tasksProgress: "작업 {{completed}}/{{total}}개",
-      tasksProgressCurrent: "작업 {{completed}}/{{total}}개 · {{task}}",
       activity: {
         created: "작업 {{count}}개 생성",
         added: "추가됨",
@@ -1630,12 +1629,14 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    title: "하위 에이전트",
+    pillLabelOne: "하위 에이전트 1개",
+    pillLabelMany: "하위 에이전트 {{count}}개",
     detachAction: "{{label}} 분리",
     detachTooltip: "하위 에이전트 분리",
     archiveAction: "{{label}} 보관",
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
-    archiveFinishedTooltip: "아카이브 완료",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {

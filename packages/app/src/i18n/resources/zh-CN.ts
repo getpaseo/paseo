@@ -336,7 +336,6 @@ export const zhCN: TranslationResources = {
       title: "任务",
       empty: "还没有任务。",
       tasksProgress: "{{completed}}/{{total}} 项任务",
-      tasksProgressCurrent: "{{completed}}/{{total}} 项任务 · {{task}}",
       activity: {
         created: "已创建 {{count}} 项任务",
         added: "已添加",
@@ -1600,12 +1599,14 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    title: "Subagent",
+    pillLabelOne: "1 个 subagent",
+    pillLabelMany: "{{count}} 个 subagent",
     detachAction: "分离 {{label}}",
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
     archiveFinishedAction: "归档已完成的 subagent",
-    archiveFinishedTooltip: "归档已完成项",
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },
   panels: {

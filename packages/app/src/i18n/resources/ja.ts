@@ -339,7 +339,6 @@ export const ja: TranslationResources = {
       title: "タスク",
       empty: "タスクがまだありません。",
       tasksProgress: "{{completed}}/{{total}}タスク",
-      tasksProgressCurrent: "{{completed}}/{{total}}タスク · {{task}}",
       activity: {
         created: "{{count}}件のタスクを作成",
         added: "追加",
@@ -1636,12 +1635,14 @@ export const ja: TranslationResources = {
     backdrop: "メニューの背景",
   },
   subagents: {
+    title: "サブエージェント",
+    pillLabelOne: "サブエージェント 1 件",
+    pillLabelMany: "サブエージェント {{count}} 件",
     detachAction: "{{label}}を切り離す",
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
-    archiveFinishedTooltip: "完了した項目をアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
   panels: {
