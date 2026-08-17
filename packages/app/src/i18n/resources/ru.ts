@@ -2027,6 +2027,9 @@ export const ru: TranslationResources = {
         codeFontAccessibility: "Семейство шрифтов кода",
         codeSize: "Размер кода",
         codeSizeAccessibility: "Размер шрифта кода",
+        wordShaping: "Формирование слов в терминале",
+        wordShapingHint:
+          "Формирует целые слова в терминале для контекстных шрифтов вроде Fast-Font",
       },
       syntax: {
         title: "Синтаксис",

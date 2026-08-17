@@ -105,6 +105,7 @@ interface TerminalEmulatorProps {
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
+  wordShapingEnabled?: boolean;
   keyboardInset?: number;
   isKeyboardVisible?: boolean;
   swipeGesturesEnabled?: boolean;
@@ -168,6 +169,7 @@ export default function TerminalEmulator({
   scrollbackLines,
   fontFamily,
   fontSize,
+  wordShapingEnabled = false,
   swipeGesturesEnabled = false,
   onSwipeLeft,
   onSwipeRight,
@@ -195,6 +197,8 @@ export default function TerminalEmulator({
   scrollbackLinesRef.current = scrollbackLines;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
+  const wordShapingEnabledRef = useRef(wordShapingEnabled);
+  wordShapingEnabledRef.current = wordShapingEnabled;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
@@ -463,6 +467,7 @@ export default function TerminalEmulator({
       theme: mountedThemeRef.current,
       fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
+      wordShapingEnabled: wordShapingEnabledRef.current,
     });
     onRendererReadyChangeRef.current?.({ streamKey, isReady: true });
 
@@ -505,6 +510,10 @@ export default function TerminalEmulator({
   useEffect(() => {
     runtimeRef.current?.setFont({ fontFamily, fontSize });
   }, [fontFamily, fontSize]);
+
+  useEffect(() => {
+    runtimeRef.current?.setWordShapingEnabled(wordShapingEnabled);
+  }, [wordShapingEnabled]);
 
   useEffect(() => {
     if (focusRequestToken <= 0) {

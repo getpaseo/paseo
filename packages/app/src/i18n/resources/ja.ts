@@ -2006,6 +2006,9 @@ export const ja: TranslationResources = {
         codeFontAccessibility: "コードフォントファミリー",
         codeSize: "コードサイズ",
         codeSizeAccessibility: "コードフォントサイズ",
+        wordShaping: "ターミナルの単語シェイピング",
+        wordShapingHint:
+          "Fast-Font などのコンテキストフォントに対応し、ターミナル内で単語単位のシェイピングを行います",
       },
       syntax: {
         title: "構文ハイライト",

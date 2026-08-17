@@ -29,6 +29,7 @@ import {
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import { enableTerminalWordShaping } from "./terminal-word-shaping";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -40,6 +41,7 @@ export interface TerminalEmulatorRuntimeMountInput {
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  wordShapingEnabled?: boolean;
 }
 
 export interface TerminalEmulatorRuntimeCallbacks {
@@ -190,6 +192,8 @@ export class TerminalEmulatorRuntime {
   private hasUngatedWrites = false;
   private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
+  private wordShapingEnabled = false;
+  private disableWordShaping: (() => void) | null = null;
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
@@ -357,6 +361,10 @@ export class TerminalEmulatorRuntime {
     this.terminal = terminal;
     this.fitAddon = fitAddon;
     window.__paseoTerminal = terminal;
+    this.wordShapingEnabled = input.wordShapingEnabled ?? false;
+    if (this.wordShapingEnabled) {
+      this.disableWordShaping = enableTerminalWordShaping(terminal);
+    }
 
     const fitAndEmitResize = (resizeInput?: TerminalResizeRequest): void => {
       const forceRefresh = resizeInput?.forceRefresh ?? false;
@@ -726,6 +734,24 @@ export class TerminalEmulatorRuntime {
     this.refreshVisibleRows();
   }
 
+  setWordShapingEnabled(enabled: boolean): void {
+    const terminal = this.terminal;
+    if (!terminal || this.wordShapingEnabled === enabled) {
+      return;
+    }
+    this.wordShapingEnabled = enabled;
+    try {
+      this.disableWordShaping?.();
+    } catch {
+      // ignore
+    }
+    this.disableWordShaping = null;
+    if (enabled) {
+      this.disableWordShaping = enableTerminalWordShaping(terminal);
+    }
+    this.refreshVisibleRows();
+  }
+
   focus(input?: { forceRefocus?: boolean }): void {
     const terminal = this.terminal;
     if (!terminal) {
@@ -801,6 +827,8 @@ export class TerminalEmulatorRuntime {
     this.lastSize = null;
     this.themeBackgroundElements = [];
     this.suppressInput = false;
+    this.wordShapingEnabled = false;
+    this.disableWordShaping = null;
     this.inputModeDecoder.decode();
     this.inputModeTracker.reset();
     this.emitInputModeChange();

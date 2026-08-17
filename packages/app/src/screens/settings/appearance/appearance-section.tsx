@@ -546,6 +546,11 @@ export function AppearanceSection() {
     [settings.monoFontFamily, updateSettings],
   );
 
+  const handleTerminalWordShapingChange = useCallback(
+    (terminalWordShaping: boolean) => void updateSettings({ terminalWordShaping }),
+    [updateSettings],
+  );
+
   const handleUiSizeChange = useCallback((value: string) => {
     setUiSizeDraft(value.replace(/[^\d]/g, ""));
   }, []);
@@ -657,6 +662,24 @@ export function AppearanceSection() {
             onChangeDraft={handleCodeSizeChange}
             onCommit={commitCodeSize}
           />
+          {showFontFamilyRows ? (
+            <View style={settingsStyles.row}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>
+                  {t("settings.appearance.fonts.wordShaping")}
+                </Text>
+                <Text style={settingsStyles.rowHint}>
+                  {t("settings.appearance.fonts.wordShapingHint")}
+                </Text>
+              </View>
+              <Switch
+                value={settings.terminalWordShaping}
+                onValueChange={handleTerminalWordShapingChange}
+                accessibilityLabel={t("settings.appearance.fonts.wordShaping")}
+                testID="terminal-word-shaping-toggle"
+              />
+            </View>
+          ) : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>
