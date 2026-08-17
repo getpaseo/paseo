@@ -405,6 +405,9 @@ describe("saveAppSettings", () => {
         }
         entries.set(key, value);
       },
+      async removeItem(key) {
+        entries.delete(key);
+      },
     };
     const deps = { storage, desktop: createFakeDesktopBridge() };
     const queryClient = new QueryClient();
@@ -459,6 +462,9 @@ describe("saveAppSettings", () => {
         }
         entries.set(key, value);
       },
+      async removeItem(key) {
+        entries.delete(key);
+      },
     };
     const deps = { storage, desktop: createFakeDesktopBridge() };
     const queryClient = new QueryClient();
@@ -487,6 +493,7 @@ describe("saveAppSettings", () => {
       setItem: async () => {
         throw new Error("storage unavailable");
       },
+      removeItem: async () => {},
     };
     const queryClient = new QueryClient();
     queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
