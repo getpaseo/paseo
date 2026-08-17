@@ -73,6 +73,7 @@ import {
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
+import { PinnedDraggableRowChrome } from "@/components/sidebar/sidebar-pinned-drag-handle";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
@@ -166,23 +167,28 @@ export function SidebarStatusWorkspaceList({
       isActive,
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
-      <StatusWorkspaceRow
-        workspace={workspace}
-        {...buildStatusRowProjectPresentation({
-          workspace,
-          projectIconByProjectViewKey,
-          hostBadgeByServerId,
-        })}
-        inStatusGroup={false}
-        shortcutNumber={statusShortcutIndex.get(workspace.workspaceKey) ?? null}
-        showShortcutBadge={showShortcutBadges}
-        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-        onToggleWorkspacePin={onToggleWorkspacePin}
-        onWorkspacePress={onWorkspacePress}
-        drag={drag}
-        isDragging={isActive}
+      <PinnedDraggableRowChrome
+        workspaceKey={workspace.workspaceKey}
         dragHandleProps={dragHandleProps}
-      />
+        isDragging={isActive}
+      >
+        <StatusWorkspaceRow
+          workspace={workspace}
+          {...buildStatusRowProjectPresentation({
+            workspace,
+            projectIconByProjectViewKey,
+            hostBadgeByServerId,
+          })}
+          inStatusGroup={false}
+          shortcutNumber={statusShortcutIndex.get(workspace.workspaceKey) ?? null}
+          showShortcutBadge={showShortcutBadges}
+          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+          onToggleWorkspacePin={onToggleWorkspacePin}
+          onWorkspacePress={onWorkspacePress}
+          drag={drag}
+          isDragging={isActive}
+        />
+      </PinnedDraggableRowChrome>
     ),
     [
       hostBadgeByServerId,

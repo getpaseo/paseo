@@ -1004,6 +1004,7 @@ export const en = {
     },
     pinned: {
       title: "Pinned",
+      reorder: "Drag to reorder",
     },
     host: {
       noHost: "No host",

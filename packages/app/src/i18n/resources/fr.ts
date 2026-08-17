@@ -1025,6 +1025,7 @@ export const fr: TranslationResources = {
     },
     pinned: {
       title: "Épinglés",
+      reorder: "Glisser pour réorganiser",
     },
     host: {
       noHost: "Aucun hôte",

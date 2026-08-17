@@ -101,6 +101,7 @@ import {
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
+import { PinnedDraggableRowChrome } from "@/components/sidebar/sidebar-pinned-drag-handle";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
@@ -1515,6 +1516,54 @@ function areWorkspaceRowItemPropsEqual(
 
 const MemoWorkspaceRowItem = memo(WorkspaceRowItem, areWorkspaceRowItemPropsEqual);
 
+function PinnedChatDraggableRow({
+  workspace,
+  workspaceEntry,
+  hostBadge,
+  leadingProjectIconDataUri,
+  shortcutNumber,
+  showShortcutBadge,
+  canCopyBranchName,
+  canPin,
+  onToggleWorkspacePin,
+  isCreating,
+  selectionEnabled,
+  activeWorkspaceSelection,
+  onWorkspacePress,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: Omit<WorkspaceRowItemProps, "leadingProjectName" | "isDragging"> & {
+  isDragging: boolean;
+}) {
+  return (
+    <PinnedDraggableRowChrome
+      workspaceKey={workspace.workspaceKey}
+      dragHandleProps={dragHandleProps}
+      isDragging={isDragging}
+    >
+      <MemoWorkspaceRowItem
+        workspace={workspace}
+        workspaceEntry={workspaceEntry}
+        hostBadge={hostBadge}
+        leadingProjectName={workspace.projectName}
+        leadingProjectIconDataUri={leadingProjectIconDataUri}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        canCopyBranchName={canCopyBranchName}
+        canPin={canPin}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={isCreating}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+        drag={drag}
+        isDragging={isDragging}
+      />
+    </PinnedDraggableRowChrome>
+  );
+}
+
 function WorkspaceRow({
   workspaceEntry,
   hostBadge,
@@ -2355,11 +2404,10 @@ function ProjectModeList({
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
       return (
-        <MemoWorkspaceRowItem
+        <PinnedChatDraggableRow
           workspace={workspace}
           workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
           leadingProjectIconDataUri={
             projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
           }

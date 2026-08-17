@@ -995,6 +995,7 @@ export const ar: TranslationResources = {
     },
     pinned: {
       title: "المثبتة",
+      reorder: "اسحب لإعادة الترتيب",
     },
     host: {
       noHost: "لا مضيف",

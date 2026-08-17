@@ -987,6 +987,7 @@ export const zhCN: TranslationResources = {
     },
     pinned: {
       title: "已置顶",
+      reorder: "拖动以重新排序",
     },
     host: {
       noHost: "没有 Host",

@@ -1017,6 +1017,7 @@ export const ptBR: TranslationResources = {
     },
     pinned: {
       title: "Fixados",
+      reorder: "Arraste para reordenar",
     },
     host: {
       noHost: "Nenhum host",
