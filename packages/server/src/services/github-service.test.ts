@@ -1436,6 +1436,46 @@ describe("ForgeService", () => {
     service.dispose?.();
   });
 
+  it("keeps the last status when an alias payload carries no pull request connection", async () => {
+    let now = 0;
+    const runner = createRunner([
+      batchResponseJson({ repositories: [batchRepository()] }),
+      // Every field absent: only `pullRequests` distinguishes "no pull request on this
+      // branch" from a payload that says nothing at all.
+      batchResponseJson({ repositories: [{ unexpected: true }] }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveOriginSlug: async () => "parentOwner/parentRepo",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const errors: unknown[] = [];
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/work/a",
+      headRef: "feature/batch",
+      onStatus: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statuses).toEqual([expect.objectContaining({ number: 42 })]);
+
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+
+    // The refresh failed, so the pane keeps #42 instead of being blanked.
+    expect(statuses).toEqual([expect.objectContaining({ number: 42 })]);
+    expect(errors).toHaveLength(1);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
   it("retries the origin lookup after a failed slug resolution", async () => {
     let now = 0;
     let slugAttempts = 0;

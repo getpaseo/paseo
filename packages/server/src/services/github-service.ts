@@ -391,11 +391,11 @@ const BatchRepositorySchema = GitHubRepositoryMergePolicySchema.extend({
     .nullable()
     .optional()
     .catch(null),
-  pullRequests: z
-    .object({ nodes: z.array(BatchPullRequestNodeSchema).catch([]) })
-    .nullable()
-    .optional()
-    .catch(null),
+  // The one field that must not fall back to a default. An empty node list is how a
+  // resolved repository says "no pull request on this branch", so if the connection
+  // itself is missing or unreadable the alias failed and has to be reported as such
+  // rather than clearing the workspace's status.
+  pullRequests: z.object({ nodes: z.array(BatchPullRequestNodeSchema) }),
 });
 
 const BatchRateLimitSchema = z.object({ remaining: z.number() });
@@ -2722,7 +2722,7 @@ function toBatchPullRequestStatus(
     ResolvedPullRequestCandidate,
     z.infer<typeof BatchPullRequestNodeSchema>
   >();
-  for (const node of repository.pullRequests?.nodes ?? []) {
+  for (const node of repository.pullRequests.nodes) {
     const candidate = toCurrentPullRequestCandidate(
       { ...node, statusCheckRollup: toBatchStatusCheckRollupContexts(node.statusCheckRollup) },
       target.headRef,
