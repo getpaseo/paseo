@@ -128,6 +128,9 @@ const GITHUB_ENV = {
 // (e.g. a stalled network call) fails the same way across every forge.
 const GITHUB_COMMAND_TIMEOUT_MS = 30_000;
 const REPO_HOST_NULL_TTL_MS = 60_000;
+// A checkout with no GitHub origin, or a git read that failed, is re-tried after this
+// window instead of pinning the workspace to the unbatched lookup for good.
+const ORIGIN_SLUG_NULL_TTL_MS = 60_000;
 const GIT_ORIGIN_URL_READ_TIMEOUT_MS = 5_000;
 
 const LabelSchema = z.object({
@@ -928,7 +931,8 @@ interface GitHubPollBatchRepo {
   headRef: string;
   /** Set when the target was redirected from a fork to the fork's parent. */
   forkOwner?: string;
-  originSlug: string;
+  /** Fork-redirect identity: resolved host plus origin slug, never slug alone. */
+  redirectKey: string;
 }
 
 interface ResolvedPullRequestCandidate {
@@ -956,13 +960,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const cache = new Map<string, CacheEntry>();
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
-  // Origin slug -> repository that actually holds the pull requests. A fork's own
-  // `pullRequests(headRefName:)` connection is always empty because a pull request
+  // Host and origin slug -> repository that actually holds the pull requests. A fork's
+  // own `pullRequests(headRefName:)` connection is always empty because a pull request
   // belongs to its base repository, so the first response redirects to the parent.
   const pollBaseRepoBySlug = new Map<string, { owner: string; name: string; forkOwner: string }>();
   // Origin slug per cwd, read from git config rather than the API so a batch never
   // spends a request just to learn which repository a workspace points at.
-  const originSlugByCwd = new Map<string, Promise<string | null>>();
+  const originSlugByCwd = new Map<
+    string,
+    { promise: Promise<string | null>; expiresAt: number | null }
+  >();
   let pollBatchTimer: NodeJS.Timeout | null = null;
   let rateLimitRemaining: number | null = null;
   let disposed = false;
@@ -1208,13 +1215,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           byHost.set(host ?? "", [target]);
         }
       }
-      const batches: GitHubPollTarget[][] = [];
-      for (const targets of byHost.values()) {
+      const batches: Array<{ host: string; targets: GitHubPollTarget[] }> = [];
+      for (const [host, targets] of byHost) {
         for (let start = 0; start < targets.length; start += GITHUB_POLL_BATCH_MAX_TARGETS) {
-          batches.push(targets.slice(start, start + GITHUB_POLL_BATCH_MAX_TARGETS));
+          batches.push({
+            host,
+            targets: targets.slice(start, start + GITHUB_POLL_BATCH_MAX_TARGETS),
+          });
         }
       }
-      await Promise.all(batches.map((targets) => runPollBatch(targets)));
+      await Promise.all(batches.map(({ host, targets }) => runPollBatch(targets, host)));
     } finally {
       for (const target of due) {
         target.inFlight = false;
@@ -1223,10 +1233,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
   }
 
-  async function runPollBatch(targets: GitHubPollTarget[]): Promise<void> {
+  async function runPollBatch(targets: GitHubPollTarget[], host: string): Promise<void> {
     const requests: Array<{ target: GitHubPollTarget; repo: GitHubPollBatchRepo }> = [];
     for (const target of targets) {
-      const repo = await resolvePollBatchRepo(target);
+      const repo = await resolvePollBatchRepo(target, host);
       if (repo) {
         requests.push({ target, repo });
         continue;
@@ -1314,15 +1324,27 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       }
       const repository = BatchRepositorySchema.safeParse(data[buildBatchAlias(index)]);
       if (!repository.success) {
-        applyPollResult(target, null);
+        // A repository that resolves always answers with an object, and "no pull
+        // request" arrives as an empty `pullRequests.nodes`. A missing or unreadable
+        // alias is therefore a failed refresh, not a cleared status: reporting it as
+        // success would blank the pane and reset the error backoff.
+        applyPollError(
+          target,
+          new GitHubCommandError({
+            args,
+            cwd: target.cwd,
+            exitCode: null,
+            stderr: `gh returned no readable repository for ${repo.owner}/${repo.name}`,
+          }),
+        );
         return;
       }
       const parent = repository.data.parent;
-      if (repository.data.isFork && parent && !pollBaseRepoBySlug.has(repo.originSlug)) {
+      if (repository.data.isFork && parent && !pollBaseRepoBySlug.has(repo.redirectKey)) {
         // A fork holds no pull requests of its own, so ask the parent instead. Recorded
-        // per slug, which makes this cost one extra pass the first time a fork is seen
-        // and nothing afterwards.
-        pollBaseRepoBySlug.set(repo.originSlug, {
+        // per host and slug, which makes this cost one extra pass the first time a fork
+        // is seen and nothing afterwards.
+        pollBaseRepoBySlug.set(repo.redirectKey, {
           owner: parent.owner.login,
           name: parent.name,
           forkOwner: repo.owner,
@@ -1334,13 +1356,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     });
 
     if (redirected.length > 0) {
-      // Terminates: the slugs now carry a redirect, so this pass cannot redirect again.
-      await runPollBatch(redirected);
+      // Terminates: those keys now carry a redirect, so this pass cannot redirect again.
+      await runPollBatch(redirected, host);
     }
   }
 
   async function resolvePollBatchRepo(
     target: GitHubPollTarget,
+    host: string,
   ): Promise<GitHubPollBatchRepo | null> {
     const slug = target.remoteUrl
       ? (parseGitHubRemoteUrl(target.remoteUrl)?.repo ?? null)
@@ -1349,25 +1372,38 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     if (!slug || !originOwner || !originName) {
       return null;
     }
-    const redirect = pollBaseRepoBySlug.get(slug);
+    // Keyed by host as well as slug: the same owner/name can exist on github.com and
+    // on a GitHub Enterprise instance, and one host's fork parent is not the other's.
+    const redirectKey = `${host}\n${slug}`;
+    const redirect = pollBaseRepoBySlug.get(redirectKey);
     return {
       owner: redirect?.owner ?? originOwner,
       name: redirect?.name ?? originName,
       headRef: target.headRef,
       ...(redirect ? { forkOwner: redirect.forkOwner } : {}),
-      originSlug: slug,
+      redirectKey,
     };
   }
 
   function resolveOriginSlugCached(cwd: string): Promise<string | null> {
-    const cachedSlug = originSlugByCwd.get(cwd);
-    if (cachedSlug) {
-      return cachedSlug;
+    const existing = originSlugByCwd.get(cwd);
+    if (existing && (existing.expiresAt === null || deps.now() < existing.expiresAt)) {
+      return existing.promise;
     }
-    // A rejection must not stick in the cache, or one transient git failure would
-    // pin the workspace to the unbatched path for the daemon's lifetime.
-    const pending = deps.resolveOriginSlug(cwd).catch(() => null);
-    originSlugByCwd.set(cwd, pending);
+    // A resolved slug is kept for the daemon's lifetime; a failure, or a checkout with
+    // no GitHub origin, expires so one transient git error cannot pin the workspace to
+    // the unbatched lookup for good.
+    const pending: Promise<string | null> = deps
+      .resolveOriginSlug(cwd)
+      .catch(() => null)
+      .then((slug) => {
+        const current = originSlugByCwd.get(cwd);
+        if (slug === null && current?.promise === pending) {
+          current.expiresAt = deps.now() + ORIGIN_SLUG_NULL_TTL_MS;
+        }
+        return slug;
+      });
+    originSlugByCwd.set(cwd, { promise: pending, expiresAt: null });
     return pending;
   }
 

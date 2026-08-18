@@ -370,6 +370,10 @@ function batchAliasCount(call: RunnerCall | undefined): number {
   return (call?.args ?? []).filter((arg) => /^o\d+=/.test(arg)).length;
 }
 
+function batchFirstAliasOwner(call: RunnerCall): string {
+  return call.args.find((arg) => arg.startsWith("o0="))?.slice(3) ?? "";
+}
+
 function noPullRequestError(args: string[] = ["pr", "view"]): GitHubCommandError {
   return new GitHubCommandError({
     args,
@@ -1345,6 +1349,127 @@ describe("ForgeService", () => {
 
     expect(status).toMatchObject({ number: 42, state: "open" });
     expect(runner.calls).toHaveLength(callsAfterBatch);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("keeps fork redirects separate for the same slug on different hosts", async () => {
+    const forkRepository = batchRepository({
+      isFork: true,
+      parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      pullRequests: { nodes: [] },
+    });
+    const runner = createRunner([
+      // github.com batch, then its fork redirect to the parent.
+      batchResponseJson({ repositories: [forkRepository] }),
+      batchResponseJson({ repositories: [batchRepository()] }),
+      // The enterprise workspace shares the slug but must not inherit that redirect.
+      batchResponseJson({ repositories: [batchRepository()] }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/work/ghes" ? "github.acme.internal" : null),
+      resolveOriginSlug: async () => "forkOwner/parentRepo",
+      now: () => 0,
+    });
+    const subscriptions = ["/work/cloud", "/work/ghes"].map((cwd) =>
+      service.retainCurrentPullRequestStatusPoll?.({ cwd, headRef: "feature/batch" }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const owners = batchStatusCalls(runner.calls).map(batchFirstAliasOwner);
+    const enterpriseOwners = batchStatusCalls(runner.calls)
+      .filter((call) => call.envOverlay?.GH_HOST === "github.acme.internal")
+      .map(batchFirstAliasOwner);
+    expect(owners).toContain("parentOwner");
+    // The enterprise host asked about its own fork, never the other host's parent.
+    expect(enterpriseOwners).toEqual(["forkOwner"]);
+
+    for (const subscription of subscriptions) {
+      subscription?.unsubscribe();
+    }
+    service.dispose?.();
+  });
+
+  it("treats a missing alias as a failed refresh rather than a cleared status", async () => {
+    const runner = createRunner([
+      // A valid envelope whose alias payload is absent and carries no error entry.
+      batchResponseJson({ repositories: [null] }),
+      // Responses for the direct read below, proving it was not served from cache.
+      currentPullRequestJson({ headRefName: "feature/batch" }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveOriginSlug: async () => "parentOwner/parentRepo",
+      now: () => 0,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const errors: unknown[] = [];
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/work/a",
+      headRef: "feature/batch",
+      onStatus: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(statuses).toEqual([]);
+    expect(errors).toHaveLength(1);
+    // A cleared status would have been cached; a failed refresh must not be, so the
+    // next direct read has to go back to gh.
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(
+      await service.getCurrentPullRequestStatus({ cwd: "/work/a", headRef: "feature/batch" }),
+    ).toMatchObject({ number: 42, state: "open" });
+    expect(currentPullRequestStatusCalls(runner.calls).length).toBeGreaterThan(0);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("retries the origin lookup after a failed slug resolution", async () => {
+    let now = 0;
+    let slugAttempts = 0;
+    const runner = createRunner([batchResponseJson({ repositories: [batchRepository()] })]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveOriginSlug: async () => {
+        slugAttempts += 1;
+        if (slugAttempts === 1) {
+          throw new Error("git config failed");
+        }
+        return "parentOwner/parentRepo";
+      },
+      now: () => now,
+    });
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/work/a",
+      headRef: "feature/batch",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    // The first pass fell back to the unbatched lookup.
+    expect(batchStatusCalls(runner.calls)).toHaveLength(0);
+
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+
+    // Once the negative entry expires the workspace returns to the batched path.
+    expect(slugAttempts).toBeGreaterThan(1);
+    expect(batchStatusCalls(runner.calls)).toHaveLength(1);
 
     subscription?.unsubscribe();
     service.dispose?.();
