@@ -65,7 +65,14 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
       blur: () => inputRef.current?.blur(),
-      getText: () => textRef.current,
+      getText: () => {
+        const input = inputRef.current as WebTextInputElement | null;
+        const nextText = input?.value ?? textRef.current;
+        if (nextText !== textRef.current) {
+          textRef.current = nextText;
+        }
+        return nextText;
+      },
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
         const input = inputRef.current as WebTextInputElement | null;
