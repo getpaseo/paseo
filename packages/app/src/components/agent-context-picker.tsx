@@ -452,7 +452,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   groupTitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     marginBottom: theme.spacing[1],
     textTransform: "uppercase",
@@ -512,16 +512,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   rowTime: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   rowMeta: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
   rowNotice: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
   footer: {
@@ -547,6 +547,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   sourceNoteText: {
     color: theme.colors.foregroundMuted,
     flex: 1,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));
