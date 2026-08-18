@@ -1493,6 +1493,7 @@ export const ptBR: TranslationResources = {
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfis de agente",
     createProfile: "Criar perfil",
+    createProfileFromModel: "Criar perfil a partir de {{model}}",
     editProfileLabel: "Editar {{name}}",
     editProfilesCount: "Editar perfis ({{count}})",
     modelCount: "{{count}} modelo",

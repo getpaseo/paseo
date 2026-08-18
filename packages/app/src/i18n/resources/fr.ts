@@ -1511,6 +1511,7 @@ export const fr: TranslationResources = {
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d'agent",
     createProfile: "Créer un profil",
+    createProfileFromModel: "Créer un profil à partir de {{model}}",
     editProfileLabel: "Modifier {{name}}",
     editProfilesCount: "Modifier les profils ({{count}})",
     modelCount: "{{count}} modèle",

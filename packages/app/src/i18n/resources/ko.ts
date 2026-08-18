@@ -1473,6 +1473,7 @@ export const ko: TranslationResources = {
     editProfiles: "편집",
     editProfilesLabel: "에이전트 프로필 편집",
     createProfile: "프로필 만들기",
+    createProfileFromModel: "{{model}}에서 프로필 만들기",
     editProfileLabel: "{{name}} 편집",
     editProfilesCount: "프로필 편집 ({{count}})",
     modelCount: "모델 {{count}}개",

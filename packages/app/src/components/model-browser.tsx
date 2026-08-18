@@ -710,7 +710,7 @@ function ModelRow({
         <ModelRowProfileAction
           hovered={isHovered}
           onPress={handleCreateProfile}
-          label={t("modelSelector.createProfile")}
+          label={t("modelSelector.createProfileFromModel", { model: row.modelLabel })}
           testID={`model-create-profile-${row.provider}-${row.modelId}`}
         >
           <ThemedPlus size={ICON_SIZE.xs} uniProps={foregroundMutedMapping} />
@@ -756,6 +756,7 @@ function ModelRow({
     primary,
     profiledRows,
     row.modelId,
+    row.modelLabel,
     row.provider,
     t,
   ]);
