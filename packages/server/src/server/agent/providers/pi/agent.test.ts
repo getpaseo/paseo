@@ -793,6 +793,74 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("surfaces live exact IRC custom messages as completed sub-agent tool calls", async () => {
+    const { pi, session, events } = await createSession();
+    const rawText = `<irc>
+Incoming IRC message from agent \`Main\`:
+
+Envelope body
+
+Sent while waiting/working. Active interruptible wait stopped early for immediate reading.
+</irc>`;
+
+    await session.startTurn("wait for peer");
+    pi.latestSession().emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "irc:incoming",
+        content: rawText,
+        details: {
+          id: "irc-live-1",
+          from: "Main",
+          message: "Review this\nacross two lines",
+        },
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: {
+          type: "tool_call",
+          callId: "pi-irc:irc-live-1",
+          name: "agent_message",
+          status: "completed",
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Main",
+            description: "Review this\nacross two lines",
+            log: rawText,
+          },
+          error: null,
+        },
+      },
+      { type: "turn_completed" },
+    ]);
+  });
+
+  test("keeps malformed live IRC custom messages on the assistant fallback", async () => {
+    const { pi, session, events } = await createSession();
+
+    await session.startTurn("wait for peer");
+    pi.latestSession().emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "irc:incoming",
+        content: "Malformed IRC transport text",
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: { type: "assistant_message", text: "Malformed IRC transport text" },
+      },
+      { type: "turn_completed" },
+    ]);
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

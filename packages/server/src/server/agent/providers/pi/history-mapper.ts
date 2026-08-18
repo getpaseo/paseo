@@ -9,6 +9,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { mapPiIrcMessage } from "./irc-message-mapper.js";
 
 export interface PiCapturedUserMessageEntry {
   id: string;
@@ -117,6 +118,16 @@ export class PiHistoryMapper {
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
+    const ircMessage = mapPiIrcMessage(message, text);
+    if (ircMessage) {
+      return [
+        {
+          type: "timeline",
+          provider: this.provider,
+          item: ircMessage,
+        },
+      ];
+    }
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {
       return [mappedEvent];

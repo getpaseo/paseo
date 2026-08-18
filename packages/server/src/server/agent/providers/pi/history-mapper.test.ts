@@ -140,6 +140,64 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("replays exact IRC custom messages as completed sub-agent tool calls", async () => {
+    const rawText = `<irc>
+Incoming IRC message from agent \`Main\`:
+
+Review this
+across two lines
+
+Sent while waiting/working. Active interruptible wait stopped early for immediate reading.
+</irc>`;
+
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "irc:incoming",
+          content: rawText,
+          details: { id: "irc-1", from: "Main", message: "Review this\nacross two lines" },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "pi-irc:irc-1",
+          name: "agent_message",
+          status: "completed",
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Main",
+            description: "Review this\nacross two lines",
+            log: rawText,
+          },
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("replays malformed IRC custom messages through the assistant fallback", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "irc:incoming",
+          content: "Malformed IRC transport text",
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Malformed IRC transport text" },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(
