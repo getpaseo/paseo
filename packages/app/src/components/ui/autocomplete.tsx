@@ -365,7 +365,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   sectionHeader: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
