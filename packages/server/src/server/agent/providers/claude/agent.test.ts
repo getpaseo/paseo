@@ -9,6 +9,7 @@ import * as executableUtils from "../../../../executable-resolution/executable-r
 import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   ClaudeAgentClient,
+  claudeQuestionAnswerRejection,
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
@@ -17,7 +18,12 @@ import {
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type {
+  AgentPermissionRequest,
+  AgentSession,
+  AgentTimelineItem,
+  AgentStreamEvent,
+} from "../../agent-sdk-types.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
@@ -2857,5 +2863,134 @@ describe("Claude question permission notifications", () => {
 
     expect(request.title).toBeUndefined();
     expect(request.description).toBeUndefined();
+  });
+});
+
+describe("claudeQuestionAnswerRejection", () => {
+  const questionRequest = (...questions: unknown[]): AgentPermissionRequest =>
+    ({
+      id: "permission-1",
+      provider: "claude",
+      name: "AskUserQuestion",
+      kind: "question",
+      input: {
+        questions: questions.length
+          ? questions
+          : [{ question: "Which colour?", header: "Colour", options: [] }],
+      },
+    }) as unknown as AgentPermissionRequest;
+
+  // A question whose text carries padding: `readNonEmptyString` tests the
+  // trimmed value for emptiness but returns the original, so the padding is
+  // part of the key.
+  const paddedRequest = questionRequest({ question: " Which colour? ", header: " Colour " });
+
+  const rejected: Array<[string, AgentPermissionRequest, Record<string, unknown>]> = [
+    // The shape the incident used: valid as a string, read only for `plan` kinds.
+    ["selectedActionId instead of answers", questionRequest(), { selectedActionId: "Viridian" }],
+    ["updatedInput without answers", questionRequest(), { updatedInput: { choice: "Viridian" } }],
+    ["an empty answers map", questionRequest(), { updatedInput: { answers: {} } }],
+    ["an answers array", questionRequest(), { updatedInput: { answers: ["Viridian"] } }],
+    ["a key matching no question", questionRequest(), { updatedInput: { answers: { Hue: "V" } } }],
+    ["a blank answer", questionRequest(), { updatedInput: { answers: { Colour: "  " } } }],
+    ["a non-string answer", questionRequest(), { updatedInput: { answers: { Colour: 1 } } }],
+    [
+      "a trimmed key for a padded question",
+      paddedRequest,
+      {
+        updatedInput: { answers: { "Which colour?": "V" } },
+      },
+    ],
+    // `Array.isArray([])` is true, so an empty echoed list wins over the
+    // request's own questions and maps nothing.
+    [
+      "an empty echoed question list",
+      questionRequest(),
+      {
+        updatedInput: { questions: [], answers: { Colour: "V" } },
+      },
+    ],
+  ];
+
+  for (const [label, request, response] of rejected) {
+    test(`rejects ${label}`, () => {
+      expect(claudeQuestionAnswerRejection(request, { behavior: "allow", ...response })).toContain(
+        "still pending",
+      );
+    });
+  }
+
+  const accepted: Array<[string, AgentPermissionRequest, Record<string, unknown>]> = [
+    ["keyed by header", questionRequest(), { updatedInput: { answers: { Colour: "V" } } }],
+    [
+      "keyed by full question text",
+      questionRequest(),
+      {
+        updatedInput: { answers: { "Which colour?": "V" } },
+      },
+    ],
+    [
+      "keyed by a padded question's exact text",
+      paddedRequest,
+      {
+        updatedInput: { answers: { " Which colour? ": "V" } },
+      },
+    ],
+    [
+      "keyed by a padded header",
+      paddedRequest,
+      {
+        updatedInput: { answers: { " Colour ": "V" } },
+      },
+    ],
+    // The normalizer keeps whatever it can map, so a partial answer delivers.
+    [
+      "answering one of two questions",
+      questionRequest(
+        { question: "Which colour?", header: "Colour" },
+        { question: "Ship it?", header: "Ship" },
+      ),
+      { updatedInput: { answers: { Ship: "Yes" } } },
+    ],
+    [
+      "questions the caller echoed back",
+      questionRequest(),
+      {
+        updatedInput: {
+          questions: [{ question: "Ship it?", header: "Ship" }],
+          answers: { Ship: "Y" },
+        },
+      },
+    ],
+  ];
+
+  for (const [label, request, response] of accepted) {
+    test(`accepts an answer ${label}`, () => {
+      expect(claudeQuestionAnswerRejection(request, { behavior: "allow", ...response })).toBeNull();
+    });
+  }
+
+  test("leaves deny alone, which needs no answers", () => {
+    expect(claudeQuestionAnswerRejection(questionRequest(), { behavior: "deny" })).toBeNull();
+  });
+
+  test("leaves non-question requests alone", () => {
+    const toolRequest = { ...questionRequest(), kind: "tool" } as AgentPermissionRequest;
+    expect(claudeQuestionAnswerRejection(toolRequest, { behavior: "allow" })).toBeNull();
+  });
+
+  test("names the keys the request accepts, padding included", () => {
+    const message = claudeQuestionAnswerRejection(paddedRequest, { behavior: "allow" });
+    expect(message).toContain('" Which colour? "');
+    expect(message).toContain('" Colour "');
+  });
+
+  test("names the echoed keys when the caller supplied their own questions", () => {
+    const message = claudeQuestionAnswerRejection(questionRequest(), {
+      behavior: "allow",
+      updatedInput: { questions: [{ question: "Ship it?", header: "Ship" }], answers: {} },
+    });
+    expect(message).toContain("Ship it?");
+    expect(message).not.toContain("Which colour?");
   });
 });

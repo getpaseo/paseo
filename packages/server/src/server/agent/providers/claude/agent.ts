@@ -195,24 +195,26 @@ function stripClaudeAskUserQuestionUiMetadata(input: AgentMetadata): AgentMetada
   };
 }
 
-export function normalizeClaudeAskUserQuestionUpdatedInput(
+/**
+ * The answers this response will actually deliver, keyed by full question text,
+ * or null when there is no question list and answers map to work from.
+ *
+ * Shared by the normalizer and by the check that rejects an undeliverable
+ * answer, so the two can never disagree about what "deliverable" means.
+ */
+function resolveClaudeAskUserQuestionAnswers(
   updatedInput: AgentMetadata | undefined,
   fallbackInput: AgentMetadata | undefined,
-): AgentMetadata {
+): Record<string, string> | null {
   const fallback = isMetadata(fallbackInput) ? fallbackInput : {};
   const base = isMetadata(updatedInput) ? updatedInput : {};
-  // Paseo's shared question UI serializes answers by question header, but Claude's
-  // AskUserQuestion tool expects answer keys to match the full question text. Merge
-  // the original request payload back in so provider callbacks that only return
-  // `{ answers }` still satisfy Claude's full tool input schema.
-  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
   const questions =
     (Array.isArray(base.questions) ? base.questions : null) ??
     (Array.isArray(fallback.questions) ? fallback.questions : null);
   const answers = isMetadata(base.answers) ? base.answers : null;
 
   if (!questions || !answers) {
-    return merged;
+    return null;
   }
 
   const normalizedAnswers: Record<string, string> = {};
@@ -236,7 +238,23 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
     }
   }
 
-  if (Object.keys(normalizedAnswers).length === 0) {
+  return normalizedAnswers;
+}
+
+export function normalizeClaudeAskUserQuestionUpdatedInput(
+  updatedInput: AgentMetadata | undefined,
+  fallbackInput: AgentMetadata | undefined,
+): AgentMetadata {
+  const fallback = isMetadata(fallbackInput) ? fallbackInput : {};
+  const base = isMetadata(updatedInput) ? updatedInput : {};
+  // Paseo's shared question UI serializes answers by question header, but Claude's
+  // AskUserQuestion tool expects answer keys to match the full question text. Merge
+  // the original request payload back in so provider callbacks that only return
+  // `{ answers }` still satisfy Claude's full tool input schema.
+  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
+  const normalizedAnswers = resolveClaudeAskUserQuestionAnswers(updatedInput, fallbackInput);
+
+  if (!normalizedAnswers || Object.keys(normalizedAnswers).length === 0) {
     return merged;
   }
 
@@ -244,6 +262,86 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
     ...merged,
     answers: normalizedAnswers,
   };
+}
+
+/**
+ * The reason an `allow` on a question permission would deliver no answer, or
+ * null when it delivers one.
+ *
+ * A question answered in any shape but `updatedInput.answers` keyed by one of
+ * its questions resolves as `allow` and delivers nothing, and the waiting agent
+ * is told "The user did not answer the questions." — an affirmative falsehood
+ * rather than silence, so neither side sees the failure. The field most natural
+ * to reach for cannot work: `selectedActionId` is optional with no membership
+ * check and is read only for `plan` kinds, while a question advertises no
+ * actions at all.
+ *
+ * This asks `resolveClaudeAskUserQuestionAnswers` rather than restating its
+ * rule, so the check cannot drift from the mapping it guards — including the
+ * two details easiest to get wrong, that `readNonEmptyString` returns the
+ * original string rather than a trimmed one, and that an empty
+ * `updatedInput.questions` array is a list that wins over the request's own.
+ */
+export function claudeQuestionAnswerRejection(
+  request: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): string | null {
+  if (request.kind !== "question" || response.behavior !== "allow") {
+    return null;
+  }
+
+  const answers = resolveClaudeAskUserQuestionAnswers(response.updatedInput, request.input);
+  if (answers && Object.keys(answers).length > 0) {
+    return null;
+  }
+
+  const echoed = response.updatedInput?.questions;
+  const stored = request.input?.questions;
+  let questions: unknown[] = [];
+  if (Array.isArray(echoed)) {
+    questions = echoed;
+  } else if (Array.isArray(stored)) {
+    questions = stored;
+  }
+
+  const acceptedKeys: string[] = [];
+  for (const item of questions) {
+    const question = isMetadata(item) ? item : null;
+    const questionText = question ? readNonEmptyString(question.question) : null;
+    if (!questionText) {
+      continue;
+    }
+    acceptedKeys.push(questionText);
+    const header = readNonEmptyString(question?.header);
+    if (header) {
+      acceptedKeys.push(header);
+    }
+  }
+
+  const example = acceptedKeys[0] ?? "<question text or header>";
+  const accepted =
+    acceptedKeys.length > 0
+      ? ` Accepted keys: ${acceptedKeys.map((key) => JSON.stringify(key)).join(", ")}.`
+      : "";
+  return (
+    `Permission request '${request.id}' is a question: allow requires ` +
+    `updatedInput.answers keyed by a question's full text or its header, with a ` +
+    `non-empty string value, e.g. {"answers":{${JSON.stringify(example)}:"<answer>"}}.` +
+    `${accepted} ` +
+    `selectedActionId is ignored for question requests. ` +
+    `The request is still pending; answer it again with that shape.`
+  );
+}
+
+/** Throws `claudeQuestionAnswerRejection`'s reason, or returns. */
+function assertClaudeQuestionAnswerDeliverable(
+  request: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): void {
+  const rejection = claudeQuestionAnswerRejection(request, response);
+  if (rejection) {
+    throw new Error(rejection);
+  }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -2464,6 +2562,12 @@ class ClaudeAgentSession implements AgentSession {
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
+
+    // Before the delete below, so a rejected answer leaves the request pending
+    // and answerable rather than consuming it for nothing. AgentManager only
+    // drops its own copy once this resolves, so both maps survive the throw.
+    assertClaudeQuestionAnswerDeliverable(pending.request, response);
+
     this.pendingPermissions.delete(requestId);
     pending.cleanup?.();
 
