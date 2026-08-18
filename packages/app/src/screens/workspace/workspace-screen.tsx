@@ -1349,7 +1349,11 @@ function WorkspaceChromeRow({
       <FloatingPanelPortalHost name={portalHostName} />
 
       {showExplorerSidebar && workspaceRoot ? (
-        <WindowChromeRegion corners="top-right">
+        // The explorer column starts below the header that owns the corner, so it claims
+        // nothing: a second claim on the same corner would let two surfaces pad for one set
+        // of controls, and it also made the explorer hide its own close button on Windows
+        // and Linux for controls that are not in its header.
+        <WindowChromeRegion corners="none">
           <ExplorerSidebar {...explorerProps} workspaceRoot={workspaceRoot} />
         </WindowChromeRegion>
       ) : null}
