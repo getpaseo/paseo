@@ -344,6 +344,23 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("th")).toEqual({ data: "", shouldClear: false });
   });
 
+  it("keeps replacement desync protection after Backspace empties the hidden input", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("teh")).toEqual({ data: "teh", shouldClear: false });
+    // Autocorrect changes the buffer but cannot rewrite the terminal.
+    expect(input.receiveTextChange("the")).toEqual({ data: "", shouldClear: false });
+
+    for (const text of ["th", "t", ""]) {
+      expect(input.receiveKeyPress("Backspace")).toEqual({ data: "", shouldClear: false });
+      expect(input.receiveTextChange(text)).toEqual({ data: "", shouldClear: false });
+    }
+
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
+    // The terminal still contains `teh`, so this must not rub it out.
+    expect(input.receiveTextChange("你好")).toEqual({ data: "", shouldClear: false });
+  });
+
   it("resumes composition once the line is cleared", () => {
     const input = createTerminalTextInputState();
 

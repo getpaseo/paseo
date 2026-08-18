@@ -105,7 +105,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
   // A swallowed replacement leaves the terminal holding text the buffer no
   // longer describes. A composition rubout deletes from the terminal, so it
   // would delete whatever is actually sitting there rather than the character
-  // the buffer thinks it is replacing. Stay off until the line is cleared.
+  // the buffer thinks it is replacing. Stay off until the input state resets.
   let replacementDesynced = false;
 
   return {
@@ -144,7 +144,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       if (text.length === 0) {
         previousText = "";
-        replacementDesynced = false;
         return { data: "", shouldClear: false };
       }
 
