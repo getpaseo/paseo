@@ -211,6 +211,41 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  // The quota cards report one account per profile, so they need the environment each
+  // profile launches with — a profile pointed at another CLAUDE_CONFIG_DIR is another
+  // account, not another label for the same one.
+  test("listProviderProfiles reports enabled derived providers with their launch env", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "claude-alt": {
+          extends: "claude",
+          label: "Claude (alt)",
+          enabled: true,
+          env: { CLAUDE_CONFIG_DIR: "/home/dev/.claude-alt" },
+        },
+        "claude-disabled": {
+          extends: "claude",
+          label: "Claude (disabled)",
+          enabled: false,
+          env: { CLAUDE_CONFIG_DIR: "/home/dev/.claude-disabled" },
+        },
+      },
+    });
+    try {
+      expect(manager.listProviderProfiles()).toEqual([
+        {
+          providerId: "claude-alt",
+          baseProviderId: "claude",
+          label: "Claude (alt)",
+          env: { CLAUDE_CONFIG_DIR: "/home/dev/.claude-alt" },
+        },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getProviderLabel returns the override label when provided", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

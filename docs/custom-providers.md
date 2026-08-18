@@ -290,6 +290,10 @@ Example: two different Anthropic accounts as separate profiles:
 
 Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
 
+A Claude profile that sets its own `CLAUDE_CONFIG_DIR` signs in to its own account, so it also gets its own usage card in Settings, next to the base provider's. Cards are deduplicated by the account the credentials turn out to come from: a profile that leaves the directory alone — including one that only switches `ANTHROPIC_API_KEY` — shares the base provider's card, because the usage API reports the subscription signed in to the config directory rather than API-key spend. On macOS that also collapses profiles whose directories hold no `.credentials.json`, since they all read the same login Keychain.
+
+Give `CLAUDE_CONFIG_DIR` an absolute path. Claude Code resolves a relative one against the directory the agent runs in, which the daemon has no equivalent of, so a profile setting a relative path gets no usage card.
+
 You can also combine profiles with model overrides to pin specific models per profile:
 
 ```json

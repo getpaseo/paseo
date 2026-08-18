@@ -13,6 +13,10 @@ const PROJECT_DIR_LENGTH_CAP = 200;
 
 export interface ClaudeProjectDirOptions {
   configDir?: string;
+  // Provider profile settings. A profile that sets its own CLAUDE_CONFIG_DIR
+  // launches Claude Code against that directory, so its transcripts live there
+  // too — it must win over the daemon-wide environment.
+  runtimeSettings?: { env?: Record<string, string> };
 }
 
 export async function claudeProjectDir(
@@ -66,6 +70,15 @@ function hashSuffix(input: string): string {
   return Math.abs(hash).toString(36);
 }
 
+export function resolveClaudeConfigDir(options?: ClaudeProjectDirOptions): string {
+  return (
+    options?.configDir ??
+    options?.runtimeSettings?.env?.CLAUDE_CONFIG_DIR ??
+    process.env.CLAUDE_CONFIG_DIR ??
+    join(homedir(), ".claude")
+  );
+}
+
 function resolveConfigDir(options?: ClaudeProjectDirOptions): string {
-  return options?.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+  return resolveClaudeConfigDir(options);
 }

@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -10,6 +9,7 @@ import type {
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
+import { resolveClaudeConfigDir } from "../../../server/agent/providers/claude/project-dir.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
@@ -90,6 +90,9 @@ interface ClaudeCredentialRecord {
 
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
+  /** Set for a provider profile, which reports under its own id and label. */
+  providerId?: string;
+  displayName?: string;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
@@ -312,27 +315,78 @@ async function readClaudeKeychainCredentials(): Promise<unknown | null> {
   }
 }
 
+/**
+ * The directory whose `.credentials.json` describes an account.
+ *
+ * CLAUDE_HOME is paseo's own knob and stays first for anyone already setting it;
+ * everything below it is Claude Code's own resolution, so the card describes the
+ * directory the agent actually signs in to.
+ */
+function resolveClaudeUsageHome(claudeHome?: string): string {
+  return claudeHome || process.env["CLAUDE_HOME"] || resolveClaudeConfigDir();
+}
+
+/**
+ * The account key for credentials that came out of the login Keychain, which is one
+ * store for the whole machine no matter which config directory sent us looking.
+ */
+const CLAUDE_KEYCHAIN_ACCOUNT_KEY = `keychain:${CLAUDE_KEYCHAIN_SERVICE}`;
+
+/**
+ * The canonical path, so one credentials file reached under two names — a symlinked config
+ * directory, or a dotfile manager linking `.credentials.json` itself — is one account.
+ * Falls back to the lexical path when there is nothing on disk to resolve, which is the
+ * case where there are no credentials to collide over anyway.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await fs.realpath(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
+  private credentials: Promise<ClaudeCredentialRecord | null> | null = null;
 
   constructor(options: ClaudeQuotaProviderOptions) {
-    this.logger = options.logger.child({ module: "claude-quota-provider" });
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
+    this.logger = options.logger.child({
+      module: "claude-quota-provider",
+      providerId: this.providerId,
+    });
+    this.claudeHome = resolveClaudeUsageHome(options.claudeHome);
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }
 
+  /**
+   * Where this card's credentials actually come from. Usually the `.credentials.json` this
+   * config directory led to — two profiles reaching one file read one account, whatever
+   * name each took to get there — but a directory with no usable file falls back to the
+   * machine-wide Keychain on macOS, and every profile that lands there is the same account
+   * under different directory names. With neither, the directory names the account that
+   * would be there once someone signs in.
+   */
+  async resolveAccountKey(): Promise<string> {
+    const credentials = await this.loadCredentials();
+    if (credentials?.filePath === null) return CLAUDE_KEYCHAIN_ACCOUNT_KEY;
+    return canonicalPath(credentials?.filePath ?? this.claudeHome);
+  }
+
   async fetchUsage(): Promise<ProviderUsage> {
-    const credentials = await this.readCredentials();
+    const credentials = await this.loadCredentials();
+    this.credentials = null;
     if (!credentials) {
       return unavailableUsage(this);
     }
@@ -424,6 +478,17 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       parsed.push(limit);
     }
     return parsed;
+  }
+
+  /**
+   * Shares one credential read between `resolveAccountKey` and the `fetchUsage` that
+   * follows it, which keeps the Keychain lookup — a `security` subprocess — off the
+   * second caller. `fetchUsage` drops it again, because refreshing rotates the token on
+   * disk and the next refresh has to see the new one.
+   */
+  private loadCredentials(): Promise<ClaudeCredentialRecord | null> {
+    this.credentials ??= this.readCredentials();
+    return this.credentials;
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
