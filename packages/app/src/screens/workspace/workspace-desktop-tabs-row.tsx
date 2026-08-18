@@ -665,6 +665,7 @@ function TabChip({
         <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
             <ContextMenuTrigger
+              enabledOnMobile={false}
               {...(dragHandleProps?.attributes as object | undefined)}
               {...(dragHandleProps?.listeners as object | undefined)}
               testID={`workspace-tab-${buildDeterministicWorkspaceTabId(tab.target)}`}
