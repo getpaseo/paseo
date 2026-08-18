@@ -26,7 +26,7 @@ import { ChangesSurface } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
-import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
@@ -319,7 +319,6 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const hasRightWindowControls = useHasOwnedWindowChromeObstruction("top-right");
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
@@ -389,27 +388,28 @@ function ExplorerSidebarContent({
           )}
         </View>
         <View style={styles.headerRightSection}>
-          {!hasRightWindowControls && (
-            <Pressable
-              onPress={onClose}
-              style={styles.closeButton}
-              testID="explorer-close"
-              nativeID="explorer-close"
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel={t("workspace.tabs.explorer.close")}
-              hitSlop={8}
-            >
-              {({ hovered, pressed }) => (
-                <X
-                  size={18}
-                  color={
-                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                  }
-                />
-              )}
-            </Pressable>
-          )}
+          {/* Rendered unconditionally. This used to be hidden whenever the header owned the
+              top-right window controls, because the header did not reserve their width and the
+              button would have been drawn underneath them. The header reserves the measured
+              inset now, so the button always has clear space, and hiding it left the native
+              close button as the only close-looking control in this header. */}
+          <Pressable
+            onPress={onClose}
+            style={styles.closeButton}
+            testID="explorer-close"
+            nativeID="explorer-close"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={t("workspace.tabs.explorer.close")}
+            hitSlop={8}
+          >
+            {({ hovered, pressed }) => (
+              <X
+                size={18}
+                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+            )}
+          </Pressable>
         </View>
       </WindowChromeSafeArea>
 
