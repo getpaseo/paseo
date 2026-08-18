@@ -1478,7 +1478,7 @@ export const ja: TranslationResources = {
     editProfiles: "編集",
     editProfilesLabel: "エージェントプロファイルを編集",
     createProfile: "プロファイルを作成",
-    createProfileFromModel: "{{model}}からプロファイルを作成",
+    createProfileFromModel: "このモデルからプロファイルを作成",
     editProfileLabel: "{{name}}を編集",
     editProfilesCount: "プロファイルを編集（{{count}}）",
     modelCount: "{{count}}つのモデル",
