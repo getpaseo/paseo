@@ -1908,7 +1908,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   purposeSummaryText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     textAlign: "center",
   },

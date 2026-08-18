@@ -719,7 +719,7 @@ const styles = StyleSheet.create((theme) => ({
   sessionSummary: {
     marginLeft: theme.iconSize.md + theme.spacing[2],
     marginTop: 1,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sessionMetaText: {
