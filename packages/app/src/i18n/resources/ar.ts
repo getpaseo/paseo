@@ -274,6 +274,12 @@ export const ar: TranslationResources = {
       runningAgent: "هذا الوكيل لا يزال قيد التشغيل. ستؤدي أرشفته إلى إيقاف الوكيل.",
       archive: "أرشيف",
     },
+    deleteSheet: {
+      archivedAgent: "هذه الجلسة مؤرشفة. سيؤدي الحذف إلى إزالتها نهائيًا من القرص.",
+      confirmTitle: "حذف نهائي؟",
+      confirmMessage: "سيؤدي هذا إلى حذف الجلسة وسجلها نهائيًا من القرص. لا يمكن التراجع عن هذا.",
+      delete: "حذف نهائي",
+    },
   },
   message: {
     diagram: {

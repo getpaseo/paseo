@@ -277,6 +277,12 @@ export const es: TranslationResources = {
       runningAgent: "Este agente todavía está ejecutándose. Archivarlo detendrá al agente.",
       archive: "Archivo",
     },
+    deleteSheet: {
+      archivedAgent: "Esta sesión está archivada. Eliminarla la quitará permanentemente del disco.",
+      confirmTitle: "¿Eliminar permanentemente?",
+      confirmMessage: "Esto eliminará permanentemente la sesión y su historial del disco. No se puede deshacer.",
+      delete: "Eliminar permanentemente",
+    },
   },
   message: {
     diagram: {

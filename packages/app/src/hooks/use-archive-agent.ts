@@ -240,11 +240,11 @@ interface ArchiveAgentMutationContext {
   lists: ArchivedAgentListCacheSnapshot;
 }
 
-function getStoredAgentSnapshot(input: ArchiveAgentInput) {
+export function getStoredAgentSnapshot(input: ArchiveAgentInput) {
   return useSessionStore.getState().sessions[input.serverId]?.agents.get(input.agentId);
 }
 
-function restoreAgentSnapshot(
+export function restoreAgentSnapshot(
   input: ArchiveAgentInput & { agent: ReturnType<typeof getStoredAgentSnapshot> },
 ): void {
   const setAgents = useSessionStore.getState().setAgents;

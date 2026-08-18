@@ -5,6 +5,7 @@ import {
   Modal,
   RefreshControl,
   FlatList,
+  Alert,
   type ListRenderItem,
   type PressableStateCallbackType,
 } from "react-native";
@@ -17,10 +18,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
-import { Archive, ChevronRight } from "lucide-react-native";
+import { Archive, ChevronRight, Trash2 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useDeleteAgent } from "@/hooks/use-delete-agent";
+import { useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import type { AgentSearchMatch } from "@getpaseo/protocol/messages";
@@ -105,6 +108,20 @@ function formatDateSectionLabel(t: TFunction, section: DateSectionKey): string {
     case "older":
       return t("agentList.dateSections.older");
   }
+}
+
+function resolveActionSheetTitle(
+  t: TFunction,
+  daemonUnavailable: boolean,
+  isArchivedAction: boolean,
+): string {
+  if (daemonUnavailable) {
+    return t("agentList.archiveSheet.hostOffline");
+  }
+  if (isArchivedAction) {
+    return t("agentList.deleteSheet.archivedAgent");
+  }
+  return t("agentList.archiveSheet.runningAgent");
 }
 
 function SessionBadge({
@@ -389,6 +406,8 @@ export function AgentList({
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
+  const { deleteAgent } = useDeleteAgent();
+  const voiceRuntime = useVoiceRuntimeOptional();
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
@@ -425,6 +444,13 @@ export function AgentList({
         return;
       }
 
+      // Archived sessions open the action sheet so they can be permanently
+      // deleted; everything else keeps the existing one-tap archive behavior.
+      if (agent.archivedAt) {
+        setActionAgent(agent);
+        return;
+      }
+
       const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
       if (!client) {
         setActionAgent(agent);
@@ -447,6 +473,36 @@ export function AgentList({
     void archiveAgent({ serverId: actionAgent.serverId, agentId: actionAgent.id }).catch(() => {});
     setActionAgent(null);
   }, [actionAgent, actionClient, archiveAgent]);
+
+  const handleDeletePermanently = useCallback(() => {
+    if (!actionAgent || !actionClient) {
+      return;
+    }
+    const { serverId, id: agentId } = actionAgent;
+    setActionAgent(null);
+    Alert.alert(
+      t("agentList.deleteSheet.confirmTitle"),
+      t("agentList.deleteSheet.confirmMessage"),
+      [
+        { text: t("common.actions.cancel"), style: "cancel" },
+        {
+          text: t("agentList.deleteSheet.delete"),
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              // Deleting a session that is currently in voice mode would leave
+              // capture/keep-awake attached to a session that no longer exists;
+              // stop it first (only when this agent is the active voice target).
+              if (voiceRuntime?.isVoiceModeForAgent(serverId, agentId)) {
+                await voiceRuntime.stopVoice().catch(() => undefined);
+              }
+              await deleteAgent({ serverId, agentId }).catch(() => {});
+            })();
+          },
+        },
+      ],
+    );
+  }, [actionAgent, actionClient, deleteAgent, t, voiceRuntime]);
 
   const flatItems = useMemo((): FlatListItem[] => {
     if (flat) {
@@ -527,6 +583,7 @@ export function AgentList({
     () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
     [isActionDaemonUnavailable],
   );
+  const isArchivedAction = Boolean(actionAgent?.archivedAt);
 
   const refreshControl = useMemo(
     () =>
@@ -566,9 +623,7 @@ export function AgentList({
           <View style={sheetContainerStyle}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable
-                ? t("agentList.archiveSheet.hostOffline")
-                : t("agentList.archiveSheet.runningAgent")}
+              {resolveActionSheetTitle(t, isActionDaemonUnavailable, isArchivedAction)}
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable
@@ -578,15 +633,27 @@ export function AgentList({
               >
                 <Text style={styles.sheetCancelText}>{t("common.actions.cancel")}</Text>
               </Pressable>
-              <Pressable
-                disabled={isActionDaemonUnavailable}
-                style={[styles.sheetButton, styles.sheetArchiveButton]}
-                onPress={handleArchiveAgent}
-                testID="agent-action-archive"
-              >
-                <Text style={sheetArchiveTextStyle}>{t("agentList.archiveSheet.archive")}</Text>
-              </Pressable>
+              {!isArchivedAction ? (
+                <Pressable
+                  disabled={isActionDaemonUnavailable}
+                  style={[styles.sheetButton, styles.sheetArchiveButton]}
+                  onPress={handleArchiveAgent}
+                  testID="agent-action-archive"
+                >
+                  <Text style={sheetArchiveTextStyle}>{t("agentList.archiveSheet.archive")}</Text>
+                </Pressable>
+              ) : null}
             </View>
+            {!isActionDaemonUnavailable ? (
+              <Pressable
+                style={styles.sheetDeleteButton}
+                onPress={handleDeletePermanently}
+                testID="agent-action-delete-permanently"
+              >
+                <Trash2 size={14} color={theme.colors.statusDanger} />
+                <Text style={styles.sheetDeleteText}>{t("agentList.deleteSheet.delete")}</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </Modal>
@@ -786,6 +853,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   sheetCancelText: {
     color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
+  },
+  sheetDeleteButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[4],
+    borderWidth: 1,
+    borderColor: theme.colors.statusDanger,
+  },
+  sheetDeleteText: {
+    color: theme.colors.statusDanger,
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.base,
   },

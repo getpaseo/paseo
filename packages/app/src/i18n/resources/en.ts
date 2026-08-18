@@ -272,6 +272,13 @@ export const en = {
       runningAgent: "This agent is still running. Archiving it will stop the agent.",
       archive: "Archive",
     },
+    deleteSheet: {
+      archivedAgent: "This session is archived. Deleting will permanently remove it from disk.",
+      confirmTitle: "Delete permanently?",
+      confirmMessage:
+        "This will permanently delete the session and its history from disk. This cannot be undone.",
+      delete: "Delete permanently",
+    },
   },
   message: {
     diagram: {

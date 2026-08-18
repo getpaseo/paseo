@@ -276,6 +276,12 @@ export const ru: TranslationResources = {
       runningAgent: "Этот агент все еще работает. Архивирование остановит агент.",
       archive: "Архив",
     },
+    deleteSheet: {
+      archivedAgent: "Этот сеанс заархивирован. Удаление навсегда удалит его с диска.",
+      confirmTitle: "Удалить навсегда?",
+      confirmMessage: "Это навсегда удалит сеанс и его историю с диска. Это действие нельзя отменить.",
+      delete: "Удалить навсегда",
+    },
   },
   message: {
     diagram: {

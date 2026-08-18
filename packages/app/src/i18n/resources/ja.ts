@@ -277,6 +277,12 @@ export const ja: TranslationResources = {
       runningAgent: "このエージェントはまだ実行中です。アーカイブするとエージェントが停止します。",
       archive: "アーカイブ",
     },
+    deleteSheet: {
+      archivedAgent: "このセッションはアーカイブ済みです。削除するとディスクから完全に削除されます。",
+      confirmTitle: "完全に削除しますか？",
+      confirmMessage: "セッションとその履歴がディスクから完全に削除されます。元に戻すことはできません。",
+      delete: "完全に削除",
+    },
   },
   message: {
     diagram: {

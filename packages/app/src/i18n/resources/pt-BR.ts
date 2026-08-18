@@ -277,6 +277,12 @@ export const ptBR: TranslationResources = {
       runningAgent: "Este agente ainda está em execução. Arquivá-lo interromperá o agente.",
       archive: "Arquivar",
     },
+    deleteSheet: {
+      archivedAgent: "Esta sessão está arquivada. Excluí-la a removerá permanentemente do disco.",
+      confirmTitle: "Excluir permanentemente?",
+      confirmMessage: "Isso excluirá permanentemente a sessão e seu histórico do disco. Não é possível desfazer.",
+      delete: "Excluir permanentemente",
+    },
   },
   message: {
     diagram: {

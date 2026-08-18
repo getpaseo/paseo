@@ -274,6 +274,12 @@ export const zhCN: TranslationResources = {
       runningAgent: "此 Agent 仍在运行。归档会停止该 Agent。",
       archive: "归档",
     },
+    deleteSheet: {
+      archivedAgent: "该会话已归档。删除将把它从磁盘上永久移除。",
+      confirmTitle: "确定永久删除？",
+      confirmMessage: "这会将会话及其历史记录从磁盘永久删除，无法撤销。",
+      delete: "永久删除",
+    },
   },
   message: {
     diagram: {
