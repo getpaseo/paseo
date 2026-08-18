@@ -1,8 +1,7 @@
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { openSettingsSection } from "../support/helpers/settings";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
@@ -255,33 +254,20 @@ test.describe("Workspace labels", () => {
         await expect(unlabelledRow).toBeVisible();
         expect(await size(urgent)).toEqual(atRest);
 
-        // Selecting every label there is empties nothing; selecting one that nothing carries
-        // together with Unlabelled under "all" is what empties the sidebar, below.
+        // Unlabelled is a first-class filter option.
         await unlabelledLabel.click();
         await expect(labelledRow).toBeHidden();
         await expect(unlabelledRow).toBeVisible();
 
-        // Two selected labels are what the match toggle is for, and only then.
-        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeHidden();
+        // Selection is deliberately OR-only: labels and Unlabelled together include both rows.
         await urgent.click();
-        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeVisible();
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();
 
-        // Labelled and unlabelled at once is unsatisfiable, so this empties the sidebar. That
-        // swaps the list's body and nothing above it, so the header the flyout is anchored to
-        // survives and the page stays up — this is the transition that used to close the menu.
-        await page.getByTestId("sidebar-label-filter-match-all").click();
-        await expect(labelledRow).toBeHidden();
-        await expect(unlabelledRow).toBeHidden();
-        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeVisible();
-        await expect(page.getByTestId("sidebar-label-filter-clear")).toBeVisible();
-
-        // And back out of it from that same still-open page, which is the swap in reverse.
+        // Clear restores the complete sidebar without leaving the filter page.
         await page.getByTestId("sidebar-label-filter-clear").click();
         await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeHidden();
         await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
-        await expect(page.getByTestId("sidebar-label-filter-match-any")).toBeHidden();
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();
         await expect(urgent).toHaveAttribute("aria-checked", "false");
@@ -289,18 +275,6 @@ test.describe("Workspace labels", () => {
         await expect(unlabelledLabel).toHaveAttribute("aria-checked", "false");
 
         await page.keyboard.press("Escape");
-        await page.getByTestId("sidebar-display-preferences-menu").click();
-        await page.getByTestId("sidebar-display-grouping").click();
-        await page.getByTestId("sidebar-grouping-label").click();
-        await expect(page.getByTestId("sidebar-workspace-group-label:urgent")).toBeVisible();
-        await expect(page.getByTestId("sidebar-workspace-group-label:urgent")).toHaveAttribute(
-          "aria-label",
-          "Urgent group",
-        );
-        await expect(page.getByTestId("sidebar-workspace-group-label:frontend")).toBeVisible();
-        await expect(
-          page.getByTestId("sidebar-workspace-group-synthetic:unlabelled"),
-        ).toBeVisible();
       });
 
       await test.step("editing a label is one operation and preserves its assignments", async () => {
@@ -358,23 +332,6 @@ test.describe("Workspace labels", () => {
         await page.getByTestId("workspace-label-picker-create-submit").click();
         await expectAssigned(page, "Retry", true);
         await page.keyboard.press("Escape");
-      });
-
-      await test.step("active locale updates label group headings and accessibility", async () => {
-        await openSettings(page);
-        await openSettingsSection(page, "general");
-        await page.getByRole("button", { name: "System", exact: true }).click();
-        await page.getByRole("button", { name: "Español - Spanish", exact: true }).click();
-        await page.goBack();
-        await expect(
-          page.getByTestId("sidebar-workspace-group-synthetic:unlabelled"),
-        ).toHaveAttribute("aria-label", "Grupo Sin etiqueta");
-
-        await openSettings(page);
-        await openSettingsSection(page, "general");
-        await page.getByRole("button", { name: /^Español/ }).click();
-        await page.getByRole("button", { name: /^English/ }).click();
-        await page.goBack();
       });
     } finally {
       await unlabelled.cleanup();

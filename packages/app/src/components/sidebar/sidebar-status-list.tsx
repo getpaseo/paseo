@@ -349,7 +349,7 @@ function StatusGroupRows({
       {!collapsed ? (
         <View
           style={styles.statusWorkspaceListContainer}
-          testID={`sidebar-workspace-group-rows-${group.key}`}
+          testID={`sidebar-status-group-rows-${group.key}`}
         >
           {visibleWorkspaces.map((workspace) => (
             <StatusWorkspaceRow
@@ -372,7 +372,7 @@ function StatusGroupRows({
               expanded={workspacesExpanded}
               onPress={toggleWorkspacesExpanded}
               indented
-              testID={`sidebar-workspace-group-show-more-${group.key}`}
+              testID={`sidebar-status-group-show-more-${group.key}`}
             />
           ) : null}
         </View>
@@ -437,7 +437,7 @@ function StatusGroupHeader({
         accessibilityState={accessibilityState}
         style={rowStyle}
         onPress={handlePress}
-        testID={`sidebar-workspace-group-${group.key}`}
+        testID={`sidebar-status-group-${group.key}`}
       >
         <View style={styles.statusGroupRowLeft}>
           <View style={styles.statusGroupLeadingVisualSlot}>
