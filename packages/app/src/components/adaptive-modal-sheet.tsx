@@ -1,10 +1,10 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode, Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
-import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   getOverlayRoot,
@@ -15,7 +15,6 @@ import {
 import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
-  BottomSheetTextInput,
   KEYBOARD_STATUS,
   useBottomSheetInternal,
   type BottomSheetBackgroundProps,
@@ -30,10 +29,11 @@ import {
   getBottomSheetVisibleContentHeight,
   getCompactSheetSafeAreaPadding,
 } from "@/components/adaptive-modal-sheet-layout";
-import { createControlGeometry } from "@/components/ui/control-geometry";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AdaptiveTextInput } from "@/components/adaptive-text-input";
+export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
 // leading icon, search input icon) and any row primitive rendered inside the
@@ -211,15 +211,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  adaptiveInputOutline: {
-    ...createControlGeometry(theme).controlFocusRingColor,
-  },
-  adaptiveInputText: {
-    color: theme.colors.foreground,
-  },
-  adaptiveInputPlaceholder: {
-    color: theme.colors.foregroundMuted,
-  },
 }));
 
 const WEB_EXIT_DURATION_MS = 160;
@@ -287,55 +278,6 @@ function BottomSheetVisibleContent({ children }: { children: ReactNode }) {
     </Animated.View>
   );
 }
-
-export type AdaptiveTextInputProps = TextInputProps & {
-  initialValue?: string;
-  resetKey?: string | number;
-};
-
-// React Native controlled TextInput can replay stale JS values during fast input
-// and visibly flicker/cursor-jump. Keep the rendered text native-owned; callers
-// can seed it once with initialValue and remount with resetKey for real resets.
-// See https://github.com/facebook/react-native/issues/44157
-//
-// Text color and placeholder color are owned by this leaf — not the caller.
-// `@gorhom/bottom-sheet` mounts header subtrees before the sheet is visible
-// under whatever theme is active at mount time, then keeps them mounted across
-// theme changes; any caller that paints color via `StyleSheet.create((theme) =>
-// ...)` from outside this leaf ends up with stale colors in dark mode (see
-// docs/unistyles.md "Hidden Sheet Content"). withUnistyles wraps the actual
-// TextInput so theme-driven re-renders land on the wrapper.
-const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-}));
-const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-}));
-
-export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
-  function AdaptiveTextInputInner(props, ref) {
-    const isMobile = useIsCompactFormFactor();
-    const { value: _value, initialValue, resetKey, defaultValue, style, ...inputProps } = props;
-    // Leaf-owned color goes LAST so callers cannot override it with a stale
-    // theme read. Outline color is theme-aware on web :focus-visible.
-    const textInputProps = {
-      ...inputProps,
-      defaultValue: initialValue ?? defaultValue,
-      style: [styles.adaptiveInputOutline, style, styles.adaptiveInputText],
-    };
-
-    if (isMobile && isNative) {
-      return (
-        <ThemedBottomSheetTextInput
-          key={resetKey}
-          ref={ref as unknown as Ref<never>}
-          {...textInputProps}
-        />
-      );
-    }
-    return <ThemedTextInput key={resetKey} ref={ref} {...textInputProps} />;
-  },
-);
 
 export function SheetHeaderView({
   header,

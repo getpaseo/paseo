@@ -110,7 +110,6 @@ export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEd
           accessibilityLabel="Cron expression"
           initialValue={cronText}
           resetKey={`cadence-cron-${fieldResetKey}`}
-          value={cronText}
           onChangeText={handleCronChange}
           placeholder="0 9 * * *"
           autoCapitalize="none"
