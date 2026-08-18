@@ -125,23 +125,23 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     flex: 1,
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
   status: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   statusError: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
   },
   hostLabel: {
     flex: 1,
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   metadataRow: {
@@ -151,12 +151,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   preview: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   errorText: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
   },
   controlsRow: {

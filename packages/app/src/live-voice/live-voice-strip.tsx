@@ -106,28 +106,28 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
   hostLabel: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   status: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   statusError: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
   },
   preview: {
     flex: 1,
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     textAlign: "right",
   },

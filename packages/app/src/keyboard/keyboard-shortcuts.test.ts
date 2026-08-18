@@ -922,7 +922,7 @@ describe("live voice hold-to-invert mute binding", () => {
 
   it("leaves the mute toggle a non-hold action", () => {
     const result = resolveShortcut({
-      event: { key: "m", code: "KeyM", ctrlKey: true, shiftKey: true },
+      event: { key: "l", code: "KeyL", ctrlKey: true, shiftKey: true },
       context: { isMac: false },
     });
 

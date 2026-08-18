@@ -250,7 +250,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   enableAudioLabel: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
   transcript: {
@@ -261,12 +261,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   transcriptEmpty: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   transcriptEntry: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
   transcriptRole: {
@@ -274,7 +274,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
   },
 }));

@@ -1186,9 +1186,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   // typing — because muting is exactly what you reach for mid-keystroke when
   // someone walks in. Terminal keeps first refusal on its own keys.
   {
-    id: "live-voice-mute-toggle-cmd-shift-m-mac",
+    id: "live-voice-mute-toggle-cmd-shift-l-mac",
     action: "live-voice.mute.toggle",
-    combo: "Cmd+Shift+M",
+    combo: "Cmd+Shift+L",
     repeat: false,
     when: { mac: true, commandCenter: false, terminal: false },
     help: {
@@ -1198,9 +1198,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "live-voice-mute-toggle-ctrl-shift-m-non-mac",
+    id: "live-voice-mute-toggle-ctrl-shift-l-non-mac",
     action: "live-voice.mute.toggle",
-    combo: "Ctrl+Shift+M",
+    combo: "Ctrl+Shift+L",
     repeat: false,
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
