@@ -24,12 +24,23 @@ import {
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  createAgentTabFromMenu,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
-import { selectModel } from "../support/helpers/app";
+import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
+import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
+import {
+  expectResumeOverflowFallsBackToOneTail,
+  rememberTimelineRequestCounts,
+} from "../support/helpers/timeline-resume";
+import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
+import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
   scrollTimelineUntilOlderHistoryIsReachable,
@@ -257,14 +268,20 @@ async function submitMessageThatWillBeRejected(page: Page, prompt: string): Prom
 
 async function expectRejectedSubmissionRestored(
   page: Page,
-  input: { prompt: string; errorMessage: string },
+  input: { prompt: string; errorMessage: string; preservesActiveTurn?: boolean },
 ): Promise<void> {
-  await expect(page.getByText(input.errorMessage)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("alert").filter({ hasText: input.errorMessage })).toBeVisible({
+    timeout: 30_000,
+  });
   await expectComposerDraft(page, input.prompt);
   await expectComposerEditable(page);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
-  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
   await expect(page.getByTestId("user-message").filter({ hasText: input.prompt })).toHaveCount(0);
+  if (input.preservesActiveTurn) {
+    await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+    return;
+  }
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
   await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
 }
 
@@ -275,6 +292,60 @@ async function retryRestoredSubmission(page: Page, prompt: string): Promise<void
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+}
+
+async function configureSteerInSettings(page: Page): Promise<void> {
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+Comma`);
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await selectSteerInSettings(page);
+}
+
+async function selectSteerInSettings(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Steer", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
+      return raw ? (JSON.parse(raw) as { sendBehavior?: unknown }).sendBehavior : null;
+    })
+    .toBe("steer");
+}
+
+async function replaySteeredSleepTurnInBrowser(
+  page: Page,
+  testInfo: { workerIndex: number },
+  shape: "claude" | "codex",
+): Promise<void> {
+  const gate = await installDaemonWebSocketGate(page);
+  gate.holdNextShellToolCall("completed");
+  await gotoAppShell(page);
+  await openSettings(page);
+  await selectSteerInSettings(page);
+  const agent = await startRunningMockAgent(page, {
+    prefix: `steer-replay-${shape}-${testInfo.workerIndex}-`,
+    model: "ten-second-stream",
+    prompt: `Replay a ${shape}-shaped foreground shell tool call while the user steers this turn.`,
+  });
+  try {
+    await expect(page.getByTestId("tool-call-badge").last()).toBeVisible({ timeout: 30_000 });
+    await expectComposerVisible(page);
+    await submitMessage(page, "hello");
+
+    await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(0);
+    await expectInFlightForkAvailable(page);
+
+    await gate.waitForHeldServerMessage();
+    gate.releaseHeldServerMessage();
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+
+    await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Fork chat" }).last()).toBeVisible();
+  } finally {
+    gate.restore();
+    await agent.cleanup();
+  }
 }
 
 async function queueMessage(page: Page, prompt: string): Promise<void> {
@@ -333,6 +404,66 @@ async function expectInterruptedTurnOrderAfterReconnect(
   } finally {
     gate.restore();
     await agent.cleanup();
+  }
+}
+
+async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
+  page: Page,
+  testInfo: { workerIndex: number },
+): Promise<void> {
+  const subscriptions = observeTimelineSubscriptions(page);
+  const gate = await installDaemonWebSocketGate(page);
+  const target = await seedMockAgentWorkspace({
+    repoPrefix: `submission-hidden-stream-${testInfo.workerIndex}-`,
+    title: "Hidden streaming submission",
+    model: "ten-second-stream",
+  });
+  const evictionAgents = await Promise.all(
+    Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
+      seedMockAgentWorkspace({
+        repoPrefix: `submission-workspace-eviction-${testInfo.workerIndex}-${index}-`,
+        title: `Workspace eviction ${index + 1}`,
+      }),
+    ),
+  );
+  const prompt = "Keep this hidden image prompt before its streaming output.";
+  const targetDeckEntry = workspaceDeckEntryLocator(page, getServerId(), target.workspaceId);
+
+  try {
+    await openAgentRoute(page, target);
+    await expectComposerVisible(page);
+    await subscriptions.waitForSubscribedAgents([target.agentId]);
+
+    const userMessageCount = gate.getAgentStreamItemCount("user_message");
+    gate.setAgentStreamSuppressed(true);
+    const promptRow = await submitMessageWithImage(page, prompt);
+    await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
+
+    for (const evictionAgent of evictionAgents) {
+      await openAgentRoute(page, evictionAgent);
+      await expectComposerVisible(page);
+    }
+    await expect(targetDeckEntry).toHaveCount(0);
+    await subscriptions.waitForSubscribedAgents([
+      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
+    ]);
+    gate.setAgentStreamSuppressed(false);
+
+    await target.client.waitForFinish(target.agentId, 30_000);
+    const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    await openAgentRoute(page, target);
+    await expectComposerVisible(page);
+    await subscriptions.waitForSubscribedAgents([target.agentId]);
+
+    const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
+    await expect(promptRow).toBeVisible();
+    await expect(response).toBeVisible();
+    await expectRenderedBefore(promptRow, response);
+    expectResumeOverflowFallsBackToOneTail(gate, requestsBeforeReturn);
+  } finally {
+    gate.setAgentStreamSuppressed(false);
+    gate.restore();
+    await Promise.all([...evictionAgents.map((agent) => agent.cleanup()), target.cleanup()]);
   }
 }
 
@@ -627,7 +758,7 @@ async function expectRenderedBefore(first: Locator, second: Locator): Promise<vo
 async function openWorkspaceDraft(page: Page, workspaceId: string): Promise<void> {
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspaceId));
   await waitForWorkspaceTabsVisible(page);
-  await page.getByTestId("workspace-new-agent-tab-inline").click();
+  await createAgentTabFromMenu(page);
   await expectComposerVisible(page);
 }
 
@@ -963,6 +1094,83 @@ test.describe("Agent message submission", () => {
     await retryRestoredSubmission(page, prompt);
   });
 
+  test("restores an ambiguous Steer failure without retrying or interrupting", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const prompt = "Restore this ambiguous Steer submission.";
+    const agent = await startRunningMockAgent(page, {
+      prefix: `steer-ambiguous-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active while a Steer request fails.",
+      featureValues: { mockSteerAmbiguousFailures: 1 },
+    });
+    try {
+      await configureSteerInSettings(page);
+      await page.goBack();
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+      const sendsBefore = gate.getClientRequestCount("send_agent_message_request");
+      const cancelsBefore = gate.getClientRequestCount("cancel_agent_request");
+
+      await submitMessageThatWillBeRejected(page, prompt);
+      await expectRejectedSubmissionRestored(page, {
+        prompt,
+        errorMessage: "Requested mock steer transport failure",
+        preservesActiveTurn: true,
+      });
+
+      expect(gate.getClientRequestCount("send_agent_message_request")).toBe(sendsBefore + 1);
+      expect(gate.getClientRequestCount("cancel_agent_request")).toBe(cancelsBefore);
+      expect(gate.getClientRequests("send_agent_message_request").at(-1)).toMatchObject({
+        text: prompt,
+        activeTurnBehavior: "steer",
+      });
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("keeps an optimistic Steer prompt inside the active turn before acknowledgement", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: `steer-optimistic-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active while the user steers it.",
+    });
+    try {
+      await configureSteerInSettings(page);
+      await page.goBack();
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+      gate.holdNextServerMessage("send_agent_message_response");
+      await submitMessage(page, "hello");
+      await gate.waitForHeldServerMessage("send_agent_message_response");
+      await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+      await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+      gate.releaseHeldServerMessage("send_agent_message_response");
+      await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("replays Claude-shaped steering inside one active turn", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await replaySteeredSleepTurnInBrowser(page, testInfo, "claude");
+  });
+
+  test("replays Codex-shaped steering inside one active turn", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    await replaySteeredSleepTurnInBrowser(page, testInfo, "codex");
+  });
+
   test("restores overlapping queued sends when their connection fails", async ({
     page,
   }, testInfo) => {
@@ -1011,6 +1219,13 @@ test.describe("Agent message submission", () => {
   }, testInfo) => {
     test.setTimeout(90_000);
     await expectInterruptedTurnOrderAfterReconnect(page, testInfo);
+  });
+
+  test("keeps a streaming hidden submission before its output after workspace eviction", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    await expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(page, testInfo);
   });
 
   test("clears an attachment-only submission when canonical history arrives after a missed running transition", async ({

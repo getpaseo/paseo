@@ -172,6 +172,7 @@ export interface ProjectDescriptor {
   projectDisplayName: string;
   projectCustomName: string | null;
   projectCustomIconRevision?: string | null;
+  projectIconRevision?: string;
   projectRootPath: string;
   projectKind: WorkspaceDescriptorPayload["projectKind"];
 }
@@ -185,6 +186,7 @@ export function normalizeProjectDescriptor(
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
+    projectIconRevision: payload.projectIconRevision,
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };
@@ -306,6 +308,8 @@ export interface AgentTimelineCursorState {
 export interface SessionReplicaTimeline {
   agentId: string;
   items: StreamItem[];
+  range: AgentTimelineCursorState | null;
+  hasOlder: boolean;
 }
 
 export interface SessionReplica {
@@ -391,6 +395,7 @@ export interface SessionState {
   // Hydration status
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
+  hasWorkspaceDirectorySnapshot: boolean;
 
   // Audio state
   isPlayingAudio: boolean;
@@ -653,6 +658,7 @@ function createInitialSessionState(
     serverInfo: null,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
+    hasWorkspaceDirectorySnapshot: false,
     isPlayingAudio: false,
     focusedAgentId: null,
     focusedTerminalId: null,
@@ -785,6 +791,16 @@ export const useSessionStore = create<SessionStore>()(
             const tasks = latestTasksFromStream(timeline.items);
             if (tasks.length > 0) agentTasks.set(timeline.agentId, tasks);
           }
+          const agentTimelineCursor = new Map<string, AgentTimelineCursorState>();
+          const agentTimelineHasOlder = new Map<string, boolean>();
+          const agentTimelineHasNewer = new Map<string, boolean>();
+          const agentAuthoritativeHistoryApplied = new Map<string, boolean>();
+          if (timeline?.range) {
+            agentTimelineCursor.set(timeline.agentId, timeline.range);
+            agentTimelineHasOlder.set(timeline.agentId, timeline.hasOlder);
+            agentTimelineHasNewer.set(timeline.agentId, false);
+            agentAuthoritativeHistoryApplied.set(timeline.agentId, true);
+          }
           const agentLastActivity = new Map(prev.agentLastActivity);
           for (const agent of replica.agents.values()) {
             agentLastActivity.set(agent.id, agent.lastActivityAt);
@@ -799,8 +815,13 @@ export const useSessionStore = create<SessionStore>()(
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
                 workspaces: replica.workspaces,
                 projects: replica.projects,
+                hasWorkspaceDirectorySnapshot: true,
                 agentStreamTail,
                 agentTasks,
+                agentTimelineCursor,
+                agentTimelineHasOlder,
+                agentTimelineHasNewer,
+                agentAuthoritativeHistoryApplied,
               },
             },
             agentLastActivity,

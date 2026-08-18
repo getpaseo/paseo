@@ -1,14 +1,11 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Folder } from "lucide-react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import {
   TreeChevron,
-  TreeIndentGuides,
   treeRowPaddingLeft,
-  WORKSPACE_FILE_ROW_TRAILING_PADDING,
-  WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+  workspaceTreeRowStyles,
   WORKSPACE_TREE_ICON_LABEL_GAP,
   WORKSPACE_TREE_ICON_SIZE,
 } from "@/components/tree-primitives";
@@ -17,9 +14,6 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { isWeb } from "@/constants/platform";
-
-const ThemedFolder = withUnistyles(Folder);
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 interface DiffFolderRowProps {
   /** full uncompressed directory path — the collapse identity */
@@ -47,7 +41,10 @@ function folderRowPressableStyle(
   { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
   isSelected: boolean,
 ) {
-  return [styles.folderRow, (Boolean(hovered) || pressed || isSelected) && styles.folderRowActive];
+  return [
+    workspaceTreeRowStyles.row,
+    (Boolean(hovered) || pressed || isSelected) && workspaceTreeRowStyles.active,
+  ];
 }
 
 export function DiffFolderRow({
@@ -73,6 +70,9 @@ export function DiffFolderRow({
   const handleSelect = useCallback(() => {
     onSelect(dirPath);
   }, [dirPath, onSelect]);
+  const [isHovered, setIsHovered] = useState(false);
+  const showNameHover = useCallback(() => setIsHovered(true), []);
+  const hideNameHover = useCallback(() => setIsHovered(false), []);
 
   const handlePress = useCallback(() => {
     const selection = isWeb ? window.getSelection() : null;
@@ -121,7 +121,12 @@ export function DiffFolderRow({
   }, [dirPath, onRevert]);
 
   const leftStyle = useMemo(
-    () => [styles.left, inlineUnistylesStyle({ paddingLeft: treeRowPaddingLeft(depth) })],
+    () => [
+      styles.left,
+      inlineUnistylesStyle({
+        paddingLeft: treeRowPaddingLeft(depth),
+      }),
+    ],
     [depth],
   );
 
@@ -132,29 +137,32 @@ export function DiffFolderRow({
 
   return (
     <View style={styles.container} onLayout={handleLayout} testID={testID}>
-      <TreeIndentGuides depth={depth} />
       <ContextMenu>
         <ContextMenuTrigger
           onPress={handlePress}
           onLongPress={handleSelect}
           onContextMenu={handleSelect}
           style={pressableStyle}
+          onHoverIn={showNameHover}
+          onHoverOut={hideNameHover}
           accessibilityRole="button"
           accessibilityState={accessibilityState}
           aria-selected={isSelected}
           testID={testID ? `${testID}-toggle` : undefined}
         >
           <View style={leftStyle}>
-            <View style={styles.chevronOpticalOffset}>
+            <View style={styles.chevronSlot}>
               <TreeChevron expanded={!collapsed} />
             </View>
-            <View style={styles.folderIcon}>
-              <ThemedFolder
-                size={WORKSPACE_TREE_ICON_SIZE}
-                uniProps={foregroundMutedColorMapping}
-              />
-            </View>
-            <Text style={styles.folderName} numberOfLines={1}>
+            <Text
+              style={[
+                styles.folderName,
+                workspaceTreeRowStyles.name,
+                isHovered && workspaceTreeRowStyles.nameHovered,
+              ]}
+              numberOfLines={1}
+              testID={testID ? `${testID}-name` : undefined}
+            >
               {displayName}
             </Text>
           </View>
@@ -186,17 +194,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     overflow: "hidden",
   },
-  folderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
-    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
-    gap: theme.spacing[1],
-    minWidth: 0,
-  },
-  folderRowActive: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
   left: {
     flexDirection: "row",
     alignItems: "center",
@@ -204,13 +201,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  chevronOpticalOffset: {
-    width: WORKSPACE_TREE_ICON_SIZE,
-    height: WORKSPACE_TREE_ICON_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  folderIcon: {
+  chevronSlot: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,
     alignItems: "center",
@@ -223,7 +214,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   folderName: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
     flexShrink: 1,

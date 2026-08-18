@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
+  buildSubagentPillPresentation,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
-  formatHeaderLabel,
   resolveRowLabel,
 } from "./track-presentation";
 
@@ -23,60 +24,62 @@ function row(
   };
 }
 
-describe("formatHeaderLabel", () => {
-  it("uses singular 'subagent' for a single row", () => {
-    expect(formatHeaderLabel([row({ id: "a" })])).toBe("1 subagent");
+describe("buildSubagentPillPresentation", () => {
+  // The real instance, so a label that names a key nobody added renders as that key and fails.
+  beforeAll(async () => {
+    if (!i18n.isInitialized) {
+      await i18n.init();
+    }
+    await i18n.changeLanguage("en");
   });
 
-  it("uses plural 'subagents' for two rows with no running rows", () => {
-    expect(formatHeaderLabel([row({ id: "a" }), row({ id: "b" })])).toBe("2 subagents");
+  const pill = (rows: SubagentRow[]) => buildSubagentPillPresentation(i18n.t, rows);
+
+  it("counts the children that are running, not the fan-out", () => {
+    expect(pill([row({ id: "a" }), row({ id: "b", status: "running" })])).toEqual({
+      label: "1 running",
+      statusBucket: "running",
+    });
   });
 
-  it("appends the running count when at least one row is running", () => {
+  it("counts every child in the state it reports", () => {
     expect(
-      formatHeaderLabel([row({ id: "a", status: "running" }), row({ id: "b" }), row({ id: "c" })]),
-    ).toBe("3 subagents · 1 running");
-  });
-
-  it("counts every running row in the suffix", () => {
-    expect(
-      formatHeaderLabel([
+      pill([
         row({ id: "a", status: "running" }),
         row({ id: "b", status: "running" }),
-        row({ id: "c", requiresAttention: true }),
-        row({ id: "d" }),
-        row({ id: "e" }),
+        row({ id: "c" }),
       ]),
-    ).toBe("5 subagents · 2 running");
+    ).toEqual({ label: "2 running", statusBucket: "running" });
   });
 
-  it("ignores requiresAttention on non-running rows in the header copy", () => {
+  it("ranks a failed child above a running one, and counts the failures", () => {
     expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: false }),
-        row({ id: "b", status: "idle", requiresAttention: false }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
+      pill([
+        row({ id: "a", status: "running" }),
+        row({ id: "b", status: "error", requiresAttention: true }),
+        row({ id: "c", status: "error" }),
       ]),
-    ).toBe("3 subagents");
+    ).toEqual({ label: "2 failed", statusBucket: "failed" });
   });
 
-  it("still counts running rows even when they require attention", () => {
-    expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: true }),
-        row({ id: "b", status: "running", requiresAttention: true }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
-      ]),
-    ).toBe("3 subagents · 1 running");
+  it("names what it opens once every child is done", () => {
+    expect(pill([row({ id: "a" }), row({ id: "b" })])).toEqual({
+      label: "2 subagents",
+      statusBucket: null,
+    });
   });
 
-  it("uses singular 'subagent' for a single row that requires attention upstream", () => {
-    expect(formatHeaderLabel([row({ id: "a", requiresAttention: true })])).toBe("1 subagent");
+  it("keeps the singular for a lone child", () => {
+    expect(pill([row({ id: "a" })])).toEqual({ label: "1 subagent", statusBucket: null });
+  });
+
+  it("has nothing to mark without rows", () => {
+    expect(pill([])).toEqual({ label: "0 subagents", statusBucket: null });
   });
 });
 
 describe("countFinishedSubagents", () => {
-  it("counts only terminal provider-owned children", () => {
+  it("counts eligible managed and terminal provider-owned children", () => {
     const providerRows: SubagentRow[] = [
       {
         kind: "provider",
@@ -109,6 +112,16 @@ describe("countFinishedSubagents", () => {
         row({ id: "managed-running", status: "running" }),
         row({ id: "managed-idle", status: "idle" }),
         ...providerRows,
+      ]),
+    ).toBe(2);
+  });
+
+  it("excludes running and initializing managed children", () => {
+    expect(
+      countFinishedSubagents([
+        row({ id: "running", status: "running" }),
+        row({ id: "initializing", status: "initializing" }),
+        row({ id: "finished", status: "idle" }),
       ]),
     ).toBe(1);
   });

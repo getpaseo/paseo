@@ -651,7 +651,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
   },
   questionNavText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   optionItem: {
@@ -680,7 +680,7 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 22,
   },
   optionDescription: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
   selectionControl: {
@@ -707,7 +707,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   actionsContainer: {
     gap: theme.spacing[2],
@@ -730,6 +730,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   actionText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

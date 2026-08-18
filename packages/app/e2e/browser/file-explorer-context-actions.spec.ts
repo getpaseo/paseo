@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { openFileExplorer } from "../support/helpers/file-explorer";
+import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -110,6 +111,21 @@ test.afterEach(async () => {
   await workspace?.cleanup();
 });
 
+test("file explorer rows share the workspace title opacity treatment", async ({ page }) => {
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const row = page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByTestId(/^file-explorer-row-\d+$/)
+    .first();
+  const name = row.getByTestId(/-name$/);
+  await expect(row).toHaveCSS("opacity", "1");
+  await expect(name).toHaveCSS("opacity", "0.76");
+  await row.hover();
+  await expect(name).toHaveCSS("opacity", "1");
+});
+
 test("creates, renames, copies, and deletes entries through the file explorer", async ({
   context,
   page,
@@ -124,6 +140,14 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
 
   await page.getByTestId("files-new-folder").click();
   await expect(nameInput).toBeVisible();
+  const draftRow = nameInput.locator("xpath=..");
+  const placeholderColor = await nameInput.evaluate(
+    (input) => getComputedStyle(input, "::placeholder").color,
+  );
+  const extraMutedChevronColor = await draftRow
+    .locator("svg")
+    .evaluate((icon) => getComputedStyle(icon).stroke);
+  expect(placeholderColor).toBe(extraMutedChevronColor);
   await nameInput.press("Tab");
   await expect(nameInput).toBeHidden();
 
@@ -189,18 +213,38 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   const fileRow = entry("created.txt").locator(
     "xpath=ancestor::*[starts-with(@data-testid, 'file-explorer-row-')][1]",
   );
-  await expect(folderRow.locator("svg")).toHaveCount(2);
+  await expect(folderRow.locator("svg")).toHaveCount(1);
   await expect(fileRow.locator("svg")).toHaveCount(1);
   const gitRow = entry(".git").locator(
     "xpath=ancestor::*[starts-with(@data-testid, 'file-explorer-row-')][1]",
   );
   const collapsedChevronBounds = await gitRow.locator("svg").first().boundingBox();
   const expandedChevronBounds = await folderRow.locator("svg").first().boundingBox();
+  const collapsedChevronSlotBounds = await gitRow
+    .locator("svg")
+    .first()
+    .locator("xpath=../..")
+    .boundingBox();
+  const expandedChevronSlotBounds = await folderRow
+    .locator("svg")
+    .first()
+    .locator("xpath=../..")
+    .boundingBox();
   expect(collapsedChevronBounds).not.toBeNull();
   expect(expandedChevronBounds).not.toBeNull();
+  expect(collapsedChevronSlotBounds).not.toBeNull();
+  expect(expandedChevronSlotBounds).not.toBeNull();
   const collapsedChevronCenter = collapsedChevronBounds!.x + collapsedChevronBounds!.width / 2;
   const expandedChevronCenter = expandedChevronBounds!.x + expandedChevronBounds!.width / 2;
   expect(collapsedChevronCenter).toBeCloseTo(expandedChevronCenter, 0);
+  expect(collapsedChevronCenter).toBeCloseTo(
+    collapsedChevronSlotBounds!.x + collapsedChevronSlotBounds!.width / 2,
+    0,
+  );
+  expect(expandedChevronCenter).toBeCloseTo(
+    expandedChevronSlotBounds!.x + expandedChevronSlotBounds!.width / 2,
+    0,
+  );
   const folderLabelBounds = await entry("folder").boundingBox();
   const fileLabelBounds = await entry("created.txt").boundingBox();
   expect(folderLabelBounds).not.toBeNull();
@@ -409,7 +453,7 @@ test("hides unsupported file operations and revert actions", async ({ page }) =>
   await expect(filesMenu.getByText("Delete", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("explorer-tab-changes").click();
+  await openChangesPanel(page);
   await expect(page.getByTestId("diff-file-0")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-duplicate")).toHaveCount(0);

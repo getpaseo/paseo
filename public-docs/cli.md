@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "Paseo CLI reference: manage agents, workspaces, scripts, schedules, daemons, and permissions from your terminal."
+description: "Paseo CLI reference: manage projects, workspaces, agents, plugins, scripts, schedules, daemons, and permissions from your terminal."
 nav: CLI
 order: 3
 category: Getting started
@@ -59,6 +59,34 @@ Use `--output-schema` to return only matching JSON output. You can pass a schema
 
 By default, `paseo run` waits for completion. Use `--background` to return immediately while the agent keeps running.
 
+## Projects
+
+Register the current directory as a project, then list the projects known to the daemon:
+
+```bash
+cd ~/dev/my-app
+paseo project create
+paseo project ls
+```
+
+Use the project ID from `paseo project ls` to rename, reset, or delete a project:
+
+```bash
+paseo project rename <project-id> "My app"
+paseo project rename <project-id> --reset
+paseo project delete <project-id>
+```
+
+`--reset` restores the name derived from the project directory. Deleting a project archives its active workspaces and removes the project from Paseo. It does not delete the project directory.
+
+For a local daemon, `paseo project create [path]` defaults to the current directory and resolves relative paths on the CLI machine. When you use `--host` or `PASEO_HOST`, provide a path that the target daemon can access:
+
+```bash
+paseo project create /srv/repos/api --host devbox:6767
+```
+
+The remote daemon interprets that path on its own machine. See [Workspaces](/docs/workspaces) for how projects group working directories and sessions.
+
 ## Workspaces
 
 Create a workspace independently when you want to prepare its files before starting an agent:
@@ -113,6 +141,26 @@ paseo script stop web
 By default, Paseo selects the workspace whose directory is the current directory. Pass `--cwd <path>` to select a different directory, or `--workspace <workspace-id>` when a directory has multiple workspaces. These commands also accept `--host` and the standard output options such as `--json`.
 
 The output includes each script's lifecycle and supervised terminal ID. Services also include their assigned port, proxy URL, and health. See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
+
+## Plugins
+
+Create and manage trusted local plugins on a daemon:
+
+```bash
+paseo plugin init /absolute/path/to/plugin
+paseo plugin install /absolute/path/to/plugin
+paseo plugin ls
+paseo plugin reload my-plugin
+paseo plugin logs my-plugin
+paseo plugin disable my-plugin
+paseo plugin enable my-plugin
+paseo plugin remove my-plugin
+```
+
+`paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
+structured entries or `--host <target>` for another daemon. See the
+[Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
+behavior.
 
 ## Listing agents
 
@@ -202,8 +250,12 @@ Detaching is an explicit lifecycle action, not a creation flag. The agent keeps 
 paseo daemon start             # Start the daemon
 paseo daemon start --web-ui    # Start and serve the bundled web UI
 paseo daemon status            # Check status
+paseo reload                    # Reload config.json (top-level alias)
+paseo daemon reload             # Reload config.json
 paseo daemon stop              # Stop the daemon
 ```
+
+Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result, and `--host` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 

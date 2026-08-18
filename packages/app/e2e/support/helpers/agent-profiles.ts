@@ -104,21 +104,24 @@ export interface SeededProviderModel {
  * list is what avoids running anything: replacement models skip catalog
  * discovery, and Claude's static modes mean the provider never spawns. The
  * command only has to resolve for the availability probe, hence `node`.
+ * Providers with dynamic catalogs can pass a small RPC fixture as `command`.
  */
 export async function seedModelProvider(input: {
   id: string;
   label: string;
   models: SeededProviderModel[];
+  extends?: "claude" | "pi";
+  command?: string[];
 }): Promise<HostSeed> {
   const client = await connectAgentProfilesClient();
   await client.patchDaemonConfig({
     providers: {
       [input.id]: {
-        extends: "claude",
+        extends: input.extends ?? "claude",
         label: input.label,
         description: `${input.label} test provider`,
         enabled: true,
-        command: ["node"],
+        command: input.command ?? ["node"],
         models: input.models,
       },
     },

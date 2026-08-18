@@ -20,6 +20,9 @@ interface ClientRequest {
   payload?: unknown;
   mode?: unknown;
   path?: unknown;
+  agentId?: unknown;
+  text?: unknown;
+  activeTurnBehavior?: unknown;
 }
 
 interface ServerMessage {
@@ -46,6 +49,11 @@ interface HeldServerMessage {
   key: string;
   agentStreamFollowers: Array<string | Buffer>;
   blockedAgentId?: string;
+}
+
+interface PendingServerMessageHold {
+  matches: (message: ClientRequest | null) => boolean;
+  blockAgentStreamFollowers?: boolean;
 }
 
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
@@ -125,6 +133,25 @@ function forceTimelineReset(message: string | Buffer, enabled: boolean): string 
   return JSON.stringify(envelope);
 }
 
+function rewriteShellToolCommand(
+  message: string | Buffer,
+  command: string | null,
+): string | Buffer {
+  if (!command || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: { event?: { type?: unknown; item?: Record<string, unknown> } } };
+    payload?: { event?: { type?: unknown; item?: Record<string, unknown> } };
+  };
+  const event = (envelope.message?.payload ?? envelope.payload)?.event;
+  if (event?.type !== "timeline" || event.item?.type !== "tool_call") return message;
+  const detail = event.item.detail;
+  if (!detail || typeof detail !== "object" || (detail as { type?: unknown }).type !== "shell") {
+    return message;
+  }
+  (detail as { command?: unknown }).command = command;
+  return JSON.stringify(envelope);
+}
+
 function readAgentStreamEventType(message: ClientRequest | null): string | null {
   if (message?.type !== "agent_stream" || !message.payload || typeof message.payload !== "object") {
     return null;
@@ -150,6 +177,36 @@ function readAgentStreamItemType(message: ClientRequest | null): string | null {
   return event?.type === "timeline" && typeof event.item?.type === "string"
     ? event.item.type
     : null;
+}
+
+function matchesToolCall(
+  message: ClientRequest | null,
+  input: { status: string; command?: string },
+): boolean {
+  if (readAgentStreamItemType(message) !== "tool_call") return false;
+  const event = (
+    message?.payload as
+      | {
+          event?: { item?: { status?: unknown; detail?: { command?: unknown } } };
+        }
+      | undefined
+  )?.event;
+  return (
+    event?.item?.status === input.status &&
+    (input.command === undefined || event.item.detail?.command === input.command)
+  );
+}
+
+function matchesShellToolCall(message: ClientRequest | null, status: string): boolean {
+  if (readAgentStreamItemType(message) !== "tool_call") return false;
+  const event = (
+    message?.payload as
+      | {
+          event?: { item?: { status?: unknown; detail?: { type?: unknown } } };
+        }
+      | undefined
+  )?.event;
+  return event?.item?.status === status && event.item.detail?.type === "shell";
 }
 
 function shouldSuppressServerMessage(input: {
@@ -226,10 +283,11 @@ export async function installDaemonWebSocketGate(page: Page) {
   let forceTimelineEpochReset = false;
   let stripAssistantMessageIds = false;
   let stripCanonicalSubmittedPromptsFeature = false;
+  let shellToolCommandOverride: string | null = null;
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
-  const pendingServerMessageHolds = new Map<string, (message: ClientRequest | null) => boolean>();
+  const pendingServerMessageHolds = new Map<string, PendingServerMessageHold>();
   const heldServerMessages: HeldServerMessage[] = [];
   const heldServerMessageWaiters = new Set<() => void>();
   const suppressedServerMessageTypes = new Set<string>();
@@ -243,6 +301,7 @@ export async function installDaemonWebSocketGate(page: Page) {
     total: { agents: 0, workspaces: 0 },
   };
   const clientRequestCounts = new Map<string, number>();
+  const clientRequests = new Map<string, ClientRequest[]>();
   const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
   const agentStreamEventCounts = new Map<string, number>();
@@ -322,11 +381,11 @@ export async function installDaemonWebSocketGate(page: Page) {
       if (!suppressed) blocked.agentStreamFollowers.push(input.message);
       return true;
     }
-    const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
-      matches(input.parsed),
+    const matchedHold = Array.from(pendingServerMessageHolds).find(([, hold]) =>
+      hold.matches(input.parsed),
     );
     if (!matchedHold) return suppressed;
-    const [key] = matchedHold;
+    const [key, hold] = matchedHold;
     pendingServerMessageHolds.delete(key);
     heldServerMessages.push({
       browser: input.browser,
@@ -334,7 +393,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       key,
       agentStreamFollowers: [],
       blockedAgentId:
-        readAgentStreamEventType(input.parsed) === "turn_started"
+        hold.blockAgentStreamFollowers || readAgentStreamEventType(input.parsed) === "turn_started"
           ? (agentId ?? undefined)
           : undefined,
     });
@@ -385,6 +444,11 @@ export async function installDaemonWebSocketGate(page: Page) {
       }
       const request = readClientRequest(message);
       recordClientRequest(request, clientRequestCounts, timelineRequestCounts, directoryStarts);
+      if (typeof request?.type === "string") {
+        const requests = clientRequests.get(request.type) ?? [];
+        requests.push(request);
+        clientRequests.set(request.type, requests);
+      }
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
         resolveHeldClientRequest?.();
@@ -417,6 +481,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         stripAssistantMessageIds,
         serverMessage?.type,
       );
+      outboundMessage = rewriteShellToolCommand(outboundMessage, shellToolCommandOverride);
       outboundMessage = stripCanonicalSubmittedPrompts(
         outboundMessage,
         stripCanonicalSubmittedPromptsFeature,
@@ -516,25 +581,36 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldClientRequestType = null;
     },
     holdNextServerMessage(type: string): void {
-      pendingServerMessageHolds.set(serverMessageKey(type), (message) => message?.type === type);
+      pendingServerMessageHolds.set(serverMessageKey(type), {
+        matches: (message) => message?.type === type,
+      });
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
       const heldAgentUpdate = { agentId, status };
-      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), (message) =>
-        matchesAgentUpdate(message, heldAgentUpdate),
-      );
+      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), {
+        matches: (message) => matchesAgentUpdate(message, heldAgentUpdate),
+      });
     },
     holdNextAgentStreamEvent(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamEventKey(type),
-        (message) => readAgentStreamEventType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamEventKey(type), {
+        matches: (message) => readAgentStreamEventType(message) === type,
+      });
     },
     holdNextAgentStreamItem(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamItemKey(type),
-        (message) => readAgentStreamItemType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamItemKey(type), {
+        matches: (message) => readAgentStreamItemType(message) === type,
+      });
+    },
+    holdNextToolCall(input: { status: string; command?: string }): void {
+      pendingServerMessageHolds.set(`tool-call:${input.status}:${input.command ?? ""}`, {
+        matches: (message) => matchesToolCall(message, input),
+      });
+    },
+    holdNextShellToolCall(status: string): void {
+      pendingServerMessageHolds.set(`shell-tool-call:${status}`, {
+        matches: (message) => matchesShellToolCall(message, status),
+        blockAgentStreamFollowers: true,
+      });
     },
     async waitForHeldServerMessage(type?: string): Promise<void> {
       const key = type ? serverMessageKey(type) : null;
@@ -686,6 +762,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     setCanonicalSubmittedPromptsStripped(stripped: boolean): void {
       stripCanonicalSubmittedPromptsFeature = stripped;
     },
+    setShellToolCommandOverride(command: string | null): void {
+      shellToolCommandOverride = command;
+    },
     setAgentStreamSuppressed(suppressed: boolean): void {
       suppressAgentStream = suppressed;
     },
@@ -701,6 +780,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
+    },
+    getClientRequests(type: string): ReadonlyArray<ClientRequest> {
+      return [...(clientRequests.get(type) ?? [])];
     },
     getTimelineRequestCount(direction: "tail" | "before" | "after"): number {
       return timelineRequestCounts.get(direction) ?? 0;

@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 
-import {
-  keyboardActionDispatcher,
-  type KeyboardActionDefinition,
-  type KeyboardActionId,
+import type {
+  KeyboardActionDefinition,
+  KeyboardActionId,
 } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 
 interface UseKeyboardActionHandlerInput {
   handlerId: string;
@@ -37,6 +37,7 @@ interface UseKeyboardActionHandlerInput {
  *     registration and would otherwise go stale).
  */
 export function useKeyboardActionHandler(input: UseKeyboardActionHandlerInput) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const inputRef = useRef(input);
   inputRef.current = input;
 
@@ -58,5 +59,5 @@ export function useKeyboardActionHandler(input: UseKeyboardActionHandlerInput) {
       },
       handle: (action) => inputRef.current.handle(action),
     });
-  }, [input.handlerId, input.priority, actionsKey]);
+  }, [actionsKey, input.handlerId, input.priority, keyboardActionDispatcher]);
 }

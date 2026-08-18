@@ -21,7 +21,7 @@ import {
   type WorktreeConfig,
 } from "./worktree";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import { getPaseoWorktreeMetadataPath, readPaseoWorktreeMetadata } from "./worktree-metadata.js";
 import {
   getCheckoutDiff,
   getCheckoutStatus,
@@ -41,8 +41,8 @@ import {
   readFileSync,
   chmodSync,
   lstatSync,
+  readlinkSync,
   symlinkSync,
-  unlinkSync,
 } from "fs";
 import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
@@ -128,7 +128,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       expect(existsSync(metadataPath)).toBe(true);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-      expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
+      expect(metadata).toMatchObject({
+        version: 1,
+        baseRefName: "main",
+        changeRequestLookupTarget: { headRef: "hello-world", localBranchName: "hello-world" },
+      });
     });
 
     it("creates and owns worktrees under a configured root", async () => {
@@ -254,7 +258,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-      expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
+      expect(metadata).toMatchObject({
+        version: 1,
+        baseRefName: "main",
+        changeRequestLookupTarget: { headRef: "feature/x", localBranchName: "feature/x" },
+      });
     });
 
     it("checks out an existing local branch that is not checked out elsewhere", async () => {
@@ -278,7 +286,11 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-      expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
+      expect(metadata).toMatchObject({
+        version: 1,
+        baseRefName: "dev",
+        changeRequestLookupTarget: { headRef: "dev", localBranchName: "dev" },
+      });
     });
 
     it("checks out an existing local branch whose name contains uppercase letters and dots", async () => {
@@ -312,6 +324,10 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       expect(result.branchName).toBe("main-1");
       expect(existsSync(result.worktreePath)).toBe(true);
+      expect(readPaseoWorktreeMetadata(result.worktreePath)?.changeRequestLookupTarget).toEqual({
+        headRef: "main-1",
+        localBranchName: "main-1",
+      });
     });
 
     it("fetches a GitHub PR branch, checks it out, writes metadata, and runs setup", async () => {
@@ -1191,73 +1207,95 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       });
     });
 
-    it("runs setup from the edited source config when the selected ref already has paseo.json", async () => {
+    it("keeps a new worktree clean when its upstream ref has a newer paseo.json", async () => {
+      const remoteDir = join(tempDir, "remote.git");
+      const updaterDir = join(tempDir, "updater");
       writeFileSync(
         join(repoDir, "paseo.json"),
-        JSON.stringify({ worktree: { setup: 'echo "committed" > committed-setup.log' } }),
+        JSON.stringify({ worktree: { setup: "echo old" } }),
       );
       execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
       execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
         cwd: repoDir,
       });
-
+      execFileSync("git", ["clone", "--bare", repoDir, remoteDir]);
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir });
+      execFileSync("git", ["clone", remoteDir, updaterDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: updaterDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: updaterDir });
       writeFileSync(
-        join(repoDir, "paseo.json"),
-        JSON.stringify({ worktree: { setup: 'echo "edited" > edited-setup.log' } }),
+        join(updaterDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo new" } }),
       );
+      execFileSync("git", ["add", "paseo.json"], { cwd: updaterDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "update paseo.json"], {
+        cwd: updaterDir,
+      });
+      execFileSync("git", ["push", "origin", "main"], { cwd: updaterDir });
+      execFileSync("git", ["fetch", "origin"], { cwd: repoDir });
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "edited-config",
-        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/edited-config" },
-        runSetup: true,
+        worktreeSlug: "upstream-config",
+        source: {
+          kind: "branch-off",
+          baseBranch: "origin/main",
+          branchName: "feature/upstream-config",
+        },
+        runSetup: false,
         paseoHome,
       });
 
       const worktreeConfigPath = join(result.worktreePath, "paseo.json");
       expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
-        worktree: { setup: 'echo "edited" > edited-setup.log' },
+        worktree: { setup: "echo new" },
       });
-      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
-      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
     });
 
-    it("replaces a selected ref's paseo.json symlink without writing through it", async () => {
-      const sourceConfigPath = join(repoDir, "paseo.json");
-      const externalConfigPath = join(tempDir, "external-paseo.json");
-      const committedConfig = JSON.stringify({
-        worktree: { setup: 'echo "committed" > committed-setup.log' },
-      });
-      const editedConfig = JSON.stringify({
-        worktree: { setup: 'echo "edited" > edited-setup.log' },
-      });
-      writeFileSync(externalConfigPath, committedConfig);
-      symlinkSync(externalConfigPath, sourceConfigPath);
+    it("preserves a dangling paseo.json symlink from the selected ref", async () => {
+      const externalConfigPath = join(tempDir, "outside-paseo.json");
+      execFileSync("git", ["checkout", "-b", "symlink-config"], { cwd: repoDir });
+      symlinkSync(externalConfigPath, join(repoDir, "paseo.json"));
       execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
-      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add config link"], {
-        cwd: repoDir,
-      });
-      unlinkSync(sourceConfigPath);
-      writeFileSync(sourceConfigPath, editedConfig);
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json symlink"],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo source" } }),
+      );
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "replace-config-link",
+        worktreeSlug: "symlink-config",
         source: {
           kind: "branch-off",
-          baseBranch: "main",
-          branchName: "feature/replace-config-link",
+          baseBranch: "symlink-config",
+          branchName: "feature/symlink-config",
         },
-        runSetup: true,
+        runSetup: false,
         paseoHome,
       });
 
       const worktreeConfigPath = join(result.worktreePath, "paseo.json");
-      expect(readFileSync(externalConfigPath, "utf8")).toBe(committedConfig);
-      expect(lstatSync(worktreeConfigPath).isFile()).toBe(true);
-      expect(readFileSync(worktreeConfigPath, "utf8")).toBe(editedConfig);
-      expect(readFileSync(join(result.worktreePath, "edited-setup.log"), "utf8")).toBe("edited\n");
-      expect(existsSync(join(result.worktreePath, "committed-setup.log"))).toBe(false);
+      expect(lstatSync(worktreeConfigPath).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(worktreeConfigPath)).toBe(externalConfigPath);
+      expect(existsSync(externalConfigPath)).toBe(false);
+      expect(
+        execFileSync("git", ["status", "--porcelain"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }),
+      ).toBe("");
     });
 
     it("creates a worktree without error when no paseo.json exists in the main repo", async () => {

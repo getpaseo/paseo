@@ -339,7 +339,7 @@ const styles = StyleSheet.create((theme) => ({
   message: {
     flexShrink: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   messageError: {

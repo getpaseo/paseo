@@ -1683,7 +1683,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     paddingVertical: theme.spacing[3],
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   comboboxItem: {
     flexDirection: "row",
@@ -1744,12 +1744,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   comboboxItemLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flexShrink: 0,
   },
   comboboxItemDescription: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
@@ -1757,7 +1757,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   footer: {
     borderTopWidth: 1,
@@ -1768,7 +1768,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   comboboxTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     textAlign: "left",
   },

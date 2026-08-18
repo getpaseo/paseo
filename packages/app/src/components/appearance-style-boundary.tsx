@@ -15,7 +15,6 @@ const appearanceStyleBoundaryMapping = (theme: Theme): Partial<AppearanceStyleBo
   appearanceKey: [
     theme.fontFamily.ui,
     theme.fontFamily.mono,
-    theme.fontSize.xs,
     theme.fontSize.sm,
     theme.fontSize.base,
     theme.fontSize.lg,

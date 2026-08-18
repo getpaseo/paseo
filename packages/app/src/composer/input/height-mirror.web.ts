@@ -37,7 +37,7 @@ export function useComposerHeightMirror({
   minHeight,
   maxHeight,
   onHeight,
-}: Args): void {
+}: Args): (value: string) => void {
   const paramsRef = useRef({ value, minHeight, maxHeight, onHeight });
   paramsRef.current = { value, minHeight, maxHeight, onHeight };
 
@@ -70,34 +70,36 @@ export function useComposerHeightMirror({
     };
   }, []);
 
-  const measure = useCallback(() => {
-    const mirror = mirrorRef.current;
-    const source = textareaRef.current;
-    if (!mirror || !source || typeof window === "undefined") return;
-    if (!(source instanceof HTMLElement)) return;
+  const measure = useCallback(
+    (text: string) => {
+      const mirror = mirrorRef.current;
+      const source = textareaRef.current;
+      if (!mirror || !source || typeof window === "undefined") return;
+      if (!(source instanceof HTMLElement)) return;
 
-    const cs = window.getComputedStyle(source);
-    const ms = mirror.style;
-    for (const prop of COPIED_STYLES) {
-      ms[prop] = cs[prop];
-    }
-    ms.width = `${source.clientWidth}px`;
+      const cs = window.getComputedStyle(source);
+      const ms = mirror.style;
+      for (const prop of COPIED_STYLES) {
+        ms[prop] = cs[prop];
+      }
+      ms.width = `${source.clientWidth}px`;
 
-    const {
-      value: currentValue,
-      minHeight: currentMinHeight,
-      maxHeight: currentMaxHeight,
-      onHeight: currentOnHeight,
-    } = paramsRef.current;
-    // Trailing newline is collapsed by textarea measurement — pad with a space.
-    mirror.value = currentValue.endsWith("\n") ? `${currentValue} ` : currentValue;
+      const {
+        minHeight: currentMinHeight,
+        maxHeight: currentMaxHeight,
+        onHeight: currentOnHeight,
+      } = paramsRef.current;
+      // Trailing newline is collapsed by textarea measurement — pad with a space.
+      mirror.value = text.endsWith("\n") ? `${text} ` : text;
 
-    const next = Math.max(currentMinHeight, Math.min(currentMaxHeight, mirror.scrollHeight));
-    currentOnHeight(next);
-  }, [textareaRef]);
+      const next = Math.max(currentMinHeight, Math.min(currentMaxHeight, mirror.scrollHeight));
+      currentOnHeight(next);
+    },
+    [textareaRef],
+  );
 
   useLayoutEffect(() => {
-    measure();
+    measure(value);
   }, [maxHeight, minHeight, value, measure]);
 
   useEffect(() => {
@@ -109,9 +111,11 @@ export function useComposerHeightMirror({
       const nextWidth = source.clientWidth;
       if (Math.abs(nextWidth - previousWidth) < 1) return;
       previousWidth = nextWidth;
-      measure();
+      measure(paramsRef.current.value);
     });
     observer.observe(source);
     return () => observer.disconnect();
   }, [textareaRef, measure]);
+
+  return measure;
 }

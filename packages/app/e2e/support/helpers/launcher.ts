@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "../../../src/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { getServerId } from "./server-id";
+import { createAgentTabFromMenu } from "./workspace-tabs";
 
 // ─── Navigation ────────────────────────────────────────────────────────────
 
@@ -61,18 +62,28 @@ export async function getActiveTabTestId(page: Page): Promise<string | null> {
 
 // ─── Tab actions ───────────────────────────────────────────────────────────
 
-/** Press Cmd+T (macOS) or Ctrl+T (Linux/Windows) to open a new tab. */
+/** Press Cmd+T (macOS) or Ctrl+T (Linux/Windows) to open the focused pane's New tab menu. */
 export async function pressNewTabShortcut(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+t`);
 }
 
+export async function openNewTabMenuWithShortcut(page: Page): Promise<void> {
+  await pressNewTabShortcut(page);
+  await expect(page.getByRole("menuitem", { name: /^Agent/ })).toBeVisible();
+}
+
+export async function pressDirectNewTabShortcut(page: Page, key: string): Promise<void> {
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+Shift+${key}`);
+}
+
 // ─── Tab bar assertions ───────────────────────────────────────────────────
 
-/** Assert the inline new-agent plus button is visible in the tab bar. */
+/** Assert the inline plus button is visible in the tab bar. */
 export async function assertNewChatTileVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
@@ -85,14 +96,9 @@ export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> 
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Click the inline plus button to create a draft/chat tab. */
+/** Open the new-tab menu and click "New agent" to create a draft/chat tab. */
 export async function clickNewChat(page: Page): Promise<void> {
-  const button = page
-    .getByTestId("workspace-new-agent-tab-inline")
-    .filter({ visible: true })
-    .first();
-  await expect(button).toBeVisible({ timeout: 10_000 });
-  await button.click();
+  await createAgentTabFromMenu(page);
 }
 
 /** Open the new-tab menu and click "New terminal". */
@@ -129,9 +135,9 @@ export async function waitForTabWithTitle(
   ).toBeVisible({ timeout });
 }
 
-/** Assert the inline new-agent plus button is visible in the tab bar. */
+/** Assert the inline plus button is visible in the tab bar. */
 export async function assertSingleNewTabButton(page: Page): Promise<void> {
-  const buttons = page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true });
+  const buttons = page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true });
   const count = await buttons.count();
   expect(count).toBeGreaterThanOrEqual(1);
 }
@@ -162,21 +168,59 @@ export async function sampleTabsDuringTransition(
   page: Page,
   action: () => Promise<void>,
   durationMs = 2_000,
-  intervalMs = 30,
-): Promise<string[][]> {
-  const snapshots: string[][] = [];
-  const startSampling = async () => {
-    const start = Date.now();
-    while (Date.now() - start < durationMs) {
-      snapshots.push(await getTabTestIds(page));
-      await page.waitForTimeout(intervalMs);
+): Promise<Array<Array<{ id: string; width: number }>>> {
+  await page.evaluate((duration) => {
+    const scope = globalThis as typeof globalThis & {
+      __paseoTabTrackFrames?: Array<Array<{ id: string; width: number }>>;
+    };
+    scope.__paseoTabTrackFrames = [];
+    const startedAt = performance.now();
+    function sample() {
+      const tabs = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])',
+        ),
+      ).filter((element) => element.getClientRects().length > 0);
+      scope.__paseoTabTrackFrames?.push(
+        tabs.map((element) => ({
+          id: element.getAttribute("data-testid") ?? "",
+          width: Math.round(element.getBoundingClientRect().width),
+        })),
+      );
+      if (performance.now() - startedAt < duration) {
+        requestAnimationFrame(sample);
+      }
     }
-  };
-
-  const samplingPromise = startSampling();
+    requestAnimationFrame(sample);
+  }, durationMs);
   await action();
-  await samplingPromise;
-  return snapshots;
+  await page.waitForTimeout(durationMs + 100);
+  return page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & {
+      __paseoTabTrackFrames?: Array<Array<{ id: string; width: number }>>;
+    };
+    return scope.__paseoTabTrackFrames ?? [];
+  });
+}
+
+export async function expectTabTitleFits(
+  page: Page,
+  title: string,
+  widthRange: { min: number; max: number },
+): Promise<void> {
+  const tab = page
+    .locator('[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])')
+    .filter({ hasText: title })
+    .filter({ visible: true })
+    .last();
+  await expect(tab).toContainText(title);
+  const tabWidth = await tab.evaluate((element) => element.getBoundingClientRect().width);
+  expect(tabWidth).toBeGreaterThanOrEqual(widthRange.min);
+  expect(tabWidth).toBeLessThanOrEqual(widthRange.max);
+  const label = tab.getByText(title, { exact: true });
+  await expect(label).toBeVisible();
+  const labelFits = await label.evaluate((element) => element.scrollWidth <= element.clientWidth);
+  expect(labelFits).toBe(true);
 }
 
 export function terminalSurfaceLocator(page: Page) {

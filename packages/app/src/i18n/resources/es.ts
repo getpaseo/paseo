@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const es: TranslationResources = {
       interruptAgent: "agente de interrupción",
       queueMessage: "mensaje de cola",
       sendAndInterrupt: "Enviar e interrumpir",
+      sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
       queue: "Cola",
       send: "Enviar",
@@ -337,7 +339,6 @@ export const es: TranslationResources = {
       title: "Tareas",
       empty: "Aún no hay tareas.",
       tasksProgress: "{{completed}}/{{total}} tareas",
-      tasksProgressCurrent: "{{completed}}/{{total}} tareas · {{task}}",
       activity: {
         created: "Se crearon {{count}} tareas",
         added: "Añadida",
@@ -527,6 +528,8 @@ export const es: TranslationResources = {
         screenshotCopied: "Captura copiada al portapapeles",
         elementCopied: "Elemento copiado al portapapeles",
         screenshotFailed: "No se pudo copiar la captura",
+        selectorLoading: "Espera a que la página termine de cargar",
+        selectorFailed: "No se pudo iniciar el selector de elementos",
       },
       annotate: {
         title: "Anotar elemento",
@@ -588,18 +591,22 @@ export const es: TranslationResources = {
         renameAgent: "Cambiar nombre del agente",
       },
       actions: {
+        newTab: "Nueva pestaña",
         newAgent: "Nuevo agente",
         newTerminal: "Nueva terminal",
         preparingTerminal: "Preparando la pestaña del terminal",
         preparingTerminalTooltip: "Preparando terminal...",
         newBrowser: "Nuevo navegador",
+        maximizePane: "Maximizar panel",
+        restorePane: "Restaurar panel",
         exitFocusMode: "Salir del modo de concentración",
         splitRight: "Panel dividido a la derecha",
         splitDown: "Dividir panel hacia abajo",
+        changes: "Cambios",
+        files: "Archivos",
+        pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
-        pinTarget: "Fijar",
-        unpinTarget: "Desfijar",
       },
       explorer: {
         open: "Explorador abierto",
@@ -619,6 +626,7 @@ export const es: TranslationResources = {
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",
+        failedToCloseAgent: "No se pudo cerrar el agente",
       },
       confirmations: {
         unsavedTitle: "Cambios sin guardar",
@@ -878,16 +886,16 @@ export const es: TranslationResources = {
         switchToUnified: "Cambiar a diferencia unificada",
         switchToSplit: "Cambiar a diferencia lado a lado",
         showTreeView: "Mostrar árbol de carpetas",
-        showFlatView: "Mostrar lista plana de archivos",
+        hideTreeView: "Ocultar árbol de carpetas",
         options: "Opciones de diferencia",
         hideWhitespace: "Ocultar espacios en blanco",
         showWhitespace: "Mostrar espacios en blanco",
         scrollLongLines: "Desplazarse por largas filas",
         wrapLongLines: "Envolver largas filas",
-        collapseAll: "Contraer todos los archivos",
-        expandAll: "Expandir todos los archivos",
         collapseAllFolders: "Contraer todas las carpetas",
         expandAllFolders: "Expandir todas las carpetas",
+        collapseAllFiles: "Contraer todos los archivos",
+        expandAllFiles: "Expandir todos los archivos",
         refreshing: "Refrescante",
         refresh: "Refrescar",
         refreshState: "Actualizar el estado de git y {{brand}}",
@@ -904,6 +912,7 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
+        modifiedFile: "Modificado",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits del espacio de trabajo",
@@ -997,6 +1006,8 @@ export const es: TranslationResources = {
       },
       show: {
         label: "Mostrar",
+        branch: "Rama",
+        project: "Proyecto",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Comprobaciones",
@@ -1384,6 +1395,7 @@ export const es: TranslationResources = {
     openPath: "Abrir ruta",
   },
   branchSwitcher: {
+    triggerTooltip: "Cambiar rama del espacio de trabajo",
     currentBranch: "Sucursal actual:{{branchName}}. Presione para cambiar de rama.",
     placeholder: "Cambiar de rama...",
     searchPlaceholder: "Filtrar ramas...",
@@ -1448,6 +1460,7 @@ export const es: TranslationResources = {
     defaultModel: "Por defecto",
     profiles: "Perfiles",
     providers: "Proveedores",
+    model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfiles de agente",
     createProfile: "Crear perfil",
@@ -1651,12 +1664,20 @@ export const es: TranslationResources = {
     backdrop: "Fondo del menú",
   },
   subagents: {
+    title: "Subagentes",
+    pillLabelOne: "1 subagente",
+    pillLabelMany: "{{count}} subagentes",
+    pillLabelRunning: "{{count}} en ejecución",
+    pillLabelFailed: "{{count}} con error",
+    pillLabelNeedsInputOne: "1 necesita datos",
+    pillLabelNeedsInputMany: "{{count}} necesitan datos",
+    pillLabelReadyToReview: "{{count}} para revisar",
     detachAction: "Separar {{label}}",
     detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
     archiveFinishedAction: "Archivar subagentes finalizados",
-    archiveFinishedTooltip: "Archivar finalizados",
+    archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1691,6 +1712,17 @@ export const es: TranslationResources = {
         reloadTitle: "¿Recargar desde el disco?",
         reloadMessage: "Se perderán tus cambios locales.",
       },
+    },
+    files: {
+      label: "Archivos",
+      subtitle: "Archivos del espacio de trabajo",
+      tooltip: "Explorar archivos del espacio de trabajo",
+    },
+    pullRequest: {
+      label: "Solicitud de extracción",
+      subtitle: "Detalles de la solicitud de extracción",
+      emptyTitle: "Aún no hay ninguna solicitud de extracción",
+      emptyDescription: "Crea una solicitud para este checkout y consulta aquí sus detalles.",
     },
     diff: {
       changesLabel: "Cambios",
@@ -1825,8 +1857,10 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Resumen",
     },
+    plugins: pluginSettings.es,
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
@@ -1861,11 +1895,14 @@ export const es: TranslationResources = {
         descriptions: {
           interrupt:
             "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          steer:
+            "Cuando el agente se está ejecutando, Enter dirige el turno activo. Command/Ctrl+Enter pone en cola.",
           queue:
             "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
         },
         options: {
           interrupt: "Interrumpir",
+          steer: "Dirigir",
           queue: "Cola",
         },
       },
@@ -1999,8 +2036,8 @@ export const es: TranslationResources = {
         interfaceFontHint:
           "Utilizado en toda la aplicación. Déjelo vacío para el valor predeterminado del sistema.",
         interfaceFontAccessibility: "Familia de fuentes de interfaz",
-        interfaceSize: "Tamaño de la interfaz",
-        interfaceSizeAccessibility: "Tamaño de fuente de la interfaz",
+        baseSize: "Tamaño base",
+        baseSizeAccessibility: "Tamaño base de la fuente",
         codeFont: "Fuente de código",
         codeFontHint:
           "Se utiliza en código, diferencias y salida del terminal. Déjelo vacío para el valor predeterminado del sistema.",
@@ -2072,6 +2109,7 @@ export const es: TranslationResources = {
         toggleBothSidebars: "Alternar ambas barras laterales",
         toggleSettings: "Alternar configuración",
         toggleFocusMode: "Alternar modo de enfoque",
+        toggleExplorerPaneMaximization: "Alternar maximización del panel Explorador",
         cycleTheme: "Tema del ciclo",
         focusMessageInput: "Entrada de mensaje de enfoque",
         cycleAgentMode: "Alternar modo del agente",
@@ -2459,6 +2497,9 @@ export const es: TranslationResources = {
           "Consulte los documentos para obtener más detalles y las variables de entorno disponibles para estos comandos.",
         setup: "Configuración",
         setupAccessibility: "Comandos de configuración del árbol de trabajo",
+        uncommittedTitle: "Confirma los cambios de paseo.json",
+        uncommittedDescription:
+          "Los árboles de trabajo nuevos usan el script de configuración de la rama base que selecciones.",
         teardown: "Demoler",
         teardownAccessibility: "Comandos de desmontaje del árbol de trabajo",
       },

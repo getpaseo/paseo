@@ -5,7 +5,6 @@ import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
-const WORKER_HEARTBEAT_MISSED_CHECK_LIMIT = 15;
 const WORKER_TERMINATION_GRACE_MS = 10_000;
 
 interface SupervisorLogFileOptions {
@@ -32,10 +31,6 @@ type WorkerLifecycleMessage =
 
 interface SupervisorHeartbeatMessage {
   type: "paseo:supervisor-heartbeat";
-}
-
-interface WorkerHeartbeatMessage {
-  type: "paseo:worker-heartbeat";
 }
 
 interface SupervisorOptions {
@@ -91,15 +86,6 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     };
   }
   return null;
-}
-
-function isWorkerHeartbeatMessage(msg: unknown): msg is WorkerHeartbeatMessage {
-  return (
-    typeof msg === "object" &&
-    msg !== null &&
-    "type" in msg &&
-    (msg as { type?: unknown }).type === "paseo:worker-heartbeat"
-  );
 }
 
 function toRotatingFileStreamSize(size: string): string {
@@ -250,7 +236,6 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const currentChild = child;
-    let missedWorkerHeartbeatChecks = 0;
     const heartbeat = setInterval(() => {
       const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
       if (currentChild.connected) {
@@ -267,23 +252,6 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }, WORKER_HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
 
-    const workerWatchdog = setInterval(() => {
-      if (child !== currentChild || restarting || shuttingDown) {
-        return;
-      }
-      missedWorkerHeartbeatChecks += 1;
-      if (missedWorkerHeartbeatChecks < WORKER_HEARTBEAT_MISSED_CHECK_LIMIT) {
-        return;
-      }
-      writeLifecycleLog("Worker heartbeat timed out; restarting worker", {
-        missedHeartbeatChecks: missedWorkerHeartbeatChecks,
-        supervisorPid: process.pid,
-        workerPid: currentChild.pid ?? null,
-      });
-      requestRestart("worker_heartbeat_timeout");
-    }, WORKER_HEARTBEAT_INTERVAL_MS);
-    workerWatchdog.unref();
-
     child.on("disconnect", () => {
       writeLifecycleLog("Worker IPC channel disconnected");
     });
@@ -299,10 +267,6 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     });
 
     child.on("message", (msg: unknown) => {
-      if (isWorkerHeartbeatMessage(msg)) {
-        missedWorkerHeartbeatChecks = 0;
-        return;
-      }
       const lifecycleMessage = parseLifecycleMessage(msg);
       if (!lifecycleMessage) {
         return;
@@ -333,7 +297,6 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("exit", (code, signal) => {
       clearInterval(heartbeat);
-      clearInterval(workerWatchdog);
       clearForceKillTimer();
       const exitDescriptor = describeExit(code, signal);
       writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });

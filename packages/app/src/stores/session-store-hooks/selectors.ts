@@ -16,6 +16,7 @@ export interface SessionsSnapshot {
     string,
     {
       hasHydratedWorkspaces?: boolean;
+      hasWorkspaceDirectorySnapshot?: boolean;
       workspaces: Map<string, WorkspaceDescriptor>;
       projects?: Map<string, ProjectDescriptor>;
     }
@@ -138,6 +139,18 @@ export function selectHydratedWorkspaceServerIds(
   return serverIds.filter((serverId) => state.sessions[serverId]?.hasHydratedWorkspaces === true);
 }
 
+export function selectWorkspaceDirectoryServerIds(
+  state: SessionsSnapshot,
+  serverIds: readonly string[],
+): string[] {
+  return serverIds.filter((serverId) => {
+    const session = state.sessions[serverId];
+    return (
+      session?.hasHydratedWorkspaces === true || session?.hasWorkspaceDirectorySnapshot === true
+    );
+  });
+}
+
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
@@ -167,6 +180,38 @@ export function selectWorkspaceStructureProjects(
   }
 
   return buildWorkspaceStructureProjects({ sessions });
+}
+
+export function createWorkspaceStructureProjectsSelector(
+  serverIds: readonly string[],
+): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
+  let previousInputs: Array<{
+    workspaces: Map<string, WorkspaceDescriptor> | undefined;
+    projects: Map<string, ProjectDescriptor> | undefined;
+  }> | null = null;
+  let previousProjects: WorkspaceStructureProject[] | null = null;
+
+  return (state) => {
+    const inputs = serverIds.map((serverId) => ({
+      workspaces: state.sessions[serverId]?.workspaces,
+      projects: state.sessions[serverId]?.projects,
+    }));
+    const priorInputs = previousInputs;
+    const unchanged =
+      priorInputs !== null &&
+      inputs.every(
+        (input, index) =>
+          input.workspaces === priorInputs[index]?.workspaces &&
+          input.projects === priorInputs[index]?.projects,
+      );
+    if (unchanged && previousProjects) {
+      return previousProjects;
+    }
+
+    previousInputs = inputs;
+    previousProjects = selectWorkspaceStructureProjects(state, serverIds);
+    return previousProjects;
+  };
 }
 
 export function selectProject(

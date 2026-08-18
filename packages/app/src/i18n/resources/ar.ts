@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
   common: {
@@ -96,6 +97,7 @@ export const ar: TranslationResources = {
       interruptAgent: "عامل المقاطعة",
       queueMessage: "رسالة قائمة الانتظار",
       sendAndInterrupt: "إرسال ومقاطعة",
+      sendAndSteer: "إرسال وتوجيه",
       sendMessage: "أرسل رسالة",
       queue: "طابور",
       send: "يرسل",
@@ -334,7 +336,6 @@ export const ar: TranslationResources = {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
       tasksProgress: "{{completed}}/{{total}} مهام",
-      tasksProgressCurrent: "{{completed}}/{{total}} مهام · {{task}}",
       activity: {
         created: "تم إنشاء {{count}} مهام",
         added: "أُضيفت",
@@ -523,6 +524,8 @@ export const ar: TranslationResources = {
         screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
         elementCopied: "تم نسخ العنصر إلى الحافظة",
         screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+        selectorLoading: "انتظر حتى ينتهي تحميل الصفحة",
+        selectorFailed: "تعذّر بدء محدد العنصر",
       },
       annotate: {
         title: "التعليق على العنصر",
@@ -583,18 +586,22 @@ export const ar: TranslationResources = {
         renameAgent: "إعادة تسمية الوكيل",
       },
       actions: {
+        newTab: "علامة تبويب جديدة",
         newAgent: "وكيل جديد",
         newTerminal: "محطة جديدة",
         preparingTerminal: "إعداد علامة التبويب المحطة الطرفية",
         preparingTerminalTooltip: "جارٍ تحضير المحطة...",
         newBrowser: "متصفح جديد",
+        maximizePane: "تكبير الجزء",
+        restorePane: "استعادة الجزء",
         exitFocusMode: "إنهاء وضع التركيز",
         splitRight: "تقسيم الجزء الأيمن",
         splitDown: "تقسيم الجزء لأسفل",
+        changes: "التغييرات",
+        files: "الملفات",
+        pullRequest: "طلب السحب",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
-        pinTarget: "تثبيت",
-        unpinTarget: "إلغاء التثبيت",
       },
       explorer: {
         open: "افتح المستكشف",
@@ -614,6 +621,7 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        failedToCloseAgent: "فشل في إغلاق الوكيل",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",
@@ -847,16 +855,16 @@ export const ar: TranslationResources = {
         switchToUnified: "التبديل إلى الفرق الموحد",
         switchToSplit: "التبديل إلى الفرق جنبًا إلى جنب",
         showTreeView: "إظهار شجرة المجلدات",
-        showFlatView: "إظهار قائمة الملفات المسطحة",
+        hideTreeView: "إخفاء شجرة المجلدات",
         options: "خيارات الفرق",
         hideWhitespace: "إخفاء المسافة البيضاء",
         showWhitespace: "إظهار المسافة البيضاء",
         scrollLongLines: "قم بتمرير الخطوط الطويلة",
         wrapLongLines: "لف الخطوط الطويلة",
-        collapseAll: "طي كافة الملفات",
-        expandAll: "قم بتوسيع كافة الملفات",
         collapseAllFolders: "طي كافة المجلدات",
         expandAllFolders: "توسيع كافة المجلدات",
+        collapseAllFiles: "طي كافة الملفات",
+        expandAllFiles: "توسيع كافة الملفات",
         refreshing: "منعش",
         refresh: "ينعش",
         refreshState: "تحديث حالة git و{{brand}}",
@@ -873,6 +881,7 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        modifiedFile: "معدّل",
         commits: {
           title: "الإيداعات",
           countLabel: "{{count}} من إيداعات مساحة العمل",
@@ -966,6 +975,8 @@ export const ar: TranslationResources = {
       },
       show: {
         label: "إظهار",
+        branch: "الفرع",
+        project: "المشروع",
         host: "المضيف",
         changeRequest: "طلب السحب",
         checks: "الفحوصات",
@@ -1344,6 +1355,7 @@ export const ar: TranslationResources = {
     openPath: "فتح المسار",
   },
   branchSwitcher: {
+    triggerTooltip: "تبديل فرع مساحة العمل",
     currentBranch: "الفرع الحالي:{{branchName}}. اضغط لتبديل الفرع.",
     placeholder: "تبديل الفرع...",
     searchPlaceholder: "تصفية الفروع...",
@@ -1407,6 +1419,7 @@ export const ar: TranslationResources = {
     defaultModel: "تقصير",
     profiles: "الملفات الشخصية",
     providers: "المزودون",
+    model: "النموذج",
     editProfiles: "تحرير",
     editProfilesLabel: "تحرير ملفات الوكيل",
     createProfile: "إنشاء ملف شخصي",
@@ -1608,12 +1621,20 @@ export const ar: TranslationResources = {
     backdrop: "خلفية القائمة",
   },
   subagents: {
+    title: "الوكلاء الفرعيون",
+    pillLabelOne: "وكيل فرعي واحد",
+    pillLabelMany: "{{count}} وكلاء فرعيين",
+    pillLabelRunning: "{{count}} قيد التشغيل",
+    pillLabelFailed: "{{count}} فشلت",
+    pillLabelNeedsInputOne: "واحد يحتاج إدخالاً",
+    pillLabelNeedsInputMany: "{{count}} تحتاج إدخالاً",
+    pillLabelReadyToReview: "{{count}} جاهزة للمراجعة",
     detachAction: "فصل {{label}}",
     detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
-    archiveFinishedTooltip: "أرشفة المكتملين",
+    archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1648,6 +1669,17 @@ export const ar: TranslationResources = {
         reloadTitle: "إعادة التحميل من القرص؟",
         reloadMessage: "ستفقد تغييراتك المحلية.",
       },
+    },
+    files: {
+      label: "الملفات",
+      subtitle: "ملفات مساحة العمل",
+      tooltip: "تصفح ملفات مساحة العمل",
+    },
+    pullRequest: {
+      label: "طلب السحب",
+      subtitle: "تفاصيل طلب السحب",
+      emptyTitle: "لا يوجد طلب سحب بعد",
+      emptyDescription: "أنشئ طلب سحب لنسخة العمل هذه لعرض تفاصيله هنا.",
     },
     diff: {
       changesLabel: "التغييرات",
@@ -1782,8 +1814,10 @@ export const ar: TranslationResources = {
       providers: "مقدمي الخدمات",
       usage: "الاستخدام",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "نظرة عامة",
     },
+    plugins: pluginSettings.ar,
     metadataGeneration: {
       title: "إنشاء البيانات الوصفية",
       description:
@@ -1816,10 +1850,13 @@ export const ar: TranslationResources = {
         descriptions: {
           interrupt:
             "عند تشغيل الوكيل، يوقف Enter التشغيل. Command/Ctrl+Enter يضيف إلى قائمة الانتظار.",
+          steer:
+            "عند تشغيل الوكيل، يوجّه Enter الجولة النشطة. يضيف Command/Ctrl+Enter إلى قائمة الانتظار.",
           queue: "عند تشغيل الوكيل، يضيف Enter إلى قائمة الانتظار. Command/Ctrl+Enter يرسل.",
         },
         options: {
           interrupt: "مقاطعة",
+          steer: "توجيه",
           queue: "طابور",
         },
       },
@@ -1951,8 +1988,8 @@ export const ar: TranslationResources = {
         interfaceFont: "خط الواجهة",
         interfaceFontHint: "تستخدم عبر التطبيق. اتركه فارغًا للإعداد الافتراضي للنظام",
         interfaceFontAccessibility: "عائلة خطوط الواجهة",
-        interfaceSize: "حجم الواجهة",
-        interfaceSizeAccessibility: "حجم الخط في الواجهة",
+        baseSize: "الحجم الأساسي",
+        baseSizeAccessibility: "حجم الخط الأساسي",
         codeFont: "خط الكود",
         codeFontHint:
           "تستخدم في الكود والاختلافات والمخرجات الطرفية. اتركه فارغًا للإعداد الافتراضي للنظام",
@@ -2024,6 +2061,7 @@ export const ar: TranslationResources = {
         toggleBothSidebars: "تبديل كلا الشريطين الجانبيين",
         toggleSettings: "تبديل الإعدادات",
         toggleFocusMode: "تبديل وضع التركيز",
+        toggleExplorerPaneMaximization: "تبديل تكبير جزء المستكشف",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
         cycleAgentMode: "تبديل وضع الوكيل",
@@ -2404,6 +2442,9 @@ export const ar: TranslationResources = {
         docsTooltip: "راجع المستندات لمزيد من التفاصيل ومتغيرات البيئة المتاحة لهذه الأوامر",
         setup: "يثبت",
         setupAccessibility: "أوامر إعداد شجرة العمل",
+        uncommittedTitle: "ثبّت تغييرات paseo.json",
+        uncommittedDescription:
+          "تستخدم أشجار العمل الجديدة نص الإعداد البرمجي من الفرع الأساسي الذي تحدده.",
         teardown: "هدم",
         teardownAccessibility: "أوامر هدم شجرة العمل",
       },

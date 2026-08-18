@@ -66,6 +66,8 @@ const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
 // The same marks these things carry on the workspace row itself, so the menu and the row it
 // configures name each item the same way twice.
 const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
+  branch: withUnistyles(GitBranch),
+  project: withUnistyles(Folder),
   host: withUnistyles(Server),
   changeRequest: withUnistyles(GitPullRequest),
   services: withUnistyles(Globe),
@@ -99,6 +101,8 @@ const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
 };
 
 const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
+  branch: "sidebar.display.show.branch",
+  project: "sidebar.display.show.project",
   host: "sidebar.display.show.host",
   changeRequest: "sidebar.display.show.changeRequest",
   services: "sidebar.display.show.services",

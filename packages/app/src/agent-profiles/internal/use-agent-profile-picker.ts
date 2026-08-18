@@ -1,7 +1,5 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -9,21 +7,22 @@ import { useSessionStore } from "@/stores/session-store";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
-import { materializeAgentProfile, toAgentConfigApply } from "./materialize-profile";
+import {
+  materializeAgentProfile,
+  reconcileMaterializedProfileMode,
+  toAgentConfigApply,
+  type MaterializedAgentProfile,
+} from "./materialize-profile";
 import { buildAgentProfileTags } from "./profile-summary";
 import { useAgentProfiles } from "./use-agent-profiles";
 
-/** The draft composer's own setters. Applying a profile drives them like a user would. */
+/** The draft composer owns profile application as one state transition. */
 export interface DraftAgentProfileControls {
-  selectProvider: (provider: AgentProvider) => void;
-  selectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
-  selectMode: (modeId: string) => void;
-  selectThinkingOption: (thinkingOptionId: string) => void;
-  setFeature?: (featureId: string, value: unknown) => void;
+  applyProfile: (profile: MaterializedAgentProfile) => void;
 }
 
 export type AgentProfileApplyTarget =
-  | { kind: "agent"; agentId: string }
+  | { kind: "agent"; agentId: string; availableModeIds: readonly string[] | null }
   | { kind: "draft"; controls: DraftAgentProfileControls };
 
 /** Everything the model picker renders for one profile. It never sees the profile itself. */
@@ -107,8 +106,7 @@ export function useAgentProfilePicker(
   );
 
   const persistSelection = useCallback(
-    (profile: AgentProfile) => {
-      const resolved = materializeAgentProfile(profile);
+    (resolved: MaterializedAgentProfile) => {
       void updatePreferences((current) =>
         mergeCreateAgentSelectionPreferences({
           preferences: current,
@@ -135,35 +133,21 @@ export function useAgentProfilePicker(
       }
       const resolved = materializeAgentProfile(profile);
 
-      // Persist on both paths, before driving the controls. The draft form drops
-      // its local feature values when the provider changes, so preferences are
-      // the only channel that survives a profile that switches provider.
-      persistSelection(profile);
-
       if (target.kind === "draft") {
-        const { controls } = target;
-        if (resolved.modelId) {
-          controls.selectProviderAndModel(resolved.provider, resolved.modelId);
-        } else {
-          controls.selectProvider(resolved.provider);
-        }
-        if (resolved.modeId) {
-          controls.selectMode(resolved.modeId);
-        }
-        if (resolved.thinkingOptionId) {
-          controls.selectThinkingOption(resolved.thinkingOptionId);
-        }
-        for (const [featureId, value] of Object.entries(resolved.featureValues)) {
-          controls.setFeature?.(featureId, value);
-        }
+        target.controls.applyProfile(resolved);
         return;
       }
 
+      const reconciled = reconcileMaterializedProfileMode(resolved, target.availableModeIds);
+      if (!reconciled) {
+        return;
+      }
+      persistSelection(reconciled);
       if (!client) {
         return;
       }
       void client
-        .applyAgentConfig(target.agentId, toAgentConfigApply(resolved))
+        .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[useAgentProfilePicker] applyAgentConfig failed", error);

@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
+import { openChangesPanel } from "../support/helpers/workspace-tabs";
 
 const COMMIT_SUBJECT = "Show commit timestamps";
 
@@ -13,7 +15,7 @@ test("commit history explains when the workspace has no commits ahead of its bas
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: workspace.repoPath, stdio: "ignore" });
   await workspace.navigateTo();
 
-  await page.getByRole("button", { name: "Open explorer" }).click();
+  await openChangesPanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -33,7 +35,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
 
-  await page.getByRole("button", { name: "Open explorer" }).click();
+  await openChangesPanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -50,13 +52,15 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("commit-diff-toolbar")).toBeVisible({ timeout: 30_000 });
   const layoutToggle = panel.getByTestId("commit-diff-toggle-layout");
   await expect(layoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
-  await expect(panel.getByTestId("diff-code-row-0")).toBeVisible({ timeout: 30_000 });
+  await expect(panel.getByTestId("git-diff-canvas")).toBeVisible({ timeout: 30_000 });
+  await expectCommitDiffHeaderGeometry(panel);
 
   await layoutToggle.click();
   await expect(layoutToggle).toHaveAccessibleName("Switch to unified diff");
-  await expect(panel.getByTestId("diff-code-row-0")).toHaveCount(0);
-  await expect(panel.getByTestId(/^diff-file-0-group-\d+$/).first()).toBeVisible();
+  await expect(panel.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
+  await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
 
+  await page.getByTestId(/^workspace-tab-commit_diff_/).hover();
   await page.getByTestId(/^workspace-commit-diff-close-/).click();
   await expect(panel).toHaveCount(0);
   await commitRow.click();
@@ -67,7 +71,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
 
   await page.setViewportSize({ width: 480, height: 900 });
   await expect(panel.getByTestId("commit-diff-toolbar")).toHaveCount(0);
-  await expect(panel.getByTestId("diff-code-row-0")).toBeVisible();
+  await expect(panel.getByTestId("git-diff-canvas")).toBeVisible();
 });
 
 async function createFeatureCommit(repoPath: string): Promise<void> {
@@ -83,4 +87,26 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
       GIT_COMMITTER_DATE: "2020-01-15T12:00:00Z",
     },
   });
+}
+
+async function expectCommitDiffHeaderGeometry(panel: Locator): Promise<void> {
+  const [header, content, name, stat] = await Promise.all([
+    panel.getByTestId("diff-file-0").boundingBox(),
+    panel.getByTestId("diff-file-0-header-content").boundingBox(),
+    panel.getByTestId("diff-file-0-name").boundingBox(),
+    panel.getByTestId("diff-file-0-stat").boundingBox(),
+  ]);
+  expect(header).not.toBeNull();
+  expect(content).not.toBeNull();
+  expect(name).not.toBeNull();
+  expect(stat).not.toBeNull();
+  expect(header!.height).toBeCloseTo(30, 0);
+  expect(content!.x).toBeCloseTo(header!.x, 0);
+  expect(content!.width).toBeCloseTo(header!.width, 0);
+  expect(name!.x - header!.x).toBeCloseTo(12, 0);
+  expect(name!.x + name!.width).toBeLessThan(stat!.x);
+  expect(Math.abs(name!.y + name!.height / 2 - (stat!.y + stat!.height / 2))).toBeLessThanOrEqual(
+    1,
+  );
+  expect(stat!.x + stat!.width).toBeLessThan(header!.x + header!.width);
 }

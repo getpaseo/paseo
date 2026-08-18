@@ -37,6 +37,12 @@ and it loses. Selections used to be dropped entirely for exactly that reason.
 The consequence for callers: an `onSelect` on iOS runs a beat after the press. Don't add a second
 delay on top of it, and don't read state that the same press mutated.
 
+This is why a row inside a menu surface goes through `selectItem` rather than calling its handler
+from its own `Pressable`. `MenuItem` is not the only row shape on the engine — `ComposerTrackRow`
+is another, with its own icons and hover-revealed actions — but both hand the press to the engine
+and take `closeOnSelect` to say whether choosing them ends the surface. A row that owns its press
+outright leaves the surface open behind whatever it opened, and skips the iOS wait.
+
 ## Pages
 
 A submenu is a page, declared as data on the surface and reached by a `MenuSubTrigger` whose `id`

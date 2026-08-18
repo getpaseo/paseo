@@ -16,6 +16,7 @@ import {
   BottomSheetBackdrop,
   BottomSheetScrollView,
   BottomSheetTextInput,
+  KEYBOARD_STATUS,
   useBottomSheetInternal,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
@@ -25,9 +26,13 @@ import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
-import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
+import {
+  getBottomSheetVisibleContentHeight,
+  getCompactSheetSafeAreaPadding,
+} from "@/components/adaptive-modal-sheet-layout";
 import { createControlGeometry } from "@/components/ui/control-geometry";
 import { isNative, isWeb } from "@/constants/platform";
+import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -38,6 +43,8 @@ export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
   resetKey?: string | number;
   placeholder?: string;
   autoFocus?: boolean;
@@ -105,7 +112,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   title: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   headerActions: {
@@ -150,7 +157,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   inlineTitle: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
@@ -158,7 +165,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     paddingVertical: theme.spacing[2],
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   desktopScrollContainer: {
     flexShrink: 1,
@@ -262,14 +269,15 @@ function BottomSheetVisibleContent({ children }: { children: ReactNode }) {
         ? animatedPosition.get()
         : Math.min(animatedPosition.get(), initialDetentPosition);
 
+    const keyboardState = animatedKeyboardState.get();
     return {
-      height: Math.max(
-        0,
-        containerHeight -
-          contentPosition -
-          handleHeight -
-          animatedKeyboardState.get().heightWithinContainer,
-      ),
+      height: getBottomSheetVisibleContentHeight({
+        containerHeight,
+        contentPosition,
+        handleHeight,
+        keyboardHeight: keyboardState.heightWithinContainer,
+        isKeyboardVisible: keyboardState.status === KEYBOARD_STATUS.SHOWN,
+      }),
     };
   }, [animatedDetentsState, animatedKeyboardState, animatedLayoutState, animatedPosition]);
 
@@ -409,6 +417,8 @@ export function SheetHeaderView({
             placeholder={search.placeholder ?? t("common.actions.search")}
             resetKey={search.resetKey}
             onChangeText={handleSearchChange}
+            onFocus={search.onFocus}
+            onBlur={search.onBlur}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus={search.autoFocus}
@@ -466,6 +476,8 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
             placeholder={header.search.placeholder ?? t("common.actions.search")}
             resetKey={header.search.resetKey}
             onChangeText={header.search.onChange}
+            onFocus={header.search.onFocus}
+            onBlur={header.search.onBlur}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus={header.search.autoFocus}
@@ -518,17 +530,19 @@ export function AdaptiveModalSheet({
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
+  const isKeyboardVisible = useKeyboardVisibility();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
       getCompactSheetSafeAreaPadding({
         isCompact: isMobile,
+        isKeyboardVisible,
         hasFooter: Boolean(footer),
         baseContentPadding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
         baseFooterPadding: theme.spacing[3],
         safeAreaBottom: insets.bottom,
       }),
-    [footer, insets.bottom, isMobile, theme.spacing],
+    [footer, insets.bottom, isKeyboardVisible, isMobile, theme.spacing],
   );
   const compactContentStyle = useMemo(
     () => [

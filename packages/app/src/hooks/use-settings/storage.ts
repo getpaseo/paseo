@@ -1,4 +1,5 @@
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
+import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import { parseAppLanguage, type AppLanguage } from "@/i18n/locales";
@@ -13,13 +14,16 @@ import {
   parseSidebarRowItems,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
-import { THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import { isNative } from "@/constants/platform";
+import { FONT_SIZE, THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import { z } from "zod";
+import { readValidatedJson } from "@/storage/validated-storage";
 
 export const APP_SETTINGS_KEY = "@paseo:app-settings";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
-export type SendBehavior = "interrupt" | "queue";
+export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
@@ -28,6 +32,7 @@ export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
 const VALID_THEMES = new Set<string>(THEME_OPTIONS.map((option) => option.name));
+const ThemePreferenceSchema = z.enum(THEME_OPTIONS.map((option) => option.name));
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
@@ -39,9 +44,13 @@ const VALID_TOOL_CALL_DETAIL_LEVELS = new Set<ToolCallDetailLevel>(["overview", 
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
-export const DEFAULT_UI_FONT_SIZE = 16; // == FONT_SIZE.base
-export const MIN_UI_FONT_SIZE = 11;
-export const MAX_UI_FONT_SIZE = 24;
+export function defaultUiBaseFontSize(native: boolean): number {
+  return native ? 15 : FONT_SIZE.base;
+}
+
+export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
+export const MIN_UI_BASE_FONT_SIZE = 10;
+export const MAX_UI_BASE_FONT_SIZE = 21;
 export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
@@ -56,7 +65,7 @@ export interface AppSettings {
   useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
-  uiFontSize: number; // clamped px, default 16
+  uiBaseFontSize: number; // clamped px, platform default 14 or 15
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
@@ -74,14 +83,49 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
-/**
- * `sidebarRowItems` is widened back to `unknown` because it is still read for a value the
- * current shape no longer has — see `isChecksHiddenByLegacyRowItem`.
- */
-type StoredAppSettings = Partial<Omit<AppSettings, "sidebarRowItems">> & {
-  compactToolCalls?: unknown;
-  sidebarRowItems?: unknown;
-};
+const SidebarRowItemsSchema = z.strictObject({
+  branch: z.boolean().optional(),
+  project: z.boolean().optional(),
+  host: z.boolean().optional(),
+  changeRequest: z.boolean().optional(),
+  services: z.boolean().optional(),
+  checks: z.boolean().optional(),
+  scripts: z.boolean().optional(),
+});
+
+const StoredAppSettingsSchema = z.strictObject({
+  theme: ThemePreferenceSchema.optional(),
+  language: z
+    .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
+    .optional(),
+  sendBehavior: z.enum(["interrupt", "steer", "queue"]).optional(),
+  serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).optional(),
+  terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
+  useLegacyTerminalRenderer: z.boolean().optional(),
+  uiFontFamily: z.string().optional(),
+  monoFontFamily: z.string().optional(),
+  uiBaseFontSize: z.union([z.number(), z.string()]).optional(),
+  // COMPAT(uiFontSizeScale): replaced by the literal base size in v0.4, remove after 2027-08-17.
+  uiFontSize: z.union([z.number(), z.string()]).optional(),
+  codeFontSize: z.union([z.number(), z.string()]).optional(),
+  syntaxTheme: z.string().refine(isSyntaxThemeId).optional(),
+  workspaceTitleSource: z.enum(["title", "branch"]).optional(),
+  sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).optional(),
+  sidebarRowItems: SidebarRowItemsSchema.optional(),
+  sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional(),
+  autoExpandReasoning: z.boolean().optional(),
+  toolCallDetailLevel: z.enum(["overview", "detailed"]).optional(),
+  compactToolCalls: z.boolean().optional(),
+  chatOutlineEnabled: z.boolean().optional(),
+  vimKeybindings: z.boolean().optional(),
+  // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
+  manageBuiltInDaemon: z.boolean().optional(),
+  releaseChannel: z.enum(["stable", "beta"]).optional(),
+});
+
+const LegacyRendererSettingsSchema = StoredAppSettingsSchema;
+
+type StoredAppSettings = z.infer<typeof StoredAppSettingsSchema>;
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
@@ -92,7 +136,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   useLegacyTerminalRenderer: false,
   uiFontFamily: "",
   monoFontFamily: "",
-  uiFontSize: DEFAULT_UI_FONT_SIZE,
+  uiBaseFontSize: DEFAULT_UI_BASE_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
@@ -114,6 +158,7 @@ export const DEFAULT_APP_SETTINGS: Settings = {
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface DesktopSettingsBridge {
@@ -146,17 +191,24 @@ export async function saveAppSettings(input: {
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
   try {
-    const stored = await deps.storage.getItem(APP_SETTINGS_KEY);
+    const stored = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
     if (stored) {
-      return normalizeAppSettings(JSON.parse(stored));
+      const normalized = normalizeAppSettings(stored);
+      if (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) {
+        await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(normalized));
+      }
+      return normalized;
     }
 
-    const legacyStored = await deps.storage.getItem(LEGACY_SETTINGS_KEY);
+    const legacyStored = await readValidatedJson(
+      deps.storage,
+      LEGACY_SETTINGS_KEY,
+      LegacyRendererSettingsSchema,
+    );
     if (legacyStored) {
-      const legacyParsed = JSON.parse(legacyStored) as Record<string, unknown>;
       const next = {
         ...DEFAULT_CLIENT_SETTINGS,
-        ...pickAppSettingsFromLegacy(legacyParsed),
+        ...pickAppSettingsFromLegacy(legacyStored),
       } satisfies AppSettings;
       await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
       return next;
@@ -197,11 +249,11 @@ export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Setti
 }
 
 export function normalizeAppSettings(value: unknown): AppSettings {
-  const stored =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as StoredAppSettings)
-      : {};
-  return { ...DEFAULT_CLIENT_SETTINGS, ...pickAppSettings(stored) };
+  const result = StoredAppSettingsSchema.safeParse(value);
+  return {
+    ...DEFAULT_CLIENT_SETTINGS,
+    ...pickAppSettings(result.success ? result.data : {}),
+  };
 }
 
 function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLevel | null {
@@ -256,7 +308,11 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
     result.theme = stored.theme;
   }
-  if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
+  if (
+    stored.sendBehavior === "interrupt" ||
+    stored.sendBehavior === "steer" ||
+    stored.sendBehavior === "queue"
+  ) {
     result.sendBehavior = stored.sendBehavior;
   }
   if (
@@ -309,12 +365,20 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (monoFontFamily !== null) {
     result.monoFontFamily = monoFontFamily;
   }
-  const uiFontSize = parseClampedFontSize(stored.uiFontSize, {
-    min: MIN_UI_FONT_SIZE,
-    max: MAX_UI_FONT_SIZE,
+  const uiBaseFontSize = parseClampedFontSize(stored.uiBaseFontSize, {
+    min: MIN_UI_BASE_FONT_SIZE,
+    max: MAX_UI_BASE_FONT_SIZE,
   });
-  if (uiFontSize !== null) {
-    result.uiFontSize = uiFontSize;
+  if (uiBaseFontSize !== null) {
+    result.uiBaseFontSize = uiBaseFontSize;
+  } else {
+    const legacyUiFontSize = parseClampedFontSize(stored.uiFontSize, {
+      min: 11,
+      max: 24,
+    });
+    if (legacyUiFontSize !== null) {
+      result.uiBaseFontSize = Math.round((FONT_SIZE.base * legacyUiFontSize) / 16);
+    }
   }
   const codeFontSize = parseClampedFontSize(stored.codeFontSize, {
     min: MIN_CODE_FONT_SIZE,
@@ -334,7 +398,9 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   return result;
 }
 
-function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {
+function pickAppSettingsFromLegacy(
+  legacy: z.infer<typeof LegacyRendererSettingsSchema>,
+): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
     result.theme = legacy.theme;
@@ -420,15 +486,11 @@ async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): P
 
 async function loadRendererSettingsPayload(
   storage: KeyValueStorage,
-): Promise<Record<string, unknown> | null> {
-  const current = await storage.getItem(APP_SETTINGS_KEY);
+): Promise<z.infer<typeof LegacyRendererSettingsSchema> | null> {
+  const current = await readValidatedJson(storage, APP_SETTINGS_KEY, LegacyRendererSettingsSchema);
   if (current) {
-    return JSON.parse(current) as Record<string, unknown>;
+    return current;
   }
 
-  const legacy = await storage.getItem(LEGACY_SETTINGS_KEY);
-  if (!legacy) {
-    return null;
-  }
-  return JSON.parse(legacy) as Record<string, unknown>;
+  return readValidatedJson(storage, LEGACY_SETTINGS_KEY, LegacyRendererSettingsSchema);
 }

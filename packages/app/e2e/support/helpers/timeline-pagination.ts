@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { readReplicaCache } from "./replica-cache-storage";
 import {
   delayAgentBootstrapTailResponse,
   delayAgentOlderTimelineResponse,
@@ -37,6 +38,12 @@ const HISTORY_START_THRESHOLD_PX = 96;
 interface TimelineViewportSnapshot {
   scrollHeight: number;
   scrollTop: number;
+}
+
+interface PersistedCanonicalTimelineRange {
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
 }
 
 export interface TimelinePresentationSnapshot {
@@ -284,26 +291,43 @@ export async function reloadAgentTimelineFromPersistedReplica(
   agent: LongTimelineAgent,
 ): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((agentId) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{
-            timeline?: {
-              agentId?: string;
-              items?: unknown[];
-            } | null;
-          }>;
-        };
-        const timeline = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline;
-        return timeline?.items?.length === 50;
-      }, agent.agentId),
-    )
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      const timeline = cache?.hosts?.find(
+        (host) => host.timeline?.agentId === agent.agentId,
+      )?.timeline;
+      return timeline?.items?.length === 50;
+    })
     .toBe(true);
 
   await page.reload();
   await expectTimelinePromptVisible(page, agent.newestPrompt);
+}
+
+export async function waitForPersistedCanonicalTimelineRange(
+  page: Page,
+  agentId: string,
+): Promise<PersistedCanonicalTimelineRange> {
+  const readRange = async () => {
+    const cache = await readReplicaCache(page);
+    if (cache?.version !== 6) return null;
+    const range = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline?.range;
+    if (
+      typeof range?.epoch !== "string" ||
+      typeof range.startSeq !== "number" ||
+      typeof range.endSeq !== "number"
+    ) {
+      return null;
+    }
+    return { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq };
+  };
+
+  await expect.poll(readRange).not.toBeNull();
+  const range = await readRange();
+  if (!range) {
+    throw new Error(`Persisted canonical timeline range is missing for ${agentId}`);
+  }
+  return range;
 }
 
 export async function holdNextOlderTimelinePage(

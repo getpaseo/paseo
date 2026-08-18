@@ -1,9 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
   type CollapsedProjectsState,
+  type PersistedCollapsedProjects,
   mergePersistedCollapsedProjects,
+  PersistedCollapsedProjectsSchema,
   serializeCollapsedProjects,
   setProjectCollapsed,
   togglePinnedCollapsed,
@@ -19,7 +22,7 @@ interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
 }
 
 export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsState>()(
-  persist(
+  persist<SidebarCollapsedSectionsState, [], [], PersistedCollapsedProjects>(
     (set) => ({
       collapsedProjectKeys: new Set(),
       collapsedStatusGroupKeys: new Set(),
@@ -34,13 +37,10 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
     }),
     {
       name: "sidebar-collapsed-sections",
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createValidatedPersistStorage(AsyncStorage, PersistedCollapsedProjectsSchema),
       partialize: (state) => serializeCollapsedProjects(state),
       merge: (persistedState, currentState) =>
-        mergePersistedCollapsedProjects(
-          persistedState as { collapsedProjectKeys?: unknown } | undefined,
-          currentState,
-        ),
+        mergePersistedCollapsedProjects(persistedState, currentState),
     },
   ),
 );

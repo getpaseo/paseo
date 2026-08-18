@@ -62,6 +62,4 @@ Prepare the handoff in a dedicated workspace:
 
 Do not encode independence as a create mode and do not invoke CLI or wire-level detach operations. Detach is a user gesture in the subagents track.
 
-Leave `notifyOnFinish` omitted unless the user explicitly wants no callback.
-
-Don't wait by default — the user decides whether to follow along or move on. Tell them the agent ID and how to follow along (the paseo skill explains).
+Do not wait or poll for the agent to finish.

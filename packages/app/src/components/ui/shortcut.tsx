@@ -72,7 +72,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   text: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

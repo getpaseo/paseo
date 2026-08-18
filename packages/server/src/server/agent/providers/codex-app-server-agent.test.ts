@@ -46,6 +46,7 @@ describe("mapCodexPlanUpdateToTodo", () => {
     });
   });
 });
+
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
@@ -143,6 +144,144 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   internals.spawnAppServer = async () => appServer.child;
   return provider;
 }
+
+async function startPublicSteeringSession(
+  appServer: FakeCodexAppServer,
+  resolveSlashCommandInvocation?: (prompt: AgentPromptInput) => Promise<{
+    commandName: string;
+    args?: string;
+  } | null>,
+): Promise<{ session: AgentSession; paseoTurnId: string }> {
+  const session = new CodexAppServerAgentSession(
+    createConfig({ cwd: "/workspace/project" }),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+    { resolveSlashCommandInvocation },
+  );
+  const started = await session.startTurn("first");
+  await appServer.waitForTurnStart();
+  appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return { session, paseoTurnId: started.turnId };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+describe("Codex active-turn steering admission", () => {
+  test("does not steer B when A completes while command resolution is pending", async () => {
+    const commandResolution = deferred<{ commandName: string } | null>();
+    const resolverEntered = deferred<void>();
+    const appServer = createFakeCodexAppServer();
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer, async (prompt) => {
+      if (prompt !== "/held") return null;
+      resolverEntered.resolve();
+      return commandResolution.promise;
+    });
+
+    const steer = session.steerActiveTurn!("/held", {
+      expectedTurnId: paseoTurnId,
+      clientMessageId: "steer-A",
+    });
+    await resolverEntered.promise;
+    appServer.completeTurn({ threadId: "thread-1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const startedB = await session.startTurn("second");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-B" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    commandResolution.resolve(null);
+
+    await expect(steer).resolves.toEqual({ status: "unavailable" });
+    expect(startedB.turnId).not.toBe(paseoTurnId);
+    expect(appServer.requests().filter((request) => request.method === "turn/steer")).toEqual([]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test.each([
+    ["method unavailable", -32601, "method not found", undefined, "unavailable"],
+    ["no active turn", -32600, "no active turn to steer", undefined, "unavailable"],
+    [
+      "expected turn mismatch",
+      -32600,
+      "expected active turn id `native-A` but found `native-B`",
+      undefined,
+      "unavailable",
+    ],
+    [
+      "output schema mismatch",
+      -32600,
+      "active turn uses a different output schema",
+      undefined,
+      "unavailable",
+    ],
+    [
+      "review turn",
+      -32600,
+      "cannot steer a review turn",
+      { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } },
+      "unavailable",
+    ],
+    ["unknown invalid request", -32600, "input must not be empty", undefined, "throws"],
+  ] as const)("classifies JSON-RPC $0", async (_name, code, message, data, expected) => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ __jsonRpcError: { code, message, ...(data ? { data } : {}) } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const steer = session.steerActiveTurn!("follow up", {
+      expectedTurnId: paseoTurnId,
+      clientMessageId: "steer-frame",
+    });
+    if (expected === "unavailable") {
+      await expect(steer).resolves.toEqual({ status: "unavailable" });
+    } else {
+      await expect(steer).rejects.toThrow(message);
+    }
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("leaves a JSON-RPC server error ambiguous", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({
+        __jsonRpcError: { code: -32000, message: "connection lost" },
+      }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    await expect(
+      session.steerActiveTurn!("follow up", {
+        expectedTurnId: paseoTurnId,
+        clientMessageId: "steer-transport",
+      }),
+    ).rejects.toThrow("connection lost");
+    await session.close();
+  });
+
+  test("rejects an in-flight steer when the app-server transport disconnects", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => new Promise<void>(() => undefined),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const steer = session.steerActiveTurn!("follow up", {
+      expectedTurnId: paseoTurnId,
+      clientMessageId: "steer-disconnect",
+    });
+    await appServer.waitForRequest("turn/steer");
+    appServer.disconnect();
+
+    await expect(steer).rejects.toThrow("Codex app-server exited");
+    expect(appServer.requests().filter((request) => request.method === "turn/steer")).toHaveLength(
+      1,
+    );
+    await session.close();
+  });
+});
 
 async function startCompactionTurnTest(): Promise<{
   appServer: FakeCodexAppServer;
@@ -2241,6 +2380,80 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps a settled child completed until Codex starts another child turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "call-settled-child",
+        threadId: "settled-child-thread",
+        agentPath: "/root/settled-child",
+      });
+      appServer.completeTurn({ threadId: "settled-child-thread" });
+      appServer.says({
+        threadId: "settled-child-thread",
+        itemId: "late-child-message",
+        text: "Late trailing output.",
+      });
+
+      const providerUpserts = events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      );
+      expect(providerUpserts.at(-1)).toMatchObject({
+        id: "settled-child-thread",
+        status: "completed",
+      });
+      expect(events.at(-1)).toMatchObject({
+        type: "timeline",
+        item: {
+          callId: "call-settled-child",
+          status: "completed",
+          detail: { type: "sub_agent", log: "[Assistant] Late trailing output." },
+        },
+      });
+
+      appServer.completesSubAgentActivity({
+        callId: "late-child-interaction",
+        threadId: "settled-child-thread",
+        agentPath: "/root/settled-child",
+        kind: "interacted",
+      });
+      expect(
+        events.findLast(
+          (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+        ),
+      ).toMatchObject({ event: { id: "settled-child-thread", status: "completed" } });
+
+      appServer.startsTurn({
+        threadId: "settled-child-thread",
+        turnId: "next-child-turn",
+      });
+      expect(
+        events.findLast(
+          (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+        ),
+      ).toMatchObject({ event: { id: "settled-child-thread", status: "running" } });
+
+      appServer.completeTurn({ threadId: "settled-child-thread" });
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("updates a registered child with its later native activity name", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -3453,6 +3666,10 @@ describe("Codex app-server provider", () => {
 
     const liveEvents: AgentStreamEvent[] = [];
     session.subscribe((event) => liveEvents.push(event));
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "v2-child-thread",
+      turn: { id: "v2-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
@@ -3481,6 +3698,10 @@ describe("Codex app-server provider", () => {
     });
 
     liveEvents.length = 0;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "legacy-child-thread",
+      turn: { id: "legacy-child-turn-after-resume" },
+    });
     asInternals(session).handleNotification("item/agentMessage/delta", {
       threadId: "legacy-child-thread",
       itemId: "legacy-child-message-after-resume",
