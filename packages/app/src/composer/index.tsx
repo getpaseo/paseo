@@ -56,11 +56,10 @@ import {
 import type { ImageAttachment, MessagePayload } from "./types";
 import {
   readRecallHistory,
-  rememberSentPrompt,
+  readRecallSession,
   resolveRecall,
   resolveRecallDirection,
-  shouldRestoreStash,
-  type RecallSession,
+  writeRecallSession,
 } from "./message-recall";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
@@ -1339,26 +1338,6 @@ function ComposerContentImpl({
       messageInputRef.current?.focus();
     },
   });
-  // The Up/Down walk through sent messages, absent while the user is on their own text.
-  const recallSessionRef = useRef<RecallSession | null>(null);
-  // The committed draft and the writer that owns it, captured after the commit so a walk that is
-  // abandoned reads the composer it is leaving rather than the one it is switching to. Reading
-  // the writer from here also keeps the walk alive when the prop's identity changes.
-  const committedDraftRef = useRef({ text: userInput, write: onChangeText });
-  useEffect(() => {
-    committedDraftRef.current = { text: userInput, write: onChangeText };
-  });
-  // A walk left behind — the agent changed, the tab closed — would persist the recalled message
-  // over what the user was writing, so the stash goes back on the way out.
-  useEffect(() => {
-    return () => {
-      const committed = committedDraftRef.current;
-      const abandoned = { session: recallSessionRef.current, draftText: committed.text };
-      recallSessionRef.current = null;
-      if (!shouldRestoreStash(abandoned)) return;
-      committed.write(abandoned.session.stash.text);
-    };
-  }, [agentId]);
   const autocompleteOnKeyPressRef = useRef(autocomplete.onKeyPress);
   autocompleteOnKeyPressRef.current = autocomplete.onKeyPress;
   const selectAutocompleteOption = autocomplete.onSelectOption;
@@ -1472,6 +1451,7 @@ function ComposerContentImpl({
       }
       await dispatchComposerAgentMessage({
         client,
+        serverId,
         agentId: targetAgentId,
         text,
         attachments: sendAttachments,
@@ -1524,8 +1504,6 @@ function ComposerContentImpl({
       });
       if (!result.queued) return;
 
-      // Queued or sent, the user committed the text, so recall can reach it.
-      rememberSentPrompt({ serverId, agentId, text: queuedMessage });
       replaceUserInput("");
       setSelectedAttachments([]);
       resetSuppression();
@@ -1536,7 +1514,6 @@ function ComposerContentImpl({
       clearSentAttachments,
       queueWriter,
       resetSuppression,
-      serverId,
       setSelectedAttachments,
       replaceUserInput,
     ],
@@ -1580,16 +1557,12 @@ function ComposerContentImpl({
         },
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
-      if (result === "submitted") {
-        rememberSentPrompt({ serverId, agentId, text: outgoingMessage });
-      }
       completeSubmit({
         result,
         outgoingAttachments,
       });
     },
     [
-      agentId,
       allowEmptySubmit,
       beginSubmit,
       clearDraft,
@@ -1597,7 +1570,6 @@ function ComposerContentImpl({
       hasExternalContent,
       isAgentRunning,
       queueMessage,
-      serverId,
       setSelectedAttachments,
       replaceUserInput,
       submitBehavior,
@@ -1904,13 +1876,13 @@ function ComposerContentImpl({
           agentId,
           timeline: useSessionStore.getState().sessions[serverId]?.agentStreamTail.get(agentId),
         }),
-        session: recallSessionRef.current,
+        session: readRecallSession({ serverId, agentId }),
         snapshot: event.input,
         direction,
       });
       if (!outcome) return false;
 
-      recallSessionRef.current = outcome.session;
+      writeRecallSession({ serverId, agentId, session: outcome.session });
       event.preventDefault();
       replaceUserInput(outcome.text, outcome.selection);
       return true;

@@ -13,6 +13,7 @@ import {
   keyCastStep,
 } from "../support/helpers/key-cast";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 const VIEWPORT = { width: 1440, height: 900 };
 
@@ -146,6 +147,61 @@ test.describe("composer message recall", () => {
 
       await keyCastStep(page, "Recall never sent anything on its own.");
       await keyCastBeat(page, 1_500);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("keeps the walk alive across an agent switch, so the draft is one Down away", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "composer-message-recall-switch-",
+      title: "Composer message recall switch",
+      model: "ten-second-stream",
+    });
+
+    try {
+      const other = await agent.client.createAgent({
+        provider: "mock",
+        cwd: agent.cwd,
+        workspaceId: agent.workspaceId,
+        title: "Second agent",
+        modeId: "load-test",
+        model: "ten-second-stream",
+      });
+
+      await page.setViewportSize(VIEWPORT);
+      // Open both so the workspace carries a tab for each, then switch between them the way a
+      // user does — by the tab, not by the URL, which would reload the app.
+      await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: other.id });
+      await openAgentRoute(page, agent);
+      await waitForWorkspaceTabsVisible(page);
+      const agentTab = page.getByTestId(`workspace-tab-agent_${agent.agentId}`).first();
+      const otherTab = page.getByTestId(`workspace-tab-agent_${other.id}`).first();
+
+      await expectComposerEditable(page);
+      await submitMessage(page, SENT.newest);
+      await expectAgentIdle(page, 60_000);
+
+      const composer = composerLocator(page);
+      await composer.click();
+      await composer.pressSequentially("half typed", { delay: 30 });
+      await composer.press("ArrowUp");
+      await expect(composer).toHaveValue(SENT.newest);
+
+      await otherTab.click();
+      await expect(otherTab).toHaveAttribute("aria-selected", "true");
+      await expect(composerLocator(page)).toHaveValue("");
+
+      await agentTab.click();
+      await expect(agentTab).toHaveAttribute("aria-selected", "true");
+      await expect(composerLocator(page)).toHaveValue(SENT.newest);
+
+      await composerLocator(page).click();
+      await composerLocator(page).press("ArrowDown");
+      await expect(composerLocator(page)).toHaveValue("half typed");
     } finally {
       await agent.cleanup();
     }

@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import {
   collectSentMessages,
-  forgetSentPrompts,
+  forgetRecallState,
   readRecallHistory,
+  readRecallSession,
   rememberSentPrompt,
+  writeRecallSession,
   resolveRecall,
   resolveRecallDirection,
-  shouldRestoreStash,
   type RecallSession,
   type RecallSnapshot,
 } from "./message-recall";
@@ -82,7 +83,7 @@ describe("readRecallHistory", () => {
   const agent = { serverId: "host", agentId: "agent-1" };
 
   beforeEach(() => {
-    forgetSentPrompts();
+    forgetRecallState();
   });
 
   it("reaches past the loaded timeline page, newest first", () => {
@@ -307,19 +308,31 @@ describe("resolveRecall", () => {
   });
 });
 
-describe("shouldRestoreStash", () => {
-  const session: RecallSession = { index: 0, recalled: "newest", stash: holding("half typed") };
+describe("the walk, per agent", () => {
+  const agent = { serverId: "host", agentId: "agent-1" };
+  const session: RecallSession = {
+    index: 0,
+    recalled: "rebase onto main",
+    stash: holding("half typed"),
+  };
 
-  it("restores while the recalled message is still standing in the draft", () => {
-    expect(shouldRestoreStash({ session, draftText: "newest" })).toBe(true);
+  beforeEach(() => {
+    forgetRecallState();
   });
 
-  it("leaves the draft alone once it has moved on", () => {
-    expect(shouldRestoreStash({ session, draftText: "" })).toBe(false);
-    expect(shouldRestoreStash({ session, draftText: "newest, and then some" })).toBe(false);
+  it("survives the composer, because more than one is mounted for the same agent", () => {
+    writeRecallSession({ ...agent, session });
+    expect(readRecallSession(agent)).toEqual(session);
   });
 
-  it("has nothing to restore without a walk", () => {
-    expect(shouldRestoreStash({ session: null, draftText: "" })).toBe(false);
+  it("is not shared between agents", () => {
+    writeRecallSession({ ...agent, session });
+    expect(readRecallSession({ serverId: "host", agentId: "agent-2" })).toBeNull();
+  });
+
+  it("is dropped once the composer is back on the user's own text", () => {
+    writeRecallSession({ ...agent, session });
+    writeRecallSession({ ...agent, session: null });
+    expect(readRecallSession(agent)).toBeNull();
   });
 });

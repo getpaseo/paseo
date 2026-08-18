@@ -100,9 +100,40 @@ export function readRecallHistory(input: {
   return history;
 }
 
-/** Tests only — the remembered prompts outlive any one component. */
-export function forgetSentPrompts(): void {
+/**
+ * The walk in progress, per agent.
+ *
+ * It lives beside the remembered prompts rather than in the composer, because the app mounts
+ * more than one composer for the same agent and retains them across navigation. Keyed by agent,
+ * a walk survives that churn: leaving the composer and coming back keeps Down one press away
+ * from the stashed draft.
+ */
+const walkByAgent = new Map<string, RecallSession>();
+
+export function readRecallSession(input: {
+  serverId: string;
+  agentId: string;
+}): RecallSession | null {
+  return walkByAgent.get(recallKey(input)) ?? null;
+}
+
+export function writeRecallSession(input: {
+  serverId: string;
+  agentId: string;
+  session: RecallSession | null;
+}): void {
+  const key = recallKey(input);
+  if (input.session === null) {
+    walkByAgent.delete(key);
+    return;
+  }
+  walkByAgent.set(key, input.session);
+}
+
+/** Tests only — recall state outlives any one component. */
+export function forgetRecallState(): void {
   sentPromptsByAgent.clear();
+  walkByAgent.clear();
 }
 
 /** Newest first, blank messages and adjacent repeats dropped. */
@@ -193,19 +224,4 @@ export function resolveRecall(input: {
 
 function step(session: RecallSession): RecallOutcome {
   return { session, text: session.recalled, selection: caretAtEnd(session.recalled) };
-}
-
-/**
- * Whether leaving the composer mid-walk should put the stash back.
- *
- * Recall writes through the draft, so a walk that is abandoned by switching agents or closing
- * the tab would persist a recalled message over what the user was writing. Restoring is only
- * right while the recalled text is still standing — once the draft has moved on, by sending,
- * queueing, or dictating over it, the stash is stale and belongs nowhere.
- */
-export function shouldRestoreStash(input: {
-  session: RecallSession | null;
-  draftText: string;
-}): input is { session: RecallSession; draftText: string } {
-  return input.session !== null && input.session.recalled === input.draftText;
 }

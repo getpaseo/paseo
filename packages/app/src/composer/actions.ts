@@ -13,6 +13,7 @@ import {
   splitComposerAttachmentsForSubmit,
   type ComposerAttachmentSubmitFormat,
 } from "@/composer/attachments/submit";
+import { rememberSentPrompt } from "@/composer/message-recall";
 import { createUserMessage, generateMessageId, type UserMessageItem } from "@/types/stream";
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
@@ -170,6 +171,7 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
 
 export interface DispatchComposerAgentMessageInput {
   client: ComposerSendClient;
+  serverId: string;
   agentId: string;
   text: string;
   attachments: ComposerAttachment[];
@@ -209,6 +211,9 @@ export async function dispatchComposerAgentMessage(
       attachments: wirePayload.attachments,
     });
     input.submission.accept(input.agentId, clientMessageId);
+    // Recall holds what was actually sent, so it is recorded here rather than where the text is
+    // queued or handed off: a queued prompt can still be pulled back into the composer and edited.
+    rememberSentPrompt({ serverId: input.serverId, agentId: input.agentId, text: input.text });
   } catch (error) {
     input.submission.reject(input.agentId, clientMessageId);
     throw error;
