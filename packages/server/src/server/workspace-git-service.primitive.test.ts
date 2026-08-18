@@ -137,19 +137,46 @@ function createCurrentPullRequestStatus(
   };
 }
 
-function currentPullRequestJson(overrides: Record<string, unknown> = {}): string {
+function batchPullRequestStatusJson(rollupContexts: unknown[] = []): string {
   return JSON.stringify({
-    number: 123,
-    url: "https://github.com/acme/repo/pull/123",
-    title: "Update feature",
-    state: "OPEN",
-    isDraft: false,
-    baseRefName: "main",
-    headRefName: "feature",
-    mergedAt: null,
-    statusCheckRollup: [],
-    reviewDecision: "REVIEW_REQUIRED",
-    ...overrides,
+    data: {
+      rateLimit: { remaining: 4_000 },
+      w0: {
+        isFork: false,
+        parent: null,
+        autoMergeAllowed: true,
+        mergeCommitAllowed: true,
+        squashMergeAllowed: true,
+        rebaseMergeAllowed: true,
+        viewerDefaultMergeMethod: "SQUASH",
+        pullRequests: {
+          nodes: [
+            {
+              number: 123,
+              url: "https://github.com/acme/repo/pull/123",
+              title: "Update feature",
+              state: "OPEN",
+              isDraft: false,
+              baseRefName: "main",
+              headRefName: "feature",
+              mergedAt: null,
+              reviewDecision: "REVIEW_REQUIRED",
+              mergeable: "MERGEABLE",
+              headRepositoryOwner: { login: "acme" },
+              mergeStateStatus: "CLEAN",
+              autoMergeRequest: null,
+              viewerCanEnableAutoMerge: false,
+              viewerCanDisableAutoMerge: false,
+              viewerCanMergeAsAdmin: false,
+              viewerCanUpdateBranch: false,
+              isMergeQueueEnabled: false,
+              isInMergeQueue: false,
+              statusCheckRollup: { contexts: { nodes: rollupContexts } },
+            },
+          ],
+        },
+      },
+    },
   });
 }
 
@@ -1026,25 +1053,23 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("subscription starts GitHub self-heal reads within the fast poll window", async () => {
     let nowMs = 0;
-    const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
+    const batchTickMs: number[] = [];
+    const runner = vi.fn(async () => {
+      batchTickMs.push(nowMs);
+      return {
+        stdout: batchPullRequestStatusJson([
+          { __typename: "StatusContext", context: "ci", state: "PENDING" },
+        ]),
+        stderr: "",
+      };
+    });
     const github = createGitHubService({
       ttlMs: 0,
-      runner: vi.fn(async () => ({
-        stdout: currentPullRequestJson({
-          statusCheckRollup: [{ __typename: "StatusContext", context: "ci", state: "PENDING" }],
-        }),
-        stderr: "",
-      })),
+      runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
       now: () => nowMs,
     });
-    const getCurrentPullRequestStatus = github.getCurrentPullRequestStatus.bind(github);
-    github.getCurrentPullRequestStatus = vi.fn(
-      async (options): Promise<CurrentPullRequestStatus | null> => {
-        githubReadCalls.push({ reason: options.reason, tickMs: nowMs });
-        return getCurrentPullRequestStatus(options);
-      },
-    );
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, { currentBranch: "feature" }),
     );
@@ -1064,10 +1089,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     await flushPromises();
 
-    expect(githubReadCalls).toContainEqual({
-      reason: "self-heal-github",
-      tickMs: 20_000,
-    });
+    expect(batchTickMs).toContain(20_000);
     expect(getCheckoutStatus).toHaveBeenCalledTimes(gitReadsAfterInitialSnapshot);
     expect(listener).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1132,24 +1154,22 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("settled GitHub self-heal reads stay on the slow poll window without refreshing git", async () => {
     let nowMs = 0;
-    const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
-    const runner = vi.fn(async () => ({
-      stdout: currentPullRequestJson(),
-      stderr: "",
-    }));
+    const ghTickMs: number[] = [];
+    const batchTickMs: number[] = [];
+    const runner = vi.fn(async (args: string[]) => {
+      ghTickMs.push(nowMs);
+      if (args[1] === "graphql") {
+        batchTickMs.push(nowMs);
+      }
+      return { stdout: batchPullRequestStatusJson(), stderr: "" };
+    });
     const github = createGitHubService({
       ttlMs: 0,
       runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
       now: () => nowMs,
     });
-    const getCurrentPullRequestStatus = github.getCurrentPullRequestStatus.bind(github);
-    github.getCurrentPullRequestStatus = vi.fn(
-      async (options): Promise<CurrentPullRequestStatus | null> => {
-        githubReadCalls.push({ reason: options.reason, tickMs: nowMs });
-        return getCurrentPullRequestStatus(options);
-      },
-    );
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, { currentBranch: "feature" }),
     );
@@ -1162,7 +1182,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await flushPromises();
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => {
-      expect(runner).toHaveBeenCalledTimes(1);
+      expect(batchTickMs).toContain(0);
     });
     await flushPromises();
     const gitReadsAfterInitialSnapshot = getCheckoutStatus.mock.calls.length;
@@ -1171,20 +1191,15 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     await flushPromises();
 
-    expect(githubReadCalls).not.toContainEqual({
-      reason: "self-heal-github",
-      tickMs: 20_000,
-    });
+    // A settled pull request must not touch GitHub again inside the fast window.
+    expect(ghTickMs).not.toContain(20_000);
     expect(getCheckoutStatus).toHaveBeenCalledTimes(gitReadsAfterInitialSnapshot);
 
     nowMs = 120_000;
     await vi.advanceTimersByTimeAsync(100_000);
     await flushPromises();
 
-    expect(githubReadCalls).toContainEqual({
-      reason: "self-heal-github",
-      tickMs: 120_000,
-    });
+    expect(batchTickMs).toContain(120_000);
 
     subscription.unsubscribe();
     service.dispose();

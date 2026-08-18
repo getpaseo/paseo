@@ -500,6 +500,12 @@ export interface ForgeService {
     headRef: string;
     headSha?: string;
     headRepositoryOwner?: string;
+    /**
+     * Origin remote the caller already resolved. An adapter that batches polls
+     * addresses repositories by owner/name, and this saves it from re-reading git
+     * config for every workspace on every pass.
+     */
+    remoteUrl?: string;
     onStatus?: (status: CurrentPullRequestStatus | null) => void;
     onError?: (error: unknown) => void;
   }): { unsubscribe: () => void };

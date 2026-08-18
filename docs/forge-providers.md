@@ -98,6 +98,39 @@ Thread the checkout head SHA through adapter cache and poll identities as well
 as the lookup itself. Otherwise a commit made on the same branch can inherit the
 previous commit's cached terminal status until the cache expires.
 
+### The poll budget is shared
+
+`retainCurrentPullRequestStatusPoll` is per workspace, but the API quota behind it
+is per account. One retained poll per workspace, each running its own timer and its
+own request, does not survive a couple of dozen open workspaces: GitHub's GraphQL
+quota is 5000 points per hour for the whole daemon, and the unbatched lookup spent
+58 requests refreshing 20 workspaces once.
+
+So an adapter that can address change requests by repository owes the shared
+scheduler, not a timer per target. The GitHub adapter keeps one timer for every
+retained target, collects whichever ones are due, groups them by resolved host
+(GH_HOST is per workspace, and a GitHub Enterprise workspace must never ride along
+in a github.com request), and sends one aliased document per group. The same 20
+workspaces then cost 2 points in one request.
+
+Three things that fall out of batching and are easy to get wrong:
+
+- **Address repositories from data you already have.** The caller passes
+  `remoteUrl`, so the adapter parses owner/name instead of asking the API, or even
+  git, which repository a workspace points at.
+- **A failing alias must not fail the batch.** `gh api graphql` exits non-zero when
+  any aliased field errors, and still prints the partial `data` next to an `errors`
+  array whose `path[0]` names the alias. Read `stdout` off the error, report only
+  the named targets, and deliver everyone else's status.
+- **A fork holds no pull requests.** A pull request belongs to its base repository,
+  so `pullRequests(headRefName:)` on a fork is always empty while the same field on
+  the parent returns fork branches too, tagged with `headRepositoryOwner`. Redirect
+  a fork to its parent once and remember it per repository.
+
+Watch the quota rather than discovering it is gone: select `rateLimit` in the batch
+and stretch every cadence to the error-backoff cap once the remaining points get
+close to what user-driven reads need.
+
 Cloud hosts in the manifest are a bounded public-host list, not a self-host
 allowlist. Self-hosted detection is a trust gate: Paseo only talks to a forge
 host that is either a known cloud host or one the CLI is already authenticated

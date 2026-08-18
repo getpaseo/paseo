@@ -2434,6 +2434,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         ...(pollTarget.headRepositoryOwner
           ? { headRepositoryOwner: pollTarget.headRepositoryOwner }
           : {}),
+        remoteUrl,
         onStatus: (status) => {
           if (!this.isActiveObservedWorkspaceTarget(target)) {
             return;

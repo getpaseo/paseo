@@ -107,6 +107,20 @@ const FAILED_CHECK_JOB_LIMIT = 5;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
+// Every due poll target that shares a host goes into one `gh api graphql` call.
+// GitHub bills GraphQL in points rather than requests, so this is where the saving
+// comes from: 20 workspaces measured at 2 points in one request against the 5000
+// points/hour budget, where the unbatched lookup spent 58 requests on the same
+// refresh. The cap also keeps the document well under the size where the API starts
+// answering HTTP 502 (around 100 aliases).
+export const GITHUB_POLL_BATCH_MAX_TARGETS = 20;
+// Candidates per repository/head-ref pair, matching the `pr list --limit 10` the
+// unbatched lookup used: a reused branch name can carry several terminal PRs.
+const GITHUB_POLL_BATCH_CANDIDATE_LIMIT = 10;
+// GraphQL points left before every poll drops to the error-backoff cadence. The
+// hourly budget is shared with user-driven reads (timelines, check details), and
+// those must not be starved by background polling.
+const GITHUB_RATE_LIMIT_RESERVE_POINTS = 250;
 const GITHUB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
 } as const;
@@ -287,30 +301,30 @@ const GitHubAutoMergeRequestSchema = z
   .optional()
   .catch(null);
 
+const GitHubRepositoryMergePolicySchema = z.object({
+  autoMergeAllowed: z.boolean().optional().catch(false),
+  mergeCommitAllowed: z.boolean().optional().catch(false),
+  squashMergeAllowed: z.boolean().optional().catch(false),
+  rebaseMergeAllowed: z.boolean().optional().catch(false),
+  viewerDefaultMergeMethod: z.string().nullable().optional().catch(null),
+});
+
+const GitHubPullRequestMergeFactsSchema = z.object({
+  mergeStateStatus: z.string().nullable().optional().catch(null),
+  autoMergeRequest: GitHubAutoMergeRequestSchema,
+  viewerCanEnableAutoMerge: z.boolean().optional().catch(false),
+  viewerCanDisableAutoMerge: z.boolean().optional().catch(false),
+  viewerCanMergeAsAdmin: z.boolean().optional().catch(false),
+  viewerCanUpdateBranch: z.boolean().optional().catch(false),
+  isMergeQueueEnabled: z.boolean().optional().catch(false),
+  isInMergeQueue: z.boolean().optional().catch(false),
+});
+
 const GitHubPullRequestFactsGraphqlSchema = z.object({
   data: z.object({
-    repository: z
-      .object({
-        autoMergeAllowed: z.boolean().optional().catch(false),
-        mergeCommitAllowed: z.boolean().optional().catch(false),
-        squashMergeAllowed: z.boolean().optional().catch(false),
-        rebaseMergeAllowed: z.boolean().optional().catch(false),
-        viewerDefaultMergeMethod: z.string().nullable().optional().catch(null),
-        pullRequest: z
-          .object({
-            mergeStateStatus: z.string().nullable().optional().catch(null),
-            autoMergeRequest: GitHubAutoMergeRequestSchema,
-            viewerCanEnableAutoMerge: z.boolean().optional().catch(false),
-            viewerCanDisableAutoMerge: z.boolean().optional().catch(false),
-            viewerCanMergeAsAdmin: z.boolean().optional().catch(false),
-            viewerCanUpdateBranch: z.boolean().optional().catch(false),
-            isMergeQueueEnabled: z.boolean().optional().catch(false),
-            isInMergeQueue: z.boolean().optional().catch(false),
-          })
-          .nullable()
-          .optional()
-          .catch(null),
-      })
+    repository: GitHubRepositoryMergePolicySchema.extend({
+      pullRequest: GitHubPullRequestMergeFactsSchema.nullable().optional().catch(null),
+    })
       .nullable()
       .optional()
       .catch(null),
@@ -331,6 +345,72 @@ const CurrentPullRequestStatusSchema = z.object({
   reviewDecision: z.unknown().optional(),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   headRepositoryOwner: HeadRepositoryOwnerSchema,
+});
+
+// `gh pr view --json statusCheckRollup` hands back a flat context array because the
+// CLI flattens the connection for us. Raw GraphQL keeps the connection, and the
+// workflow name lives one level deeper, so the batch normalizes both back into the
+// shape `parseStatusCheckRollup` already understands.
+const BatchStatusCheckRollupSchema = z
+  .object({
+    contexts: z
+      .object({ nodes: z.array(z.unknown()).catch([]) })
+      .nullable()
+      .optional()
+      .catch(null),
+  })
+  .nullable()
+  .optional()
+  .catch(null);
+
+const BatchCheckRunWorkflowSchema = z.object({
+  __typename: z.literal("CheckRun"),
+  checkSuite: z
+    .object({
+      workflowRun: z
+        .object({ workflow: z.object({ name: z.string() }).nullable().optional() })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+const BatchPullRequestNodeSchema = CurrentPullRequestStatusSchema.extend({
+  ...GitHubPullRequestMergeFactsSchema.shape,
+  statusCheckRollup: BatchStatusCheckRollupSchema,
+});
+
+const BatchRepositorySchema = GitHubRepositoryMergePolicySchema.extend({
+  isFork: z.boolean().optional().catch(false),
+  parent: z
+    .object({ owner: z.object({ login: z.string() }), name: z.string() })
+    .nullable()
+    .optional()
+    .catch(null),
+  pullRequests: z
+    .object({ nodes: z.array(BatchPullRequestNodeSchema).catch([]) })
+    .nullable()
+    .optional()
+    .catch(null),
+});
+
+const BatchRateLimitSchema = z.object({ remaining: z.number() });
+
+const BatchResponseSchema = z.object({
+  data: z.record(z.string(), z.unknown()).nullable().optional().catch(null),
+  errors: z
+    .array(
+      z.object({
+        message: z.string().optional().catch(""),
+        path: z
+          .array(z.union([z.string(), z.number()]))
+          .optional()
+          .catch([]),
+      }),
+    )
+    .optional()
+    .catch([]),
 });
 
 const TimelineAuthorSchema = z
@@ -524,6 +604,118 @@ query PullRequestStatusFacts($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const BATCH_PULL_REQUEST_STATUS_FRAGMENTS = `
+fragment PaseoBatchRepository on Repository {
+  isFork
+  parent {
+    owner {
+      login
+    }
+    name
+  }
+  autoMergeAllowed
+  mergeCommitAllowed
+  squashMergeAllowed
+  rebaseMergeAllowed
+  viewerDefaultMergeMethod
+}
+fragment PaseoBatchPullRequest on PullRequest {
+  number
+  url
+  title
+  state
+  isDraft
+  baseRefName
+  headRefName
+  headRefOid
+  mergedAt
+  reviewDecision
+  mergeable
+  headRepositoryOwner {
+    login
+  }
+  mergeStateStatus
+  autoMergeRequest {
+    enabledAt
+    mergeMethod
+    enabledBy {
+      login
+    }
+  }
+  viewerCanEnableAutoMerge
+  viewerCanDisableAutoMerge
+  viewerCanMergeAsAdmin
+  viewerCanUpdateBranch
+  isMergeQueueEnabled
+  isInMergeQueue
+  statusCheckRollup {
+    contexts(last: 100) {
+      nodes {
+        __typename
+        ... on CheckRun {
+          databaseId
+          name
+          status
+          conclusion
+          detailsUrl
+          startedAt
+          completedAt
+          checkSuite {
+            workflowRun {
+              databaseId
+              workflow {
+                name
+              }
+            }
+          }
+        }
+        ... on StatusContext {
+          context
+          state
+          targetUrl
+          createdAt
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * One aliased `repository` field per poll target, so a whole batch of workspaces
+ * resolves in a single request. `pullRequests(headRefName:)` on the base repository
+ * also returns cross-repository (fork) pull requests, which is why a fork checkout
+ * is redirected to its parent rather than queried directly.
+ */
+function buildBatchPullRequestStatusQuery(count: number): string {
+  const declarations: string[] = [];
+  const fields: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    declarations.push(`$o${index}: String!`, `$n${index}: String!`, `$h${index}: String!`);
+    fields.push(
+      [
+        `  ${buildBatchAlias(index)}: repository(owner: $o${index}, name: $n${index}) {`,
+        "    ...PaseoBatchRepository",
+        `    pullRequests(headRefName: $h${index}, first: ${GITHUB_POLL_BATCH_CANDIDATE_LIMIT}, orderBy: {field: UPDATED_AT, direction: DESC}) {`,
+        "      nodes {",
+        "        ...PaseoBatchPullRequest",
+        "      }",
+        "    }",
+        "  }",
+      ].join("\n"),
+    );
+  }
+  return `query PaseoBatchPullRequestStatus(${declarations.join(", ")}) {
+  rateLimit {
+    remaining
+  }
+${fields.join("\n")}
+}${BATCH_PULL_REQUEST_STATUS_FRAGMENTS}`;
+}
+
+function buildBatchAlias(index: number): string {
+  return `w${index}`;
+}
+
 const PULL_REQUEST_TIMELINE_QUERY = `
 query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -617,6 +809,11 @@ interface GitHubServiceDependencies {
    * call routes to the workspace's instance instead of github.com.
    */
   resolveRepoHost: (cwd: string) => Promise<string | null>;
+  /**
+   * `owner/name` of the workspace's origin remote, read from git config so a
+   * batched poll never spends an API request to learn which repository to address.
+   */
+  resolveOriginSlug: (cwd: string) => Promise<string | null>;
 }
 
 export interface GitHubCommandRunnerOptions {
@@ -695,18 +892,12 @@ interface CreateGitHubServiceOptions {
   resolveGhPath?: () => Promise<string | null>;
   now?: () => number;
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
+  resolveOriginSlug?: (cwd: string) => Promise<string | null>;
 }
 
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
 type PullRequestStatusContextNode = z.infer<typeof PullRequestStatusContextNodeSchema>;
 type CurrentPullRequestStatusItem = z.infer<typeof CurrentPullRequestStatusSchema>;
-type GitHubPullRequestFactsGraphql = z.infer<typeof GitHubPullRequestFactsGraphqlSchema>;
-type GitHubPullRequestFactsRepository = NonNullable<
-  GitHubPullRequestFactsGraphql["data"]["repository"]
->;
-type GitHubPullRequestFactsPullRequest = NonNullable<
-  GitHubPullRequestFactsRepository["pullRequest"]
->;
 
 interface InFlightCacheEntry {
   cwd: string;
@@ -720,11 +911,24 @@ interface GitHubPollTarget {
   headSha?: string;
   headRepositoryOwner?: string;
   retainCount: number;
-  timer: NodeJS.Timeout | null;
+  remoteUrl?: string;
+  /** When this target next wants a refresh. One shared timer serves every target. */
+  nextDueAtMs: number;
+  inFlight: boolean;
   latestStatus: CurrentPullRequestStatus | null;
   consecutiveErrors: number;
   callbacks: Set<(status: CurrentPullRequestStatus | null) => void>;
   errorCallbacks: Set<(error: unknown) => void>;
+}
+
+/** Repository a poll target's pull requests actually live in, plus its head ref. */
+interface GitHubPollBatchRepo {
+  owner: string;
+  name: string;
+  headRef: string;
+  /** Set when the target was redirected from a fork to the fork's parent. */
+  forkOwner?: string;
+  originSlug: string;
 }
 
 interface ResolvedPullRequestCandidate {
@@ -740,6 +944,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     resolveGhPath: options.resolveGhPath ?? resolveGhPath,
     now: options.now ?? Date.now,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
+    resolveOriginSlug: options.resolveOriginSlug ?? resolveGitHubSlugFromOrigin,
   };
   // A resolved enterprise host is cached permanently; a null resolution (no
   // host, or the auth probe said no) expires so `gh auth login --hostname`
@@ -751,6 +956,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const cache = new Map<string, CacheEntry>();
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
+  // Origin slug -> repository that actually holds the pull requests. A fork's own
+  // `pullRequests(headRefName:)` connection is always empty because a pull request
+  // belongs to its base repository, so the first response redirects to the parent.
+  const pollBaseRepoBySlug = new Map<string, { owner: string; name: string; forkOwner: string }>();
+  // Origin slug per cwd, read from git config rather than the API so a batch never
+  // spends a request just to learn which repository a workspace points at.
+  const originSlugByCwd = new Map<string, Promise<string | null>>();
+  let pollBatchTimer: NodeJS.Timeout | null = null;
+  let rateLimitRemaining: number | null = null;
+  let disposed = false;
   const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
   let api!: GitHubService;
 
@@ -923,14 +1138,264 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     if (target.retainCount <= 0) {
       return;
     }
-    if (target.timer) {
-      clearTimeout(target.timer);
+    const budgetedDelayMs =
+      rateLimitRemaining !== null && rateLimitRemaining < GITHUB_RATE_LIMIT_RESERVE_POINTS
+        ? Math.max(delayMs, GITHUB_POLL_ERROR_BACKOFF_CAP_MS)
+        : delayMs;
+    target.nextDueAtMs = deps.now() + budgetedDelayMs;
+    armPollBatchTimer();
+  }
+
+  /** Re-point the single shared timer at whichever retained target comes due first. */
+  function armPollBatchTimer(): void {
+    if (pollBatchTimer) {
+      clearTimeout(pollBatchTimer);
+      pollBatchTimer = null;
+    }
+    if (disposed) {
+      return;
+    }
+    let earliestDueAtMs: number | null = null;
+    for (const target of pollTargets.values()) {
+      if (target.retainCount <= 0 || target.inFlight) {
+        continue;
+      }
+      if (earliestDueAtMs === null || target.nextDueAtMs < earliestDueAtMs) {
+        earliestDueAtMs = target.nextDueAtMs;
+      }
+    }
+    if (earliestDueAtMs === null) {
+      return;
+    }
+    pollBatchTimer = setTimeout(
+      () => {
+        pollBatchTimer = null;
+        void drainPollBatch();
+      },
+      Math.max(0, earliestDueAtMs - deps.now()),
+    );
+  }
+
+  async function drainPollBatch(): Promise<void> {
+    const dueAtMs = deps.now();
+    const due = [...pollTargets.values()].filter(
+      (target) => target.retainCount > 0 && !target.inFlight && target.nextDueAtMs <= dueAtMs,
+    );
+    if (due.length === 0) {
+      armPollBatchTimer();
+      return;
+    }
+    for (const target of due) {
+      target.inFlight = true;
+    }
+    try {
+      // GH_HOST is per-workspace, so a GitHub Enterprise workspace must never ride
+      // along in a github.com batch. Grouping by resolved host keeps each request
+      // pointed at one server.
+      const byHost = new Map<string, GitHubPollTarget[]>();
+      for (const target of due) {
+        let host: string | null;
+        try {
+          host = await resolveRepoHostCached(target.cwd);
+        } catch (error) {
+          applyPollError(target, error);
+          continue;
+        }
+        const group = byHost.get(host ?? "");
+        if (group) {
+          group.push(target);
+        } else {
+          byHost.set(host ?? "", [target]);
+        }
+      }
+      const batches: GitHubPollTarget[][] = [];
+      for (const targets of byHost.values()) {
+        for (let start = 0; start < targets.length; start += GITHUB_POLL_BATCH_MAX_TARGETS) {
+          batches.push(targets.slice(start, start + GITHUB_POLL_BATCH_MAX_TARGETS));
+        }
+      }
+      await Promise.all(batches.map((targets) => runPollBatch(targets)));
+    } finally {
+      for (const target of due) {
+        target.inFlight = false;
+      }
+      armPollBatchTimer();
+    }
+  }
+
+  async function runPollBatch(targets: GitHubPollTarget[]): Promise<void> {
+    const requests: Array<{ target: GitHubPollTarget; repo: GitHubPollBatchRepo }> = [];
+    for (const target of targets) {
+      const repo = await resolvePollBatchRepo(target);
+      if (repo) {
+        requests.push({ target, repo });
+        continue;
+      }
+      // No GitHub origin to address by owner/name (submodule-style checkouts, or a
+      // remote git cannot report). Fall back to the unbatched lookup so the target
+      // still reports a status instead of stalling.
+      await runGitHubPoll(target);
+    }
+    if (requests.length === 0) {
+      return;
     }
 
-    target.timer = setTimeout(() => {
-      target.timer = null;
-      void runGitHubPoll(target);
-    }, delayMs);
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${buildBatchPullRequestStatusQuery(requests.length)}`,
+    ];
+    requests.forEach(({ repo }, index) => {
+      args.push("-F", `o${index}=${repo.owner}`);
+      args.push("-F", `n${index}=${repo.name}`);
+      args.push("-F", `h${index}=${repo.headRef}`);
+    });
+
+    const batchCwd = requests[0]?.target.cwd ?? "";
+    let stdout: string;
+    try {
+      stdout = await run(args, { cwd: batchCwd });
+    } catch (error) {
+      // `gh api graphql` exits non-zero when any alias errors while still printing the
+      // partial `data`, so one unreachable repository must not fail the whole batch.
+      const partial = error instanceof GitHubCommandError ? error.stdout.trim() : "";
+      if (!partial) {
+        for (const { target } of requests) {
+          applyPollError(target, error);
+        }
+        return;
+      }
+      stdout = partial;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(stdout);
+    } catch {
+      payload = null;
+    }
+    const parsed = BatchResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      const error = new GitHubCommandError({
+        args,
+        cwd: batchCwd,
+        exitCode: null,
+        stderr: `gh returned an unreadable batched pull request status response (${stdout.length} bytes)`,
+      });
+      for (const { target } of requests) {
+        applyPollError(target, error);
+      }
+      return;
+    }
+
+    const data = parsed.data.data ?? {};
+    const rateLimit = BatchRateLimitSchema.safeParse(data.rateLimit);
+    if (rateLimit.success) {
+      rateLimitRemaining = rateLimit.data.remaining;
+    }
+    const errorsByAlias = groupBatchErrorsByAlias(parsed.data.errors ?? []);
+    const unaliasedErrors = errorsByAlias.get("") ?? [];
+
+    const redirected: GitHubPollTarget[] = [];
+    requests.forEach(({ target, repo }, index) => {
+      const aliasErrors = errorsByAlias.get(buildBatchAlias(index)) ?? unaliasedErrors;
+      if (aliasErrors.length > 0) {
+        applyPollError(
+          target,
+          new GitHubCommandError({
+            args,
+            cwd: target.cwd,
+            exitCode: null,
+            stderr: aliasErrors.join("; "),
+          }),
+        );
+        return;
+      }
+      const repository = BatchRepositorySchema.safeParse(data[buildBatchAlias(index)]);
+      if (!repository.success) {
+        applyPollResult(target, null);
+        return;
+      }
+      const parent = repository.data.parent;
+      if (repository.data.isFork && parent && !pollBaseRepoBySlug.has(repo.originSlug)) {
+        // A fork holds no pull requests of its own, so ask the parent instead. Recorded
+        // per slug, which makes this cost one extra pass the first time a fork is seen
+        // and nothing afterwards.
+        pollBaseRepoBySlug.set(repo.originSlug, {
+          owner: parent.owner.login,
+          name: parent.name,
+          forkOwner: repo.owner,
+        });
+        redirected.push(target);
+        return;
+      }
+      applyPollResult(target, toBatchPullRequestStatus(repository.data, target, repo));
+    });
+
+    if (redirected.length > 0) {
+      // Terminates: the slugs now carry a redirect, so this pass cannot redirect again.
+      await runPollBatch(redirected);
+    }
+  }
+
+  async function resolvePollBatchRepo(
+    target: GitHubPollTarget,
+  ): Promise<GitHubPollBatchRepo | null> {
+    const slug = target.remoteUrl
+      ? (parseGitHubRemoteUrl(target.remoteUrl)?.repo ?? null)
+      : await resolveOriginSlugCached(target.cwd);
+    const [originOwner, originName] = slug?.split("/") ?? [];
+    if (!slug || !originOwner || !originName) {
+      return null;
+    }
+    const redirect = pollBaseRepoBySlug.get(slug);
+    return {
+      owner: redirect?.owner ?? originOwner,
+      name: redirect?.name ?? originName,
+      headRef: target.headRef,
+      ...(redirect ? { forkOwner: redirect.forkOwner } : {}),
+      originSlug: slug,
+    };
+  }
+
+  function resolveOriginSlugCached(cwd: string): Promise<string | null> {
+    const cachedSlug = originSlugByCwd.get(cwd);
+    if (cachedSlug) {
+      return cachedSlug;
+    }
+    // A rejection must not stick in the cache, or one transient git failure would
+    // pin the workspace to the unbatched path for the daemon's lifetime.
+    const pending = deps.resolveOriginSlug(cwd).catch(() => null);
+    originSlugByCwd.set(cwd, pending);
+    return pending;
+  }
+
+  function applyPollResult(
+    target: GitHubPollTarget,
+    status: CurrentPullRequestStatus | null,
+  ): void {
+    target.latestStatus = status;
+    target.consecutiveErrors = 0;
+    // Same key `getCurrentPullRequestStatus` reads, so a checkout pane opening right
+    // after a batch reuses the batched result instead of issuing its own lookup.
+    cache.set(getPollTargetKey(target), {
+      value: status,
+      cwd: target.cwd,
+      expiresAt: deps.now() + ttlMs,
+    });
+    for (const callback of target.callbacks) {
+      callback(status);
+    }
+    scheduleGitHubPoll(target);
+  }
+
+  function applyPollError(target: GitHubPollTarget, error: unknown): void {
+    target.consecutiveErrors += 1;
+    for (const callback of target.errorCallbacks) {
+      callback(error);
+    }
+    scheduleGitHubPoll(target);
   }
 
   async function runGitHubPoll(target: GitHubPollTarget): Promise<void> {
@@ -943,19 +1408,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         reason: "self-heal-github",
       });
     } catch (error) {
-      target.consecutiveErrors += 1;
-      for (const callback of target.errorCallbacks) {
-        callback(error);
-      }
-      scheduleGitHubPoll(target);
+      applyPollError(target, error);
     }
   }
 
   function closeGitHubPollTarget(target: GitHubPollTarget): void {
-    if (target.timer) {
-      clearTimeout(target.timer);
-      target.timer = null;
-    }
     target.retainCount = 0;
     target.callbacks.clear();
     target.errorCallbacks.clear();
@@ -1515,7 +1972,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           headSha: input.headSha,
           headRepositoryOwner: input.headRepositoryOwner,
           retainCount: 0,
-          timer: null,
+          ...(input.remoteUrl ? { remoteUrl: input.remoteUrl } : {}),
+          nextDueAtMs: deps.now(),
+          inFlight: false,
           latestStatus: null,
           consecutiveErrors: 0,
           callbacks: new Set(),
@@ -1523,6 +1982,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         };
         pollTargets.set(key, target);
       }
+      // A workspace whose remote changed keeps its poll identity but must address the
+      // new repository.
+      target.remoteUrl = input.remoteUrl ?? target.remoteUrl;
 
       const isNewlyRetained = target.retainCount === 0;
       target.retainCount += 1;
@@ -1557,6 +2019,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           }
           closeGitHubPollTarget(target);
           pollTargets.delete(key);
+          armPollBatchTimer();
         },
       };
     },
@@ -1577,9 +2040,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       // Drop the cached host so a changed remote re-resolves GH_HOST instead of
       // routing later gh calls to the previous instance.
       repoHostByCwd.delete(input.cwd);
+      // A changed remote also changes which repository the batch addresses.
+      originSlugByCwd.delete(input.cwd);
     },
 
     dispose() {
+      disposed = true;
+      if (pollBatchTimer) {
+        clearTimeout(pollBatchTimer);
+        pollBatchTimer = null;
+      }
       for (const target of pollTargets.values()) {
         closeGitHubPollTarget(target);
       }
@@ -2140,7 +2610,13 @@ function parsePullRequestGithubFacts(
   if (!repository || !pullRequest) {
     return null;
   }
+  return toGitHubPullRequestStatusFacts(repository, pullRequest);
+}
 
+function toGitHubPullRequestStatusFacts(
+  repository: z.infer<typeof GitHubRepositoryMergePolicySchema>,
+  pullRequest: z.infer<typeof GitHubPullRequestMergeFactsSchema>,
+): GitHubPullRequestStatusFacts {
   return {
     mergeStateStatus: pullRequest.mergeStateStatus ?? null,
     autoMergeRequest: toGitHubAutoMergeRequest(pullRequest.autoMergeRequest),
@@ -2155,7 +2631,7 @@ function parsePullRequestGithubFacts(
 }
 
 function toGitHubAutoMergeRequest(
-  request: GitHubPullRequestFactsPullRequest["autoMergeRequest"],
+  request: z.infer<typeof GitHubAutoMergeRequestSchema>,
 ): GitHubPullRequestStatusFacts["autoMergeRequest"] {
   if (!request) {
     return null;
@@ -2168,7 +2644,7 @@ function toGitHubAutoMergeRequest(
 }
 
 function toGitHubRepositoryMergePolicy(
-  repository: GitHubPullRequestFactsRepository,
+  repository: z.infer<typeof GitHubRepositoryMergePolicySchema>,
 ): GitHubPullRequestStatusFacts["repository"] {
   return {
     autoMergeAllowed: repository.autoMergeAllowed ?? false,
@@ -2177,6 +2653,88 @@ function toGitHubRepositoryMergePolicy(
     rebaseMergeAllowed: repository.rebaseMergeAllowed ?? false,
     viewerDefaultMergeMethod: repository.viewerDefaultMergeMethod ?? null,
   };
+}
+
+/**
+ * GraphQL reports a failing field with its response path, so `path[0]` names the
+ * alias whose target failed. Errors without a usable path apply to the whole batch.
+ */
+function groupBatchErrorsByAlias(
+  errors: ReadonlyArray<{ message?: string; path?: ReadonlyArray<string | number> }>,
+): Map<string, string[]> {
+  const byAlias = new Map<string, string[]>();
+  for (const error of errors) {
+    const alias = typeof error.path?.[0] === "string" ? error.path[0] : "";
+    const message = error.message ?? "gh reported an unspecified GraphQL error";
+    const messages = byAlias.get(alias);
+    if (messages) {
+      messages.push(message);
+    } else {
+      byAlias.set(alias, [message]);
+    }
+  }
+  return byAlias;
+}
+
+function toBatchPullRequestStatus(
+  repository: z.infer<typeof BatchRepositorySchema>,
+  target: { headRef: string; headSha?: string; headRepositoryOwner?: string },
+  repo: GitHubPollBatchRepo,
+): CurrentPullRequestStatus | null {
+  const candidates: ResolvedPullRequestCandidate[] = [];
+  const nodeByCandidate = new Map<
+    ResolvedPullRequestCandidate,
+    z.infer<typeof BatchPullRequestNodeSchema>
+  >();
+  for (const node of repository.pullRequests?.nodes ?? []) {
+    const candidate = toCurrentPullRequestCandidate(
+      { ...node, statusCheckRollup: toBatchStatusCheckRollupContexts(node.statusCheckRollup) },
+      target.headRef,
+    );
+    if (!candidate) {
+      continue;
+    }
+    candidates.push(candidate);
+    nodeByCandidate.set(candidate, node);
+  }
+  // A fork branch's pull request sits in the parent repository next to every other
+  // contributor's, so the fork owner is what distinguishes it.
+  const headRepositoryOwner = target.headRepositoryOwner ?? repo.forkOwner;
+  const match = pickPullRequestCandidate({
+    candidates,
+    headRef: target.headRef,
+    ...(target.headSha ? { headSha: target.headSha } : {}),
+    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+  });
+  if (!match) {
+    return null;
+  }
+  const node = nodeByCandidate.get(match);
+  if (!node) {
+    return match.status;
+  }
+  return {
+    ...match.status,
+    forgeSpecific: { forge: "github", ...toGitHubPullRequestStatusFacts(repository, node) },
+  };
+}
+
+function toBatchStatusCheckRollupContexts(
+  rollup: z.infer<typeof BatchStatusCheckRollupSchema>,
+): unknown[] {
+  const contexts = rollup?.contexts?.nodes ?? [];
+  for (const node of contexts) {
+    const parsed = BatchCheckRunWorkflowSchema.safeParse(node);
+    const workflowName = parsed.success
+      ? parsed.data.checkSuite?.workflowRun?.workflow?.name
+      : undefined;
+    if (workflowName && typeof node === "object" && node !== null) {
+      // This response object belongs to the batch alone, so flatten in place. The
+      // rollup parser reads `workflowName` at the top level, where `gh` puts it.
+      Object.assign(node, { workflowName });
+    }
+  }
+  return contexts;
 }
 
 function toCurrentPullRequestCandidate(
