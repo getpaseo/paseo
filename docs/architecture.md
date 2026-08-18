@@ -64,21 +64,21 @@ not retain non-Git directories.
 
 **Key modules:**
 
-| Module                          | Responsibility                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay  |
-| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing        |
-| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations         |
-| `server/directory-sync/`        | Daemon-global latest-state sequences for projects, workspaces, and agents     |
-| `server/workspace-labels/`      | Host-local label catalog, assignment mutations, and explicit subscriptions    |
-| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management       |
-| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
-| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
-| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
-| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
+| Module                          | Responsibility                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `server/bootstrap.ts`           | Daemon initialization: HTTP server, WS server, agent manager, storage, relay   |
+| `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing         |
+| `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations          |
+| `server/directory-sync/`        | Daemon-global latest-state sequences for projects, workspaces, and agents      |
+| `server/workspace-labels/`      | Host-local label catalog, assignment mutations, and explicit subscriptions     |
+| `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management        |
+| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                          |
+| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation  |
+| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK        |
+| `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                                |
 | `server/orchestration-skills/`  | Bundled catalog, host selection, convergence, and skill-directory transactions |
-| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
-| `server/schedule/`              | Cron-based scheduled agents                                                   |
+| `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                  |
+| `server/schedule/`              | Cron-based scheduled agents                                                    |
 
 ### `packages/protocol` — Wire schemas and shared protocol types
 
