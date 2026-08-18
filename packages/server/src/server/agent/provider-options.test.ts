@@ -66,6 +66,19 @@ describe("provider-owned option schemas", () => {
     ).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true } });
   });
 
+  test("accepts the native Claude skills context filter", () => {
+    expect(ClaudeProviderOptionsSchema.parse({ skills: ["research", "code-review"] })).toEqual({
+      skills: ["research", "code-review"],
+    });
+    expect(ClaudeProviderOptionsSchema.parse({ skills: "all" })).toEqual({ skills: "all" });
+  });
+
+  test("rejects an invalid Claude skills value", () => {
+    expect(() =>
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, { skills: "some" }),
+    ).toThrow("providerOptions.skills");
+  });
+
   test("reports the exact invalid Claude option path", () => {
     expect(() =>
       validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
