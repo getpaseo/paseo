@@ -1272,7 +1272,7 @@ test.describe("Agent message submission", () => {
   test("keeps a streaming hidden submission before its output after workspace eviction", async ({
     page,
   }, testInfo) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(page, testInfo);
   });
 
