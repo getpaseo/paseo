@@ -3,6 +3,7 @@ import {
   buildWorkspaceLabelPickerRows,
   createWorkspaceLabelManagerModel,
   createWorkspaceLabelPickerModel,
+  hasAuthoritativeWorkspaceLabelCatalog,
   mergeWorkspaceLabelCatalogs,
   projectWorkspaceLabels,
   selectWorkspaceLabelDefinitions,
@@ -14,6 +15,24 @@ import {
 // step. There is nothing left here to assert that the compiler does not.
 
 describe("workspace label projection", () => {
+  test("does not treat a failed online catalog as authoritative", () => {
+    expect(
+      hasAuthoritativeWorkspaceLabelCatalog([
+        { serverId: "host-a", status: "online", error: "request failed", labels: [] },
+      ]),
+    ).toBe(false);
+    expect(
+      hasAuthoritativeWorkspaceLabelCatalog([
+        {
+          serverId: "host-a",
+          status: "online",
+          error: null,
+          labels: [{ name: "Urgent", color: "red" }],
+        },
+      ]),
+    ).toBe(true);
+  });
+
   test("merges normalized names deterministically and lets the target host definition win", () => {
     const catalogs = [
       { serverId: "host-b", labels: [{ name: "Blocked", color: "red" as const }] },

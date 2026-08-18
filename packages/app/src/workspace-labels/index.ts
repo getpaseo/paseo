@@ -56,6 +56,20 @@ export interface WorkspaceLabelProjection {
   targetHost: WorkspaceLabelHostSnapshot | undefined;
 }
 
+/**
+ * A connected host with a failed catalog request can still accept label mutations, but its
+ * replica is not evidence that a persisted filter names a deleted label. Reconciliation is
+ * destructive, so wait until every connected catalog has loaded successfully.
+ */
+export function hasAuthoritativeWorkspaceLabelCatalog(
+  hosts: readonly WorkspaceLabelHostSnapshot[],
+): boolean {
+  return (
+    hosts.some((host) => host.status === "online") &&
+    !hosts.some((host) => host.status === "online" && host.error !== null)
+  );
+}
+
 export function projectWorkspaceLabels(
   hostsById: Readonly<Record<string, WorkspaceLabelHostSnapshot>>,
   targetServerId?: string,

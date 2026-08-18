@@ -17,7 +17,10 @@ import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
-import { useWorkspaceLabelProjection } from "@/workspace-labels";
+import {
+  hasAuthoritativeWorkspaceLabelCatalog,
+  useWorkspaceLabelProjection,
+} from "@/workspace-labels";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -60,11 +63,11 @@ export function SidebarModelProvider({
     () => labelHosts.flatMap((host) => host.labels.map((label) => label.name)),
     [labelHosts],
   );
-  const hasOnlineLabelCatalog = labelHosts.some((host) => host.status === "online");
+  const hasAuthoritativeLabelCatalog = hasAuthoritativeWorkspaceLabelCatalog(labelHosts);
   useEffect(() => {
-    if (!hasOnlineLabelCatalog) return;
+    if (!hasAuthoritativeLabelCatalog) return;
     reconcileLabelFilter(availableLabelNames);
-  }, [availableLabelNames, hasOnlineLabelCatalog, reconcileLabelFilter]);
+  }, [availableLabelNames, hasAuthoritativeLabelCatalog, reconcileLabelFilter]);
   const hasActiveLabelFilter = hasActiveSidebarLabelFilter(labelFilter);
   const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
