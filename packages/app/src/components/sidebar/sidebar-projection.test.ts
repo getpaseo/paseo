@@ -63,12 +63,8 @@ function makeProject(
   };
 }
 
-function workspaceIds(group: { rows: SidebarWorkspaceEntry[] }): string[] {
-  return group.rows.map((entry) => entry.workspaceId);
-}
-
 function projectionInput(options?: {
-  groupMode?: "project" | "status" | "label";
+  groupMode?: "project" | "status";
   pinnedCollapsed?: boolean;
 }) {
   const pinned = makeWorkspace("pinned", "running");
@@ -89,7 +85,6 @@ function projectionInput(options?: {
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
-    unlabelledLabel: "Unlabelled",
   };
 }
 
@@ -97,7 +92,7 @@ function projectionInput(options?: {
  * Two projects, one workspace each, both labelled — so every grouping mode puts rows from more
  * than one project on screen, and a mode that asked for fewer icons than it renders would show it.
  */
-function twoProjectInput(groupMode: "project" | "status" | "label") {
+function twoProjectInput(groupMode: "project" | "status") {
   const first = makeWorkspace("first", "running", ["Urgent"], "project");
   const second = makeWorkspace("second", "needs_input", ["Backend"], "other-project");
   return {
@@ -118,9 +113,7 @@ function twoProjectInput(groupMode: "project" | "status" | "label") {
 describe("buildSidebarProjection", () => {
   // The rule that outlived the bug it was written for: a project icon is fetched per project, so
   // whatever a mode groups by, the rows it produces can only reference projects already covered.
-  // Deriving the targets per mode is what left label grouping with an empty map and a sidebar of
-  // placeholder initials.
-  for (const groupMode of ["project", "status", "label"] as const) {
+  for (const groupMode of ["project", "status"] as const) {
     it(`covers every row ${groupMode} grouping renders with a project icon target`, () => {
       const projection = buildSidebarProjection(twoProjectInput(groupMode));
       const covered = new Set(projection.projectIconTargets.map((target) => target.projectViewKey));
@@ -179,34 +172,5 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
-  });
-
-  it("keeps pinned workspaces out of label groups while preserving pinned shortcut order", () => {
-    const input = projectionInput({ groupMode: "label" });
-    input.workspaceEntriesByKey.get("srv:pinned")!.labels = ["Urgent"];
-    input.workspaceEntriesByKey.get("srv:unpinned")!.labels = ["Urgent", "Backend"];
-    const projection = buildSidebarProjection(input);
-
-    expect(
-      projection.workspaceGroups.map((group) => ({
-        key: group.key,
-        workspaces: workspaceIds(group),
-      })),
-    ).toEqual([
-      { key: "label:backend", workspaces: ["unpinned"] },
-      { key: "label:urgent", workspaces: ["unpinned"] },
-    ]);
-    expect(projection.shortcutModel.shortcutTargets).toEqual([
-      { serverId: "srv", workspaceId: "pinned" },
-      { serverId: "srv", workspaceId: "unpinned" },
-      { serverId: "srv", workspaceId: "unpinned" },
-    ]);
-  });
-
-  it("uses the translated synthetic group heading supplied by the projection boundary", () => {
-    const input = projectionInput({ groupMode: "label" });
-    input.unlabelledLabel = "Sin etiqueta";
-
-    expect(buildSidebarProjection(input).workspaceGroups.at(-1)?.label).toBe("Sin etiqueta");
   });
 });

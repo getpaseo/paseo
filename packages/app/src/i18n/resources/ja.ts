@@ -991,12 +991,7 @@ export const ja: TranslationResources = {
       amber: "琥珀",
       blue: "青",
     },
-    accessibility: {
-      group: "{{label}}グループ",
-    },
     filter: {
-      matchAny: "いずれかに一致",
-      matchAll: "すべてに一致",
       clear: "フィルターをクリア",
       noMatchesTitle: "一致するワークスペースがありません",
       noMatchesDescription:

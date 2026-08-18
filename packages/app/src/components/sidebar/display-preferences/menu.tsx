@@ -83,7 +83,6 @@ type OptionIcon = ComponentType<{
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
   status: withUnistyles(CircleDashed),
-  label: withUnistyles(Tag),
 };
 
 const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
@@ -115,14 +114,13 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
   timestamp: withUnistyles(Clock),
 };
 
-const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status", "label"];
+const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
 
 const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
   project: "sidebar.display.grouping.project",
   status: "sidebar.display.grouping.status",
-  label: "sidebar.display.grouping.labels",
 };
 
 const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
@@ -325,9 +323,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
  * host's color because it would otherwise lie, but this page is the whole set of things to filter
  * on and a per-host split would only make you visit it twice.
  *
- * Below the rows, what you can do with the selection — the match toggle once two labels are
- * selected, and Clear once anything is. Both are absent rather than disabled when they have
- * nothing to act on, so the page is as long as the decision you are actually making.
+ * Clear is absent rather than disabled when it has nothing to act on.
  */
 function LabelFilterPage({
   labels,
@@ -340,8 +336,6 @@ function LabelFilterPage({
 }): ReactElement {
   const { t } = useTranslation();
   const selected = preferences.labelFilter.labels;
-  const matchAny = useCallback(() => preferences.setLabelMatch("any"), [preferences]);
-  const matchAll = useCallback(() => preferences.setLabelMatch("all"), [preferences]);
   return (
     <>
       {labels.map((label) => (
@@ -366,26 +360,6 @@ function LabelFilterPage({
       {hasActiveSidebarLabelFilter(preferences.labelFilter) ? (
         <>
           <MenuSeparator />
-          {selected.length >= 2 ? (
-            <>
-              <MenuItem
-                selected={preferences.labelFilter.match === "any"}
-                closeOnSelect={false}
-                onSelect={matchAny}
-                testID="sidebar-label-filter-match-any"
-              >
-                {t("workspaceLabels.filter.matchAny")}
-              </MenuItem>
-              <MenuItem
-                selected={preferences.labelFilter.match === "all"}
-                closeOnSelect={false}
-                onSelect={matchAll}
-                testID="sidebar-label-filter-match-all"
-              >
-                {t("workspaceLabels.filter.matchAll")}
-              </MenuItem>
-            </>
-          ) : null}
           <MenuItem
             closeOnSelect={false}
             onSelect={preferences.clearLabelFilter}
@@ -407,9 +381,9 @@ function LabelFilterPage({
  * One label: its colour leading, its name, and the engine's own check when it is filtered on.
  *
  * The same row the host filter uses, because it is the same question — one press in, one press
- * out, several at once, and the match toggle below says how they combine. Four attempts at giving
- * exclusion a shape in this row are in the branch history; each bought a new awkwardness, because
- * two controls in one 232pt menu row is a lot of machinery for a filter nobody asked to invert.
+ * out, several at once. Four attempts at giving exclusion a shape in this row are in the branch
+ * history; each bought a new awkwardness, because two controls in one 232pt menu row is a lot of
+ * machinery for a filter nobody asked to invert.
  */
 function LabelFilterItem({
   name,

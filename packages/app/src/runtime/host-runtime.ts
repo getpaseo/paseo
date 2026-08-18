@@ -2138,7 +2138,14 @@ export class HostRuntimeStore {
               error: toErrorMessage(error),
             });
           }),
-        ]).then(() => directory?.connectWorkspaceLabels()),
+        ]).then(() =>
+          directory?.connectWorkspaceLabels().catch((error) => {
+            console.error("[HostRuntime] workspace label bootstrap failed", {
+              serverId,
+              error: toErrorMessage(error),
+            });
+          }),
+        ),
       )
       .finally(() => {
         const inFlight = this.directoryBootstrapInFlight.get(serverId);

@@ -980,12 +980,7 @@ export const ar: TranslationResources = {
       amber: "كهرماني",
       blue: "أزرق",
     },
-    accessibility: {
-      group: "مجموعة {{label}}",
-    },
     filter: {
-      matchAny: "مطابقة أي منها",
-      matchAll: "مطابقة جميعها",
       clear: "مسح عامل التصفية",
       noMatchesTitle: "لا توجد مساحات عمل مطابقة",
       noMatchesDescription: "غيّر عامل تصفية التسميات أو امسحه لعرض مساحات العمل.",

@@ -18,13 +18,7 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import {
-  groupWorkspacesByLabel,
-  labelWorkspaceGroups,
-  statusWorkspaceGroups,
-  type SidebarWorkspaceGroup,
-} from "./sidebar-labels";
-import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
+import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -35,7 +29,7 @@ export interface SidebarProjection {
    * because it is the same `projects` the rows above are projected from: a mode that renders a
    * row can only ever ask for an icon this list already covers. It used to be derived in the
    * list, under a `groupMode === "status"` gate written when status was the only mode that put
-   * icons on rows, and label grouping rendered every row with a placeholder for it.
+   * icons on rows.
    */
   projectIconTargets: SidebarProjectIconTarget[];
   shortcutModel: SidebarShortcutModel;
@@ -51,8 +45,6 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
-  labelDefinitions?: readonly WorkspaceLabelDefinition[];
-  unlabelledLabel: string;
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
@@ -98,7 +90,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   };
 }
 
-/** Project mode keeps its project headers and groups nothing; every other mode groups the rows. */
+/** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
 function buildWorkspaceGroups(
   input: SidebarProjectionInput,
   unpinnedWorkspaces: SidebarWorkspaceEntry[],
@@ -109,10 +101,6 @@ function buildWorkspaceGroups(
     case "status":
       return statusWorkspaceGroups(
         buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey),
-      );
-    case "label":
-      return labelWorkspaceGroups(
-        groupWorkspacesByLabel(unpinnedWorkspaces, input.unlabelledLabel, input.labelDefinitions),
       );
   }
 }

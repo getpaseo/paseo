@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, type ReactNode } from "react";
+import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
   type SidebarWorkspaceEntry,
@@ -18,7 +18,6 @@ import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
-import { useTranslation } from "react-i18next";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -44,9 +43,8 @@ export function SidebarModelProvider({
   const list = useSidebarWorkspacesList();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
-  const { labels: mergedLabels } = useWorkspaceLabelProjection();
-  const { t } = useTranslation();
-  const unlabelledLabel = t("workspaceLabels.unlabelled");
+  const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
+  const { hosts: labelHosts } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -58,6 +56,15 @@ export function SidebarModelProvider({
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
+  const availableLabelNames = useMemo(
+    () => labelHosts.flatMap((host) => host.labels.map((label) => label.name)),
+    [labelHosts],
+  );
+  const hasOnlineLabelCatalog = labelHosts.some((host) => host.status === "online");
+  useEffect(() => {
+    if (!hasOnlineLabelCatalog) return;
+    reconcileLabelFilter(availableLabelNames);
+  }, [availableLabelNames, hasOnlineLabelCatalog, reconcileLabelFilter]);
   const needsWorkspaceEntries = groupMode !== "project" || hasActiveSidebarLabelFilter(labelFilter);
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
@@ -96,8 +103,6 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
-      labelDefinitions: mergedLabels,
-      unlabelledLabel,
     }),
     [
       collapsedProjectKeys,
@@ -109,8 +114,6 @@ export function SidebarModelProvider({
       pinnedKeys,
       pinnedWorkspaceOrder,
       filteredWorkspaceEntriesByKey,
-      mergedLabels,
-      unlabelledLabel,
     ],
   );
   const projection = useMemo(() => buildSidebarProjection(projectionInput), [projectionInput]);

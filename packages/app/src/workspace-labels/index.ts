@@ -141,14 +141,17 @@ class WorkspaceLabelsController {
       return;
     }
 
+    let connection: HostConnection | undefined;
     const unsubscribe = input.client.on("workspace.label.update", (message) => {
+      if (this.connections.get(input.serverId) !== connection) return;
       if (!replica.applyUpdate(message)) {
         void this.refresh(input.serverId).catch(() => undefined);
         return;
       }
       this.publish(input.serverId, replica, "online", null);
     });
-    this.connections.set(input.serverId, { client: input.client, replica, unsubscribe });
+    connection = { client: input.client, replica, unsubscribe };
+    this.connections.set(input.serverId, connection);
     await this.refresh(input.serverId);
   }
 
@@ -193,9 +196,11 @@ class WorkspaceLabelsController {
         subscriptionId: `workspace-labels:${serverId}`,
         sync: connection.replica.snapshot().cursor,
       });
+      if (this.connections.get(serverId) !== connection) return;
       connection.replica.applyList(payload);
       this.publish(serverId, connection.replica, "online", null);
     } catch (error) {
+      if (this.connections.get(serverId) !== connection) throw error;
       this.publish(
         serverId,
         connection.replica,

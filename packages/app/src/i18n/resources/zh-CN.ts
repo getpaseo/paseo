@@ -972,12 +972,7 @@ export const zhCN: TranslationResources = {
       amber: "琥珀色",
       blue: "蓝色",
     },
-    accessibility: {
-      group: "{{label}}组",
-    },
     filter: {
-      matchAny: "匹配任一",
-      matchAll: "匹配全部",
       clear: "清除筛选",
       noMatchesTitle: "没有匹配的工作区",
       noMatchesDescription: "更改或清除标签筛选以查看工作区。",

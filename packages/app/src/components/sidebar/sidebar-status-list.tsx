@@ -24,7 +24,6 @@ import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list"
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import { SidebarLabelFilterEmptyState } from "@/components/sidebar/empty-states";
-import { WORKSPACE_LABEL_ICON_MAPPINGS } from "@/workspace-labels/swatch";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -39,7 +38,6 @@ import {
   CircleCheck,
   CircleDot,
   CircleX,
-  Tag,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
 import { useMutation } from "@tanstack/react-query";
@@ -110,17 +108,7 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
-const ThemedTag = withUnistyles(Tag);
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
-
-/**
- * The label group's glyph takes the status glyphs' 14 with no optical nudge, which is worth a
- * note because `Tag` reaches the corners of its box where `CircleDot` stays inside a disc.
- * Measured on the rendered sidebar at 1440x900: both ink a 14x14 square at the same offset in the
- * slot, and the tag lays down slightly *less* ink than the circle (76 vs 84 pixels above the row
- * background), so it reads no heavier beside them. See `/tmp/labels-qa-p10/INDEX.md`.
- */
-const LABEL_GROUP_ICON_SIZE = 14;
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
   return workspace.workspaceKey;
@@ -422,7 +410,6 @@ function StatusGroupHeader({
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
 }) {
-  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
@@ -446,11 +433,7 @@ function StatusGroupHeader({
     <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
       <Pressable
         accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={
-          group.leading.kind === "label"
-            ? t("workspaceLabels.accessibility.group", { label: group.label })
-            : `${group.label} group`
-        }
+        accessibilityLabel={`${group.label} group`}
         accessibilityState={accessibilityState}
         style={rowStyle}
         onPress={handlePress}
@@ -485,18 +468,6 @@ function StatusGroupLeadingVisual({
   showChevron: boolean;
 }) {
   if (!showChevron) {
-    if (leading.kind === "label") {
-      return leading.color ? (
-        <ThemedTag
-          size={LABEL_GROUP_ICON_SIZE}
-          uniProps={WORKSPACE_LABEL_ICON_MAPPINGS[leading.color]}
-        />
-      ) : (
-        // Unlabelled has no color of its own, so it takes the muted foreground the chevron and
-        // the done status glyph already use.
-        <ThemedTag size={LABEL_GROUP_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
-      );
-    }
     return <StatusGroupIcon bucket={leading.bucket} />;
   }
   if (collapsed) {

@@ -989,12 +989,7 @@ export const en = {
       amber: "Amber",
       blue: "Blue",
     },
-    accessibility: {
-      group: "{{label}} group",
-    },
     filter: {
-      matchAny: "Match any",
-      matchAll: "Match all",
       clear: "Clear filter",
       noMatchesTitle: "No workspaces match",
       noMatchesDescription: "Change or clear the label filter to see workspaces.",

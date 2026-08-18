@@ -1005,12 +1005,7 @@ export const ptBR: TranslationResources = {
       amber: "Âmbar",
       blue: "Azul",
     },
-    accessibility: {
-      group: "Grupo {{label}}",
-    },
     filter: {
-      matchAny: "Corresponder a qualquer uma",
-      matchAll: "Corresponder a todas",
       clear: "Limpar filtro",
       noMatchesTitle: "Nenhum espaço de trabalho corresponde",
       noMatchesDescription: "Altere ou limpe o filtro de etiquetas para ver espaços de trabalho.",

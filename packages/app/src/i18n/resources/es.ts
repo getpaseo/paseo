@@ -1014,12 +1014,7 @@ export const es: TranslationResources = {
       amber: "Ámbar",
       blue: "Azul",
     },
-    accessibility: {
-      group: "Grupo {{label}}",
-    },
     filter: {
-      matchAny: "Coincidir con cualquiera",
-      matchAll: "Coincidir con todas",
       clear: "Borrar filtro",
       noMatchesTitle: "Ningún espacio de trabajo coincide",
       noMatchesDescription: "Cambia o borra el filtro de etiquetas para ver espacios de trabajo.",

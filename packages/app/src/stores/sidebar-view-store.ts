@@ -5,12 +5,11 @@ import { z } from "zod";
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
-export type SidebarGroupMode = "project" | "status" | "label";
-export type SidebarLabelMatch = "any" | "all";
+export type SidebarGroupMode = "project" | "status";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 4;
+const SIDEBAR_VIEW_STORE_VERSION = 5;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -25,12 +24,10 @@ export const SIDEBAR_UNLABELLED_LABEL_KEY = "";
  * What the sidebar's Labels page currently says.
  *
  * The labels pinned to, keyed by `workspaceLabelKey`, exactly as `hostFilters` holds server ids:
- * empty means "every label", non-empty pins the sidebar to those. `match` is the one thing hosts
- * do not need, because a workspace lives on one host and can carry several labels.
+ * empty means "every label", non-empty includes workspaces carrying any selected label.
  */
 export interface SidebarLabelFilter {
   labels: string[];
-  match: SidebarLabelMatch;
 }
 
 export function hasActiveSidebarLabelFilter(filter: SidebarLabelFilter): boolean {
@@ -46,8 +43,8 @@ interface SidebarViewStoreState {
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleLabelFilter: (name: string) => void;
-  setLabelMatch: (match: SidebarLabelMatch) => void;
   clearLabelFilter: () => void;
+  reconcileLabelFilter: (labels: readonly string[]) => void;
   reconcileHostFilters: (serverIds: readonly string[]) => void;
 }
 
@@ -57,16 +54,15 @@ interface SidebarViewPersistedState {
   labelFilter: SidebarLabelFilter;
 }
 
-const SidebarGroupModeSchema = z.enum(["project", "status", "label"]);
+const PersistedSidebarGroupModeSchema = z.enum(["project", "status", "label"]);
 const SidebarLabelFilterSchema = z.object({
   labels: z.array(z.string()),
-  match: z.enum(["any", "all"]),
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
-  groupMode: SidebarGroupModeSchema.optional(),
+  groupMode: PersistedSidebarGroupModeSchema.optional(),
   hostFilters: z.array(z.string()).optional(),
   hostFilter: z.string().nullable().optional(),
-  groupModeByServerId: z.record(z.string(), SidebarGroupModeSchema).optional(),
+  groupModeByServerId: z.record(z.string(), PersistedSidebarGroupModeSchema).optional(),
   labelFilter: SidebarLabelFilterSchema.optional(),
 });
 
@@ -109,7 +105,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   }
 
   return {
-    groupMode: state.groupMode ?? "project",
+    groupMode: state.groupMode === "status" ? "status" : "project",
     hostFilters: readHostFilters(state),
     labelFilter: state.labelFilter
       ? normalizeSidebarLabelFilter(state.labelFilter)
@@ -123,7 +119,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
  */
 function normalizeSidebarLabelFilter(filter: SidebarLabelFilter): SidebarLabelFilter {
   const labels = new Set(filter.labels.map(workspaceLabelKey));
-  return { labels: [...labels], match: filter.match };
+  return { labels: [...labels] };
 }
 
 export function createSidebarViewStorage(
@@ -164,8 +160,16 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
             : [...state.labelFilter.labels, key];
           return { labelFilter: { ...state.labelFilter, labels } };
         }),
-      setLabelMatch: (match) => set((state) => ({ labelFilter: { ...state.labelFilter, match } })),
       clearLabelFilter: () => set({ labelFilter: emptyLabelFilter() }),
+      reconcileLabelFilter: (labels) =>
+        set((state) => {
+          const available = new Set(labels.map(workspaceLabelKey));
+          const next = state.labelFilter.labels.filter(
+            (label) => label === SIDEBAR_UNLABELLED_LABEL_KEY || available.has(label),
+          );
+          if (next.length === state.labelFilter.labels.length) return state;
+          return { labelFilter: { labels: next } };
+        }),
       reconcileHostFilters: (serverIds) =>
         set((state) => {
           if (state.hostFilters.length === 0) {
@@ -197,5 +201,5 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
 );
 
 function emptyLabelFilter(): SidebarLabelFilter {
-  return { labels: [], match: "any" };
+  return { labels: [] };
 }

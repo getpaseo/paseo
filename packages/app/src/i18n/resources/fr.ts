@@ -1013,12 +1013,7 @@ export const fr: TranslationResources = {
       amber: "Ambre",
       blue: "Bleu",
     },
-    accessibility: {
-      group: "Groupe {{label}}",
-    },
     filter: {
-      matchAny: "Correspondre à l’une",
-      matchAll: "Correspondre à toutes",
       clear: "Effacer le filtre",
       noMatchesTitle: "Aucun espace de travail ne correspond",
       noMatchesDescription:

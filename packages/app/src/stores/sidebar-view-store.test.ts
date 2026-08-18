@@ -42,7 +42,7 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       hostFilters: [],
-      labelFilter: { labels: [], match: "any" },
+      labelFilter: { labels: [] },
     });
   });
 
@@ -93,7 +93,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: [],
-      labelFilter: { labels: [], match: "any" },
+      labelFilter: { labels: [] },
     });
   });
 
@@ -106,7 +106,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a"],
-      labelFilter: { labels: [], match: "any" },
+      labelFilter: { labels: [] },
     });
   });
 
@@ -119,23 +119,23 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
-      labelFilter: { labels: [], match: "any" },
+      labelFilter: { labels: [] },
     });
   });
 
   it("clears only the label facet", () => {
     useSidebarViewStore.setState({
-      groupMode: "label",
+      groupMode: "status",
       hostFilters: ["host-a"],
-      labelFilter: { labels: ["urgent", "blocked"], match: "all" },
+      labelFilter: { labels: ["urgent", "blocked"] },
     });
 
     useSidebarViewStore.getState().clearLabelFilter();
 
     expect(useSidebarViewStore.getState()).toMatchObject({
-      groupMode: "label",
+      groupMode: "status",
       hostFilters: ["host-a"],
-      labelFilter: { labels: [], match: "any" },
+      labelFilter: { labels: [] },
     });
   });
 
@@ -157,11 +157,20 @@ describe("sidebar view store", () => {
 
     toggleLabelFilter(SIDEBAR_UNLABELLED_LABEL_KEY);
     toggleLabelFilter("Urgent");
-    useSidebarViewStore.getState().setLabelMatch("all");
+    expect(useSidebarViewStore.getState().labelFilter).toEqual({
+      labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent"],
+    });
+  });
+
+  it("drops deleted labels from the active filter but retains Unlabelled", () => {
+    useSidebarViewStore.setState({
+      labelFilter: { labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent", "removed"] },
+    });
+
+    useSidebarViewStore.getState().reconcileLabelFilter(["Urgent"]);
 
     expect(useSidebarViewStore.getState().labelFilter).toEqual({
       labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent"],
-      match: "all",
     });
   });
 
@@ -170,7 +179,7 @@ describe("sidebar view store", () => {
       migrateSidebarViewState({
         labelFilter: { labels: [" Urgent ", "BLOCKED", "urgent"], match: "all" },
       }).labelFilter,
-    ).toEqual({ labels: ["urgent", "blocked"], match: "all" });
+    ).toEqual({ labels: ["urgent", "blocked"] });
   });
 
   it("falls back to the legacy storage key when the new key is empty", async () => {

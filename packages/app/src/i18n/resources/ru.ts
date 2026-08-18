@@ -1002,12 +1002,7 @@ export const ru: TranslationResources = {
       amber: "Янтарный",
       blue: "Синий",
     },
-    accessibility: {
-      group: "Группа «{{label}}»",
-    },
     filter: {
-      matchAny: "Совпадает с любой",
-      matchAll: "Совпадает со всеми",
       clear: "Очистить фильтр",
       noMatchesTitle: "Нет подходящих рабочих пространств",
       noMatchesDescription:

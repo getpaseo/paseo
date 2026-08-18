@@ -1,11 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelMatch } from "@/stores/sidebar-view-store";
-import {
-  filterWorkspacesByLabels,
-  groupWorkspacesByLabel,
-  labelWorkspaceGroups,
-} from "./sidebar-labels";
+import { SIDEBAR_UNLABELLED_LABEL_KEY } from "@/stores/sidebar-view-store";
+import { filterWorkspacesByLabels } from "./sidebar-labels";
 
 function workspace(
   workspaceId: string,
@@ -40,38 +36,26 @@ function workspace(
   };
 }
 
-function workspaceIds(group: { rows: SidebarWorkspaceEntry[] }): string[] {
-  return group.rows.map((entry) => entry.workspaceId);
-}
-
-describe("sidebar label filtering and grouping", () => {
+describe("sidebar label filtering", () => {
   const workspaces = [
     workspace("one", ["Backend", "Urgent"], "2026-01-01"),
     workspace("two", ["Backend"]),
     workspace("three", []),
   ];
 
-  function filtered(labels: string[], match: SidebarLabelMatch = "any") {
-    return filterWorkspacesByLabels({ workspaces, labels, match }).map(
-      (entry) => entry.workspaceId,
-    );
+  function filtered(labels: string[]) {
+    return filterWorkspacesByLabels({ workspaces, labels }).map((entry) => entry.workspaceId);
   }
 
-  test("composes match-any and match-all over the selected labels", () => {
+  test("includes a workspace carrying any selected label", () => {
     expect(filtered([])).toEqual(["one", "two", "three"]);
     expect(filtered(["backend"])).toEqual(["one", "two"]);
     expect(filtered(["backend", "urgent"])).toEqual(["one", "two"]);
-    expect(filtered(["backend", "urgent"], "all")).toEqual(["one"]);
-  });
-
-  test("treats a lone selection the same under either match mode", () => {
-    expect(filtered(["urgent"], "all")).toEqual(filtered(["urgent"]));
   });
 
   test("models Unlabelled as a row in the same list", () => {
     expect(filtered([SIDEBAR_UNLABELLED_LABEL_KEY])).toEqual(["three"]);
     expect(filtered(["backend", SIDEBAR_UNLABELLED_LABEL_KEY])).toEqual(["one", "two", "three"]);
-    expect(filtered(["backend", SIDEBAR_UNLABELLED_LABEL_KEY], "all")).toEqual([]);
   });
 
   test("reads whitespace-only label names as no label rather than as the Unlabelled key", () => {
@@ -79,38 +63,7 @@ describe("sidebar label filtering and grouping", () => {
       filterWorkspacesByLabels({
         workspaces: [workspace("blank", ["   "])],
         labels: [SIDEBAR_UNLABELLED_LABEL_KEY],
-        match: "any",
       }).map((entry) => entry.workspaceId),
     ).toEqual(["blank"]);
-  });
-
-  test("duplicates multi-labelled workspaces and places Unlabelled last", () => {
-    expect(
-      groupWorkspacesByLabel(workspaces, "Unlabelled").map((group) => ({
-        label: group.label,
-        rows: workspaceIds(group),
-      })),
-    ).toEqual([
-      { label: "Backend", rows: ["one", "two"] },
-      { label: "Urgent", rows: ["one"] },
-      { label: "Unlabelled", rows: ["three"] },
-    ]);
-  });
-
-  test("keeps the synthetic unlabelled group outside real label identity", () => {
-    const groups = labelWorkspaceGroups(
-      groupWorkspacesByLabel(
-        [
-          { ...workspaces[0], labels: ["Unlabelled"] },
-          { ...workspaces[2], labels: [] },
-        ],
-        "Unlabelled",
-      ),
-    );
-
-    expect(groups.map(({ key, rows }) => ({ key, rows: workspaceIds({ rows }) }))).toEqual([
-      { key: "label:unlabelled", rows: ["one"] },
-      { key: "synthetic:unlabelled", rows: ["three"] },
-    ]);
   });
 });

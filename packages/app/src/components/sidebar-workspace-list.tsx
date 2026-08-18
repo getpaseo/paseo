@@ -1991,13 +1991,9 @@ export function SidebarWorkspaceList({
     },
     [getPinnedWorkspaceOrder, setPinnedWorkspaceOrder],
   );
-  // One fetch, one map, every mode — project mode paints icons on its headers and every other
-  // mode paints them on each row, all keyed by `projectViewKey`. This used to be two calls with
-  // two gates, and the mode-gated one still read `groupMode === "status"` after label grouping
-  // started rendering through the same branch: the branch below learned about the new mode, the
-  // gate fourteen lines above it did not, and every label-grouped row fell through to its
-  // placeholder initial. The targets now come from the projection that produced the rows, so the
-  // question "what is on screen" is answered once. See `SidebarProjection.projectIconTargets`.
+  // One fetch, one map, every mode — project mode paints icons on its headers and status mode
+  // paints them on each row, all keyed by `projectViewKey`. The targets come from the projection
+  // that produced the rows, so the question "what is on screen" is answered once.
   const projectIconByProjectViewKey = useProjectIcons({ projects: projectIconTargets });
 
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
