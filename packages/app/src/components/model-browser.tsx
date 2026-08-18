@@ -795,12 +795,12 @@ function ModelRow({
             ) : null}
           </View>
           <View style={styles.browserRowTrailing}>
-            {profileAction}
             <View style={styles.browserRowSelection}>
               {isSelected ? (
                 <ThemedCheck size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
               ) : null}
             </View>
+            {profileAction}
           </View>
         </View>
       </ModelBrowserPressable>
