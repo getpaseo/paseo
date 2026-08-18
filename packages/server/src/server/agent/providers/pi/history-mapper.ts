@@ -118,7 +118,7 @@ export class PiHistoryMapper {
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
-    const ircMessage = mapPiIrcMessage(message, text);
+    const ircMessage = mapPiIrcMessage({ message, rawText: text });
     if (ircMessage) {
       return [
         {

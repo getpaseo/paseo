@@ -28,10 +28,10 @@ describe("Pi IRC message mapper", () => {
       text: "First line\nsecond line",
     });
     expect(
-      mapPiIrcMessage(
-        { role: "custom", customType: "irc:incoming", content: currentEnvelope },
-        currentEnvelope,
-      ),
+      mapPiIrcMessage({
+        message: { role: "custom", customType: "irc:incoming", content: currentEnvelope },
+        rawText: currentEnvelope,
+      }),
     ).toEqual({
       type: "tool_call",
       callId: expect.stringMatching(/^pi-irc:[0-9a-f]{64}$/),
@@ -53,8 +53,8 @@ describe("Pi IRC message mapper", () => {
 
   test("prefers structured details without interpreting message text as transport metadata", () => {
     expect(
-      mapPiIrcMessage(
-        {
+      mapPiIrcMessage({
+        message: {
           role: "custom",
           customType: "irc:incoming",
           content: currentEnvelope,
@@ -64,8 +64,8 @@ describe("Pi IRC message mapper", () => {
             message: "Keep this line\n\nSent while waiting/working. This is message content.",
           },
         },
-        currentEnvelope,
-      ),
+        rawText: currentEnvelope,
+      }),
     ).toEqual({
       type: "tool_call",
       callId: "pi-irc:msg-42",
@@ -83,20 +83,20 @@ describe("Pi IRC message mapper", () => {
 
   test("rejects other custom types and malformed IRC envelopes", () => {
     expect(
-      mapPiIrcMessage(
-        { role: "custom", customType: "other", content: currentEnvelope },
-        currentEnvelope,
-      ),
+      mapPiIrcMessage({
+        message: { role: "custom", customType: "other", content: currentEnvelope },
+        rawText: currentEnvelope,
+      }),
     ).toBeNull();
     expect(
-      mapPiIrcMessage(
-        {
+      mapPiIrcMessage({
+        message: {
           role: "custom",
           customType: "irc:incoming",
           content: "Incoming IRC message without an envelope",
         },
-        "Incoming IRC message without an envelope",
-      ),
+        rawText: "Incoming IRC message without an envelope",
+      }),
     ).toBeNull();
     expect(
       parsePiIrcEnvelope("<irc>\nIncoming IRC message from agent ``:\n\ntext\n</irc>"),

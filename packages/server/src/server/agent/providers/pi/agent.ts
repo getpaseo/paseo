@@ -2240,7 +2240,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (event.message.role === "custom") {
       const text = getUserMessageText(event.message.content);
-      const ircMessage = mapPiIrcMessage(event.message, text);
+      const ircMessage = mapPiIrcMessage({ message: event.message, rawText: text });
       if (ircMessage || text) {
         this.emit({
           type: "timeline",

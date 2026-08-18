@@ -11,6 +11,10 @@ interface ParsedIrcMessage {
   text: string;
   id?: string;
 }
+interface MapPiIrcMessageInput {
+  message: Extract<PiAgentMessage, { role: "custom" }>;
+  rawText: string;
+}
 
 function parseStructuredDetails(details: unknown): ParsedIrcMessage | null {
   if (typeof details !== "object" || details === null || Array.isArray(details)) {
@@ -42,10 +46,10 @@ export function parsePiIrcEnvelope(rawText: string): ParsedIrcMessage | null {
   return { sender, text };
 }
 
-export function mapPiIrcMessage(
-  message: Extract<PiAgentMessage, { role: "custom" }>,
-  rawText: string,
-): ToolCallTimelineItem | null {
+export function mapPiIrcMessage({
+  message,
+  rawText,
+}: MapPiIrcMessageInput): ToolCallTimelineItem | null {
   if (message.customType !== "irc:incoming") {
     return null;
   }
