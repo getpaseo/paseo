@@ -1,29 +1,29 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { TextInput } from "react-native";
-import { withUnistyles } from "react-native-unistyles";
-import type { ComposerTextInputHandle, ComposerTextInputProps } from "./text-input-types";
+import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 interface WebTextInputElement extends TextInput {
   value?: string;
   setSelectionRange?: (start: number, end: number) => void;
-  addEventListener: (type: "compositionstart" | "compositionend", listener: EventListener) => void;
-  removeEventListener: (
-    type: "compositionstart" | "compositionend",
-    listener: EventListener,
-  ) => void;
+  addEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
+  removeEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
 }
 
-const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
-  placeholderTextColor: theme.colors.surface4,
-}));
-
-export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTextInputProps>(
-  function ComposerTextInputWeb(
-    { text, onChangeText, onPasteImages: _, onPasteError: __, ...props },
-    ref,
-  ) {
+export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
+  function EditingTextInputWeb(allProps, ref) {
+    const {
+      initialValue = "",
+      onChangeText,
+      onPasteImages: _,
+      onPasteError: __,
+      variant: ___,
+      value: ____,
+      defaultValue: _____,
+      ...props
+    } = allProps as EditingTextInputProps & { value?: unknown; defaultValue?: unknown };
     const inputRef = useRef<TextInput | null>(null);
-    const textRef = useRef(text);
+    const initialTextRef = useRef(initialValue);
+    const textRef = useRef(initialTextRef.current);
     const isComposingRef = useRef(false);
     const onChangeTextRef = useRef(onChangeText);
     onChangeTextRef.current = onChangeText;
@@ -38,10 +38,9 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
       const endComposition = () => {
         isComposingRef.current = false;
         const nextText = input.value ?? "";
-        if (nextText !== textRef.current) {
-          textRef.current = nextText;
-          onChangeTextRef.current(nextText);
-        }
+        if (nextText === textRef.current) return;
+        textRef.current = nextText;
+        onChangeTextRef.current?.(nextText);
       };
 
       input.addEventListener("compositionstart", startComposition);
@@ -52,33 +51,26 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
       };
     }, []);
 
-    const handleChangeText = useCallback(
-      (nextText: string) => {
-        if (isComposingRef.current) return;
-        if (nextText === textRef.current) return;
-        textRef.current = nextText;
-        onChangeText(nextText);
-      },
-      [onChangeText],
-    );
+    const handleChangeText = useCallback((nextText: string) => {
+      if (isComposingRef.current || nextText === textRef.current) return;
+      textRef.current = nextText;
+      onChangeTextRef.current?.(nextText);
+    }, []);
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
       blur: () => inputRef.current?.blur(),
+      isFocused: () => document.activeElement === inputRef.current,
       getText: () => {
         const input = inputRef.current as WebTextInputElement | null;
         const nextText = input?.value ?? textRef.current;
-        if (nextText !== textRef.current) {
-          textRef.current = nextText;
-        }
+        textRef.current = nextText;
         return nextText;
       },
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
         const input = inputRef.current as WebTextInputElement | null;
-        if (input && "value" in input) {
-          input.value = nextText;
-        }
+        if (input && "value" in input) input.value = nextText;
         if (selection && typeof input?.setSelectionRange === "function") {
           input.setSelectionRange(selection.start, selection.end);
         }
@@ -87,10 +79,10 @@ export const ComposerTextInput = forwardRef<ComposerTextInputHandle, ComposerTex
     }));
 
     return (
-      <ThemedTextInput
+      <TextInput
         {...props}
         ref={inputRef}
-        defaultValue={text}
+        defaultValue={initialTextRef.current}
         onChangeText={handleChangeText}
       />
     );

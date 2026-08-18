@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +26,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { ProjectEditSheet } from "@/components/project-edit-sheet";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
@@ -1063,7 +1064,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
         <TextInput
           testID="script-edit-name"
           accessibilityLabel={t("settings.project.scripts.nameAccessibility")}
-          value={script.name}
+          initialValue={script.name}
           onChangeText={handleNameChange}
           onBlur={handleNameBlur}
           placeholder="dev"
@@ -1082,7 +1083,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
           testID="script-edit-command"
           accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
           multiline
-          value={script.commandText}
+          initialValue={script.commandText}
           onChangeText={handleCommandChange}
           onBlur={handleCommandBlur}
           placeholder="npm run dev"

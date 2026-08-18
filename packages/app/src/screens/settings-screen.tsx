@@ -5,10 +5,10 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
   type PressableStateCallbackType,
 } from "react-native";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -448,7 +448,7 @@ function GeneralSection({
             </Text>
           </View>
           <TextInput
-            value={terminalScrollbackValue}
+            initialValue={terminalScrollbackValue}
             onChangeText={handleTerminalScrollbackChangeText}
             onBlur={commitTerminalScrollback}
             onSubmitEditing={commitTerminalScrollback}

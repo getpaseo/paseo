@@ -61,11 +61,12 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
   states) is owned by `components/ui/control-geometry.ts` — controls never
   declare their own, and screens never nudge global component styles to align
   a row.
-- Text editing surfaces own in-progress text. Seed `FormTextInput` once with
-  `initialValue`; React observes committed edits through `onChangeText` and
-  never replays model state through `value`. Use `resetKey` only for an explicit
-  programmatic replacement. On web, IME candidates stay unpublished until
-  composition commits.
+- Every text field consumes `EditingTextInput`, directly or through a UI
+  wrapper. The editing surface owns in-progress text; React observes committed
+  edits through `onChangeText`, and programmatic mutations use the input's
+  `replaceText` command. Its props omit `value` and `defaultValue`, web IME
+  candidates stay unpublished until composition commits, and lint rejects raw
+  React Native `TextInput` imports outside the primitive.
 - The form declares one size for all fields: `sm` on desktop, `md` compact
   (`useIsCompactFormFactor`).
 - Availability hierarchy: a field whose capability doesn't apply is **hidden**
@@ -97,7 +98,6 @@ inputs (host set, connection statuses), never synthetic version counters.
 - `useEffect` choreography impersonating construct/hydrate/resolve/destroy.
 - One mounted form instance serving create and edit.
 - `useMemo`-keyed model construction on live-data identity.
-- Controlled text fields that replay form-model state into the editing surface.
 - Selected labels derived from live query lists.
 - `isLoading`/`isEmpty` boolean bags where a load-state union belongs.
 - Conditional mounting of hint/error rows that shifts layout (subtext renders

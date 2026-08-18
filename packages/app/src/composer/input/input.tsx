@@ -2,7 +2,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
-  TextInput,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
@@ -59,8 +58,11 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeightMirror } from "./height-mirror";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
-import { ComposerTextInput } from "./text-input";
-import type { ComposerTextInputHandle } from "./text-input-types";
+import {
+  EditingTextInput as ComposerTextInput,
+  type EditingTextInputHandle as ComposerTextInputHandle,
+  type EditingTextInputProps,
+} from "@/components/ui/text-input";
 import {
   resolveSendTooltipLabel,
   resolveSubmitAccessibilityLabel,
@@ -622,7 +624,7 @@ interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
   textInputRef: React.Ref<ComposerTextInputHandle>;
-  textInputStyle: React.ComponentProps<typeof TextInput>["style"];
+  textInputStyle: EditingTextInputProps["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
   placeholder: string;
   accessibilityLabel: string;
@@ -662,7 +664,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       <ComposerTextInput
         ref={props.textInputRef}
         dataSet={COMPOSER_INPUT_DATASET}
-        text={props.value}
+        initialValue={props.value}
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
         accessibilityLabel={props.accessibilityLabel}

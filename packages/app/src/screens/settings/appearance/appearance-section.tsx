@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, TextInput, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
   MAX_CODE_FONT_SIZE,
   MAX_UI_BASE_FONT_SIZE,
@@ -332,7 +333,7 @@ function FontFamilyRow({
         <Text style={settingsStyles.rowHint}>{hint}</Text>
       </View>
       <TextInput
-        value={draft}
+        initialValue={draft}
         onChangeText={onChangeDraft}
         onBlur={handleCommit}
         onSubmitEditing={handleCommit}
@@ -372,7 +373,7 @@ function FontSizeRow({
       </View>
       <View style={styles.sizeField}>
         <TextInput
-          value={draft}
+          initialValue={draft}
           onChangeText={onChangeDraft}
           onBlur={onCommit}
           onSubmitEditing={onCommit}

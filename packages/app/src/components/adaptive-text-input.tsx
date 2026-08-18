@@ -1,19 +1,15 @@
-import React, {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useRef,
-  type ForwardedRef,
-  type Ref,
-} from "react";
-import { TextInput, type TextInputProps } from "react-native";
+import React, { forwardRef, useCallback, useEffect, useRef } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { createControlGeometry } from "@/components/ui/control-geometry";
+import {
+  EditingTextInput,
+  type EditingTextInputHandle,
+  type EditingTextInputProps,
+} from "@/components/ui/text-input";
 
-export type AdaptiveTextInputProps = Omit<TextInputProps, "value" | "defaultValue"> & {
+export type AdaptiveTextInputProps = EditingTextInputProps & {
   initialValue?: string;
   resetKey?: string | number;
 };
@@ -27,26 +23,23 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-}));
-const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
+const ThemedTextInput = withUnistyles(EditingTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 
-export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
+export const AdaptiveTextInput = forwardRef<EditingTextInputHandle, AdaptiveTextInputProps>(
   function AdaptiveTextInputInner(props, ref) {
     const isMobile = useIsCompactFormFactor();
     const { initialValue, resetKey, style, onChangeText, ...inputProps } = props;
-    const inputRef = useRef<TextInput | null>(null);
-    const initialTextRef = useRef(initialValue);
+    const inputRef = useRef<EditingTextInputHandle | null>(null);
     const replacementTextRef = useRef(initialValue ?? "");
     const previousResetKeyRef = useRef(resetKey);
     replacementTextRef.current = initialValue ?? "";
     const setInputRef = useCallback(
-      (node: TextInput | null) => {
-        inputRef.current = node;
-        assignRef(ref, node);
+      (handle: EditingTextInputHandle | null) => {
+        inputRef.current = handle;
+        if (typeof ref === "function") ref(handle);
+        else if (ref) ref.current = handle;
       },
       [ref],
     );
@@ -54,32 +47,18 @@ export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
     useEffect(() => {
       if (resetKey === previousResetKeyRef.current) return;
       previousResetKeyRef.current = resetKey;
-      inputRef.current?.setNativeProps({ text: replacementTextRef.current });
+      inputRef.current?.replaceText(replacementTextRef.current);
     }, [resetKey]);
 
-    const textInputProps = {
-      ...inputProps,
-      defaultValue: initialTextRef.current,
-      onChangeText,
-      style: [styles.outline, style, styles.text],
-    };
-
-    if (isMobile && isNative) {
-      return (
-        <ThemedBottomSheetTextInput
-          ref={setInputRef as unknown as Ref<never>}
-          {...textInputProps}
-        />
-      );
-    }
-    return <ThemedTextInput ref={setInputRef} {...textInputProps} />;
+    return (
+      <ThemedTextInput
+        {...inputProps}
+        ref={setInputRef}
+        initialValue={initialValue}
+        onChangeText={onChangeText}
+        style={[styles.outline, style, styles.text]}
+        variant={isMobile && isNative ? "bottom-sheet" : "default"}
+      />
+    );
   },
 );
-
-function assignRef(ref: ForwardedRef<TextInput>, node: TextInput | null): void {
-  if (typeof ref === "function") {
-    ref(node);
-  } else if (ref) {
-    ref.current = node;
-  }
-}

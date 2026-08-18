@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,6 +9,7 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 export interface AdaptiveRenameModalProps {
   visible: boolean;
@@ -39,7 +40,7 @@ export function AdaptiveRenameModal({
   const [draft, setDraft] = useState(initialValue);
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -58,7 +59,7 @@ export function AdaptiveRenameModal({
       if (isWeb && node instanceof HTMLInputElement) {
         node.setSelectionRange(0, length);
       } else if (!isWeb && length > 0) {
-        node.setNativeProps({ selection: { start: 0, end: length } });
+        node.replaceText(node.getText(), { start: 0, end: length });
       }
     }, 50);
     return () => clearTimeout(timeout);

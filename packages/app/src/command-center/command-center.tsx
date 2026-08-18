@@ -3,7 +3,6 @@ import {
   Modal,
   Pressable,
   Text,
-  TextInput,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -18,12 +17,15 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   BottomSheetBackdrop,
   BottomSheetFlatList,
-  BottomSheetTextInput,
   type BottomSheetFlatListMethods,
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -69,7 +71,7 @@ import {
 } from "./results";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
 
-const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
+const ThemedBottomSheetTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
@@ -211,7 +213,7 @@ interface CommandCenterState {
   results: readonly CommandCenterResult[];
   rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
-  inputRef: React.RefObject<TextInput | null>;
+  inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
   close(): void;
@@ -227,7 +229,7 @@ function useCommandCenterState(): CommandCenterState {
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const setScope = useKeyboardShortcutsStore((state) => state.setCommandCenterScope);
   const snapshot = useCommandCenterContributions();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -547,7 +549,7 @@ export function CommandCenter() {
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
-  const bottomSheetInputRef = useRef<React.ElementRef<typeof BottomSheetTextInput>>(null);
+  const bottomSheetInputRef = useRef<EditingTextInputHandle>(null);
   const scrollMetricsRef = useRef({ offset: 0, visibleLength: 0 });
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
@@ -711,7 +713,8 @@ export function CommandCenter() {
           <ThemedBottomSheetTextInput
             testID="command-center-input"
             ref={bottomSheetInputRef}
-            value={state.query}
+            initialValue={state.query}
+            variant="bottom-sheet"
             onChangeText={state.setQuery}
             onKeyPress={keyPress}
             onSubmitEditing={submit}
@@ -749,7 +752,7 @@ export function CommandCenter() {
               <ThemedTextInput
                 testID="command-center-input"
                 ref={state.inputRef}
-                value={state.query}
+                initialValue={state.query}
                 onChangeText={state.setQuery}
                 placeholder={
                   state.scope === "files"

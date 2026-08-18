@@ -15,7 +15,6 @@ import {
   ListRenderItemInfo,
   Pressable,
   Text,
-  TextInput,
   View,
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
@@ -23,6 +22,7 @@ import {
   type TextInputKeyPressEventData,
   type ViewStyle,
 } from "react-native";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -210,7 +210,7 @@ function EntryNameInputRow({
         </View>
         <TextInput
           autoFocus
-          value={name}
+          initialValue={name}
           onChangeText={setName}
           onSubmitEditing={commit}
           onBlur={commit}

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Text, TextInput, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Link } from "lucide-react-native";
@@ -11,6 +11,7 @@ import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@getpaseo/protocol/connection-offer";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
@@ -67,13 +68,13 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
   const isMobile = useIsCompactFormFactor();
 
   const offerUrlRef = useRef("");
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const clearInput = useCallback(() => {
     offerUrlRef.current = "";
-    inputRef.current?.clear();
+    inputRef.current?.replaceText("");
   }, []);
 
   const pairIcon = useMemo(

@@ -1,12 +1,15 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
   StyleSheet,
-  TextInput,
   type NativeSyntheticEvent,
   type StyleProp,
   type TextInputKeyPressEventData,
   type TextStyle,
 } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { resolveNativeTerminalKey, type NativeTerminalKey } from "./terminal-key-events";
 
 export const TERMINAL_INPUT_CONTEXT_MENU_HIDDEN = true;
@@ -181,7 +184,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
 export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>(
   function TerminalInput({ isKeyboardVisible, onFocus, onInput, onTerminalKey, style }, ref) {
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<EditingTextInputHandle>(null);
     const isFocusedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
     const inputState = useMemo(() => createTerminalTextInputState(), []);
@@ -197,7 +200,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
 
     const resetNativeInput = useCallback(() => {
       inputState.reset();
-      inputRef.current?.clear();
+      inputRef.current?.replaceText("");
     }, [inputState]);
 
     const showNativeKeyboard = useCallback(() => {
@@ -314,7 +317,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         autoCorrect={false}
         caretHidden={true}
         contextMenuHidden={TERMINAL_INPUT_CONTEXT_MENU_HIDDEN}
-        defaultValue=""
+        initialValue=""
         blurOnSubmit={false}
         importantForAutofill="no"
         multiline={true}

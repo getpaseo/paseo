@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ComposerTextInput } from "./text-input.web";
-import type { ComposerTextInputHandle } from "./text-input-types";
+import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
+import type { EditingTextInputHandle as ComposerTextInputHandle } from "@/components/ui/text-input";
 
 interface MountedInput {
   root: Root;
@@ -30,7 +30,7 @@ function mountInput(
     root.render(
       <ComposerTextInput
         ref={inputRef}
-        text=""
+        initialValue=""
         multiline={true}
         onChangeText={onChangeText}
         testID="composer-input"
@@ -90,7 +90,7 @@ describe("ComposerTextInput web IME composition", () => {
       typeFromIme(mounted.textarea, "locally typed");
       mounted.root.render(
         <ComposerTextInput
-          text=""
+          initialValue=""
           multiline={true}
           onChangeText={recorder.onChangeText}
           placeholder="rerender with stale publication"
@@ -112,7 +112,7 @@ describe("ComposerTextInput web IME composition", () => {
       mounted.textarea.value = "你好";
       mounted.root.render(
         <ComposerTextInput
-          text=""
+          initialValue=""
           multiline={true}
           onChangeText={recorder.onChangeText}
           placeholder="rerender while composing"
@@ -141,7 +141,7 @@ describe("ComposerTextInput web IME composition", () => {
       mounted.textarea.value = "你好";
       mounted.root.render(
         <ComposerTextInput
-          text="你"
+          initialValue="你"
           multiline={true}
           onChangeText={ignoreTextChange}
           placeholder="second composition"

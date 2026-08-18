@@ -1,7 +1,7 @@
 import React, { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { AdaptiveTextInput } from "./adaptive-text-input.web";
+import { AdaptiveTextInput } from "./adaptive-text-input";
 
 interface MountedInput {
   root: Root;

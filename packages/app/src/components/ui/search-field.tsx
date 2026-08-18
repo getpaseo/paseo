@@ -1,8 +1,12 @@
-import { useCallback, useState, type ReactElement } from "react";
-import { Pressable, TextInput, View } from "react-native";
+import { useCallback, useRef, useState, type ReactElement } from "react";
+import { Pressable, View } from "react-native";
 import { Search, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 
 const ThemedSearch = withUnistyles(Search);
 const ThemedX = withUnistyles(X);
@@ -42,16 +46,21 @@ export function SearchField({
   clearTestID,
 }: SearchFieldProps): ReactElement {
   const [isFocused, setIsFocused] = useState(false);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const handleFocus = useCallback(() => setIsFocused(true), []);
   const handleBlur = useCallback(() => setIsFocused(false), []);
-  const handleClear = useCallback(() => onChangeText(""), [onChangeText]);
+  const handleClear = useCallback(() => {
+    inputRef.current?.replaceText("");
+    onChangeText("");
+  }, [onChangeText]);
 
   return (
     <View style={[styles.field, isFocused && styles.fieldFocused]}>
       <ThemedSearch size={14} uniProps={mutedColorMapping} />
       <ThemedTextInput
         testID={testID}
-        value={value}
+        ref={inputRef}
+        initialValue={value}
         onChangeText={onChangeText}
         onFocus={handleFocus}
         onBlur={handleBlur}
