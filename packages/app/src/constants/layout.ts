@@ -27,9 +27,15 @@ export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
 export const DESKTOP_TRAFFIC_LIGHT_WIDTH = 78;
 export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
 
-// Windows/Linux window controls (minimize/maximize/close) — top-right
+// Windows/Linux window controls (minimize/maximize/close) — top-right fallback constants,
+// used only when navigator.windowControlsOverlay reports no usable geometry. Measured insets
+// win everywhere else; see docs/window-chrome.md.
+// getTitleBarOverlayOptions (packages/desktop/src/window/window-manager.ts) asks for 29 at
+// window construction, but resolveRuntimeTitleBarOverlayOptions installs height - 1, so the
+// live overlay is a pixel shorter once the app pushes its first colour update. Reserve the
+// taller value: it covers both states.
 export const DESKTOP_WINDOW_CONTROLS_WIDTH = 140;
-export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 48;
+export const DESKTOP_WINDOW_CONTROLS_HEIGHT = 29;
 
 export {
   getIsElectron as getIsElectronRuntime,

@@ -1321,7 +1321,6 @@ interface WorkspaceChromeRowProps extends Omit<
   "workspaceRoot"
 > {
   children: ReactNode;
-  explorerOpen: boolean;
   portalHostName: string;
   showExplorerSidebar: boolean;
   workspaceRoot: string | null;
@@ -1329,17 +1328,19 @@ interface WorkspaceChromeRowProps extends Omit<
 
 function WorkspaceChromeRow({
   children,
-  explorerOpen,
   portalHostName,
   showExplorerSidebar,
   workspaceRoot,
   ...explorerProps
 }: WorkspaceChromeRowProps) {
-  const explorerRendered = showExplorerSidebar && explorerOpen && workspaceRoot !== null;
-
   return (
     <View style={styles.threePaneRow}>
-      <WindowChromeRegion corners={explorerRendered ? "top-left" : "both"}>
+      {/* The center column's header spans the full window width and starts at the top
+          edge, so it keeps the window's top-right corner even while the explorer is
+          open: the explorer column begins below that header and never reaches the
+          window controls. Handing top-right to the explorer left the header unpadded
+          and put its icons under the controls on Windows and Linux. */}
+      <WindowChromeRegion corners="both">
         <FloatingPanelPortalHostNameProvider hostName={portalHostName}>
           {children}
         </FloatingPanelPortalHostNameProvider>
@@ -3656,7 +3657,6 @@ function WorkspaceScreenContent({
             <WorkspaceChromeRow
               portalHostName={workspaceFloatingPanelPortalHostName}
               showExplorerSidebar={showExplorerSidebar}
-              explorerOpen={isExplorerOpen}
               serverId={normalizedServerId}
               workspaceId={normalizedWorkspaceId}
               workspaceRoot={workspaceDirectory}
