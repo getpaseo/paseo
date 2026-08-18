@@ -2490,10 +2490,57 @@ describe("ACPAgentSession", () => {
     expect(byName.get("external")?.url).toBe("https://example.com/mcp");
   });
 
+  test("does not rename internal Paseo server when target name is already taken by a user server", () => {
+    // If the user already has a non-internal server named `paseo-daemon`,
+    // renaming would overwrite it. Keep the original `paseo` name instead.
+    const session = new ACPAgentSession(
+      {
+        provider: "acp-with-mcp",
+        cwd: "/tmp/paseo-acp-test",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+          "paseo-daemon": {
+            type: "stdio",
+            command: "user-external-server",
+          },
+        },
+      },
+      {
+        provider: "acp-with-mcp",
+        logger: createTestLogger(),
+        defaultCommand: ["acp-with-mcp", "serve"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+
+    const servers = asInternals<ACPSessionInternals>(session).acpMcpServers() as Array<{
+      name: string;
+      type?: string;
+      command?: string;
+      url?: string;
+    }>;
+    const byName = new Map(servers.map((s) => [s.name, s]));
+    // Internal server keeps its original name.
+    expect(byName.get("paseo")?.url).toBe("http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1");
+    // User's server is preserved.
+    expect(byName.get("paseo-daemon")?.command).toBe("user-external-server");
+  });
+
   test("ensureDevinMcpPermissionPreapproval writes mcp permission to .devin/config.local.json", async () => {
     const dir = await fs.mkdtemp(path.join(tmpdir(), "devin-mcp-perm-"));
     try {
-      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon");
 
       const configPath = path.join(dir, ".devin", "config.local.json");
       const raw = await fs.readFile(configPath, "utf8");
@@ -2521,7 +2568,7 @@ describe("ACPAgentSession", () => {
         "utf8",
       );
 
-      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon");
 
       const raw = await fs.readFile(configPath, "utf8");
       const parsed = JSON.parse(raw) as {
@@ -2543,8 +2590,8 @@ describe("ACPAgentSession", () => {
   test("ensureDevinMcpPermissionPreapproval is idempotent", async () => {
     const dir = await fs.mkdtemp(path.join(tmpdir(), "devin-mcp-perm-idempotent-"));
     try {
-      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
-      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon", createTestLogger());
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon");
+      await ensureDevinMcpPermissionPreapproval(dir, "paseo-daemon");
 
       const configPath = path.join(dir, ".devin", "config.local.json");
       const raw = await fs.readFile(configPath, "utf8");

@@ -86,7 +86,7 @@ import {
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { PASEO_MCP_SERVER_NAME } from "../runtime-mcp-config.js";
+import { PASEO_MCP_SERVER_NAME, isInternalPaseoMcpServer } from "../runtime-mcp-config.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
@@ -545,13 +545,25 @@ function isAlreadyPresentMcpError(error: unknown): boolean {
  * OpenCode MCP tool permission names use `server.tool` format (e.g.
  * `paseo.create_agent`). Returns true when the permission name refers to a
  * tool on the internal Paseo MCP server.
+ *
+ * Verifies the server config is actually the internal Paseo MCP server (by
+ * URL), not just that the name matches — a user-configured external server
+ * named `paseo` must not get auto-approved.
  */
-function isInternalPaseoMcpPermissionName(name: string): boolean {
+function isInternalPaseoMcpPermissionName(
+  name: string,
+  mcpServers: Record<string, McpServerConfig> | undefined,
+): boolean {
   const dotIndex = name.indexOf(".");
   if (dotIndex === -1) {
     return false;
   }
-  return name.slice(0, dotIndex) === PASEO_MCP_SERVER_NAME;
+  const serverName = name.slice(0, dotIndex);
+  if (serverName !== PASEO_MCP_SERVER_NAME) {
+    return false;
+  }
+  const serverConfig = mcpServers?.[serverName];
+  return serverConfig != null && isInternalPaseoMcpServer(serverConfig);
 }
 
 function readOpenCodeMcpOperationError(data: unknown, name: string): unknown {
@@ -4826,7 +4838,10 @@ class OpenCodeAgentSession implements AgentSession {
     // etc.) injected via the `paseo` MCP server. Without this, every call
     // triggers a permission prompt and the model avoids the orchestration tools.
     // Use "always" so the grant persists and subsequent calls don't re-prompt.
-    if (request.kind === "tool" && isInternalPaseoMcpPermissionName(request.name)) {
+    if (
+      request.kind === "tool" &&
+      isInternalPaseoMcpPermissionName(request.name, this.config.mcpServers)
+    ) {
       try {
         await this.client.permission.reply({
           requestID: request.id,

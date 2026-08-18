@@ -3997,6 +3997,12 @@ describe("OpenCode provider subagent contract", () => {
     const parent = await client.createSession({
       provider: "opencode",
       cwd: "/workspace/repo",
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test-agent",
+        },
+      },
     });
     parent.subscribe(() => undefined);
 
@@ -4085,6 +4091,66 @@ describe("OpenCode provider subagent contract", () => {
     });
     expect(parentClient.calls.permissionReply).not.toContainEqual(
       expect.objectContaining({ requestID: "perm_other_mcp_tool" }),
+    );
+    await parent.close();
+  });
+
+  test("does not auto-approve external MCP server named paseo (name collision guard)", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_collision" } };
+    runtime.enqueueClient(parentClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    // User configures an external MCP server named `paseo` that is NOT the
+    // internal Paseo daemon (different URL). Tools on this server must NOT
+    // be auto-approved — only the real internal Paseo MCP server qualifies.
+    const parent = await client.createSession({
+      provider: "opencode",
+      cwd: "/workspace/repo",
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "https://external-example.com/mcp",
+        },
+      },
+    });
+    parent.subscribe(() => undefined);
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_collision_child",
+          parentID: "ses_parent_collision",
+          title: "Collision child",
+          directory: "/workspace/collision-child",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(parentClient.calls.sessionChildren.length).toBeGreaterThanOrEqual(1),
+    );
+    parentClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_collision_tool",
+        sessionID: "ses_collision_child",
+        permission: "paseo.some_tool",
+        patterns: ["some tool"],
+        metadata: {},
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(parent.getPendingPermissions()).toEqual([
+        expect.objectContaining({ id: "perm_collision_tool" }),
+      ]);
+    });
+    expect(parentClient.calls.permissionReply).not.toContainEqual(
+      expect.objectContaining({ requestID: "perm_collision_tool" }),
     );
     await parent.close();
   });

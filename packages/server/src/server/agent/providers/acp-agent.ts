@@ -2562,9 +2562,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // agent's native MCP config would shadow the ACP injection, dropping the
     // correct callerAgentId, auth token, and daemon URL. Rename the internal
     // Paseo server to a name that won't collide with user config.
+    //
+    // If the target name is already occupied by a non-internal server, keep
+    // the original name to avoid overwriting the user's configuration.
+    const existingTarget = servers[ACP_PASEO_MCP_SERVER_NAME];
+    const targetNameTaken = existingTarget != null && !isInternalPaseoMcpServer(existingTarget);
     const renamed: Record<string, McpServerConfig> = {};
     for (const [name, config] of Object.entries(servers)) {
-      renamed[isInternalPaseoMcpServer(config) ? ACP_PASEO_MCP_SERVER_NAME : name] = config;
+      if (isInternalPaseoMcpServer(config) && !targetNameTaken) {
+        renamed[ACP_PASEO_MCP_SERVER_NAME] = config;
+      } else {
+        renamed[name] = config;
+      }
     }
     return normalizeMcpServers(renamed);
   }
@@ -2575,9 +2584,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * tools (mcp__<server>__<tool> patterns), not the ACP requestPermission
    * callback. Without preapproval, every MCP tool call prompts and blocks in
    * unattended contexts.
+   *
+   * Generic ACP providers report `this.provider` as `"acp"`, so identify Devin
+   * by its command binary instead.
    */
   private async prepareMcpPermissions(): Promise<void> {
-    if (this.provider !== "devin") {
+    if (this.defaultCommand[0] !== "devin") {
       return;
     }
     const servers = this.config.mcpServers;
@@ -2588,11 +2600,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!hasInternalPaseoServer) {
       return;
     }
-    await ensureDevinMcpPermissionPreapproval(
-      this.config.cwd,
-      ACP_PASEO_MCP_SERVER_NAME,
-      this.logger,
-    );
+    await ensureDevinMcpPermissionPreapproval(this.config.cwd, ACP_PASEO_MCP_SERVER_NAME);
   }
 
   private applySessionState(response: SessionStateResponse): void {
@@ -3188,48 +3196,44 @@ function deriveCurrentConfigValue(
  * This writes `mcp__<serverName>__*` to the project-local `.devin/config.local.json`
  * so Devin auto-approves all tools on the injected Paseo MCP server. It merges
  * with any existing file, preserving user-authored permissions.
+ *
+ * Throws on failure — if the preapproval can't be written, the session would
+ * block forever on MCP tool calls in unattended contexts, so a clear error is
+ * better than a silent hang.
  */
 export async function ensureDevinMcpPermissionPreapproval(
   cwd: string,
   serverName: string,
-  logger: Logger,
 ): Promise<void> {
   const configPath = path.join(cwd, ".devin", "config.local.json");
   const permissionPattern = `mcp__${serverName}__*`;
 
+  let existing: Record<string, unknown> = {};
   try {
-    let existing: Record<string, unknown> = {};
-    try {
-      const raw = await fs.readFile(configPath, "utf8");
-      existing = JSON.parse(raw) as Record<string, unknown>;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-
-    const permissions = (existing.permissions ?? {}) as Record<string, unknown>;
-    const allow = Array.isArray(permissions.allow) ? [...(permissions.allow as string[])] : [];
-    if (allow.includes(permissionPattern)) {
-      return;
-    }
-    allow.push(permissionPattern);
-
-    const updated = {
-      ...existing,
-      permissions: {
-        ...permissions,
-        allow,
-      },
-    };
-
-    await writeFileAtomic(configPath, `${JSON.stringify(updated, null, 2)}\n`);
+    const raw = await fs.readFile(configPath, "utf8");
+    existing = JSON.parse(raw) as Record<string, unknown>;
   } catch (error) {
-    logger.warn(
-      { err: error, configPath, permissionPattern },
-      "Failed to write Devin MCP permission preapproval",
-    );
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
   }
+
+  const permissions = (existing.permissions ?? {}) as Record<string, unknown>;
+  const allow = Array.isArray(permissions.allow) ? [...(permissions.allow as string[])] : [];
+  if (allow.includes(permissionPattern)) {
+    return;
+  }
+  allow.push(permissionPattern);
+
+  const updated = {
+    ...existing,
+    permissions: {
+      ...permissions,
+      allow,
+    },
+  };
+
+  await writeFileAtomic(configPath, `${JSON.stringify(updated, null, 2)}\n`);
 }
 
 function normalizeMcpServers(servers?: Record<string, McpServerConfig>): McpServer[] {
