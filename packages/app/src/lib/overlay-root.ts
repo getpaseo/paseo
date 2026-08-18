@@ -249,6 +249,7 @@ export function useWebOverlayRegistration({
   const keyHandlerRef = useRef(onKeyDown);
   const capturedRestoreFocusRef = useRef<HTMLElement | null>(null);
   const removeEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
+  const detachedRemoveEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
   const registeredRef = useRef(false);
   const activeRef = useRef(active);
   const wasActiveRef = useRef(false);
@@ -279,11 +280,15 @@ export function useWebOverlayRegistration({
         removeEntryRef.current?.({ restoreFocus: shouldRestoreFocus });
       }
       registeredRef.current = false;
-      if (shouldRestoreFocus) removeEntryRef.current = null;
+      if (shouldRestoreFocus) {
+        removeEntryRef.current = null;
+        detachedRemoveEntryRef.current = null;
+      }
       return;
     }
     if (registeredRef.current) return;
 
+    detachedRemoveEntryRef.current = null;
     const entry: WebOverlayEntry = {
       id: idRef.current,
       order: ++webOverlayOrder,
@@ -301,7 +306,10 @@ export function useWebOverlayRegistration({
       scopeRef.current =
         typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
       if (!scopeRef.current && activeRef.current) {
-        removeEntryRef.current?.({ restoreFocus: false });
+        const removeEntry = removeEntryRef.current;
+        removeEntry?.({ restoreFocus: false });
+        detachedRemoveEntryRef.current = removeEntry;
+        removeEntryRef.current = null;
         registeredRef.current = false;
       }
       // Host refs attach before descendant layout effects and autofocus. Register
@@ -314,8 +322,10 @@ export function useWebOverlayRegistration({
   useLayoutEffect(() => {
     syncRegistration();
     return () => {
-      removeEntryRef.current?.();
+      const removeEntry = removeEntryRef.current ?? detachedRemoveEntryRef.current;
+      removeEntry?.();
       removeEntryRef.current = null;
+      detachedRemoveEntryRef.current = null;
       registeredRef.current = false;
     };
   }, [active, syncRegistration]);
