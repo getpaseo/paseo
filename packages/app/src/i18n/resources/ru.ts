@@ -1496,6 +1496,8 @@ export const ru: TranslationResources = {
     editProfiles: "Изменить",
     editProfilesLabel: "Изменить профили агентов",
     createProfile: "Создать профиль",
+    editProfileLabel: "Изменить {{name}}",
+    editProfilesCount: "Изменить профили ({{count}})",
     modelCount: "{{count}} модель",
     modelCountPlural: "{{count}} моделей",
     retry: "Повторить попытку",

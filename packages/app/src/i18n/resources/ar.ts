@@ -1463,6 +1463,8 @@ export const ar: TranslationResources = {
     editProfiles: "تحرير",
     editProfilesLabel: "تحرير ملفات الوكيل",
     createProfile: "إنشاء ملف شخصي",
+    editProfileLabel: "تحرير {{name}}",
+    editProfilesCount: "تحرير الملفات الشخصية ({{count}})",
     modelCount: "{{count}} نموذج",
     modelCountPlural: "{{count}} نماذج",
     retry: "أعد المحاولة",

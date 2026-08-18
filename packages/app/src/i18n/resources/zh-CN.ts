@@ -1446,6 +1446,8 @@ export const zhCN: TranslationResources = {
     editProfiles: "编辑",
     editProfilesLabel: "编辑智能体配置文件",
     createProfile: "创建配置文件",
+    editProfileLabel: "编辑 {{name}}",
+    editProfilesCount: "编辑配置文件 ({{count}})",
     modelCount: "{{count}} 个模型",
     modelCountPlural: "{{count}} 个模型",
     retry: "重试",

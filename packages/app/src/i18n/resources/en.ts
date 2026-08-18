@@ -1473,6 +1473,8 @@ export const en = {
     editProfiles: "Edit",
     editProfilesLabel: "Edit agent profiles",
     createProfile: "Create profile",
+    editProfileLabel: "Edit {{name}}",
+    editProfilesCount: "Edit profiles ({{count}})",
     modelCount: "{{count}} model",
     modelCountPlural: "{{count}} models",
     retry: "Retry",
