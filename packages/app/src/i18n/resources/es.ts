@@ -1890,8 +1890,10 @@ export const es: TranslationResources = {
       notConnected: "Este host no está conectado.",
       alreadyActive: "Ya hay una llamada de voz en directo en curso.",
       stopping: "La llamada de voz en directo anterior aún se está deteniendo.",
-      micDenied: "Se denegó el acceso al micrófono.",
-      micUnavailable: "No se pudo abrir el micrófono.",
+      micDenied:
+        "El acceso al micrófono está bloqueado. Permite que Paseo use el micrófono y vuelve a intentarlo.",
+      micUnavailable:
+        "No se encontró ningún micrófono disponible. Conecta o selecciona uno en los ajustes de audio del dispositivo y vuelve a intentarlo.",
       backgroundUnavailable: "No se pudo iniciar el audio en segundo plano.",
       iceTimeout: "No se pudo negociar la conexión a tiempo.",
       connectionLost: "Se perdió la conexión de voz en directo.",

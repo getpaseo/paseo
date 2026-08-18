@@ -1894,8 +1894,10 @@ export const fr: TranslationResources = {
       notConnected: "Cet hôte n'est pas connecté.",
       alreadyActive: "Un appel vocal en direct est déjà en cours.",
       stopping: "L'appel vocal en direct précédent est encore en cours d'arrêt.",
-      micDenied: "L'accès au micro a été refusé.",
-      micUnavailable: "Le micro n'a pas pu être ouvert.",
+      micDenied:
+        "L'accès au micro est bloqué. Autorisez Paseo à utiliser votre micro, puis réessayez.",
+      micUnavailable:
+        "Aucun micro utilisable n'a été trouvé. Connectez-en un ou sélectionnez-en un dans les réglages audio de l'appareil, puis réessayez.",
       backgroundUnavailable: "L'audio en arrière-plan n'a pas pu démarrer.",
       iceTimeout: "La connexion n'a pas pu être négociée à temps.",
       connectionLost: "La connexion vocale en direct a été perdue.",

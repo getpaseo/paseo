@@ -1849,8 +1849,9 @@ export const en = {
       notConnected: "This host is not connected.",
       alreadyActive: "A live voice call is already running.",
       stopping: "The previous live voice call is still stopping.",
-      micDenied: "Microphone access was denied.",
-      micUnavailable: "The microphone could not be opened.",
+      micDenied: "Microphone access is blocked. Allow Paseo to use your microphone, then retry.",
+      micUnavailable:
+        "No usable microphone was found. Connect or select one in your device's audio settings, then retry.",
       backgroundUnavailable: "Background audio could not be started.",
       iceTimeout: "The connection could not be negotiated in time.",
       connectionLost: "The live voice connection dropped.",

@@ -2007,8 +2007,10 @@ export const ko: TranslationResources = {
       notConnected: "이 호스트는 연결되어 있지 않습니다.",
       alreadyActive: "이미 라이브 음성 통화가 실행 중입니다.",
       stopping: "이전 라이브 음성 통화가 아직 종료되는 중입니다.",
-      micDenied: "마이크 접근이 거부되었습니다.",
-      micUnavailable: "마이크를 열 수 없습니다.",
+      micDenied:
+        "마이크 접근이 차단되었습니다. Paseo가 마이크를 사용하도록 허용한 다음 다시 시도하세요.",
+      micUnavailable:
+        "사용 가능한 마이크를 찾을 수 없습니다. 마이크를 연결하거나 기기의 오디오 설정에서 선택한 다음 다시 시도하세요.",
       backgroundUnavailable: "백그라운드 오디오를 시작할 수 없습니다.",
       iceTimeout: "제한 시간 내에 연결을 협상하지 못했습니다.",
       connectionLost: "라이브 음성 연결이 끊어졌습니다.",

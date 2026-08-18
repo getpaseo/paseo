@@ -18,14 +18,20 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import { useLiveVoiceAvailability } from "@/live-voice/live-voice-availability";
 import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
 import { resolveLiveVoiceStatusLabel } from "@/live-voice/live-voice-call-ui";
+import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
-import { LiveVoiceStartError, type LiveVoicePhase } from "@/live-voice/live-voice-runtime";
+import {
+  LiveVoiceStartError,
+  type LiveVoiceErrorInfo,
+  type LiveVoicePhase,
+} from "@/live-voice/live-voice-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 const ThemedAudioLines = withUnistyles(AudioLines);
@@ -78,20 +84,31 @@ function LiveVoiceHostMenuItem({
   );
 }
 
-/** In-call menu body: where the call stands, and the one action that ends it. */
+function reportUnexpectedStartError(error: unknown): void {
+  if (!(error instanceof LiveVoiceStartError)) {
+    console.error("[LiveVoice] Failed to start session", error);
+  }
+}
+
+/** In-call menu body: call status, terminal recovery, and the action that ends it. */
 function LiveVoiceCallMenuItems({
   phase,
   isAudioBlocked,
+  serverId,
+  error,
 }: {
   phase: LiveVoicePhase;
   isAudioBlocked: boolean;
+  serverId: string | null;
+  error: LiveVoiceErrorInfo | null;
 }) {
   const liveVoice = useLiveVoiceOptional();
   const { t } = useTranslation();
+  const closeMenu = useDropdownMenuClose();
 
   const handleStop = useCallback(() => {
-    void liveVoice?.stop().catch((error: unknown) => {
-      console.error("[LiveVoice] Failed to stop", error);
+    void liveVoice?.stop().catch((stopError: unknown) => {
+      console.error("[LiveVoice] Failed to stop", stopError);
     });
   }, [liveVoice]);
 
@@ -99,7 +116,15 @@ function LiveVoiceCallMenuItems({
     liveVoice?.dismiss();
   }, [liveVoice]);
 
+  const handleRetry = useCallback(() => {
+    if (!liveVoice || !serverId) {
+      return;
+    }
+    void liveVoice.start(serverId).then(closeMenu).catch(reportUnexpectedStartError);
+  }, [closeMenu, liveVoice, serverId]);
+
   const isTerminal = phase === "idle" || phase === "error";
+  const errorMessage = error ? resolveLiveVoiceErrorMessage(error, t) : undefined;
 
   return (
     <>
@@ -107,9 +132,25 @@ function LiveVoiceCallMenuItems({
         {resolveLiveVoiceStatusLabel({ phase, isAudioBlocked, t })}
       </DropdownMenuLabel>
       {isTerminal ? (
-        <DropdownMenuItem onSelect={handleDismiss} testID="live-voice-menu-dismiss">
-          {t("liveVoice.actions.dismiss")}
-        </DropdownMenuItem>
+        <>
+          {phase === "error" && serverId ? (
+            <DropdownMenuItem
+              closeOnSelect={false}
+              description={errorMessage}
+              onSelect={handleRetry}
+              testID="live-voice-menu-retry"
+            >
+              {t("common.actions.retry")}
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            description={phase === "error" && !serverId ? errorMessage : undefined}
+            onSelect={handleDismiss}
+            testID="live-voice-menu-dismiss"
+          >
+            {t("liveVoice.actions.dismiss")}
+          </DropdownMenuItem>
+        </>
       ) : (
         <DropdownMenuItem
           destructive
@@ -136,15 +177,15 @@ function LiveVoiceStartMenuItems({
 }) {
   const liveVoice = useLiveVoiceOptional();
   const { t } = useTranslation();
+  const closeMenu = useDropdownMenuClose();
   const { serverId } = selectedHost;
 
   const handleStart = useCallback(() => {
-    void liveVoice?.start(serverId).catch((error: unknown) => {
-      if (!(error instanceof LiveVoiceStartError)) {
-        console.error("[LiveVoice] Failed to start session", error);
-      }
-    });
-  }, [liveVoice, serverId]);
+    if (!liveVoice) {
+      return;
+    }
+    void liveVoice.start(serverId).then(closeMenu).catch(reportUnexpectedStartError);
+  }, [closeMenu, liveVoice, serverId]);
 
   const hasHostChoice = hosts.length > 1;
 
@@ -165,6 +206,7 @@ function LiveVoiceStartMenuItems({
         </>
       ) : null}
       <DropdownMenuItem
+        closeOnSelect={false}
         onSelect={handleStart}
         description={hasHostChoice ? undefined : selectedHost.label}
         testID="live-voice-menu-start"
@@ -190,7 +232,7 @@ export function LiveVoiceFooterButton() {
   const selectedHost =
     availableHosts.find((host) => host.serverId === selectedServerId) ?? availableHosts[0] ?? null;
 
-  const { phase, isAudioBlocked, closedCause } = liveVoice;
+  const { phase, serverId, isAudioBlocked, error, closedCause } = liveVoice;
   const hasCall = phase !== "idle" || closedCause !== null;
   const iconMappings = resolveIconMappings({ phase, hasCall });
 
@@ -220,7 +262,14 @@ export function LiveVoiceFooterButton() {
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent side="top" align="end" offset={8} width={260} testID="live-voice-menu">
-        {hasCall ? <LiveVoiceCallMenuItems phase={phase} isAudioBlocked={isAudioBlocked} /> : null}
+        {hasCall ? (
+          <LiveVoiceCallMenuItems
+            phase={phase}
+            isAudioBlocked={isAudioBlocked}
+            serverId={serverId}
+            error={error}
+          />
+        ) : null}
         {!hasCall && selectedHost ? (
           <LiveVoiceStartMenuItems
             hosts={availableHosts}

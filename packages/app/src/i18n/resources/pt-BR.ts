@@ -1876,8 +1876,10 @@ export const ptBR: TranslationResources = {
       notConnected: "Este host não está conectado.",
       alreadyActive: "Já existe uma chamada de voz ao vivo em andamento.",
       stopping: "A chamada de voz ao vivo anterior ainda está sendo encerrada.",
-      micDenied: "O acesso ao microfone foi negado.",
-      micUnavailable: "Não foi possível abrir o microfone.",
+      micDenied:
+        "O acesso ao microfone está bloqueado. Permita que o Paseo use o microfone e tente novamente.",
+      micUnavailable:
+        "Nenhum microfone disponível foi encontrado. Conecte ou selecione um nas configurações de áudio do dispositivo e tente novamente.",
       backgroundUnavailable: "Não foi possível iniciar o áudio em segundo plano.",
       iceTimeout: "Não foi possível negociar a conexão em tempo.",
       connectionLost: "A conexão de voz ao vivo caiu.",

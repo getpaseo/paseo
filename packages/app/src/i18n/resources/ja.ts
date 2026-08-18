@@ -1858,8 +1858,10 @@ export const ja: TranslationResources = {
       notConnected: "このホストは接続されていません。",
       alreadyActive: "ライブ音声通話はすでに実行中です。",
       stopping: "前回のライブ音声通話がまだ停止中です。",
-      micDenied: "マイクへのアクセスが拒否されました。",
-      micUnavailable: "マイクを開けませんでした。",
+      micDenied:
+        "マイクへのアクセスがブロックされています。Paseo にマイクの使用を許可してから、再試行してください。",
+      micUnavailable:
+        "使用可能なマイクが見つかりません。マイクを接続するか、デバイスのオーディオ設定で選択してから、再試行してください。",
       backgroundUnavailable: "バックグラウンド音声を開始できませんでした。",
       iceTimeout: "時間内に接続を確立できませんでした。",
       connectionLost: "ライブ音声の接続が切断されました。",
