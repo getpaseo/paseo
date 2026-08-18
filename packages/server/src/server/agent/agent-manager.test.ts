@@ -2808,6 +2808,9 @@ test("createAgent injects paseo MCP server only into provider launch config", as
           command: "custom-mcp",
         },
       },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "paseo", tool: "list_hosts" }],
+      },
     },
     undefined,
     { workspaceId: undefined },
@@ -2828,6 +2831,9 @@ test("createAgent injects paseo MCP server only into provider launch config", as
       type: "stdio",
       command: "custom-mcp",
     },
+  });
+  expect(client.lastConfig?.toolPolicy).toEqual({
+    preapproved: [{ kind: "mcp", server: "paseo", tool: "list_hosts" }],
   });
 
   const stored = await storage.get(snapshot.id);

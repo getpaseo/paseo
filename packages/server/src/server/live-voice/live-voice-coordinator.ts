@@ -3,6 +3,7 @@ import os from "node:os";
 import type { Logger } from "pino";
 
 import type { AgentProvider, AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import { PASEO_MCP_SERVER_NAME } from "../agent/runtime-mcp-config.js";
 import {
   asAgentRealtimeVoiceSession,
   type AgentRealtimeVoiceEvent,
@@ -15,6 +16,7 @@ import {
   type LiveVoiceRouteObservation,
   type LiveVoiceRouteRegistration,
 } from "./live-voice-route-broker.js";
+import { LIVE_VOICE_ROUTING_TOOLS } from "./live-voice-routing-tools.js";
 
 /** How long to wait for the provider's async answer-SDP notification before giving up. */
 const START_SDP_TIMEOUT_MS = 30_000;
@@ -490,6 +492,13 @@ export class LiveVoiceCoordinator {
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
+      toolPolicy: {
+        preapproved: LIVE_VOICE_ROUTING_TOOLS.map((tool) => ({
+          kind: "mcp" as const,
+          server: PASEO_MCP_SERVER_NAME,
+          tool,
+        })),
+      },
       // `realtimeStart`'s prompt configures only the conversational
       // intermediary. A provider may route a realtime delegation into a
       // separate turn on this host thread, so give that backend executor the

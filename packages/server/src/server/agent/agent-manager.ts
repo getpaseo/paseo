@@ -80,6 +80,7 @@ import {
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import {
+  PASEO_MCP_SERVER_NAME,
   stripInternalPaseoMcpServer,
   stripInternalPaseoMcpServerFromPersistence,
   withRuntimePaseoMcpServer,
@@ -5008,6 +5009,9 @@ export class AgentManager {
   private validateToolPolicyServers(config: AgentSessionConfig): void {
     if (!config.toolPolicy) return;
     const serverNames = new Set(Object.keys(config.mcpServers ?? {}));
+    if (this.mcpBaseUrl) {
+      serverNames.add(PASEO_MCP_SERVER_NAME);
+    }
     for (const grant of config.toolPolicy.preapproved) {
       if (!serverNames.has(grant.server)) {
         throw new Error(

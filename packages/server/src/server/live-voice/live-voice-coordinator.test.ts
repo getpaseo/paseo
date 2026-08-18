@@ -246,6 +246,15 @@ describe("LiveVoiceCoordinator", () => {
         cwd: HOST_CWD,
         title: "Live Voice host",
         internal: true,
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "paseo", tool: "list_hosts" },
+            { kind: "mcp", server: "paseo", tool: "find_workspace" },
+            { kind: "mcp", server: "paseo", tool: "run_paseo_tool_on_all_hosts" },
+            { kind: "mcp", server: "paseo", tool: "list_paseo_tools_on_host" },
+            { kind: "mcp", server: "paseo", tool: "run_paseo_tool_on_host" },
+          ],
+        },
       },
     ]);
     expect(harness.hosts).toHaveLength(1);

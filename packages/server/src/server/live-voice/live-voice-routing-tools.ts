@@ -75,6 +75,16 @@ export interface RegisterLiveVoiceRoutingToolsOptions {
   ) => void;
 }
 
+export const LIVE_VOICE_ROUTING_TOOL_NAMES = {
+  listHosts: "list_hosts",
+  findWorkspace: "find_workspace",
+  runOnAllHosts: "run_paseo_tool_on_all_hosts",
+  listToolsOnHost: "list_paseo_tools_on_host",
+  runOnHost: "run_paseo_tool_on_host",
+} as const;
+
+export const LIVE_VOICE_ROUTING_TOOLS = Object.values(LIVE_VOICE_ROUTING_TOOL_NAMES);
+
 /**
  * `compatibility` is optional so a client too old to send it still routes. Fall
  * back to the two facts every version reports.
@@ -280,7 +290,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   }
 
   options.registerTool(
-    "list_hosts",
+    LIVE_VOICE_ROUTING_TOOL_NAMES.listHosts,
     {
       title: "List connected hosts",
       description:
@@ -297,7 +307,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   );
 
   options.registerTool(
-    "find_workspace",
+    LIVE_VOICE_ROUTING_TOOL_NAMES.findWorkspace,
     {
       title: "Find a workspace by name",
       description:
@@ -384,7 +394,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   );
 
   options.registerTool(
-    "run_paseo_tool_on_all_hosts",
+    LIVE_VOICE_ROUTING_TOOL_NAMES.runOnAllHosts,
     {
       title: "Run a Paseo read on every host",
       description: `Run one read-only Paseo tool on every ready host at once and get the results per host, in a single call. Use this for any question about the user's machines as a whole — what is running anywhere, what is waiting on permission anywhere — instead of calling list_hosts and then run_paseo_tool_on_host once per machine. Also use it to locate something by id: fanning get_agent_status out is how to learn which machine owns an agent, and the machines that do not will report a tool error, not an outage. Only these tools can be run this way: ${LIVE_VOICE_ALL_HOSTS_READ_TOOLS.join(", ")}. Anything that changes state runs on one named host through run_paseo_tool_on_host, so the user is never asked one question that mutates several machines. unavailableHosts could not be reached at all; erroredHosts answered but this read failed there — never present either as the machine holding nothing.`,
@@ -445,7 +455,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   );
 
   options.registerTool(
-    "list_paseo_tools_on_host",
+    LIVE_VOICE_ROUTING_TOOL_NAMES.listToolsOnHost,
     {
       title: "Discover Paseo tools on host",
       description:
@@ -493,7 +503,7 @@ export function registerLiveVoiceRoutingTools(options: RegisterLiveVoiceRoutingT
   );
 
   options.registerTool(
-    "run_paseo_tool_on_host",
+    LIVE_VOICE_ROUTING_TOOL_NAMES.runOnHost,
     {
       title: "Run Paseo tool on host",
       description:
