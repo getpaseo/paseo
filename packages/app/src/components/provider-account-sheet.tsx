@@ -396,14 +396,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   renameWarning: {
     color: theme.colors.palette.amber[500],
-    fontSize: theme.fontSize.xs,
-    lineHeight: Math.round(theme.fontSize.xs * 1.4),
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
     marginTop: -theme.spacing[1],
   },
   envRowError: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    lineHeight: Math.round(theme.fontSize.xs * 1.4),
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
   },
   addEnvButton: {
     alignSelf: "flex-start",
