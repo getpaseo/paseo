@@ -1333,14 +1333,22 @@ function WorkspaceChromeRow({
   workspaceRoot,
   ...explorerProps
 }: WorkspaceChromeRowProps) {
+  // Corner ownership has to follow what actually renders, not what is conceptually open.
+  // ExplorerSidebar returns null unless the desktop file-explorer flag is set, and that flag
+  // is persisted, so a profile from an older build can still show it. When it does render it
+  // sits beside the center column at the window's top edge and owns the top-right corner;
+  // when it does not, the center column's full-width header owns both. Deriving this from the
+  // explorer *pane* state instead is what left the header unpadded with its icons under the
+  // window controls on Windows and Linux.
+  const isDesktopExplorerSidebarOpen = usePanelStore((state) =>
+    selectIsFileExplorerOpen(state, { isCompact: false }),
+  );
+  const explorerSidebarVisible =
+    showExplorerSidebar && workspaceRoot !== null && isDesktopExplorerSidebarOpen;
+
   return (
     <View style={styles.threePaneRow}>
-      {/* The center column's header spans the full window width and starts at the top
-          edge, so it keeps the window's top-right corner even while the explorer is
-          open: the explorer column begins below that header and never reaches the
-          window controls. Handing top-right to the explorer left the header unpadded
-          and put its icons under the controls on Windows and Linux. */}
-      <WindowChromeRegion corners="both">
+      <WindowChromeRegion corners={explorerSidebarVisible ? "top-left" : "both"}>
         <FloatingPanelPortalHostNameProvider hostName={portalHostName}>
           {children}
         </FloatingPanelPortalHostNameProvider>
@@ -1348,12 +1356,8 @@ function WorkspaceChromeRow({
 
       <FloatingPanelPortalHost name={portalHostName} />
 
-      {showExplorerSidebar && workspaceRoot ? (
-        // The explorer column starts below the header that owns the corner, so it claims
-        // nothing: a second claim on the same corner would let two surfaces pad for one set
-        // of controls, and it also made the explorer hide its own close button on Windows
-        // and Linux for controls that are not in its header.
-        <WindowChromeRegion corners="none">
+      {explorerSidebarVisible && workspaceRoot ? (
+        <WindowChromeRegion corners="top-right">
           <ExplorerSidebar {...explorerProps} workspaceRoot={workspaceRoot} />
         </WindowChromeRegion>
       ) : null}
