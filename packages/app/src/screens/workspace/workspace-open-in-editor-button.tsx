@@ -40,6 +40,7 @@ interface OpenTarget {
   id: string;
   label: string;
   icon: ReactElement;
+  opensActiveFile: boolean;
   onOpen: () => Promise<void> | void;
 }
 
@@ -135,6 +136,7 @@ export function WorkspaceOpenInEditorButton({
             id: target.id,
             label: target.label,
             icon: renderForgeOpenTargetIcon(presentation.icon),
+            opensActiveFile: true,
             onOpen: () => openExternalUrl(target.url),
           };
         }
@@ -144,6 +146,7 @@ export function WorkspaceOpenInEditorButton({
           icon: (
             <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
           ),
+          opensActiveFile: target.kind !== "terminal",
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),
@@ -220,7 +223,7 @@ export function WorkspaceOpenInEditorButton({
           disabled={openMutation.isPending}
           accessibilityRole="button"
           accessibilityLabel={
-            activeFileName
+            activeFileName && primaryOption.opensActiveFile
               ? t("workspace.git.openInEditor.openFileIn", {
                   fileName: activeFileName,
                   target: primaryOption.label,
@@ -251,7 +254,7 @@ export function WorkspaceOpenInEditorButton({
               testID="workspace-open-in-editor-caret"
               style={caretTriggerStyle}
               accessibilityRole="button"
-              accessibilityLabel={t("workspace.git.openInEditor.chooseEditor")}
+              accessibilityLabel={t("workspace.git.openInEditor.chooseApplication")}
             >
               <ThemedChevronDown size={16} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>

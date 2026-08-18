@@ -927,7 +927,7 @@ export const es: TranslationResources = {
       },
       openInEditor: {
         open: "Abierto",
-        chooseEditor: "Elige editor",
+        chooseApplication: "Elegir aplicación",
         openIn: "Abrir espacio de trabajo en{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "No se pudo abrir el espacio de trabajo",

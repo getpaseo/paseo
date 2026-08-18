@@ -918,7 +918,7 @@ export const ptBR: TranslationResources = {
       },
       openInEditor: {
         open: "Abrir",
-        chooseEditor: "Escolher editor",
+        chooseApplication: "Escolher aplicativo",
         openIn: "Abrir workspace em {{target}}",
         openFileIn: "Abrir {{fileName}} em {{target}}",
         failedOpen: "Falha ao abrir workspace",

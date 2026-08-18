@@ -1,4 +1,5 @@
 import { readFile, rm } from "node:fs/promises";
+import path from "node:path";
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
 import { installDesktopRuntime } from "./support/runtime";
@@ -35,13 +36,20 @@ async function readEditorOpenRecords(recordPath: string): Promise<EditorOpenReco
   }
 }
 
-async function chooseEditorTarget(page: Page, targetId: "vscode"): Promise<void> {
+async function chooseOpenTarget(
+  page: Page,
+  targetId: "vscode" | "terminal:ghostty",
+): Promise<void> {
   await expect(page.getByTestId("workspace-open-in-editor-primary")).toBeVisible({
     timeout: 30_000,
   });
   await page.getByTestId("workspace-open-in-editor-caret").click();
   await expect(page.getByTestId("workspace-open-in-editor-menu")).toBeVisible();
-  await page.getByTestId(`workspace-open-in-editor-item-${targetId}`).click();
+  const item = page.getByTestId(`workspace-open-in-editor-item-${targetId}`);
+  if (targetId === "terminal:ghostty") {
+    await expect(item.locator("img")).toBeVisible();
+  }
+  await item.click();
 }
 
 async function expectEditorOpened(input: {
@@ -74,6 +82,10 @@ test.describe("Workspace open in editor", () => {
 
     const serverId = requireE2EEnv("E2E_SERVER_ID");
     const recordPath = requireE2EEnv("E2E_EDITOR_RECORD_PATH");
+    const ghosttyIcon = await readFile(
+      path.resolve(__dirname, "../assets/editor-targets/ghostty.png"),
+      "base64",
+    );
     await rm(recordPath, { force: true });
     await installDesktopRuntime(page, {
       serverId,
@@ -90,6 +102,12 @@ test.describe("Workspace open in editor", () => {
           kind: "editor",
           icon: { kind: "symbol", name: "terminal" },
         },
+        {
+          id: "terminal:ghostty",
+          label: "Ghostty",
+          kind: "terminal",
+          icon: { kind: "image", dataUrl: `data:image/png;base64,${ghosttyIcon}` },
+        },
       ],
       editorRecordPath: recordPath,
     });
@@ -97,12 +115,21 @@ test.describe("Workspace open in editor", () => {
     const workspace = await withWorkspace({ prefix: "workspace-editor-target-" });
     await workspace.navigateTo();
 
-    await chooseEditorTarget(page, "vscode");
+    await chooseOpenTarget(page, "terminal:ghostty");
+    await expectEditorOpened({
+      recordPath,
+      editorId: "terminal:ghostty",
+      path: workspace.repoPath,
+      afterCount: 0,
+    });
+    const recordsAfterTerminalSelection = (await readEditorOpenRecords(recordPath)).length;
+
+    await chooseOpenTarget(page, "vscode");
     await expectEditorOpened({
       recordPath,
       editorId: "vscode",
       path: workspace.repoPath,
-      afterCount: 0,
+      afterCount: recordsAfterTerminalSelection,
     });
     const recordsAfterSelection = (await readEditorOpenRecords(recordPath)).length;
 

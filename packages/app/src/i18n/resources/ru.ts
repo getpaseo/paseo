@@ -918,7 +918,7 @@ export const ru: TranslationResources = {
       },
       openInEditor: {
         open: "Открыть",
-        chooseEditor: "Выбрать редактор",
+        chooseApplication: "Выбрать приложение",
         openIn: "Открыть рабочую область в{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Не удалось открыть рабочую область",

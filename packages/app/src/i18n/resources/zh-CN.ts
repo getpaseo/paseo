@@ -888,7 +888,7 @@ export const zhCN: TranslationResources = {
       },
       openInEditor: {
         open: "打开",
-        chooseEditor: "选择编辑器",
+        chooseApplication: "选择应用程序",
         openIn: "在 {{target}} 中打开 workspace",
         openFileIn: "在 {{target}} 中打开 {{fileName}}",
         failedOpen: "打开 workspace 失败",

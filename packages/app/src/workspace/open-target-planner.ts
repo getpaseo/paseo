@@ -16,6 +16,7 @@ export interface PlannedDesktopOpenTarget {
   source: "desktop";
   id: string;
   label: string;
+  kind: DesktopOpenTarget["kind"];
   editorId: string;
   icon: DesktopOpenTarget["icon"];
   openInput: OpenDesktopTargetInput;
@@ -72,11 +73,13 @@ function planDesktopOpenTargets(input: {
   }
 
   return input.desktopTargets.map((target) => {
-    if (!input.resolvedFile) {
+    const resolvedFile = target.kind === "terminal" ? null : input.resolvedFile;
+    if (!resolvedFile) {
       return {
         source: "desktop",
         id: target.id,
         label: target.label,
+        kind: target.kind,
         editorId: target.id,
         icon: target.icon,
         openInput: { editorId: target.id, workspacePath: input.workspaceDirectory },
@@ -86,12 +89,13 @@ function planDesktopOpenTargets(input: {
       source: "desktop",
       id: target.id,
       label: target.label,
+      kind: target.kind,
       editorId: target.id,
       icon: target.icon,
       openInput: {
         editorId: target.id,
         workspacePath: input.workspaceDirectory,
-        filePath: input.resolvedFile.absolutePath,
+        filePath: resolvedFile.absolutePath,
         ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
       },
     };

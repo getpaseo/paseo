@@ -11,6 +11,25 @@ interface SpawnRecord {
 }
 
 describe("editor target runtime", () => {
+  it("detects URL handlers without leaking Electron lookup failures", async () => {
+    const openedUrls: string[] = [];
+    const runtime = createEditorTargetRuntime({
+      getApplicationNameForProtocol: (url) => {
+        if (url.startsWith("warp:")) return "Warp";
+        throw new Error("No handler registered");
+      },
+      openExternalUrl: async (url) => {
+        openedUrls.push(url);
+      },
+    });
+
+    expect(runtime.hasExternalUrlHandler("warp://action/new_window")).toBe(true);
+    expect(runtime.hasExternalUrlHandler("unknown://open")).toBe(false);
+
+    await runtime.openExternalUrl("warp://action/new_window?path=%2Frepo");
+    expect(openedUrls).toEqual(["warp://action/new_window?path=%2Frepo"]);
+  });
+
   it("resolves command aliases and safely launches Windows command scripts", async () => {
     const records: SpawnRecord[] = [];
     const runtime = createEditorTargetRuntime({

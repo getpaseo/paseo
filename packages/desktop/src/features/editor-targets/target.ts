@@ -1,4 +1,4 @@
-export type EditorTargetKind = "editor" | "file-manager";
+export type EditorTargetKind = "editor" | "terminal" | "file-manager";
 
 export type EditorTargetIcon =
   | { kind: "image"; dataUrl: string }
@@ -27,6 +27,8 @@ export interface EditorTargetRuntime {
   resolveCommand(commands: readonly string[]): string | null;
   spawnDetached(input: { command: string; args: readonly string[] }): Promise<void>;
   openPath(path: string): Promise<void>;
+  openExternalUrl(url: string): Promise<void>;
+  hasExternalUrlHandler(url: string): boolean;
   revealPath(path: string): void;
   loadIcon(fileName: string): Promise<EditorTargetIcon>;
   hasMacApplication(applicationName: string): boolean;

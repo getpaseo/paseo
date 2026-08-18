@@ -26,6 +26,8 @@ export interface EditorTargetRuntimeOptions {
   pathExists?: (path: string) => boolean;
   spawn?: (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
   openPath?: (path: string) => Promise<string>;
+  openExternalUrl?: (url: string) => Promise<void>;
+  getApplicationNameForProtocol?: (url: string) => string;
   revealPath?: (path: string) => void;
   loadIcon?: (fileName: string) => Promise<EditorTargetIcon>;
   homeDirectory?: string;
@@ -131,6 +133,9 @@ export function createEditorTargetRuntime(
   const pathExists = options.pathExists ?? nodeExistsSync;
   const spawn = options.spawn ?? spawnProcess;
   const openPath = options.openPath ?? ((targetPath) => shell.openPath(targetPath));
+  const openExternalUrl = options.openExternalUrl ?? ((url) => shell.openExternal(url));
+  const getApplicationNameForProtocol =
+    options.getApplicationNameForProtocol ?? ((url) => app.getApplicationNameForProtocol(url));
   const revealPath = options.revealPath ?? ((targetPath) => shell.showItemInFolder(targetPath));
   const loadIcon = options.loadIcon ?? loadBundledIcon;
   const homeDirectory = options.homeDirectory ?? os.homedir();
@@ -168,6 +173,14 @@ export function createEditorTargetRuntime(
     async openPath(targetPath) {
       const errorMessage = await openPath(targetPath);
       if (errorMessage) throw new Error(errorMessage);
+    },
+    openExternalUrl,
+    hasExternalUrlHandler(url) {
+      try {
+        return getApplicationNameForProtocol(url).trim().length > 0;
+      } catch {
+        return false;
+      }
     },
     revealPath,
     loadIcon,
