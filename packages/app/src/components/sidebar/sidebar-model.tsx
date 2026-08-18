@@ -65,7 +65,8 @@ export function SidebarModelProvider({
     if (!hasOnlineLabelCatalog) return;
     reconcileLabelFilter(availableLabelNames);
   }, [availableLabelNames, hasOnlineLabelCatalog, reconcileLabelFilter]);
-  const needsWorkspaceEntries = groupMode !== "project" || hasActiveSidebarLabelFilter(labelFilter);
+  const hasActiveLabelFilter = hasActiveSidebarLabelFilter(labelFilter);
+  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
@@ -81,16 +82,15 @@ export function SidebarModelProvider({
     () => new Set(filteredWorkspaceEntriesByKey.keys()),
     [filteredWorkspaceEntriesByKey],
   );
-  const filteredProjects = useMemo(
-    () =>
-      list.projects.flatMap((project) => {
-        const workspaces = project.workspaces.filter((workspace) =>
-          visibleWorkspaceKeys.has(workspace.workspaceKey),
-        );
-        return workspaces.length > 0 ? [{ ...project, workspaces }] : [];
-      }),
-    [list.projects, visibleWorkspaceKeys],
-  );
+  const filteredProjects = useMemo(() => {
+    if (!hasActiveLabelFilter) return list.projects;
+    return list.projects.flatMap((project) => {
+      const workspaces = project.workspaces.filter((workspace) =>
+        visibleWorkspaceKeys.has(workspace.workspaceKey),
+      );
+      return workspaces.length > 0 ? [{ ...project, workspaces }] : [];
+    });
+  }, [hasActiveLabelFilter, list.projects, visibleWorkspaceKeys]);
   const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
   const projectionInput = useMemo(
     () => ({
