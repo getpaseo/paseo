@@ -325,6 +325,19 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("하")).toEqual({ data: "하", shouldClear: false });
   });
 
+  it("keeps CJK composition enabled after Backspace removes an emoji", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("😀")).toEqual({ data: "😀", shouldClear: false });
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
+
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
+    expect(input.receiveTextChange("你好")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f你好",
+      shouldClear: false,
+    });
+  });
+
   it("stops rubbing out once a swallowed replacement leaves the terminal ahead", () => {
     const input = createTerminalTextInputState();
 

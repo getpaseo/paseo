@@ -115,7 +115,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         return { data: "", key: terminalKey, shouldClear: false };
       }
       if (key === "Backspace") {
-        previousText = previousText.slice(0, -1);
+        previousText = Array.from(previousText).slice(0, -1).join("");
         if (replacementDesynced) {
           return { data: "", shouldClear: false };
         }
