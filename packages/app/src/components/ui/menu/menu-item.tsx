@@ -335,14 +335,14 @@ export function MenuItem({
   );
 
   const content = (
-      <Pressable
-        testID={testID}
-        accessibilityRole="menuitem"
-        accessibilityState={accessibilityState}
-        aria-checked={selected}
-        tabIndex={-1}
-        dataSet={itemDataSet}
-        disabled={isDisabled}
+    <Pressable
+      testID={testID}
+      accessibilityRole="menuitem"
+      accessibilityState={accessibilityState}
+      aria-checked={selected}
+      tabIndex={-1}
+      dataSet={itemDataSet}
+      disabled={isDisabled}
       onPress={handleItemPress}
       style={itemPressableStyle}
     >

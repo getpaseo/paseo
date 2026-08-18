@@ -63,7 +63,7 @@ const styles = StyleSheet.create((theme) => ({
   // No optical nudge: the ground is the text's own line box, so the chip's ink sits on the same
   // baseline as the bare text beside it and centring is whatever the line already does.
   name: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     lineHeight: 16,
     flexShrink: 1,
     minWidth: 0,
