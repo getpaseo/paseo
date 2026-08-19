@@ -8,10 +8,17 @@ import { isNative } from "@/constants/platform";
 import {
   closeDesktopWindow,
   getDesktopWindow,
+  isDesktopFullscreen,
   isDesktopWindowMaximized,
   minimizeDesktopWindow,
+  setDesktopFullscreen,
   toggleDesktopMaximize,
 } from "@/desktop/electron/window";
+import {
+  isRestoreMode,
+  MIDDLE_CONTROL_LABEL,
+  resolveMiddleControlMode,
+} from "@/utils/window-controls-mode";
 
 /**
  * Minimise / maximise / close drawn by the app instead of by Chromium's Window Controls
@@ -31,6 +38,7 @@ const foregroundColor = (theme: Theme) => ({ color: theme.colors.foreground });
 
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const enabled = !isNative && getIsElectronRuntime() && !getIsElectronRuntimeMac();
 
   useEffect(() => {
@@ -38,8 +46,15 @@ export function WindowControls() {
     let active = true;
 
     async function sync() {
-      const next = await isDesktopWindowMaximized();
-      if (active) setMaximized(next);
+      // Entering or leaving fullscreen resizes the window, so one resize subscription
+      // keeps both facts current.
+      const [nextMaximized, nextFullscreen] = await Promise.all([
+        isDesktopWindowMaximized(),
+        isDesktopFullscreen(),
+      ]);
+      if (!active) return;
+      setMaximized(nextMaximized);
+      setFullscreen(nextFullscreen);
     }
 
     void sync();
@@ -66,7 +81,14 @@ export function WindowControls() {
   }, [enabled]);
 
   const handleMinimize = useCallback(() => void minimizeDesktopWindow(), []);
-  const handleMaximize = useCallback(() => void toggleDesktopMaximize(), []);
+  const middleMode = resolveMiddleControlMode({ maximized, fullscreen });
+  const handleMiddle = useCallback(() => {
+    if (middleMode === "restore-fullscreen") {
+      void setDesktopFullscreen(false);
+      return;
+    }
+    void toggleDesktopMaximize();
+  }, [middleMode]);
   const handleClose = useCallback(() => void closeDesktopWindow(), []);
 
   if (!enabled) return null;
@@ -89,17 +111,17 @@ export function WindowControls() {
       </Pressable>
 
       <Pressable
-        onPress={handleMaximize}
+        onPress={handleMiddle}
         style={styles.button}
         testID="window-control-maximize"
         accessible
         accessibilityRole="button"
-        accessibilityLabel={maximized ? "Restore" : "Maximize"}
+        accessibilityLabel={MIDDLE_CONTROL_LABEL[middleMode]}
       >
         {({ hovered }) => (
           <View style={[styles.surface, hovered && styles.surfaceHovered]}>
             <ThemedSquare
-              size={maximized ? 12 : 14}
+              size={isRestoreMode(middleMode) ? 12 : 14}
               uniProps={hovered ? foregroundColor : mutedColor}
             />
           </View>

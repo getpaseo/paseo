@@ -32,6 +32,20 @@ Leftward overflow still breaks eventually. Once the leading group is gone the cl
 
 Double-clicking a `-webkit-app-region: drag` region maximises and restores with no JS handler. VS Code has no listener for it either. Tested by hand on Windows 11.
 
+## Fullscreen is not a Windows window state
+
+Windows and Linux have minimise, maximise and close; there is no macOS-style fullscreen with its
+own affordance. F11 still reaches it through the View menu's `togglefullscreen` role, and the OS
+then reports `isMaximized() === false` even though the window fills the screen, so a control keyed
+off maximised alone offers "Maximize" on an already-full window. `resolveMiddleControlMode` in
+`packages/app/src/utils/window-controls-mode.ts` answers with Windows' own vocabulary: both large
+states read "Restore" and draw the same glyph, and only the action differs, because leaving
+fullscreen is not the same call as unmaximising.
+
+The header and the controls stay visible in fullscreen. macOS hides its traffic lights there
+because the OS owns them; ours are header content, and hiding them would leave no visible way back
+from a state the user can reach with one keystroke.
+
 ## Nothing draws the buttons before the bundle mounts
 
 The app's controls do not exist until the renderer paints and the bundle mounts, and never if the bundle throws or the page fails to load. A frameless window in that state closes only through Alt+F4 or the taskbar. Two mechanisms cover it.

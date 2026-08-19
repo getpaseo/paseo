@@ -56,6 +56,14 @@ export async function isDesktopFullscreen(): Promise<boolean> {
   return await win.isFullscreen();
 }
 
+export async function setDesktopFullscreen(fullscreen: boolean): Promise<void> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.setFullscreen !== "function") {
+    return;
+  }
+  await win.setFullscreen(fullscreen);
+}
+
 export async function updateDesktopWindowControls(
   update: DesktopWindowControlsOverlayUpdate,
 ): Promise<void> {
