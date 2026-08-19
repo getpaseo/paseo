@@ -7,6 +7,7 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { OpenCodeEventSource } from "./opencode/event-consumer.js";
+import { OPENCODE_SERVER_STARTUP_TIMEOUT_MS } from "./opencode/server-manager.js";
 import {
   __openCodeInternals,
   OpenCodeAgentClient,
@@ -3299,7 +3300,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
-  test("bounds dispatch readiness at ten seconds without sending a prompt", async () => {
+  test("bounds dispatch readiness at the server startup budget without sending a prompt", async () => {
     vi.useFakeTimers();
     const openCode = new TestOpenCodeClient();
     const session = new __openCodeInternals.OpenCodeAgentSession(
@@ -3316,13 +3317,47 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       const dispatch = session.startTurn("wait for transport");
       const rejection = expect(dispatch).rejects.toThrow("OpenCode event stream first record");
-      await vi.advanceTimersByTimeAsync(9_999);
+      await vi.advanceTimersByTimeAsync(OPENCODE_SERVER_STARTUP_TIMEOUT_MS - 1);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
       await vi.advanceTimersByTimeAsync(1);
       await rejection;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
       vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("dispatches a prompt when the event stream needs more than ten seconds", async () => {
+    vi.useFakeTimers();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionPromptAsyncEvents = [];
+    const streamReady = createTestDeferred<void>();
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_readiness_slow_stream",
+      createTestLogger(),
+      new Map(),
+      {
+        ready: () => streamReady.promise,
+        subscribe: () => () => undefined,
+      },
+    );
+    try {
+      const dispatch = session.startTurn("wait for a slow transport");
+      // OpenCode installs with plugins have been observed taking well past ten seconds
+      // to emit their first SSE record.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
+      streamReady.resolve();
+      await dispatch;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      streamReady.resolve();
       await session.close();
     }
   });
