@@ -297,7 +297,30 @@ describe("service proxy subsystem shape", () => {
     });
 
     expect(serviceProxy.getHealthTargetForHostname("api--repo.localhost")).toMatchObject({
+      upstreamHost: "localhost",
       port: 4000,
+    });
+  });
+
+  it("stores an explicit upstream host for route lookup and health checks", () => {
+    const serviceProxy = new ServiceProxyRouteRegistry();
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "api",
+      upstreamHost: "::1",
+      port: 3000,
+    });
+
+    expect(serviceProxy.findRoute("api--repo.localhost")).toMatchObject({
+      hostname: "api--repo.localhost",
+      upstreamHost: "::1",
+      port: 3000,
+    });
+    expect(serviceProxy.getHealthTargetForHostname("api--repo.localhost")).toMatchObject({
+      upstreamHost: "::1",
+      port: 3000,
     });
   });
 });
@@ -313,7 +336,10 @@ interface ForwardedFixture {
  * echoes the headers it received so tests can assert what actually crossed the
  * proxy, not what a helper returned.
  */
-async function startForwardedHeadersFixture(): Promise<ForwardedFixture> {
+async function startForwardedHeadersFixture(
+  options: { upstreamHost?: string } = {},
+): Promise<ForwardedFixture> {
+  const upstreamHost = options.upstreamHost ?? "127.0.0.1";
   const upstreamPort = await findFreePort();
   const upstream = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
@@ -331,7 +357,7 @@ async function startForwardedHeadersFixture(): Promise<ForwardedFixture> {
       `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Echo-Length: ${payload.length}\r\n\r\n${payload}`,
     );
   });
-  await new Promise<void>((resolve) => upstream.listen(upstreamPort, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => upstream.listen(upstreamPort, upstreamHost, resolve));
 
   const serviceProxy = createServiceProxySubsystem({ logger });
   const route = serviceProxy.registerWorkspaceService({
@@ -417,6 +443,21 @@ function upgradeThroughProxy(
 }
 
 describe("service proxy forwarded headers", () => {
+  it("reaches services that only bind to IPv6 localhost", async () => {
+    const fixture = await startForwardedHeadersFixture({ upstreamHost: "::1" });
+    try {
+      const response = await httpGet(
+        fixture.daemonPort,
+        `${fixture.hostname}:${fixture.daemonPort}`,
+        { path: "/" },
+      );
+
+      expect(response.status).toBe(200);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("forwards the client authority with its port so services build reachable URLs", async () => {
     const fixture = await startForwardedHeadersFixture();
     try {
