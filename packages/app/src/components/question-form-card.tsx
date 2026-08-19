@@ -1,6 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useState, useCallback, useMemo } from "react";
-import { View, Text, TextInput, Pressable, type PressableStateCallbackType } from "react-native";
+import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, X } from "lucide-react-native";
@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
@@ -304,7 +305,7 @@ function QuestionOtherInput({
       accessibilityLabel={accessibilityLabel}
       placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
-      value={value}
+      initialValue={value}
       onChangeText={handleChange}
       onSubmitEditing={onSubmit}
       editable={!isResponding}
@@ -651,7 +652,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
   },
   questionNavText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   optionItem: {
@@ -680,7 +681,7 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 22,
   },
   optionDescription: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
   selectionControl: {
@@ -707,7 +708,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   actionsContainer: {
     gap: theme.spacing[2],
@@ -730,6 +731,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   actionText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

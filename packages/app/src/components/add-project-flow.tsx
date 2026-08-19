@@ -25,10 +25,13 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
   type PressableStateCallbackType,
 } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   applyAvailableAddProjectHosts,
@@ -385,10 +388,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const sessionWorkspaces = useSessionStore((store) => store.sessions[hostId ?? ""]?.workspaces);
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const addExistingWorkspace = useAddExistingWorkspace(hostId);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
   const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
+  const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
+  pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
   useEffect(() => {
@@ -403,6 +408,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [query]);
 
   useEffect(() => {
+    inputRef.current?.replaceText(pageInputValueRef.current);
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
   }, [page.kind]);
@@ -927,7 +933,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             {page.kind === "method" && isNative ? (
               // Native hardware-keyboard events need a focused responder even without a visible field.
               <TextInput
-                key={page.kind}
                 ref={inputRef}
                 onKeyPress={handleNativeKeyPress}
                 onSubmitEditing={submitActive}
@@ -944,9 +949,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             ) : null}
             {page.kind !== "method" ? (
               <ThemedTextInput
-                key={page.kind}
                 ref={inputRef}
-                value={pageInput(page)}
+                initialValue={pageInput(page)}
                 onChangeText={handleInputChange}
                 onKeyPress={isWeb ? undefined : handleNativeKeyPress}
                 onSubmitEditing={isWeb ? undefined : submitActive}
@@ -1077,14 +1081,14 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   hostContext: {
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   input: {
@@ -1112,11 +1116,11 @@ const styles = StyleSheet.create((theme) => ({
   disabled: { opacity: theme.opacity[50] },
   iconSlot: { width: 18, alignItems: "center" },
   rowText: { flex: 1, minWidth: 0 },
-  rowTitle: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
-  rowSubtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, marginTop: 2 },
+  rowTitle: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
+  rowSubtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm, marginTop: 2 },
   preview: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
   },
@@ -1128,7 +1132,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
   },
@@ -1150,10 +1154,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerKeyText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   footerAction: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

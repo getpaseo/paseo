@@ -1,0 +1,29 @@
+diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/codegen-patch/react/renderer/components/PasteTextInputSpecs/ShadowNodes.cpp b/node_modules/@mattermost/react-native-paste-input/android/src/codegen-patch/react/renderer/components/PasteTextInputSpecs/ShadowNodes.cpp
+index 73466dd..8440ac9 100644
+--- a/node_modules/@mattermost/react-native-paste-input/android/src/codegen-patch/react/renderer/components/PasteTextInputSpecs/ShadowNodes.cpp
++++ b/node_modules/@mattermost/react-native-paste-input/android/src/codegen-patch/react/renderer/components/PasteTextInputSpecs/ShadowNodes.cpp
+@@ -33,7 +33,11 @@ Size PasteTextInputShadowNode::measureContent(
+       .surfaceId = getSurfaceId(),
+   };
+ 
+-  if (getStateData().cachedAttributedStringId != 0) {
++  AttributedString attributedString = getMostRecentAttributedString(layoutContext);
++  const auto text = attributedString.getString();
++  const auto hasTrailingNewline = !text.empty() && text.back() == '\n';
++
++  if (getStateData().cachedAttributedStringId != 0 && !hasTrailingNewline) {
+     auto textSize = textLayoutManager_
+                         ->measureCachedSpannableById(
+                             getStateData().cachedAttributedStringId,
+@@ -44,9 +48,10 @@ Size PasteTextInputShadowNode::measureContent(
+     return layoutConstraints.clamp(textSize);
+   }
+ 
+-  AttributedString attributedString = getMostRecentAttributedString(layoutContext);
+   if (attributedString.isEmpty()) {
+     attributedString = getPlaceholderAttributedString(layoutContext);
++  } else if (hasTrailingNewline) {
++    attributedString.getFragments().back().string += " ";
+   }
+ 
+   auto textSize = textLayoutManager_

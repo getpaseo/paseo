@@ -180,11 +180,11 @@ const styles = StyleSheet.create((theme) => ({
     transform: [{ rotate: "90deg" }],
   },
   title: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   count: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flex: 1,
   },
@@ -203,11 +203,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   noWorkspaceCommitsText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   errorRow: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],

@@ -118,6 +118,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
+import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
@@ -128,6 +129,7 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { FileAgentTimelineStore } from "./agent/file-agent-timeline-store.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -147,6 +149,7 @@ import {
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
+import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -171,6 +174,7 @@ import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
   AgentProfile,
+  AgentSkillSelection,
   FirstAgentContext,
   PluginSource,
   TerminalProfile,
@@ -405,6 +409,7 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
   staticDir: string;
@@ -550,6 +555,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
+    skills: { selection: config.skillSelection },
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -590,6 +596,10 @@ export async function createPaseoDaemon(
         };
       },
     },
+  });
+  const orchestrationSkills = createOrchestrationSkills(daemonConfigStore);
+  void orchestrationSkills.autoUpdate().catch((error) => {
+    logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
@@ -841,6 +851,7 @@ export async function createPaseoDaemon(
   }
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+  const timelineStore = new FileAgentTimelineStore(path.join(config.paseoHome, "agent-timelines"));
   const projectRegistry = new FileBackedProjectRegistry(
     path.join(config.paseoHome, "projects", "projects.json"),
     logger,
@@ -849,6 +860,10 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  const workspaceLabelService = createWorkspaceLabelService({
+    paseoHome: config.paseoHome,
+    workspaceRegistry,
+  });
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
@@ -889,6 +904,7 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    durableTimelineStore: timelineStore,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -916,6 +932,7 @@ export async function createPaseoDaemon(
     workspaceGitService,
     logger,
   });
+  await workspaceLabelService.initialize();
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
@@ -1491,7 +1508,6 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
-      await pluginRuntime.start();
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,
@@ -1580,6 +1596,7 @@ export async function createPaseoDaemon(
                 getHostnames: () => configuredHostnames,
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
+                startPaused: true,
               },
               workspaceAutoName,
               config.auth,
@@ -1631,7 +1648,12 @@ export async function createPaseoDaemon(
               hubRelationships,
               workspaceSetupRuntime,
               pluginRuntime,
+              orchestrationSkills,
+              workspaceLabelService,
             );
+            pluginRuntime.bindPaseoSessionHost(wsServer);
+            await pluginRuntime.start();
+            wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
               config: {
                 enabled: relayEnabled,
@@ -1698,7 +1720,7 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
     terminalManager.killAll();
-    speechService.stop();
+    await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {

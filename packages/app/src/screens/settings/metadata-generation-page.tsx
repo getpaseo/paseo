@@ -166,8 +166,8 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
 const styles = StyleSheet.create((theme) => ({
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.45,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.45,
     marginHorizontal: theme.spacing[1],
   },
   loading: {

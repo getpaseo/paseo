@@ -45,12 +45,19 @@ import {
   unblockPaseoConfigWrites,
 } from "../support/helpers/project-settings";
 import { gotoAppShell } from "../support/helpers/app";
+import { openCompactSettings } from "../support/helpers/settings";
 import {
   addProjectFlowInput,
   chooseAddProjectMethod,
   openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import {
+  buildOpenProjectRoute,
+  buildProjectsSettingsRoute,
+  buildSettingsRoute,
+} from "@/utils/host-routes";
+import { getServerId } from "../support/helpers/server-id";
 
 const updatedSetup = ["npm install", "npm run build"];
 
@@ -318,6 +325,33 @@ test.describe("Projects settings", () => {
     await saveProjectEdits(page);
 
     await expectProjectEditFailed(page, "URL must use HTTP or HTTPS without credentials");
+  });
+});
+
+test.describe("Projects settings — compact navigation", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("project Back returns through Projects and Settings without reopening the project", async ({
+    page,
+    editableProject,
+  }) => {
+    await gotoAppShell(page);
+    await openCompactSettings(page, buildOpenProjectRoute());
+    await page.getByRole("button", { name: "Projects", exact: true }).click();
+    await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+
+    await openProjectSettings(page, editableProject.name);
+    await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Back to projects", exact: true })).toHaveCount(
+      0,
+    );
+
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(buildProjectsSettingsRoute(getServerId()));
+
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(buildSettingsRoute());
+    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
   });
 });
 

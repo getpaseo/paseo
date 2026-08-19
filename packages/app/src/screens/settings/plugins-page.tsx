@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
-import type { PluginListItem } from "@getpaseo/protocol/messages";
+import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
@@ -39,12 +40,16 @@ function PluginRow({
   pending,
   pendingAction,
   onAction,
+  onOpenLogs,
+  supportsLogs,
 }: {
   plugin: PluginListItem;
   clientError?: string;
   pending: boolean;
   pendingAction?: PluginRowAction;
   onAction(action: PluginRowAction, plugin: PluginListItem): void;
+  onOpenLogs(pluginId: string): void;
+  supportsLogs: boolean;
 }) {
   const { t } = useTranslation();
   const reload = useCallback(() => onAction("reload", plugin), [onAction, plugin]);
@@ -53,6 +58,7 @@ function PluginRow({
     [onAction, plugin],
   );
   const remove = useCallback(() => onAction("remove", plugin), [onAction, plugin]);
+  const openLogs = useCallback(() => onOpenLogs(plugin.id), [onOpenLogs, plugin.id]);
   const status = clientError ? "failed" : plugin.status;
   let badgeVariant: "success" | "error" | "muted" = "muted";
   if (status === "running") badgeVariant = "success";
@@ -76,6 +82,11 @@ function PluginRow({
         ) : null}
       </View>
       <View style={styles.actions}>
+        {supportsLogs ? (
+          <Button variant="outline" size="sm" onPress={openLogs} disabled={pending}>
+            {t("settings.plugins.logs.action")}
+          </Button>
+        ) : null}
         <Button variant="outline" size="sm" onPress={reload} disabled={pending || !plugin.enabled}>
           {pendingAction === "reload"
             ? t("settings.plugins.actions.reloading")
@@ -94,11 +105,85 @@ function PluginRow({
   );
 }
 
+function PluginLogsSheet({
+  client,
+  pluginId,
+  serverId,
+  onClose,
+}: {
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+  pluginId: string;
+  serverId: string;
+  onClose(): void;
+}) {
+  const { t } = useTranslation();
+  const logs = useFetchQuery({
+    queryKey: ["plugin-logs", serverId, pluginId],
+    queryFn: () => client.getPluginLogs(pluginId),
+    dataShape: "list",
+    staleTimeMs: 0,
+  });
+  const refresh = useCallback(() => {
+    void logs.refetch();
+  }, [logs]);
+  const header = useMemo<SheetHeader>(
+    () => ({
+      title: t("settings.plugins.logs.title", { id: pluginId }),
+      actions: (
+        <Button variant="outline" size="sm" onPress={refresh} disabled={logs.isFetching}>
+          {logs.isFetching
+            ? t("settings.plugins.logs.refreshing")
+            : t("settings.plugins.logs.refresh")}
+        </Button>
+      ),
+    }),
+    [logs.isFetching, pluginId, refresh, t],
+  );
+
+  let content = <Text style={styles.logsState}>{t("settings.plugins.logs.loading")}</Text>;
+  if (logs.isError) {
+    content = (
+      <Alert
+        variant="error"
+        title={t("settings.plugins.logs.errorTitle")}
+        description={errorMessage(logs.error)}
+      >
+        <Button variant="outline" size="sm" onPress={refresh}>
+          {t("settings.plugins.logs.refresh")}
+        </Button>
+      </Alert>
+    );
+  } else if (!logs.isLoading) {
+    content = logs.data?.length ? (
+      <View style={styles.logList}>
+        {logs.data.map((entry: PluginLogEntry) => (
+          <View key={entry.sequence} style={styles.logEntry}>
+            <Text style={entry.stream === "stderr" ? styles.logStderr : styles.logStdout}>
+              {entry.timestamp} {entry.stream}
+            </Text>
+            <Text style={styles.logMessage}>{entry.message}</Text>
+          </View>
+        ))}
+      </View>
+    ) : (
+      <Text style={styles.logsState}>{t("settings.plugins.logs.empty")}</Text>
+    );
+  }
+
+  return (
+    <AdaptiveModalSheet header={header} visible onClose={onClose} testID="plugin-logs-sheet">
+      {content}
+    </AdaptiveModalSheet>
+  );
+}
+
 export function HostPluginsPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "pluginManagement");
+  // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
+  const logsSupported = useHostFeature(serverId, "pluginLogs");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const refreshQueue = useRef(Promise.resolve());
   useInstalledPlugins();
@@ -107,6 +192,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const [pluginId, setPluginId] = useState("");
   const [directoryResetKey, setDirectoryResetKey] = useState(0);
   const [pluginIdResetKey, setPluginIdResetKey] = useState(0);
+  const [logsPluginId, setLogsPluginId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(
     null,
   );
@@ -223,6 +309,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   const retry = useCallback(() => {
     void refetchPlugins();
   }, [refetchPlugins]);
+  const closeLogs = useCallback(() => setLogsPluginId(null), []);
 
   if (pageState === "offline") {
     return (
@@ -265,6 +352,8 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
                 pending={mutation.isPending}
                 pendingAction={pending ? pluginRowAction(mutation.variables?.action) : undefined}
                 onAction={action}
+                onOpenLogs={setLogsPluginId}
+                supportsLogs={logsSupported}
               />
             );
           })
@@ -340,6 +429,14 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
         ) : null}
         {catalogContent}
       </SettingsSection>
+      {client && logsPluginId ? (
+        <PluginLogsSheet
+          client={client}
+          pluginId={logsPluginId}
+          serverId={serverId}
+          onClose={closeLogs}
+        />
+      ) : null}
     </View>
   );
 }
@@ -354,6 +451,34 @@ const styles = StyleSheet.create((theme) => ({
   },
   pluginTitle: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
-  error: { color: theme.colors.statusDanger, fontSize: theme.fontSize.xs },
+  error: { color: theme.colors.statusDanger, fontSize: theme.fontSize.sm },
   empty: { padding: theme.spacing[4], alignItems: "center" },
+  logsState: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    textAlign: "center",
+    paddingVertical: theme.spacing[6],
+  },
+  logList: { gap: theme.spacing[2] },
+  logEntry: {
+    padding: theme.spacing[3],
+    gap: theme.spacing[1],
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.md,
+  },
+  logStdout: {
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+  },
+  logStderr: {
+    color: theme.colors.statusDanger,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+  },
+  logMessage: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.base,
+  },
 }));

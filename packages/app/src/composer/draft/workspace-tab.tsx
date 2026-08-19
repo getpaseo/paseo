@@ -10,6 +10,7 @@ import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
+import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
@@ -751,8 +752,14 @@ const styles = StyleSheet.create((theme) => ({
   importPillRow: {
     width: "100%",
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[3],
-    paddingBottom: theme.spacing[3],
+    paddingTop: {
+      xs: COMPOSER_PILL_CLEARANCE.compact,
+      md: COMPOSER_PILL_CLEARANCE.wide,
+    },
+    paddingBottom: {
+      xs: COMPOSER_PILL_CLEARANCE.compact,
+      md: COMPOSER_PILL_CLEARANCE.wide,
+    },
     alignItems: "center",
   },
   importPillContent: {

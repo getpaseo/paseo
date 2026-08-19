@@ -1,10 +1,10 @@
 import { Command } from "commander";
-import type { PluginListItem } from "@getpaseo/protocol/messages";
+import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import type { CommandOptions, ListResult, OutputSchema, SingleResult } from "../../output/index.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions, addJsonOption } from "../../utils/command-options.js";
 import { scaffoldPluginDirectory, type PluginScaffold } from "./scaffold.js";
-import { withPluginManagementClient } from "./shared.js";
+import { withPluginLogsClient, withPluginManagementClient } from "./shared.js";
 
 interface PluginOptions extends CommandOptions {
   host?: string;
@@ -30,6 +30,15 @@ const scaffoldSchema: OutputSchema<PluginScaffold> = {
   ],
 };
 
+const pluginLogsSchema: OutputSchema<PluginLogEntry> = {
+  idField: (entry) => String(entry.sequence),
+  columns: [
+    { header: "TIME", field: "timestamp", width: 24 },
+    { header: "STREAM", field: "stream", width: 8 },
+    { header: "MESSAGE", field: "message", width: 80 },
+  ],
+};
+
 export async function runPluginInitCommand(
   directory: string,
   options: PluginOptions,
@@ -48,6 +57,15 @@ export async function runPluginListCommand(
 ): Promise<ListResult<PluginListItem>> {
   const data = await withPluginManagementClient(options.host, (client) => client.listPlugins());
   return { type: "list", data, schema: pluginSchema };
+}
+
+export async function runPluginLogsCommand(
+  pluginId: string,
+  options: PluginOptions,
+  _command: Command,
+): Promise<ListResult<PluginLogEntry>> {
+  const data = await withPluginLogsClient(options.host, (client) => client.getPluginLogs(pluginId));
+  return { type: "list", data, schema: pluginLogsSchema };
 }
 
 async function install(
@@ -98,6 +116,9 @@ export function createPluginCommand(): Command {
   addJsonAndDaemonHostOptions(plugin.command("ls").description("List configured plugins")).action(
     withOutput(runPluginListCommand),
   );
+  addJsonAndDaemonHostOptions(
+    plugin.command("logs").description("Show recent plugin output").argument("<id>"),
+  ).action(withOutput(runPluginLogsCommand));
   addJsonAndDaemonHostOptions(
     plugin
       .command("install")

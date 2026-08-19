@@ -10,7 +10,6 @@ const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 
 const extraMutedIcon = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
-const mutedIcon = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const runningIcon = (theme: Theme) => ({ color: theme.colors.statusDotRunning });
 
 function TaskStatusIcon({ isCompleted, isRunning }: { isCompleted: boolean; isRunning: boolean }) {
@@ -20,7 +19,10 @@ function TaskStatusIcon({ isCompleted, isRunning }: { isCompleted: boolean; isRu
   if (isRunning) {
     return <ThemedCircleDot size={16} uniProps={runningIcon} />;
   }
-  return <ThemedCircle size={16} uniProps={mutedIcon} />;
+  // A pending task's ring is a status mark, not a checkbox. At the muted step it carries the
+  // weight of an enabled control and invites a click that does nothing, so it sits one step back
+  // from the text it marks.
+  return <ThemedCircle size={16} uniProps={extraMutedIcon} />;
 }
 
 export const TaskListRow = memo(function TaskListRow({ task }: { task: TodoEntry }) {
@@ -47,10 +49,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // Grows and shrinks, but keeps an `auto` basis: a zero-basis label reports no intrinsic width,
+  // and a container that sizes itself to its content — the composer track panel — measures the
+  // row as empty and truncates it against a surface that had room to spare.
   text: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "auto",
+    minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   runningText: {
     color: theme.colors.foreground,

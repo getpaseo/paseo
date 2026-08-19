@@ -8,20 +8,6 @@ import {
   TestOpenCodeHarness,
 } from "./opencode/test-utils/test-opencode-harness.js";
 
-function createDeferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (error: unknown) => void;
-} {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 describe("OpenCodeAgentSession slash command timeout handling", () => {
   test("lists only OpenCode built-in slash commands Paseo can execute", async () => {
     const runtime = new TestOpenCodeHarness();
@@ -75,20 +61,12 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
   });
 
   test("waits for SSE completion when slash commands hit a header timeout", async () => {
-    const idleEventGate = createDeferred<void>();
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = createOpenCodeClientWithConnectedProvider();
     openCodeClient.sessionCommandError = new Error("fetch failed: Headers Timeout Error");
     openCodeClient.commandListResponse = {
       data: [{ name: "help", description: "Show help", hints: [] }],
     };
-    openCodeClient.eventStream = (async function* () {
-      await idleEventGate.promise;
-      yield {
-        type: "session.idle",
-        properties: { sessionID: "session-1" },
-      };
-    })();
     runtime.enqueueClient(openCodeClient);
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
@@ -98,8 +76,17 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp" });
 
     const runPromise = session.run("/help");
-    await Promise.resolve();
-    idleEventGate.resolve();
+    await nextTick();
+    expect(openCodeClient.calls.sessionCommand).toHaveLength(1);
+    let settled = false;
+    void runPromise.then(() => {
+      settled = true;
+      return undefined;
+    });
+    await nextTick();
+    expect(settled).toBe(false);
+
+    openCodeClient.emitEvent(idleEvent());
 
     await expect(runPromise).resolves.toMatchObject({
       sessionId: "session-1",

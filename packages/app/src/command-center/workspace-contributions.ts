@@ -108,7 +108,7 @@ export function buildWorkspaceCommandCenterContributions(
       keywords: ["tab", "new", "agent", "chat"],
       icon: source.icons.newAgent,
       shortcutKeys: source.shortcuts.newAgent,
-      action: { id: "workspace.tab.new", scope: "workspace" },
+      action: { id: "workspace.agent.new", scope: "workspace" },
       visibility: "always",
     }),
   ];

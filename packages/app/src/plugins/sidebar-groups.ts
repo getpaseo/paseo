@@ -20,7 +20,7 @@ export function groupPluginSidebarContributions(plugins: InstalledPlugin[]): Plu
   const groups = new Map<string, PluginSidebarGroup>();
   for (const plugin of plugins) {
     for (const item of plugin.sidebarItems) {
-      const key = `${plugin.id}/${item.id}`;
+      const key = `${plugin.id}/sidebar/${item.id}`;
       const existing = groups.get(key);
       if (existing) {
         existing.targets.push({ plugin, item });
