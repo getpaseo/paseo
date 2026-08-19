@@ -374,6 +374,74 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     unsubscribe?.();
   }
 
+  function isCallerBusyError(error: unknown): boolean {
+    return error instanceof Error && error.message.includes("already has an active run");
+  }
+
+  // steerOrReplaceActiveTurn (activeTurnBehavior: "steer" below) folds a caller
+  // that is mid-turn into that same turn without interrupting it, but its own
+  // fallback path (replaceAdmittedForegroundTurn: cancelAgentRunBefore then
+  // streamAgent) is not atomic against a run the caller starts on its own —
+  // outside any steer — in that gap, e.g. the caller's own next user message
+  // arriving at the same moment as this notification. streamAgent still
+  // rejects with "already has an active run" when that happens, and
+  // notifySafely's catch only logs it, so the caller never learns the child
+  // finished. Wait for the caller to have no in-flight run and try again
+  // instead of dropping the notification.
+  function waitForCallerRunToSettle(): Promise<void> {
+    return new Promise((resolve) => {
+      const unsubscribeWait = agentManager.subscribe(
+        (event) => {
+          if (event.type !== "agent_state" || event.agent.id !== callerAgentId) {
+            return;
+          }
+          if (!agentManager.hasInFlightRun(callerAgentId)) {
+            unsubscribeWait();
+            resolve();
+          }
+        },
+        { agentId: callerAgentId },
+      );
+      if (!agentManager.hasInFlightRun(callerAgentId)) {
+        unsubscribeWait();
+        resolve();
+      }
+    });
+  }
+
+  async function deliverToCaller(prompt: string): Promise<void> {
+    for (;;) {
+      const callerRecord = await agentStorage.get(callerAgentId);
+      if (callerRecord?.archivedAt) {
+        return;
+      }
+      if (!agentManager.getAgent(callerAgentId)) {
+        return;
+      }
+      try {
+        await sendPromptToAgent({
+          agentManager,
+          agentStorage,
+          agentId: callerAgentId,
+          prompt,
+          activeTurnBehavior: "steer",
+          unarchive: false,
+          logger,
+        });
+        return;
+      } catch (error) {
+        if (!isCallerBusyError(error)) {
+          throw error;
+        }
+        logger.debug(
+          { childAgentId, callerAgentId },
+          "Caller busy with a concurrent run, deferring finish notification until it settles",
+        );
+        await waitForCallerRunToSettle();
+      }
+    }
+  }
+
   async function notify(
     reason: FinishNotificationReason,
     permissionRequest?: AgentPermissionRequest,
@@ -397,15 +465,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       permissionRequest,
     });
 
-    await sendPromptToAgent({
-      agentManager,
-      agentStorage,
-      agentId: callerAgentId,
-      prompt: formatSystemNotificationPrompt(body),
-      activeTurnBehavior: "steer",
-      unarchive: false,
-      logger,
-    });
+    await deliverToCaller(formatSystemNotificationPrompt(body));
   }
 
   function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
