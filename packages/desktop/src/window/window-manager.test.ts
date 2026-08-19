@@ -2,16 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applyMacWindowControlsUpdate,
-  applyWindowControlsOverlayUpdate,
-  createWindowControlsOverlayState,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
-  getTitleBarOverlayOptions,
   readBadgeCount,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
-  resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
   shouldReportLoadFailure,
   shouldReportProcessGone,
@@ -49,24 +45,6 @@ describe("window-manager", () => {
     });
   });
 
-  describe("getTitleBarOverlayOptions", () => {
-    it("returns light title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("light")).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 29,
-      });
-    });
-
-    it("returns dark title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 29,
-      });
-    });
-  });
-
   describe("readWindowControlsOverlayUpdate", () => {
     it("accepts partial runtime overlay updates", () => {
       expect(
@@ -93,60 +71,6 @@ describe("window-manager", () => {
     it("preserves fractional traffic-light offsets", () => {
       expect(readWindowControlsOverlayUpdate({ trafficLightOffsetY: 1.5 })).toEqual({
         trafficLightOffsetY: 1.5,
-      });
-    });
-  });
-
-  describe("resolveRuntimeTitleBarOverlayOptions", () => {
-    it("applies the VS Code height minus border adjustment", () => {
-      expect(
-        resolveRuntimeTitleBarOverlayOptions({
-          height: 48,
-          backgroundColor: "#ffffff",
-          foregroundColor: "#09090b",
-        }),
-      ).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 47,
-      });
-    });
-  });
-
-  describe("applyWindowControlsOverlayUpdate", () => {
-    it("merges cached colors with later runtime height updates", () => {
-      const setTitleBarOverlay = vi.fn();
-      let state = createWindowControlsOverlayState("dark");
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: {
-          backgroundColor: "#181B1A",
-          foregroundColor: "#e4e4e7",
-        },
-      });
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: { height: 48 },
-      });
-
-      expect(state).toEqual({
-        height: 48,
-        backgroundColor: "#181B1A",
-        foregroundColor: "#e4e4e7",
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(1, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 28,
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(2, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 47,
       });
     });
   });

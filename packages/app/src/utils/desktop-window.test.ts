@@ -9,121 +9,25 @@ import {
 describe("window chrome", () => {
   it("has no corner obstruction outside Electron or in fullscreen", () => {
     expect(
-      resolveWindowChromeObstruction({
-        isElectron: false,
-        isMac: true,
-        isFullscreen: false,
-        measurement: null,
-      }),
+      resolveWindowChromeObstruction({ isElectron: false, isMac: true, isFullscreen: false }),
     ).toEqual({ topLeft: null, topRight: null });
     expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: true,
-        isFullscreen: true,
-        measurement: null,
-      }),
+      resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: true }),
+    ).toEqual({ topLeft: null, topRight: null });
+    expect(
+      resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: true }),
     ).toEqual({ topLeft: null, topRight: null });
   });
 
-  it("places native controls in their physical top corner", () => {
+  it("reserves the traffic light corner on macOS", () => {
     expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: true,
-        isFullscreen: false,
-        measurement: null,
-      }),
+      resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: false }),
     ).toEqual({ topLeft: { width: 78, height: 45 }, topRight: null });
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: null,
-      }),
-    ).toEqual({ topLeft: null, topRight: { width: 140, height: 29 } });
   });
 
-  it("clears corner obstructions when fullscreen wins over a visible measurement", () => {
+  it("reserves nothing on Windows and Linux because the app draws its own controls", () => {
     expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: true,
-        measurement: { visible: true, insets: { leftWidth: 0, rightWidth: 140, height: 29 } },
-      }),
-    ).toEqual({ topLeft: null, topRight: null });
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: false,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: true, insets: { leftWidth: 0, rightWidth: 140, height: 29 } },
-      }),
-    ).toEqual({ topLeft: null, topRight: null });
-  });
-
-  it("clears corner obstructions when overlay measurement is explicitly not visible", () => {
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: false },
-      }),
-    ).toEqual({ topLeft: null, topRight: null });
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: true,
-        isFullscreen: false,
-        measurement: { visible: false },
-      }),
-    ).toEqual({ topLeft: null, topRight: null });
-  });
-
-  it("overrides hardcoded constants with measured geometry on non-mac", () => {
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: true, insets: { leftWidth: 0, rightWidth: 138, height: 30 } },
-      }),
-    ).toEqual({ topLeft: null, topRight: { width: 138, height: 30 } });
-  });
-
-  it("yields a top-left obstruction for measured left-side controls on non-mac", () => {
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: true, insets: { leftWidth: 120, rightWidth: 0, height: 30 } },
-      }),
-    ).toEqual({ topLeft: { width: 120, height: 30 }, topRight: null });
-  });
-
-  it("yields both corner obstructions when measured controls exist on both sides", () => {
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: true, insets: { leftWidth: 100, rightWidth: 140, height: 29 } },
-      }),
-    ).toEqual({ topLeft: { width: 100, height: 29 }, topRight: { width: 140, height: 29 } });
-  });
-
-  it("yields no obstructions when measured insets have zero width", () => {
-    expect(
-      resolveWindowChromeObstruction({
-        isElectron: true,
-        isMac: false,
-        isFullscreen: false,
-        measurement: { visible: true, insets: { leftWidth: 0, rightWidth: 0, height: 29 } },
-      }),
+      resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: false }),
     ).toEqual({ topLeft: null, topRight: null });
   });
 

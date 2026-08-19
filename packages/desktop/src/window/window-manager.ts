@@ -33,12 +33,6 @@ export interface WindowControlsOverlayUpdate {
   trafficLightOffsetY?: number;
 }
 
-export interface WindowControlsOverlayState {
-  height: number;
-  backgroundColor?: string;
-  foregroundColor?: string;
-}
-
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {
     return input;
@@ -53,23 +47,6 @@ export function resolveSystemWindowTheme(): WindowTheme {
 
 export function getWindowBackgroundColor(theme: WindowTheme): string {
   return theme === "dark" ? "#181B1A" : "#ffffff";
-}
-
-export function createWindowControlsOverlayState(theme: WindowTheme): WindowControlsOverlayState {
-  const overlay = getTitleBarOverlayOptions(theme);
-  return {
-    height: overlay.height ?? 29,
-    backgroundColor: overlay.color,
-    foregroundColor: overlay.symbolColor,
-  };
-}
-
-export function getTitleBarOverlayOptions(theme: WindowTheme): Electron.TitleBarOverlayOptions {
-  if (theme === "dark") {
-    return { color: "#181B1A", symbolColor: "#e4e4e7", height: 29 };
-  }
-
-  return { color: "#ffffff", symbolColor: "#09090b", height: 29 };
 }
 
 export function getMainWindowChromeOptions(input: {
@@ -173,31 +150,6 @@ export function readWindowControlsOverlayUpdate(
   };
 }
 
-export function resolveRuntimeTitleBarOverlayOptions(
-  state: WindowControlsOverlayState,
-): Electron.TitleBarOverlayOptions {
-  return {
-    color: state.backgroundColor?.trim() === "" ? undefined : state.backgroundColor,
-    symbolColor: state.foregroundColor?.trim() === "" ? undefined : state.foregroundColor,
-    height: Math.max(0, state.height - 1),
-  };
-}
-
-export function applyWindowControlsOverlayUpdate(input: {
-  win: Pick<BrowserWindow, "setTitleBarOverlay">;
-  current: WindowControlsOverlayState;
-  update: WindowControlsOverlayUpdate;
-}): WindowControlsOverlayState {
-  const next: WindowControlsOverlayState = {
-    height: input.update.height ?? input.current.height,
-    backgroundColor: input.update.backgroundColor ?? input.current.backgroundColor,
-    foregroundColor: input.update.foregroundColor ?? input.current.foregroundColor,
-  };
-
-  input.win.setTitleBarOverlay(resolveRuntimeTitleBarOverlayOptions(next));
-  return next;
-}
-
 export function applyMacWindowControlsUpdate(input: {
   win: Pick<BrowserWindow, "setWindowButtonPosition">;
   update: WindowControlsOverlayUpdate;
@@ -213,8 +165,6 @@ export function applyMacWindowControlsUpdate(input: {
 }
 
 export function registerWindowManager(): void {
-  const overlayStateByWindow = new WeakMap<BrowserWindow, WindowControlsOverlayState>();
-
   ipcMain.handle("paseo:window:toggleMaximize", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
@@ -263,6 +213,12 @@ export function registerWindowManager(): void {
   });
 
   ipcMain.handle("paseo:window:updateWindowControls", (event, update?: unknown) => {
+    // macOS is the only platform with OS-drawn window buttons whose position we influence;
+    // elsewhere the app draws its own controls, so there is no overlay to update.
+    if (process.platform !== "darwin") {
+      return;
+    }
+
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) {
       return;
@@ -277,19 +233,7 @@ export function registerWindowManager(): void {
       win.setBackgroundColor(nextUpdate.backgroundColor);
     }
 
-    if (process.platform === "darwin") {
-      applyMacWindowControlsUpdate({ win, update: nextUpdate });
-      return;
-    }
-
-    const current =
-      overlayStateByWindow.get(win) ?? createWindowControlsOverlayState(resolveSystemWindowTheme());
-    const nextState = applyWindowControlsOverlayUpdate({
-      win,
-      current,
-      update: nextUpdate,
-    });
-    overlayStateByWindow.set(win, nextState);
+    applyMacWindowControlsUpdate({ win, update: nextUpdate });
   });
 }
 
@@ -540,10 +484,13 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
     }
   }
 
+  // Keep the wording window-scoped. "<app> has stopped working" is what Windows says when a
+  // process is gone for good, and it reads as terminal; only this window's renderer died, the
+  // app is still running, and Reload fixes it. VS Code words its prompts the same way.
   win.on("unresponsive", () => {
     void prompt({
-      message: `${app.name} is not responding`,
-      detail: "The window has stopped responding. Wait for it to recover, reload it, or close it.",
+      message: "This window is not responding",
+      detail: "Wait for it to recover, reload it, or close it.",
       waitable: true,
     });
   });
@@ -551,8 +498,8 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
   win.webContents.on("render-process-gone", (_event, details) => {
     if (!shouldReportProcessGone(details.reason)) return;
     void prompt({
-      message: `${app.name} has stopped working`,
-      detail: `The window's renderer exited (${details.reason}). Reload it or close it.`,
+      message: "This window has crashed",
+      detail: `Its renderer exited (${details.reason}). Reload the window, or close it.`,
       waitable: false,
     });
   });
@@ -560,8 +507,8 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, _url, isMainFrame) => {
     if (!shouldReportLoadFailure(errorCode, isMainFrame)) return;
     void prompt({
-      message: `${app.name} could not load`,
-      detail: `${errorDescription} (${errorCode}). Reload the window or close it.`,
+      message: "This window could not load",
+      detail: `${errorDescription} (${errorCode}). Reload the window, or close it.`,
       waitable: false,
     });
   });

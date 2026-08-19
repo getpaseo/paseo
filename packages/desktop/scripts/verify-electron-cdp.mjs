@@ -54,46 +54,15 @@ function rectsIntersect(left, right) {
 }
 
 /**
- * Live window-control geometry, or null where Chromium reports no overlay
- * (macOS traffic-light builds, fullscreen). The app reserves the measured value,
- * so a hardcoded rectangle here drifts from what the renderer actually pads.
+ * The window-chrome rectangle the app must keep clear. macOS reserves the
+ * native traffic-light corner; the hand-drawn Windows/Linux controls are flex
+ * items inside the header row, so they reserve no band of their own.
  */
-async function readWindowControlsOverlayInsets(page) {
-  return page.evaluate(() => {
-    const overlay = navigator.windowControlsOverlay;
-    if (!overlay || overlay.visible !== true) return null;
-    const rect = overlay.getTitlebarAreaRect();
-    const rectRight = rect.x + rect.width;
-    return {
-      leftWidth: Math.max(0, Math.round(rect.x)),
-      rightWidth: Math.max(0, Math.round(window.innerWidth - rectRight)),
-      height: Math.round(rect.height),
-    };
-  });
-}
-
-function getWindowChromeObstruction(platform, innerWidth, overlayInsets) {
-  if (overlayInsets) {
-    const onLeft = overlayInsets.leftWidth > 0;
-    const width = onLeft ? overlayInsets.leftWidth : overlayInsets.rightWidth;
-    return {
-      corner: onLeft ? "top-left" : "top-right",
-      left: onLeft ? 0 : innerWidth - width,
-      top: 0,
-      width,
-      height: overlayInsets.height,
-    };
-  }
+function getWindowChromeObstruction(platform) {
   if (platform === "darwin") {
     return { corner: "top-left", left: 0, top: 0, width: 78, height: 45 };
   }
-  return {
-    corner: "top-right",
-    left: innerWidth - 140,
-    top: 0,
-    width: 140,
-    height: 48,
-  };
+  return { corner: "none", left: 0, top: 0, width: 0, height: 0 };
 }
 
 async function inspectSettingsGeometry(page) {
@@ -135,8 +104,8 @@ async function inspectSettingsGeometry(page) {
   });
 }
 
-function settingsGeometryClearsWindowChrome(geometry, platform, overlayInsets) {
-  const obstruction = getWindowChromeObstruction(platform, geometry.innerWidth, overlayInsets);
+function settingsGeometryClearsWindowChrome(geometry, platform) {
+  const obstruction = getWindowChromeObstruction(platform);
   const consumer =
     obstruction.corner === "top-left" ? geometry.backButtonRect : geometry.detailHeaderLeftRect;
   return Boolean(consumer && !rectsIntersect(consumer, obstruction));
@@ -187,7 +156,7 @@ async function inspectTitlebarRegions(page) {
         outline: 3px solid #1677ff !important;
         outline-offset: -3px !important;
       }
-      [data-electron-verify-overlay-offender="true"] {
+      [data-electron-verify-controls-offender="true"] {
         outline: 3px solid #fa8c16 !important;
         outline-offset: -3px !important;
       }
@@ -382,6 +351,155 @@ async function inspectTitlebarRegions(page) {
   }, INTERACTIVE_SELECTOR);
 }
 
+/**
+ * The one definition of "the app-drawn controls are clear": collect the visible
+ * control set plus every other interactive element that could sit under it, then
+ * intersect Node-side with the shared rect helper. The controls check and the
+ * fullscreen check both read this, so "clear" cannot drift between the two states.
+ */
+async function collectAppWindowControls(page) {
+  const collected = await page.evaluate((interactiveSelector) => {
+    const appTestIds = [
+      "window-control-minimize",
+      "window-control-maximize",
+      "window-control-close",
+    ];
+    const bootTestIds = [
+      "boot-window-control-minimize",
+      "boot-window-control-maximize",
+      "boot-window-control-close",
+    ];
+
+    function isVisible(element) {
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.width > 0 && rect.height > 0 && window.getComputedStyle(element).display !== "none"
+      );
+    }
+
+    function readAppRegion(element) {
+      const style = window.getComputedStyle(element);
+      return style.webkitAppRegion || style.getPropertyValue("-webkit-app-region") || "none";
+    }
+
+    function describe(element) {
+      const rect = element.getBoundingClientRect();
+      const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+      return {
+        tagName: element.tagName.toLowerCase(),
+        testId: element.getAttribute("data-testid"),
+        role: element.getAttribute("role"),
+        accessibleName: (element.getAttribute("aria-label") ?? "").trim(),
+        text: text ? text.slice(0, 80) : null,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+
+    const appControls = appTestIds
+      .map((testId) => document.querySelector(`[data-testid="${testId}"]`))
+      .filter((element) => element instanceof HTMLElement)
+      .filter((element) => isVisible(element));
+    const bootRoot = document.querySelector("#paseo-boot-window-controls");
+    const bootControls = Array.from(
+      bootRoot?.querySelectorAll('[data-testid^="boot-window-control-"]') ?? [],
+    )
+      .filter((element) => element instanceof HTMLElement)
+      .filter((element) => isVisible(element));
+
+    let variant = "none";
+    if (appControls.length > 0 && bootControls.length > 0) variant = "both";
+    else if (appControls.length > 0) variant = "app";
+    else if (bootControls.length > 0) variant = "boot";
+
+    let activeControls = [];
+    if (variant === "app") activeControls = appControls;
+    if (variant === "boot") activeControls = bootControls;
+
+    const expectedTestIds = variant === "boot" ? bootTestIds : appTestIds;
+    const controls = activeControls.map((element) => describe(element));
+    const missingControls = expectedTestIds.filter(
+      (testId) => !controls.some((control) => control.testId === testId),
+    );
+
+    // A control's own subtree, an ancestor that wraps it, a full-bleed drag
+    // overlay and the top-edge resizer all overlap the buttons by design.
+    function isControlPart(element) {
+      return activeControls.some(
+        (control) => control === element || control.contains(element) || element.contains(control),
+      );
+    }
+
+    function isFullBleedDragOverlay(element) {
+      const rect = element.getBoundingClientRect();
+      return readAppRegion(element) === "drag" && rect.width >= window.innerWidth - 2;
+    }
+
+    function isTopEdgeResizer(element) {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return (
+        (style.position === "absolute" || style.position === "fixed") &&
+        rect.height <= 6 &&
+        rect.top <= 2 &&
+        rect.width >= window.innerWidth - 2
+      );
+    }
+
+    const candidates = [];
+    for (const element of document.querySelectorAll(interactiveSelector)) {
+      if (!(element instanceof HTMLElement) || !isVisible(element)) continue;
+      if (isControlPart(element)) continue;
+      if (isFullBleedDragOverlay(element) || isTopEdgeResizer(element)) continue;
+      const index = candidates.length;
+      element.setAttribute("data-electron-verify-controls-index", String(index));
+      candidates.push({ index, ...describe(element) });
+    }
+
+    return {
+      innerWidth: window.innerWidth,
+      variant,
+      appControlCount: appControls.length,
+      bootControlCount: bootControls.length,
+      controls,
+      missingControls,
+      candidates,
+    };
+  }, INTERACTIVE_SELECTOR);
+
+  const offendingElements = [];
+  for (const candidate of collected.candidates) {
+    const control = collected.controls.find((entry) => rectsIntersect(candidate, entry));
+    if (!control) continue;
+    offendingElements.push({ ...candidate, intersects: control.testId ?? control.tagName });
+  }
+
+  await page.evaluate(
+    (offenderIndexes) => {
+      for (const element of document.querySelectorAll("[data-electron-verify-controls-index]")) {
+        const index = Number(element.getAttribute("data-electron-verify-controls-index"));
+        if (offenderIndexes.includes(index)) {
+          element.setAttribute("data-electron-verify-controls-offender", "true");
+        }
+        element.removeAttribute("data-electron-verify-controls-index");
+      }
+    },
+    offendingElements.map((offender) => offender.index),
+  );
+
+  return {
+    innerWidth: collected.innerWidth,
+    variant: collected.variant,
+    appControlCount: collected.appControlCount,
+    bootControlCount: collected.bootControlCount,
+    controls: collected.controls,
+    missingControls: collected.missingControls,
+    candidateCount: collected.candidates.length,
+    offendingElements,
+  };
+}
 async function inspectFullscreenWindowChrome(page, platform) {
   const initiallyFullscreen = await readBridgeFullscreen(page);
 
@@ -398,7 +516,14 @@ async function inspectFullscreenWindowChrome(page, platform) {
       return { bridgeFullscreen };
     });
     const fullscreen = await inspectSettingsGeometry(page);
+    const controls = platform === "darwin" ? null : await collectAppWindowControls(page);
     const screenshot = await captureScreenshot(page, "04-fullscreen-window-chrome.png");
+    // macOS drops the traffic lights in fullscreen, so the reserved corner must
+    // collapse. Nothing reserves a band on Windows or Linux any more, so the
+    // invariant left to check there is the same one the controls check uses: no
+    // interactive element sits under the app-drawn buttons. Whether the controls
+    // themselves should hide in fullscreen is an open product question, so this
+    // deliberately asserts nothing about their visibility.
     const clearanceRemoved =
       platform === "darwin"
         ? Boolean(
@@ -408,16 +533,8 @@ async function inspectFullscreenWindowChrome(page, platform) {
             fullscreen.backButtonRect.top < 45 &&
             fullscreen.backButtonRect.top < before.backButtonRect.top,
           )
-        : Boolean(
-            before.detailHeaderLeftRect &&
-            fullscreen.detailHeaderLeftRect &&
-            before.innerWidth -
-              (before.detailHeaderLeftRect.left + before.detailHeaderLeftRect.width) >=
-              140 &&
-            fullscreen.innerWidth -
-              (fullscreen.detailHeaderLeftRect.left + fullscreen.detailHeaderLeftRect.width) <
-              40,
-          );
+        : null;
+    const controlsClear = controls ? controls.offendingElements.length === 0 : null;
 
     return {
       supported: true,
@@ -425,9 +542,16 @@ async function inspectFullscreenWindowChrome(page, platform) {
       before,
       fullscreen,
       clearanceRemoved,
+      controlsClear,
+      controlsVariant: controls?.variant ?? null,
+      controlCount: controls?.controls.length ?? null,
+      offendingCount: controls?.offendingElements.length ?? null,
+      offendingElements: controls?.offendingElements ?? [],
       screenshot,
       ...details,
-      passed: details.bridgeFullscreen === true && clearanceRemoved,
+      passed:
+        details.bridgeFullscreen === true &&
+        (platform === "darwin" ? clearanceRemoved === true : controlsClear === true),
     };
   } catch (error) {
     return {
@@ -465,9 +589,8 @@ async function inspectHalfScreenSettingsLayout(page, platform) {
     await outerAppSidebarSettings.waitFor({ state: "hidden", timeout: 10_000 });
 
     const details = await inspectSettingsGeometry(page);
-    const overlayInsets = await readWindowControlsOverlayInsets(page);
-    const obstruction = getWindowChromeObstruction(platform, details.innerWidth, overlayInsets);
-    const clearsWindowChrome = settingsGeometryClearsWindowChrome(details, platform, overlayInsets);
+    const obstruction = getWindowChromeObstruction(platform);
+    const clearsWindowChrome = settingsGeometryClearsWindowChrome(details, platform);
     const sidebarRight = details.sidebarRect
       ? details.sidebarRect.left + details.sidebarRect.width
       : null;
@@ -611,7 +734,8 @@ async function clearTitlebarAnnotations(page) {
       "data-electron-verify-drag",
       "data-electron-verify-resizer",
       "data-electron-verify-interactive",
-      "data-electron-verify-overlay-offender",
+      "data-electron-verify-controls-offender",
+      "data-electron-verify-controls-index",
     ]) {
       for (const element of document.querySelectorAll(`[${attribute}]`)) {
         element.removeAttribute(attribute);
@@ -642,86 +766,75 @@ function evaluateTrafficLightAvoidance(dragRegionCheck) {
   );
 }
 
-async function inspectWindowControlsOverlayClearance(page) {
-  return page.evaluate((interactiveSelector) => {
-    const overlay = navigator.windowControlsOverlay;
-    if (!overlay || overlay.visible !== true) {
-      return {
-        supported: Boolean(overlay),
-        skipped: true,
-        passed: true,
-        reason: overlay
-          ? "navigator.windowControlsOverlay is not visible"
-          : "navigator.windowControlsOverlay is unavailable in this environment",
-        titlebarAreaRect: null,
-        bands: [],
-        innerWidth: window.innerWidth,
-        offendingCount: 0,
-        offendingElements: [],
-      };
-    }
-
-    // getTitlebarAreaRect() is the strip the controls do NOT cover, so the
-    // controls occupy whatever is left of it and whatever is right of it.
-    const rect = overlay.getTitlebarAreaRect();
-    const innerWidth = window.innerWidth;
-    const rectRight = rect.x + rect.width;
-    const bands = [
-      { side: "left", left: 0, width: Math.max(0, rect.x), height: rect.height },
-      {
-        side: "right",
-        left: rectRight,
-        width: Math.max(0, innerWidth - rectRight),
-        height: rect.height,
-      },
-    ].filter((band) => band.width > 0 && band.height > 0);
-
-    function describeOffender(element, bounds, side) {
-      const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
-      return {
-        tagName: element.tagName.toLowerCase(),
-        name:
-          element.getAttribute("aria-label") ??
-          element.getAttribute("data-testid") ??
-          (text ? text.slice(0, 80) : null),
-        role: element.getAttribute("role"),
-        band: side,
-        rect: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
-      };
-    }
-
-    function findOccupiedBand(bounds) {
-      return bands.find(
-        (band) =>
-          bounds.left < band.left + band.width &&
-          bounds.left + bounds.width > band.left &&
-          bounds.top < band.height &&
-          bounds.top + bounds.height > 0,
-      );
-    }
-
-    const offendingElements = [];
-    for (const element of document.querySelectorAll(interactiveSelector)) {
-      const bounds = element.getBoundingClientRect();
-      if (bounds.width <= 0 || bounds.height <= 0) continue;
-      if (window.getComputedStyle(element).visibility === "hidden") continue;
-      const band = findOccupiedBand(bounds);
-      if (!band) continue;
-      element.setAttribute("data-electron-verify-overlay-offender", "true");
-      offendingElements.push(describeOffender(element, bounds, band.side));
-    }
-
+/**
+ * The app draws its own minimise/maximise/close buttons, and the preload injects
+ * a plain-DOM fallback set until the bundle mounts. Exactly one set may be
+ * visible, its buttons must not sit under another interactive element, and each
+ * one must keep an accessible name.
+ */
+async function inspectAppWindowControlsClearance(page) {
+  if (process.platform === "darwin") {
     return {
       supported: true,
-      skipped: false,
-      passed: offendingElements.length === 0,
-      titlebarAreaRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      bands,
-      innerWidth,
-      offendingCount: offendingElements.length,
-      offendingElements,
+      skipped: true,
+      passed: true,
+      reason: "macOS keeps the native traffic lights, so the app draws no window controls to check",
+      variant: null,
+      innerWidth: null,
+      appControlCount: 0,
+      bootControlCount: 0,
+      controls: [],
+      accessibleNames: [],
+      missingControls: [],
+      missingAccessibleNames: [],
+      candidateCount: 0,
+      offendingCount: 0,
+      offendingElements: [],
     };
-  }, INTERACTIVE_SELECTOR);
+  }
+
+  const collected = await collectAppWindowControls(page);
+  const missingAccessibleNames = collected.controls
+    .filter((control) => control.accessibleName.length === 0)
+    .map((control) => control.testId ?? control.tagName);
+
+  let reason = null;
+  if (collected.variant === "both") {
+    reason = "The app controls and the preload boot fallback are visible at the same time";
+  } else if (collected.variant === "none") {
+    reason = "Neither the app controls nor the preload boot fallback are visible";
+  } else if (collected.missingControls.length > 0) {
+    reason = `Missing ${collected.variant} controls: ${collected.missingControls.join(", ")}`;
+  } else if (collected.offendingElements.length > 0) {
+    reason = `${collected.offendingElements.length} interactive element(s) overlap the controls`;
+  } else if (missingAccessibleNames.length > 0) {
+    reason = `Window controls without an aria-label: ${missingAccessibleNames.join(", ")}`;
+  }
+
+  return {
+    supported: true,
+    skipped: false,
+    passed:
+      (collected.variant === "app" || collected.variant === "boot") &&
+      collected.missingControls.length === 0 &&
+      collected.offendingElements.length === 0 &&
+      missingAccessibleNames.length === 0,
+    reason,
+    variant: collected.variant,
+    innerWidth: collected.innerWidth,
+    appControlCount: collected.appControlCount,
+    bootControlCount: collected.bootControlCount,
+    controls: collected.controls,
+    accessibleNames: collected.controls.map((control) => ({
+      testId: control.testId,
+      accessibleName: control.accessibleName,
+    })),
+    missingControls: collected.missingControls,
+    missingAccessibleNames,
+    candidateCount: collected.candidateCount,
+    offendingCount: collected.offendingElements.length,
+    offendingElements: collected.offendingElements,
+  };
 }
 
 async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results) {
@@ -845,14 +958,14 @@ async function main() {
     const dragScreenshot = await captureScreenshot(page, "03-drag-region.png");
     await collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results);
 
-    const overlayClearance = await inspectWindowControlsOverlayClearance(page);
-    const overlayScreenshot = await captureScreenshot(page, "04-window-controls-overlay.png");
+    const controlsClearance = await inspectAppWindowControlsClearance(page);
+    const controlsScreenshot = await captureScreenshot(page, "04-app-window-controls.png");
     results.push({
-      check: "window-controls-overlay-clearance",
-      pass: overlayClearance.skipped ? true : overlayClearance.passed,
-      skipped: overlayClearance.skipped,
-      details: overlayClearance,
-      screenshot: overlayScreenshot,
+      check: "app-window-controls-clearance",
+      pass: controlsClearance.skipped ? true : controlsClearance.passed,
+      skipped: controlsClearance.skipped,
+      details: controlsClearance,
+      screenshot: controlsScreenshot,
     });
 
     const fullscreenDetails = await inspectFullscreenWindowChrome(page, desktopDetection.platform);
