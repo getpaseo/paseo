@@ -13,6 +13,8 @@ import {
   readWindowTheme,
   resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
+  shouldReportLoadFailure,
+  shouldReportProcessGone,
 } from "./window-manager";
 
 describe("window-manager", () => {
@@ -168,7 +170,7 @@ describe("window-manager", () => {
   });
 
   describe("getMainWindowChromeOptions", () => {
-    it("uses frameless hidden title bars with overlay on windows", () => {
+    it("leaves windows frameless with no overlay, so the app draws the controls", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "win32",
@@ -178,15 +180,10 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#181B1A",
-          symbolColor: "#e4e4e7",
-          height: 29,
-        },
       });
     });
 
-    it("uses frameless hidden title bars with overlay on linux", () => {
+    it("leaves linux frameless with no overlay, so the app draws the controls", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "linux",
@@ -196,11 +193,6 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#ffffff",
-          symbolColor: "#09090b",
-          height: 29,
-        },
       });
     });
 
@@ -237,6 +229,31 @@ describe("window-manager", () => {
         width: 1024,
         height: 720,
       });
+    });
+  });
+
+  describe("shouldReportLoadFailure", () => {
+    it("reports a failed main-frame load", () => {
+      expect(shouldReportLoadFailure(-105, true)).toBe(true);
+    });
+
+    it("ignores an aborted load, which ordinary navigation races produce", () => {
+      expect(shouldReportLoadFailure(-3, true)).toBe(false);
+    });
+
+    it("ignores subframe failures, which leave the window usable", () => {
+      expect(shouldReportLoadFailure(-105, false)).toBe(false);
+    });
+  });
+
+  describe("shouldReportProcessGone", () => {
+    it("reports a crashed renderer", () => {
+      expect(shouldReportProcessGone("crashed")).toBe(true);
+      expect(shouldReportProcessGone("oom")).toBe(true);
+    });
+
+    it("ignores a clean exit, which happens while the window closes", () => {
+      expect(shouldReportProcessGone("clean-exit")).toBe(false);
     });
   });
 });

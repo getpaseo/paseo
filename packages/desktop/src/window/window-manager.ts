@@ -5,6 +5,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
   clipboard,
+  dialog,
   ipcMain,
   nativeTheme,
   shell,
@@ -483,5 +484,85 @@ export function setupDragDropPrevention(win: BrowserWindow): void {
     if (url.startsWith("file://")) {
       event.preventDefault();
     }
+  });
+}
+
+/**
+ * A frameless window draws its own controls in the renderer, so when the renderer dies or
+ * hangs there is nothing left to click: the preload's boot controls are DOM too. Only the main
+ * process can still offer a way out, which is why VS Code prompts from here rather than relying
+ * on the titlebar (windowImpl.ts onWindowError). Without this the user has Alt+F4 or the
+ * taskbar, and Ferdium shipped precisely that (ferdium/ferdium-app#230).
+ */
+
+/** Chromium reports an aborted load for ordinary navigation races; only real failures matter. */
+const ERR_ABORTED = -3;
+
+export function shouldReportLoadFailure(errorCode: number, isMainFrame: boolean): boolean {
+  return isMainFrame && errorCode !== ERR_ABORTED;
+}
+
+export function shouldReportProcessGone(reason: string): boolean {
+  // A clean exit is the renderer going away on purpose, e.g. while the window closes.
+  return reason !== "clean-exit";
+}
+
+export function setupWindowFailureRecovery(win: BrowserWindow): void {
+  let prompting = false;
+
+  async function prompt(input: {
+    message: string;
+    detail: string;
+    waitable: boolean;
+  }): Promise<void> {
+    if (prompting || win.isDestroyed()) return;
+    prompting = true;
+    try {
+      const buttons = input.waitable ? ["Wait", "Reload", "Close"] : ["Reload", "Close"];
+      const { response } = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons,
+        defaultId: input.waitable ? 0 : 0,
+        cancelId: input.waitable ? 0 : 1,
+        message: input.message,
+        detail: input.detail,
+        noLink: true,
+      });
+      if (win.isDestroyed()) return;
+      const choice = buttons[response];
+      if (choice === "Reload") {
+        win.reload();
+      } else if (choice === "Close") {
+        win.destroy();
+      }
+    } finally {
+      prompting = false;
+    }
+  }
+
+  win.on("unresponsive", () => {
+    void prompt({
+      message: `${app.name} is not responding`,
+      detail: "The window has stopped responding. Wait for it to recover, reload it, or close it.",
+      waitable: true,
+    });
+  });
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    if (!shouldReportProcessGone(details.reason)) return;
+    void prompt({
+      message: `${app.name} has stopped working`,
+      detail: `The window's renderer exited (${details.reason}). Reload it or close it.`,
+      waitable: false,
+    });
+  });
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    if (!shouldReportLoadFailure(errorCode, isMainFrame)) return;
+    void prompt({
+      message: `${app.name} could not load`,
+      detail: `${errorDescription} (${errorCode}). Reload the window or close it.`,
+      waitable: false,
+    });
   });
 }

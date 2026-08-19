@@ -37,6 +37,7 @@ import {
   setupWindowStatePersistence,
   setupDefaultContextMenu,
   setupDragDropPrevention,
+  setupWindowFailureRecovery,
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
@@ -788,6 +789,7 @@ async function createWindow(
   }
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  setupWindowFailureRecovery(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     if (!isPaseoBrowserWebviewAttach(params)) {
       event.preventDefault();
