@@ -193,7 +193,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   headerTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     flex: 1,

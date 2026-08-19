@@ -523,11 +523,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   featureLabel: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   featureDescription: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   notesInput: {
     minHeight: 88,
@@ -535,7 +535,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   submitError: {
     color: theme.colors.statusDanger,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   actions: {
     flexDirection: "row",

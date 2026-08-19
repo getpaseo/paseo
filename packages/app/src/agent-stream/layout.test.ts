@@ -26,6 +26,7 @@ function assistantMessage(
   id: string,
   seed: number,
   block?: { groupId: string; index: number },
+  turnId?: string,
 ): Extract<StreamItem, { kind: "assistant_message" }> {
   return {
     kind: "assistant_message",
@@ -33,14 +34,20 @@ function assistantMessage(
     text: id,
     timestamp: timestamp(seed),
     ...(block ? { blockGroupId: block.groupId, blockIndex: block.index } : {}),
+    ...(turnId ? { turnId } : {}),
   };
 }
 
-function toolCall(id: string, seed: number): Extract<StreamItem, { kind: "tool_call" }> {
+function toolCall(
+  id: string,
+  seed: number,
+  turnId?: string,
+): Extract<StreamItem, { kind: "tool_call" }> {
   return {
     kind: "tool_call",
     id,
     timestamp: timestamp(seed),
+    ...(turnId ? { turnId } : {}),
     payload: {
       source: "orchestrator",
       data: {
@@ -143,6 +150,44 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
+  it("places one response footer after an adjacent tagged tool-only turn", () => {
+    const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
+    const nextTool = toolCall("next-tool", 2, "turn-2");
+    const layout = layoutFor({
+      platform: "web",
+      tail: [priorAssistant, nextTool],
+      timingIds: [priorAssistant.id],
+    });
+
+    expect(layout.auxiliaryTurnFooter?.itemId).toBe(priorAssistant.id);
+    expect(footerOwners(layout)).toEqual([priorAssistant.id]);
+  });
+
+  it("recomputes cached history layout when only the live boundary turn changes", () => {
+    const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
+    const history = [priorAssistant];
+    const liveHead: StreamItem[] = [{ ...userMessage("live-user", 2), turnId: "turn-1" }];
+    const strategy = strategyFor("web");
+    const first = layoutStream({
+      strategy,
+      isTurnActive: true,
+      history,
+      liveHead,
+      timingByAssistantId: timingFor(priorAssistant.id),
+    });
+
+    liveHead[0] = { ...liveHead[0]!, turnId: "turn-2" };
+    const second = layoutStream({
+      strategy,
+      isTurnActive: true,
+      history,
+      liveHead,
+      timingByAssistantId: timingFor(priorAssistant.id),
+    });
+
+    expect(footerOwners(first)).toEqual([]);
+    expect(footerOwners(second)).toEqual([priorAssistant.id]);
+  });
   it.each(["web", "android"] as const)(
     "marks only the active live-head assistant block as streaming on %s",
     (platform) => {
@@ -247,6 +292,18 @@ describe("layoutStream", () => {
     expect(assistantRow.completedFooter?.itemId).toBe(assistant.id);
     expect(assistantRow.belowItem?.id).toBe("u2");
     expect(assistantRow.frameOrder).toBe("footer-then-content");
+  });
+
+  it("keeps an accepted steer inline while its canonical turn is active", () => {
+    const assistant = { ...assistantMessage("a1", 2), turnId: "turn-1" };
+    const steer = { ...userMessage("u2", 3), turnId: "turn-1" };
+    const layout = layoutFor({
+      platform: "web",
+      isTurnActive: true,
+      tail: [{ ...userMessage("u1", 1), turnId: "turn-1" }, assistant, steer],
+      timingIds: [assistant.id],
+    });
+    expect(footerOwners(layout)).toEqual([]);
   });
 
   it("keeps forward stream content before its completed footer", () => {

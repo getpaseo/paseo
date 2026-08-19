@@ -77,9 +77,9 @@ export async function expectWorkspaceContextMenuActions(
 ): Promise<void> {
   const workspaceKey = `${getServerId()}:${workspaceId}`;
   const menu = page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}`);
-  await expect(menu.getByRole("button", { name: "Copy path" })).toBeVisible();
-  await expect(menu.getByRole("button", { name: "Rename workspace" })).toBeVisible();
-  await expect(menu.getByRole("button", { name: "Archive" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Copy path" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Rename workspace" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Archive" })).toBeVisible();
 }
 
 export async function openProjectContextMenu(page: Page, projectViewKey: string): Promise<void> {
@@ -101,8 +101,8 @@ export async function expectProjectContextMenuActions(
   projectViewKey: string,
 ): Promise<void> {
   const menu = page.getByTestId(`sidebar-project-context-menu-${projectViewKey}`);
-  await expect(menu.getByRole("button", { name: "Open project settings" })).toBeVisible();
-  await expect(menu.getByRole("button", { name: "Remove project" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Open project settings" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Remove project" })).toBeVisible();
 }
 
 export async function selectWorkspaceInSidebar(page: Page, workspaceId: string): Promise<void> {

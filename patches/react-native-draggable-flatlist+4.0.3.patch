@@ -58,7 +58,7 @@ index 2abb4a2..8ca967f 100644
      onAnimValInit?: (animVals: ReturnType<typeof useAnimatedValues>) => void;
      itemEnteringAnimation?: AnimateProps<Animated.View>["entering"];
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
-index 7c88afc..b2f103e 100644
+index 7c88afc..6d5719c 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 @@ -19,6 +19,7 @@ import {
@@ -237,17 +237,19 @@ index 7c88afc..b2f103e 100644
    useAnimatedReaction(
      () => {
        return spacerIndexAnim.value;
-@@ -271,11 +349,19 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -271,11 +349,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
    );
 
    const gestureDisabled = useSharedValue(false);
 +  const touchStartX = useSharedValue(0);
 +  const touchStartY = useSharedValue(0);
++  const manualPanActivated = useSharedValue(false);
 +  const coordinatesDragWithExternalGesture = Boolean(props.simultaneousHandlers);
 
 -  const panGesture = Gesture.Pan()
 +  let panGesture = Gesture.Pan()
      .onBegin((evt) => {
++      manualPanActivated.value = false;
        gestureDisabled.value = disabled.value;
        if (gestureDisabled.value) return;
 +      const sessionId = gestureSessionId.value + 1;
@@ -258,7 +260,7 @@ index 7c88afc..b2f103e 100644
        panGestureState.value = evt.state;
      })
      .onUpdate((evt) => {
-@@ -286,8 +372,15 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -286,8 +374,15 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
          : evt.translationY;
        touchTranslate.value = translation;
      })
@@ -275,7 +277,7 @@ index 7c88afc..b2f103e 100644
        // Set touch val to current translate val
        isTouchActiveNative.value = false;
        const translation = horizontalAnim.value
-@@ -299,6 +392,7 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -299,6 +394,7 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
 
        // Only call onDragEnd if actually dragging a cell
        if (activeIndexAnim.value === -1 || disabled.value) return;
@@ -283,7 +285,7 @@ index 7c88afc..b2f103e 100644
        disabled.value = true;
        runOnJS(onRelease)(activeIndexAnim.value);
        const springTo = placeholderOffset.value - activeCellOffset.value;
-@@ -309,14 +403,58 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -309,14 +405,64 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
            runOnJS(onDragEnd)({
              from: activeIndexAnim.value,
              to: spacerIndexAnim.value,
@@ -295,6 +297,7 @@ index 7c88afc..b2f103e 100644
      })
 -    .onTouchesDown(() => {
 +    .onFinalize((evt) => {
++      manualPanActivated.value = false;
 +      panGestureState.value = evt.state;
 +      runOnJS(onContainerTouchEnd)();
 +      if (gestureDisabled.value) return;
@@ -315,6 +318,10 @@ index 7c88afc..b2f103e 100644
      })
 +    .onTouchesMove((event, stateManager) => {
 +      if (!coordinatesDragWithExternalGesture) return;
++
++      // Manual activation arbitrates only while the pan is waiting. Failing or
++      // reactivating an active recognizer can leave RNGH/Reanimated livelocked.
++      if (manualPanActivated.value) return;
 +
 +      const touch = event.changedTouches[0];
 +      if (!touch || event.numberOfTouches !== 1) {
@@ -337,13 +344,14 @@ index 7c88afc..b2f103e 100644
 +      if (absDeltaX > 10 && absDeltaX > absDeltaY) {
 +        stateManager.fail();
 +      } else if (absDeltaY >= activationDistanceProp && absDeltaY > absDeltaX) {
++        manualPanActivated.value = true;
 +        stateManager.activate();
 +      }
 +    })
      .onTouchesUp(() => {
        // Turning this into a worklet causes timing issues. We want it to run
        // just after the finger lifts.
-@@ -324,7 +462,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -324,7 +470,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      });
 
    if (dragHitSlop) panGesture.hitSlop(dragHitSlop);
@@ -354,7 +362,7 @@ index 7c88afc..b2f103e 100644
      const activeOffset = [-activationDistanceProp, activationDistanceProp];
      if (props.horizontal) {
        panGesture.activeOffsetX(activeOffset);
-@@ -332,6 +472,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -332,6 +480,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        panGesture.activeOffsetY(activeOffset);
      }
    }
@@ -376,7 +384,7 @@ index 7c88afc..b2f103e 100644
 
    const onScroll = useStableCallback((scrollOffset: number) => {
      props.onScrollOffsetChange?.(scrollOffset);
-@@ -373,8 +528,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -373,8 +536,9 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        horizontal={!!props.horizontal}
        layoutAnimationDisabled={layoutAnimationDisabled}
      >

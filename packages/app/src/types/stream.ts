@@ -88,6 +88,7 @@ export interface UserMessageItem {
   id: string;
   clientMessageId?: string;
   messageId?: string;
+  turnId?: string;
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
@@ -99,6 +100,7 @@ export interface UserMessageInput {
   id?: string;
   clientMessageId?: string;
   messageId?: string;
+  turnId?: string;
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
@@ -116,6 +118,7 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     id,
     ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     ...(input.messageId ? { messageId: input.messageId } : {}),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
     text: input.text,
     timestamp: input.timestamp,
@@ -676,6 +679,7 @@ export interface AssistantMessageItem {
   kind: "assistant_message";
   id: string;
   messageId?: string;
+  turnId?: string;
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
@@ -694,6 +698,7 @@ export interface ThoughtItem {
   kind: "thought";
   id: string;
   timelineCursor?: TimelinePosition;
+  turnId?: string;
   text: string;
   timestamp: Date;
   status: ThoughtStatus;
@@ -729,6 +734,7 @@ export interface ToolCallItem {
   kind: "tool_call";
   id: string;
   timelineCursor?: TimelinePosition;
+  turnId?: string;
   timestamp: Date;
   payload: ToolCallPayload;
 }
@@ -747,6 +753,7 @@ export interface ActivityLogItem {
   kind: "activity_log";
   id: string;
   timelineCursor?: TimelinePosition;
+  turnId?: string;
   timestamp: Date;
   activityType: ActivityLogType;
   message: string;
@@ -757,6 +764,7 @@ export interface CompactionItem {
   kind: "compaction";
   id: string;
   timelineCursor?: TimelinePosition;
+  turnId?: string;
   timestamp: Date;
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
@@ -779,6 +787,7 @@ export interface TodoListItem {
   kind: "todo_list";
   id: string;
   timelineCursor?: TimelinePosition;
+  turnId?: string;
   timestamp: Date;
   provider: AgentProvider;
   items: TodoEntry[];
@@ -839,6 +848,7 @@ function appendUserMessage(
   messageId?: string,
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
+  turnId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -851,6 +861,7 @@ function appendUserMessage(
     clientMessageId,
     messageId,
     timelineCursor,
+    turnId,
     text: chunk,
     timestamp,
   });
@@ -1414,6 +1425,7 @@ function reduceTimelineEvent(
           item.messageId,
           item.clientMessageId,
           timelineCursor,
+          event.turnId,
         ),
       );
     case "assistant_message":
@@ -1478,13 +1490,16 @@ export function reduceStreamUpdate(
   const source = options?.source ?? "live";
   switch (event.type) {
     case "timeline":
-      return reduceTimelineEvent(
-        state,
+      return applyTimelineTurnId(
+        reduceTimelineEvent(
+          state,
+          event,
+          timestamp,
+          source,
+          options?.reservedItemIds,
+          options?.timelineCursor,
+        ),
         event,
-        timestamp,
-        source,
-        options?.reservedItemIds,
-        options?.timelineCursor,
       );
     case "thread_started":
     case "turn_started":
@@ -1498,6 +1513,51 @@ export function reduceStreamUpdate(
     default:
       return state;
   }
+}
+
+function applyTimelineTurnId(
+  items: StreamItem[],
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+): StreamItem[] {
+  const clientMessageId =
+    event.item.type === "user_message" ? event.item.clientMessageId : undefined;
+  if (clientMessageId) {
+    return reconcileCanonicalUserTurnMembership(items, clientMessageId, event.turnId);
+  }
+
+  if (!event.turnId || items.length === 0) return items;
+  const index = items.length - 1;
+  const last = items[index];
+  if (!last || last.turnId === event.turnId) return items;
+  return [
+    ...items.slice(0, index),
+    { ...last, turnId: event.turnId } as StreamItem,
+    ...items.slice(index + 1),
+  ];
+}
+
+function reconcileCanonicalUserTurnMembership(
+  items: StreamItem[],
+  clientMessageId: string,
+  turnId: string | undefined,
+): StreamItem[] {
+  const index = items.findIndex(
+    (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
+  );
+  const matched = items[index];
+  if (!matched || matched.kind !== "user_message" || matched.turnId === turnId) {
+    return items;
+  }
+
+  // A canonical user row is authoritative for membership. This replaces a
+  // provisional optimistic turn and clears it for daemons that do not emit IDs.
+  const next = turnId
+    ? { ...matched, turnId }
+    : (() => {
+        const { turnId: _, ...withoutTurnId } = matched;
+        return withoutTurnId;
+      })();
+  return [...items.slice(0, index), next, ...items.slice(index + 1)];
 }
 
 /**
@@ -1790,6 +1850,7 @@ function applyCanonicalUserMessageEvent(params: {
       createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
     messageId: event.item.messageId,
     clientMessageId: event.item.clientMessageId,
+    turnId: event.turnId,
     timelineCursor,
     text: normalized.chunk,
     timestamp,
@@ -1802,11 +1863,25 @@ function applyCanonicalUserMessageEvent(params: {
       insert: normalized.hasContent ? "head" : "none",
       presentation: "existing",
     });
+    const reconciledTail = canonical.clientMessageId
+      ? reconcileCanonicalUserTurnMembership(
+          reconciled.tail,
+          canonical.clientMessageId,
+          event.turnId,
+        )
+      : reconciled.tail;
+    const reconciledHead = canonical.clientMessageId
+      ? reconcileCanonicalUserTurnMembership(
+          reconciled.head,
+          canonical.clientMessageId,
+          event.turnId,
+        )
+      : reconciled.head;
     return {
-      tail: reconciled.tail,
-      head: reconciled.head,
-      changedTail: reconciled.changedTail,
-      changedHead: reconciled.changedHead,
+      tail: reconciledTail,
+      head: reconciledHead,
+      changedTail: reconciled.changedTail || reconciledTail !== reconciled.tail,
+      changedHead: reconciled.changedHead || reconciledHead !== reconciled.head,
       acknowledgedClientMessageIds:
         reconciled.location?.matched && reconciled.location.message.clientMessageId
           ? [reconciled.location.message.clientMessageId]
@@ -1814,10 +1889,17 @@ function applyCanonicalUserMessageEvent(params: {
     };
   }
   const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
+  const reconciledTail = canonical.clientMessageId
+    ? reconcileCanonicalUserTurnMembership(
+        reconciled.items,
+        canonical.clientMessageId,
+        event.turnId,
+      )
+    : reconciled.items;
   return {
-    tail: reconciled.items,
+    tail: reconciledTail,
     head: flushedHead,
-    changedTail: flushedTail !== tail || reconciled.items !== flushedTail,
+    changedTail: flushedTail !== tail || reconciledTail !== flushedTail,
     changedHead: flushedHead !== head,
     acknowledgedClientMessageIds:
       reconciled.matched && reconciled.message.clientMessageId

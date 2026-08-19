@@ -105,13 +105,35 @@ describe("model browser all view", () => {
   const providers = [claude, copilot, codex];
 
   it("browses providers while the query is empty", () => {
-    expect(resolveModelBrowserAllView({ providers, normalizedQuery: "" })).toEqual({
+    expect(
+      resolveModelBrowserAllView({ providers, normalizedQuery: "", isSearchFocused: false }),
+    ).toEqual({
       kind: "browse",
     });
   });
 
+  it("shows every searchable model as soon as empty search receives focus", () => {
+    const view = resolveModelBrowserAllView({
+      providers,
+      normalizedQuery: "",
+      isSearchFocused: true,
+    });
+
+    expect(view.kind).toBe("searchResults");
+    expect(view.kind === "searchResults" ? view.rows.map((row) => row.favoriteKey) : []).toEqual([
+      "claude:opus-5",
+      "claude:sonnet-4.6",
+      "copilot:claude-opus-5",
+      "codex:gpt-5.4",
+    ]);
+  });
+
   it("ranks the same model label across every provider that offers it", () => {
-    const view = resolveModelBrowserAllView({ providers, normalizedQuery: "opus" });
+    const view = resolveModelBrowserAllView({
+      providers,
+      normalizedQuery: "opus",
+      isSearchFocused: true,
+    });
 
     expect(view.kind).toBe("searchResults");
     expect(view.kind === "searchResults" ? view.rows.map((row) => row.favoriteKey) : []).toEqual([
@@ -121,7 +143,11 @@ describe("model browser all view", () => {
   });
 
   it("matches models by their provider label", () => {
-    const view = resolveModelBrowserAllView({ providers, normalizedQuery: "codex" });
+    const view = resolveModelBrowserAllView({
+      providers,
+      normalizedQuery: "codex",
+      isSearchFocused: true,
+    });
 
     expect(view.kind === "searchResults" ? view.rows.map((row) => row.modelId) : []).toEqual([
       "gpt-5.4",
@@ -129,9 +155,13 @@ describe("model browser all view", () => {
   });
 
   it("reports no matches instead of falling back to the provider list", () => {
-    expect(resolveModelBrowserAllView({ providers, normalizedQuery: "zzzz" })).toEqual({
-      kind: "noSearchMatches",
-    });
+    expect(
+      resolveModelBrowserAllView({
+        providers,
+        normalizedQuery: "zzzz",
+        isSearchFocused: true,
+      }),
+    ).toEqual({ kind: "noSearchMatches" });
   });
 
   it("ignores providers that are still loading or errored", () => {
@@ -147,7 +177,11 @@ describe("model browser all view", () => {
     };
 
     expect(
-      resolveModelBrowserAllView({ providers: [loading, failed], normalizedQuery: "opus" }),
+      resolveModelBrowserAllView({
+        providers: [loading, failed],
+        normalizedQuery: "opus",
+        isSearchFocused: true,
+      }),
     ).toEqual({ kind: "noSearchMatches" });
   });
 });

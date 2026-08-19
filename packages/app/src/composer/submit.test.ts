@@ -184,6 +184,39 @@ describe("submitAgentInput", () => {
     expect(clearDraft).not.toHaveBeenCalled();
   });
 
+  it("restores a steered active-turn draft after an ambiguous immediate-send error", async () => {
+    const error = new Error("connection lost after delivery");
+    const setUserInput = vi.fn();
+    const setAttachments = vi.fn();
+    const setSendError = vi.fn();
+    const setIsProcessing = vi.fn();
+
+    await expect(
+      submitAgentInput({
+        message: "  steer this turn  ",
+        attachments: [{ id: "img-1" }],
+        forceSend: true,
+        isAgentRunning: true,
+        canSubmit: true,
+        queueMessage: vi.fn(),
+        submitMessage: async () => {
+          throw error;
+        },
+        clearDraft: vi.fn(),
+        setUserInput,
+        setAttachments,
+        setSendError,
+        setIsProcessing,
+      }),
+    ).resolves.toBe("failed");
+
+    expect(setUserInput).toHaveBeenNthCalledWith(1, "");
+    expect(setUserInput).toHaveBeenNthCalledWith(2, "steer this turn");
+    expect(setAttachments).toHaveBeenNthCalledWith(1, []);
+    expect(setAttachments).toHaveBeenNthCalledWith(2, [{ id: "img-1" }]);
+    expect(setSendError).toHaveBeenLastCalledWith("connection lost after delivery");
+  });
+
   it("submits when empty submit is explicitly allowed", async () => {
     const queueMessage = vi.fn();
     const submitMessage = vi.fn(async () => {});

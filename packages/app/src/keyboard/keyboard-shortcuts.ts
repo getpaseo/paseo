@@ -171,7 +171,11 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   ],
   "tabs-panes": [
     "workspace-tab-new",
+    "workspace-tab-target-agent",
     "workspace-terminal-new",
+    "workspace-tab-target-browser",
+    "workspace-tab-target-changes",
+    "workspace-tab-target-files",
     "workspace-tab-close-current",
     "workspace-tab-jump-index",
     "workspace-tab-prev",
@@ -187,6 +191,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-pane-move-tab-up",
     "workspace-pane-move-tab-down",
     "workspace-pane-close",
+    "workspace-explorer-maximize",
   ],
   layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
   "agent-input": [
@@ -205,6 +210,10 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
+  "workspace-tab-target-agent": "workspace.tabs.actions.newAgent",
+  "workspace-tab-target-browser": "workspace.tabs.actions.newBrowser",
+  "workspace-tab-target-changes": "workspace.tabs.actions.changes",
+  "workspace-tab-target-files": "workspace.tabs.actions.files",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
   "workspace-jump-index": "settings.shortcuts.help.jumpToWorkspace",
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
@@ -223,6 +232,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-move-tab-up": "settings.shortcuts.help.moveTabUp",
   "workspace-pane-move-tab-down": "settings.shortcuts.help.moveTabDown",
   "workspace-pane-close": "settings.shortcuts.help.closePane",
+  "workspace-explorer-maximize": "settings.shortcuts.help.toggleExplorerPaneMaximization",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
   "search-files": "settings.shortcuts.help.searchFiles",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
@@ -379,7 +389,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   // --- Tab management ---
   {
     id: "workspace-tab-new-cmd-t-mac",
-    action: "workspace.tab.new",
+    action: "workspace.tab.menu.open",
     combo: "Cmd+T",
     when: { mac: true, commandCenter: false },
     help: {
@@ -390,13 +400,101 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
   {
     id: "workspace-tab-new-ctrl-t-non-mac",
-    action: "workspace.tab.new",
+    action: "workspace.tab.menu.open",
     combo: "Ctrl+T",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "workspace-tab-new",
       section: "tabs-panes",
       label: "New tab",
+    },
+  },
+  {
+    id: "workspace-tab-target-agent-cmd-shift-a-mac",
+    action: "workspace.tab.target.agent",
+    combo: "Cmd+Shift+A",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-agent",
+      section: "tabs-panes",
+      label: "New agent",
+    },
+  },
+  {
+    id: "workspace-tab-target-agent-ctrl-shift-a-non-mac",
+    action: "workspace.tab.target.agent",
+    combo: "Ctrl+Shift+A",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-agent",
+      section: "tabs-panes",
+      label: "New agent",
+    },
+  },
+  {
+    id: "workspace-tab-target-browser-cmd-shift-b-mac",
+    action: "workspace.tab.target.browser",
+    combo: "Cmd+Shift+B",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-browser",
+      section: "tabs-panes",
+      label: "New browser",
+    },
+  },
+  {
+    id: "workspace-tab-target-browser-ctrl-shift-b-non-mac",
+    action: "workspace.tab.target.browser",
+    combo: "Ctrl+Shift+B",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-browser",
+      section: "tabs-panes",
+      label: "New browser",
+    },
+  },
+  {
+    id: "workspace-tab-target-changes-cmd-shift-c-mac",
+    action: "workspace.tab.target.changes",
+    combo: "Cmd+Shift+C",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-changes",
+      section: "tabs-panes",
+      label: "Changes",
+    },
+  },
+  {
+    id: "workspace-tab-target-changes-ctrl-shift-c-non-mac",
+    action: "workspace.tab.target.changes",
+    combo: "Ctrl+Shift+C",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-changes",
+      section: "tabs-panes",
+      label: "Changes",
+    },
+  },
+  {
+    id: "workspace-tab-target-files-cmd-shift-e-mac",
+    action: "workspace.tab.target.files",
+    combo: "Cmd+Shift+E",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-files",
+      section: "tabs-panes",
+      label: "Files",
+    },
+  },
+  {
+    id: "workspace-tab-target-files-ctrl-shift-e-non-mac",
+    action: "workspace.tab.target.files",
+    combo: "Ctrl+Shift+E",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-files",
+      section: "tabs-panes",
+      label: "Files",
     },
   },
   {
@@ -735,6 +833,28 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-pane-close",
       section: "tabs-panes",
       label: "Close pane",
+    },
+  },
+  {
+    id: "workspace-explorer-maximize-cmd-shift-m-mac",
+    action: "workspace.explorer.maximize.toggle",
+    combo: "Cmd+Shift+M",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-explorer-maximize",
+      section: "tabs-panes",
+      label: "Toggle Explorer pane maximization",
+    },
+  },
+  {
+    id: "workspace-explorer-maximize-ctrl-shift-m-non-mac",
+    action: "workspace.explorer.maximize.toggle",
+    combo: "Ctrl+Shift+M",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-explorer-maximize",
+      section: "tabs-panes",
+      label: "Toggle Explorer pane maximization",
     },
   },
 

@@ -1,26 +1,29 @@
 import type { ReactElement } from "react";
 import { withUnistyles } from "react-native-unistyles";
-import { SquareMinus, SquarePlus } from "lucide-react-native";
+import { SquareDot, SquareMinus, SquarePlus } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 
 const ThemedSquarePlus = withUnistyles(SquarePlus);
 const ThemedSquareMinus = withUnistyles(SquareMinus);
+const ThemedSquareDot = withUnistyles(SquareDot);
 
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
+const warningMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 
 const ICON_SIZE = 14;
 
 /**
- * Whether a file was added or removed outright, shown beside its diff stat.
+ * The file's change kind, shown beside its diff stat.
  *
- * Square-plus / square-minus because that is what every forge uses for the same fact, so it needs
- * no label — the shape is the word. It sits at the same muted weight as the "+12 −3" next to it:
- * these are footnotes on a file header, not the diff body where colour carries the line-by-line
- * signal.
+ * The square variants form one aligned visual family for added, deleted, and modified files.
  */
-export function FileChangeIcon({ change }: { change: "added" | "deleted" }): ReactElement {
+export function FileChangeIcon({
+  change,
+}: {
+  change: "added" | "deleted" | "modified";
+}): ReactElement {
   const { t } = useTranslation();
 
   if (change === "added") {
@@ -33,11 +36,21 @@ export function FileChangeIcon({ change }: { change: "added" | "deleted" }): Rea
     );
   }
 
+  if (change === "deleted") {
+    return (
+      <ThemedSquareMinus
+        size={ICON_SIZE}
+        uniProps={dangerMapping}
+        accessibilityLabel={t("workspace.git.diff.deletedFile")}
+      />
+    );
+  }
+
   return (
-    <ThemedSquareMinus
+    <ThemedSquareDot
       size={ICON_SIZE}
-      uniProps={dangerMapping}
-      accessibilityLabel={t("workspace.git.diff.deletedFile")}
+      uniProps={warningMapping}
+      accessibilityLabel={t("workspace.git.diff.modifiedFile")}
     />
   );
 }

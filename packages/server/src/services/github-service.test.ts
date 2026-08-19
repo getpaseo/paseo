@@ -9,6 +9,7 @@ import {
   GitHubCommandError,
   computeGithubNextInterval,
   createGitHubService,
+  parseStatusCheckRollup,
   type GitHubCommandRunner,
   type GitHubCommandRunnerOptions,
   type CurrentPullRequestStatus,
@@ -2828,6 +2829,49 @@ describe("ForgeService", () => {
         headRef: "feature/missing",
       }),
     ).resolves.toBeNull();
+  });
+
+  it("measures a still-running check to now, so a pending check reports a duration too", () => {
+    const nowMs = Date.parse("2026-04-02T13:55:00Z");
+
+    const checks = parseStatusCheckRollup(
+      [
+        {
+          __typename: "CheckRun",
+          name: "still-going",
+          status: "IN_PROGRESS",
+          conclusion: null,
+          detailsUrl: "https://github.com/acme/repo/runs/1",
+          startedAt: "2026-04-02T13:50:00Z",
+          completedAt: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "queued",
+          status: "QUEUED",
+          conclusion: null,
+          detailsUrl: "https://github.com/acme/repo/runs/2",
+          startedAt: null,
+          completedAt: null,
+        },
+        {
+          __typename: "CheckRun",
+          name: "finished",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+          detailsUrl: "https://github.com/acme/repo/runs/3",
+          startedAt: "2026-04-02T13:50:00Z",
+          completedAt: "2026-04-02T13:52:14Z",
+        },
+      ],
+      nowMs,
+    );
+
+    expect(checks.map((check) => [check.name, check.duration])).toEqual([
+      ["still-going", "5m"],
+      ["queued", undefined],
+      ["finished", "2m 14s"],
+    ]);
   });
 
   it("keeps S1 PR status schema additions optional and strips internal check timestamps", () => {
