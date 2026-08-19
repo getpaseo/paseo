@@ -796,27 +796,40 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         phase: "stopping",
       }));
 
+      // Soft steps (daemon voice-mode, keep-awake) are best-effort so a remote
+      // failure cannot skip local mic shutdown. Native stopCapture is hard:
+      // if it rejects, do not pretend voice is disabled — callers such as
+      // permanent session delete must abort rather than leave capture active.
+      stopCue();
+      uploader.reset();
+      state.transportReady = false;
+      resetPlaybackState();
+      deps.engine.stop();
+      deps.engine.clearQueue();
+      activeSession?.adapter.setAssistantAudioPlaying(false);
+      if (activeSession) {
+        await activeSession.adapter.setVoiceMode(false).catch(() => undefined);
+      }
+
       try {
-        // Each teardown step is best-effort. A sequential hard-fail (e.g.
-        // setVoiceMode rejecting) must not skip stopCapture / keep-awake
-        // cleanup — callers such as permanent session delete rely on local
-        // resources being released even when the daemon call fails.
-        stopCue();
-        uploader.reset();
-        state.transportReady = false;
-        resetPlaybackState();
-        deps.engine.stop();
-        deps.engine.clearQueue();
-        activeSession?.adapter.setAssistantAudioPlaying(false);
-        if (activeSession) {
-          await activeSession.adapter.setVoiceMode(false).catch(() => undefined);
-        }
-        await deps.engine.stopCapture().catch(() => undefined);
-        await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
-      } finally {
+        await deps.engine.stopCapture();
+      } catch (error) {
         if (state.generation === generation) {
-          resetToDisabledState();
+          // Stay associated with the active agent so isVoiceModeForAgent still
+          // matches and a later retry / destroy can attempt capture release.
+          patchSnapshot((prev) => ({
+            ...prev,
+            isVoiceSwitching: false,
+            phase: "listening",
+            isVoiceMode: true,
+          }));
         }
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+
+      await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
+      if (state.generation === generation) {
+        resetToDisabledState();
       }
     },
 

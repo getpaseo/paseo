@@ -280,8 +280,12 @@ export const es: TranslationResources = {
     deleteSheet: {
       archivedAgent: "Esta sesión está archivada. Eliminarla la quitará permanentemente del disco.",
       confirmTitle: "¿Eliminar permanentemente?",
-      confirmMessage: "Esto eliminará permanentemente la sesión y su historial del disco. No se puede deshacer.",
+      confirmMessage:
+        "Esto eliminará permanentemente la sesión y su historial del disco. No se puede deshacer.",
       delete: "Eliminar permanentemente",
+      voiceStopFailedTitle: "No se pudo detener el modo de voz",
+      voiceStopFailedMessage:
+        "No se pudo liberar la captura del micrófono. La sesión no se eliminó; inténtalo de nuevo cuando se detenga el modo de voz.",
     },
   },
   message: {

@@ -280,6 +280,9 @@ export const ko: TranslationResources = {
       confirmTitle: "영구적으로 삭제하시겠습니까?",
       confirmMessage: "세션과 기록이 디스크에서 영구적으로 삭제되며 되돌릴 수 없습니다.",
       delete: "영구적으로 삭제",
+      voiceStopFailedTitle: "음성 모드를 중지할 수 없습니다",
+      voiceStopFailedMessage:
+        "마이크 캡처를 해제할 수 없습니다. 세션이 삭제되지 않았습니다. 음성 모드가 중지된 후 다시 시도하세요.",
     },
   },
   message: {

@@ -279,6 +279,9 @@ export const ar: TranslationResources = {
       confirmTitle: "حذف نهائي؟",
       confirmMessage: "سيؤدي هذا إلى حذف الجلسة وسجلها نهائيًا من القرص. لا يمكن التراجع عن هذا.",
       delete: "حذف نهائي",
+      voiceStopFailedTitle: "تعذّر إيقاف وضع الصوت",
+      voiceStopFailedMessage:
+        "تعذّر تحرير التقاط الميكروفون. لم تُحذف الجلسة — أعد المحاولة بعد توقف وضع الصوت.",
     },
   },
   message: {

@@ -279,10 +279,15 @@ export const fr: TranslationResources = {
       archive: "Archive",
     },
     deleteSheet: {
-      archivedAgent: "Cette session est archivée. La supprimer la retirera définitivement du disque.",
+      archivedAgent:
+        "Cette session est archivée. La supprimer la retirera définitivement du disque.",
       confirmTitle: "Supprimer définitivement ?",
-      confirmMessage: "Cela supprimera définitivement la session et son historique du disque. Cette action est irréversible.",
+      confirmMessage:
+        "Cela supprimera définitivement la session et son historique du disque. Cette action est irréversible.",
       delete: "Supprimer définitivement",
+      voiceStopFailedTitle: "Impossible d'arrêter le mode vocal",
+      voiceStopFailedMessage:
+        "La capture du microphone n'a pas pu être libérée. La session n'a pas été supprimée — réessayez une fois le mode vocal arrêté.",
     },
   },
   message: {

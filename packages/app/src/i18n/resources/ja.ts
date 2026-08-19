@@ -278,10 +278,15 @@ export const ja: TranslationResources = {
       archive: "アーカイブ",
     },
     deleteSheet: {
-      archivedAgent: "このセッションはアーカイブ済みです。削除するとディスクから完全に削除されます。",
+      archivedAgent:
+        "このセッションはアーカイブ済みです。削除するとディスクから完全に削除されます。",
       confirmTitle: "完全に削除しますか？",
-      confirmMessage: "セッションとその履歴がディスクから完全に削除されます。元に戻すことはできません。",
+      confirmMessage:
+        "セッションとその履歴がディスクから完全に削除されます。元に戻すことはできません。",
       delete: "完全に削除",
+      voiceStopFailedTitle: "ボイスモードを停止できませんでした",
+      voiceStopFailedMessage:
+        "マイクのキャプチャを解放できませんでした。セッションは削除されていません。ボイスモードが停止してから再試行してください。",
     },
   },
   message: {

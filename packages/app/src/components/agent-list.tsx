@@ -491,11 +491,19 @@ export function AgentList({
           onPress: () => {
             void (async () => {
               // Tear down voice first when this agent is the active target.
-              // stopVoice() best-effort-releases capture/keep-awake even if a
-              // daemon setVoiceMode(false) call fails, so permanent delete can
-              // proceed without leaving mic/wake locks attached to a gone agent.
+              // stopVoice() best-effort-clears daemon voice-mode / keep-awake,
+              // but hard-fails if native capture cannot be released — in that
+              // case abort delete so we never leave the mic on a gone agent.
               if (voiceRuntime?.isVoiceModeForAgent(serverId, agentId)) {
-                await voiceRuntime.stopVoice().catch(() => undefined);
+                try {
+                  await voiceRuntime.stopVoice();
+                } catch {
+                  Alert.alert(
+                    t("agentList.deleteSheet.voiceStopFailedTitle"),
+                    t("agentList.deleteSheet.voiceStopFailedMessage"),
+                  );
+                  return;
+                }
               }
               await deleteAgent({ serverId, agentId }).catch(() => {});
             })();

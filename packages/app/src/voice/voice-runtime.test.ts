@@ -450,6 +450,30 @@ describe("voice runtime", () => {
     expect(runtime.isVoiceModeForAgent("server-1", "agent-1")).toBe(false);
   });
 
+  it("rejects and keeps voice mode active when stopCapture fails", async () => {
+    const adapter = createSessionAdapter();
+    const deactivateKeepAwake = vi.fn().mockResolvedValue(undefined);
+    const engine = createAudioEngineMock();
+    vi.mocked(engine.stopCapture).mockRejectedValue(new Error("native capture stuck"));
+    const runtime = createVoiceRuntime({
+      engine,
+      getServerInfo: () => createServerInfo(),
+      activateKeepAwake: vi.fn().mockResolvedValue(undefined),
+      deactivateKeepAwake,
+    });
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    await expect(runtime.stopVoice()).rejects.toThrow("native capture stuck");
+
+    expect(adapter.setVoiceMode).toHaveBeenCalledWith(false);
+    expect(engine.stopCapture).toHaveBeenCalled();
+    expect(deactivateKeepAwake).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().isVoiceMode).toBe(true);
+    expect(runtime.getSnapshot().phase).toBe("listening");
+    expect(runtime.isVoiceModeForAgent("server-1", "agent-1")).toBe(true);
+  });
+
   it("rolls daemon voice mode back when capture fails after enabling it", async () => {
     const adapter = createSessionAdapter();
     const engine = createAudioEngineMock();

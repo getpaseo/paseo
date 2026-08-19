@@ -293,13 +293,27 @@ export function createAudioEngine(
     },
 
     async stopCapture() {
-      if (refs.captureActive) {
-        native.toggleRecording(false);
+      if (!refs.captureActive) {
+        refs.muted = false;
+        callbacks.onVolumeLevel(0);
+        releaseSessionIfIdle();
+        return;
       }
-      refs.captureActive = false;
-      refs.muted = false;
-      callbacks.onVolumeLevel(0);
-      releaseSessionIfIdle();
+
+      try {
+        // Only clear local capture state after native shutdown succeeds.
+        // If toggleRecording(false) throws, leave captureActive true so
+        // callers can retry and do not assume the mic/audio focus is free.
+        native.toggleRecording(false);
+        refs.captureActive = false;
+        refs.muted = false;
+        callbacks.onVolumeLevel(0);
+        releaseSessionIfIdle();
+      } catch (error) {
+        const wrapped = error instanceof Error ? error : new Error(String(error));
+        callbacks.onError?.(wrapped);
+        throw wrapped;
+      }
     },
 
     toggleMute() {

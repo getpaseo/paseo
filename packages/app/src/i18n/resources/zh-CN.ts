@@ -279,6 +279,8 @@ export const zhCN: TranslationResources = {
       confirmTitle: "确定永久删除？",
       confirmMessage: "这会将会话及其历史记录从磁盘永久删除，无法撤销。",
       delete: "永久删除",
+      voiceStopFailedTitle: "无法停止语音模式",
+      voiceStopFailedMessage: "麦克风占用未能释放，会话未删除。请在语音模式停止后再试。",
     },
   },
   message: {

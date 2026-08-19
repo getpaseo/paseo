@@ -278,6 +278,9 @@ export const en = {
       confirmMessage:
         "This will permanently delete the session and its history from disk. This cannot be undone.",
       delete: "Delete permanently",
+      voiceStopFailedTitle: "Could not stop voice mode",
+      voiceStopFailedMessage:
+        "Microphone capture could not be released. The session was not deleted — try again after voice mode stops.",
     },
   },
   message: {

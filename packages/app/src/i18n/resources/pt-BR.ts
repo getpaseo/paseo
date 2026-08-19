@@ -280,8 +280,12 @@ export const ptBR: TranslationResources = {
     deleteSheet: {
       archivedAgent: "Esta sessão está arquivada. Excluí-la a removerá permanentemente do disco.",
       confirmTitle: "Excluir permanentemente?",
-      confirmMessage: "Isso excluirá permanentemente a sessão e seu histórico do disco. Não é possível desfazer.",
+      confirmMessage:
+        "Isso excluirá permanentemente a sessão e seu histórico do disco. Não é possível desfazer.",
       delete: "Excluir permanentemente",
+      voiceStopFailedTitle: "Não foi possível parar o modo de voz",
+      voiceStopFailedMessage:
+        "A captura do microfone não pôde ser liberada. A sessão não foi excluída — tente novamente após o modo de voz parar.",
     },
   },
   message: {
