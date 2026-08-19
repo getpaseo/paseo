@@ -1,4 +1,4 @@
-import { resolve, dirname, basename } from "path";
+import { resolve, dirname, basename, join } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
@@ -62,6 +62,7 @@ export type GitMutationRefreshReason =
   | "stash-push"
   | "stash-pop"
   | "discard-changes"
+  | "index-update"
   | "create-worktree";
 
 const DISCARD_CHANGES_TIMEOUT_MS = 120_000;
@@ -201,9 +202,17 @@ interface CheckoutDiffRefs {
   baseRef: string;
   targetRef?: string;
   includeUntracked: boolean;
+  cached?: boolean;
+  index?: boolean;
 }
 
 function getCheckoutDiffRefArgs(refs: CheckoutDiffRefs): string[] {
+  if (refs.cached) {
+    return ["--cached"];
+  }
+  if (refs.index) {
+    return [];
+  }
   return [refs.baseRef, ...(refs.targetRef ? [refs.targetRef] : [])];
 }
 
@@ -593,7 +602,11 @@ async function readGitFileContentAtRef(
   path: string,
 ): Promise<string | null> {
   try {
-    const { stdout } = await runGitCommand(["show", `${ref}:${path}`], {
+    if (ref === "WORKTREE") {
+      return await readFile(join(cwd, path), "utf8");
+    }
+    const object = ref === "INDEX" ? `:${path}` : `${ref}:${path}`;
+    const { stdout } = await runGitCommand(["show", object], {
       cwd,
       envOverlay: READ_ONLY_GIT_ENV,
     });
@@ -825,7 +838,7 @@ export type CheckoutDiffResult =
   | { diff: ""; structured: []; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
-  mode: "uncommitted" | "base";
+  mode: "uncommitted" | "staged" | "unstaged" | "base";
   baseRef?: string;
   ignoreWhitespace?: boolean;
   includeStructured?: boolean;
@@ -3209,6 +3222,12 @@ async function resolveCheckoutDiffRefs(
   if (compare.mode === "uncommitted") {
     return { baseRef: "HEAD", includeUntracked: true };
   }
+  if (compare.mode === "staged") {
+    return { baseRef: "HEAD", targetRef: "INDEX", includeUntracked: false, cached: true };
+  }
+  if (compare.mode === "unstaged") {
+    return { baseRef: "INDEX", targetRef: "WORKTREE", includeUntracked: true, index: true };
+  }
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const baseRef = resolveOperationBaseRef({
     storedBaseRef,
@@ -3344,9 +3363,33 @@ export async function getCheckoutDiff(
 
 export async function commitChanges(
   cwd: string,
-  options: { message: string; addAll?: boolean },
+  options: { message: string; addAll?: boolean; files?: string[] },
 ): Promise<void> {
   await requireGitRepo(cwd);
+  if (options.files !== undefined) {
+    if (options.files.length === 0) {
+      throw new Error("At least one file must be selected for commit");
+    }
+    await runGitCommand(["--literal-pathspecs", "add", "-A", "--", ...options.files], {
+      cwd,
+      timeout: 120_000,
+    });
+    await runGitCommand(
+      [
+        "--literal-pathspecs",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--only",
+        "-m",
+        options.message,
+        "--",
+        ...options.files,
+      ],
+      { cwd, timeout: 120_000 },
+    );
+    return;
+  }
   if (options.addAll ?? true) {
     await runGitCommand(["add", "-A"], { cwd, timeout: 120_000 });
   }
@@ -3354,6 +3397,58 @@ export async function commitChanges(
     cwd,
     timeout: 120_000,
   });
+}
+
+export async function updateCheckoutIndex(
+  cwd: string,
+  operation: "stage" | "unstage",
+  paths: string[],
+  all = false,
+): Promise<void> {
+  await requireGitRepo(cwd);
+  if (all) {
+    if (operation === "stage") {
+      await runGitCommand(["add", "-A"], { cwd });
+      return;
+    }
+    try {
+      await runGitCommand(["reset", "-q", "HEAD"], { cwd });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("ambiguous argument 'HEAD'")) {
+        await runGitCommand(["rm", "--cached", "-r", "--ignore-unmatch", "."], { cwd });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+  const pathspecs = [...new Set(paths.map((path) => path.trim()).filter(Boolean))];
+  if (pathspecs.length === 0) {
+    throw new Error("At least one path is required");
+  }
+
+  if (operation === "stage") {
+    await runGitCommand(["--literal-pathspecs", "add", "-A", "--", ...pathspecs], { cwd });
+    return;
+  }
+
+  try {
+    await runGitCommand(["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...pathspecs], {
+      cwd,
+    });
+  } catch (error) {
+    // An unborn repository has no HEAD; mirror VS Code's rm --cached fallback.
+    if (error instanceof Error && error.message.includes("ambiguous argument 'HEAD'")) {
+      await runGitCommand(
+        ["--literal-pathspecs", "rm", "--cached", "-r", "--ignore-unmatch", "--", ...pathspecs],
+        {
+          cwd,
+        },
+      );
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function commitAll(cwd: string, message: string): Promise<void> {

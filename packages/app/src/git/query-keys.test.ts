@@ -61,7 +61,7 @@ describe("checkout query keys", () => {
     expect(
       queryClient.getQueryState(checkoutDiffQueryKey(serverId, cwd, "base", "main", true))
         ?.isInvalidated,
-    ).toBe(true);
+    ).toBe(false);
     expect(queryClient.getQueryState(checkoutPrStatusQueryKey(serverId, cwd))?.isInvalidated).toBe(
       true,
     );

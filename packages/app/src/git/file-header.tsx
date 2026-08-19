@@ -40,6 +40,8 @@ export interface FileHeaderProps {
   onDownload?: (path: string) => void;
   onDuplicate?: (path: string) => void;
   onRevert?: (path: string, oldPath?: string) => void;
+  onIndexUpdate?: (path: string, oldPath?: string) => void;
+  indexOperation?: "stage" | "unstage";
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -145,6 +147,8 @@ function FileHeaderMenu({
   onDownload,
   onDuplicate,
   onRevert,
+  onIndexUpdate,
+  indexOperation,
   testID,
 }: FileHeaderProps) {
   const openFile = useCallback(() => onOpenFile?.(file.path), [file.path, onOpenFile]);
@@ -161,6 +165,14 @@ function FileHeaderMenu({
     () => onRevert?.(file.path, file.oldPath),
     [file.oldPath, file.path, onRevert],
   );
+  const stage = useCallback(
+    () => onIndexUpdate?.(file.path, file.oldPath),
+    [file.oldPath, file.path, onIndexUpdate],
+  );
+  const unstage = useCallback(
+    () => onIndexUpdate?.(file.path, file.oldPath),
+    [file.oldPath, file.path, onIndexUpdate],
+  );
   return (
     <FileActionsContextMenuContent
       fileKind="file"
@@ -173,6 +185,8 @@ function FileHeaderMenu({
       onDownload={onDownload ? download : undefined}
       onAddToChat={onAddToChat ? addToChat : undefined}
       onDuplicate={!file.isDeleted && onDuplicate ? duplicate : undefined}
+      onStage={onIndexUpdate && indexOperation === "stage" ? stage : undefined}
+      onUnstage={onIndexUpdate && indexOperation === "unstage" ? unstage : undefined}
       onRevert={onRevert ? revert : undefined}
       testIDPrefix={testID}
     />

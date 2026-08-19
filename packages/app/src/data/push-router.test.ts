@@ -50,7 +50,11 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   emit: <K extends RouterMessageType>(message: Extract<RouterMessage, { type: K }>) => void;
   subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: {
+      mode: "uncommitted" | "staged" | "unstaged" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+    };
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
@@ -66,7 +70,11 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: {
+      mode: "uncommitted" | "staged" | "unstaged" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+    };
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
@@ -245,6 +253,42 @@ describe("server data push router", () => {
     expect(fake.unsubscribeCheckoutDiffCalls).toEqual([subscriptionId]);
 
     unmount();
+  });
+
+  it("subscribes staged and unstaged checkout diff routes", () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const serverId = "server-1";
+    const cwd = "/repo";
+    const observers: Array<() => void> = [];
+    for (const mode of ["staged", "unstaged"] as const) {
+      const queryKey = checkoutDiffQueryKey(serverId, cwd, mode);
+      const observer = new QueryObserver(queryClient, {
+        queryKey,
+        queryFn: skipToken,
+        enabled: true,
+        gcTime: Infinity,
+        staleTime: Infinity,
+        meta: checkoutDiffPushRoute({
+          enabled: true,
+          serverId,
+          subscriptionId: `checkoutDiff:${JSON.stringify(queryKey)}`,
+          cwd,
+          compare: { mode },
+        }),
+      });
+      observers.push(observer.subscribe(() => undefined));
+    }
+
+    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+
+    expect(fake.subscribeCheckoutDiffCalls.map((call) => call.compare.mode).sort()).toEqual([
+      "staged",
+      "unstaged",
+    ]);
+
+    unmount();
+    for (const unsubscribe of observers) unsubscribe();
   });
 
   it("does not retry failed subscriptions on unrelated cache events", async () => {

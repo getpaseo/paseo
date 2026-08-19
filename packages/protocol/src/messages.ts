@@ -2013,7 +2013,8 @@ const CheckoutErrorSchema = z.object({
 });
 
 const CheckoutDiffCompareSchema = z.object({
-  mode: z.enum(["uncommitted", "base"]),
+  // COMPAT(checkoutIndexDiffModes): added in v0.5.0, remove old-client gate after 2027-08-19.
+  mode: z.enum(["uncommitted", "staged", "unstaged", "base"]),
   baseRef: z.string().optional(),
   ignoreWhitespace: z.boolean().optional(),
 });
@@ -2042,6 +2043,7 @@ export const CheckoutCommitRequestSchema = z.object({
   cwd: z.string(),
   message: z.string().optional(),
   addAll: z.boolean().optional(),
+  files: z.array(z.string()).optional(),
   requestId: z.string(),
 });
 
@@ -2084,6 +2086,15 @@ export const CheckoutDiscardChangesRequestSchema = z.object({
   type: z.literal("checkout.discard_changes.request"),
   cwd: z.string(),
   paths: z.array(z.string()).min(1),
+  requestId: z.string(),
+});
+
+export const CheckoutIndexUpdateRequestSchema = z.object({
+  type: z.literal("checkout.index.update.request"),
+  cwd: z.string(),
+  operation: z.enum(["stage", "unstage"]),
+  paths: z.array(z.string()).min(1).optional(),
+  all: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -3040,6 +3051,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushRequestSchema,
   CheckoutRefreshRequestSchema,
   CheckoutDiscardChangesRequestSchema,
+  CheckoutIndexUpdateRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutForgeSetAutoMergeRequestSchema,
@@ -3410,6 +3422,10 @@ export const ServerInfoStatusPayloadSchema = z
         fsEntryDuplicate: z.boolean().optional(),
         // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
         checkoutDiscardChanges: z.boolean().optional(),
+        // COMPAT(checkoutSelectiveCommit): added in v0.5.0, remove gate after 2027-08-19.
+        checkoutSelectiveCommit: z.boolean().optional(),
+        // COMPAT(checkoutGitIndex): added in v0.5.0, remove gate after 2027-08-19.
+        checkoutGitIndex: z.boolean().optional(),
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         // An older daemon parses its persisted config strictly, so writing
         // agentProfiles to one is silently dropped. The client hides the feature
@@ -5037,6 +5053,17 @@ export const CheckoutDiscardChangesResponseSchema = z.object({
   }),
 });
 
+export const CheckoutIndexUpdateResponseSchema = z.object({
+  type: z.literal("checkout.index.update.response"),
+  payload: z.object({
+    cwd: z.string(),
+    operation: z.enum(["stage", "unstage"]),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutCommitsListResponseSchema = z.object({
   type: z.literal("checkout.commits.list.response"),
   payload: z.object({
@@ -6274,6 +6301,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushResponseSchema,
   CheckoutRefreshResponseSchema,
   CheckoutDiscardChangesResponseSchema,
+  CheckoutIndexUpdateResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
   CheckoutForgeSetAutoMergeResponseSchema,
@@ -6630,6 +6658,8 @@ export type CheckoutRefreshRequest = z.infer<typeof CheckoutRefreshRequestSchema
 export type CheckoutRefreshResponse = z.infer<typeof CheckoutRefreshResponseSchema>;
 export type CheckoutDiscardChangesRequest = z.infer<typeof CheckoutDiscardChangesRequestSchema>;
 export type CheckoutDiscardChangesResponse = z.infer<typeof CheckoutDiscardChangesResponseSchema>;
+export type CheckoutIndexUpdateRequest = z.infer<typeof CheckoutIndexUpdateRequestSchema>;
+export type CheckoutIndexUpdateResponse = z.infer<typeof CheckoutIndexUpdateResponseSchema>;
 export type CheckoutCommitFile = z.infer<typeof CheckoutCommitFileSchema>;
 export type CheckoutCommit = z.infer<typeof CheckoutCommitSchema>;
 export type CheckoutCommitsListRequest = z.infer<typeof CheckoutCommitsListRequestSchema>;
