@@ -493,6 +493,16 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
     waitTimer = null;
   }
 
+  /**
+   * Forget that the renderer was ever hung. Anything that replaces or removes the renderer -
+   * a reload, a close, a crash, a fresh load - ends the hang, and leaving the flag set would let
+   * the re-check timer fire "This window is not responding" over a healthy replacement.
+   */
+  function clearHang(): void {
+    hung = false;
+    clearWaitTimer();
+  }
+
   function closeWindow(): void {
     // close() rather than destroy(): the window-state persistence flush hangs off the close
     // event, and destroy() does not emit it, so tearing the window down directly would leave
@@ -528,9 +538,11 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
       choice = buttons[response];
       if (choice === "Reload") {
         queued = null;
+        clearHang();
         win.reload();
       } else if (choice === "Close") {
         queued = null;
+        clearHang();
         closeWindow();
       }
     } catch {
@@ -576,14 +588,20 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
   });
 
   win.on("responsive", () => {
-    hung = false;
-    clearWaitTimer();
+    clearHang();
     if (queued?.waitable) queued = null;
   });
 
   win.on("closed", clearWaitTimer);
 
+  // A fresh load means a live renderer, so any hang the window was in is over. This also covers
+  // reloads the user triggers from the menu rather than from the dialog.
+  win.webContents.on("did-finish-load", clearHang);
+
   win.webContents.on("render-process-gone", (_event, details) => {
+    // A gone renderer is not a hung one; without this the re-check timer would offer the hang
+    // prompt again over whatever replaces it.
+    clearHang();
     if (!shouldReportProcessGone(details.reason)) return;
     void prompt({
       message: "This window has crashed",
