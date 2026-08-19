@@ -1210,6 +1210,34 @@ export class AgentManager {
     );
   }
 
+  // archiveAgent (and the rest of the lifecycle mutators below) run under
+  // runLifecycleMutation's per-agent queue, but a plain resumeAgentFromPersistence
+  // call does not join that queue. A resume triggered by loading an agent (to view
+  // its timeline, for example) can then race a concurrent archive of the same
+  // agentId: the archive closes the provider process and drops the in-memory
+  // record, the resume spawns a fresh process and re-registers the agent right
+  // after, and nothing is left tracking that fresh process to close it. Routing
+  // resume through the same queue used by archive/detach/etc. gives the two a
+  // single order instead of letting them interleave.
+  resumeAgentFromPersistenceLocked(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    agentId: string,
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+      workspaceId?: string;
+      owner?: AgentOwner;
+    },
+    resumeOptions?: AgentResumeSessionOptions,
+  ): Promise<ManagedAgent> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.resumeAgentFromPersistence(handle, overrides, agentId, options, resumeOptions),
+    );
+  }
+
   private async resumeAgentFromPersistenceInternal(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
