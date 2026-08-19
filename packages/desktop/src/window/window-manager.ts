@@ -460,6 +460,21 @@ interface WindowFailurePrompt {
   waitable: boolean;
 }
 
+/**
+ * Dismissing this dialog must never be the destructive choice. Electron's `cancelId` is the
+ * button Escape and the dialog's own close box map to, so it points at the first button, which
+ * is non-destructive in both shapes: Wait when the renderer may still recover, Reload when it
+ * is already gone. Close is only ever reached by choosing it.
+ */
+export function buildFailurePromptButtons(waitable: boolean): {
+  buttons: string[];
+  defaultId: number;
+  cancelId: number;
+} {
+  const buttons = waitable ? ["Wait", "Reload", "Close"] : ["Reload", "Close"];
+  return { buttons, defaultId: 0, cancelId: 0 };
+}
+
 export function setupWindowFailureRecovery(win: BrowserWindow): void {
   let prompting = false;
   // A window can go unresponsive and then die while its dialog is still open. Dropping the
@@ -487,12 +502,12 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
     }
     prompting = true;
     try {
-      const buttons = input.waitable ? ["Wait", "Reload", "Close"] : ["Reload", "Close"];
+      const { buttons, defaultId, cancelId } = buildFailurePromptButtons(input.waitable);
       const { response } = await dialog.showMessageBox(win, {
         type: "warning",
         buttons,
-        defaultId: 0,
-        cancelId: input.waitable ? 0 : 1,
+        defaultId,
+        cancelId,
         message: input.message,
         detail: input.detail,
         noLink: true,

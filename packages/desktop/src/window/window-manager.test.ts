@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applyMacWindowControlsUpdate,
+  buildFailurePromptButtons,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
@@ -178,6 +179,26 @@ describe("window-manager", () => {
 
     it("ignores a clean exit, which happens while the window closes", () => {
       expect(shouldReportProcessGone("clean-exit")).toBe(false);
+    });
+  });
+
+  describe("buildFailurePromptButtons", () => {
+    it("offers Wait while the renderer may still recover", () => {
+      expect(buildFailurePromptButtons(true).buttons).toEqual(["Wait", "Reload", "Close"]);
+    });
+
+    it("drops Wait once the renderer is gone", () => {
+      expect(buildFailurePromptButtons(false).buttons).toEqual(["Reload", "Close"]);
+    });
+
+    it("never maps dismissal or the default to Close", () => {
+      // Escape and the dialog's own close box resolve to cancelId. Pointing that at Close would
+      // destroy the window for a user who only wanted the dialog gone.
+      for (const waitable of [true, false]) {
+        const { buttons, defaultId, cancelId } = buildFailurePromptButtons(waitable);
+        expect(buttons[cancelId]).not.toBe("Close");
+        expect(buttons[defaultId]).not.toBe("Close");
+      }
     });
   });
 });
