@@ -10,7 +10,7 @@ import {
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
-import { STATUS_RING_FRAME_SIZE } from "@/components/status-ring/geometry";
+import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -40,15 +40,25 @@ export function ComposerTrackBar({ children }: { children: ReactNode }): ReactEl
   );
 }
 
+export interface ComposerTrackPillSegment {
+  /** Leading mark — a dot, or the running ring. `null` draws the text on its own. */
+  bucket: SidebarStateBucket | null;
+  /** Short enough to stay on one line alongside its siblings: "1 failed", "2/7 tasks", "3". */
+  text: string;
+}
+
 export interface ComposerTrackPillProps {
-  /** The whole pill, and short enough to stay on one line: "3 subagents", "2/7 tasks". */
-  label: string;
+  /**
+   * The whole pill, left to right, at most one segment per state. One segment is the common case;
+   * a tracker whose children are in several states at once gives each state its own mark so none
+   * of them is hidden behind the others.
+   */
+  segments: readonly ComposerTrackPillSegment[];
   /** Sheet header on compact. Popovers never show one. */
   panelTitle: string;
   testID: string;
+  /** Spell out anything the segments abbreviate — a bare count reads as nothing out loud. */
   accessibilityLabel?: string;
-  /** Drawn as a leading mark — a dot, or the running ring. `null` leaves the pill text-only. */
-  statusBucket?: SidebarStateBucket | null;
   /** Panel body. Rendered into a popover on wide screens and a sheet on compact ones. */
   children: ReactNode;
 }
@@ -70,20 +80,18 @@ const PANEL_MAX_HEIGHT = 440;
 const PANEL_OFFSET = 12;
 
 export function ComposerTrackPill({
-  label,
+  segments,
   panelTitle,
   testID,
   accessibilityLabel,
-  statusBucket = null,
   children,
 }: ComposerTrackPillProps): ReactElement {
   return (
     <MenuRoot compactMode="sheet">
       <ComposerTrackPillTrigger
-        label={label}
+        segments={segments}
         testID={testID}
-        accessibilityLabel={accessibilityLabel ?? label}
-        statusBucket={statusBucket}
+        accessibilityLabel={accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")}
       />
       <MenuSurface
         side="top"
@@ -103,15 +111,13 @@ export function ComposerTrackPill({
 }
 
 function ComposerTrackPillTrigger({
-  label,
+  segments,
   testID,
   accessibilityLabel,
-  statusBucket,
 }: {
-  label: string;
+  segments: readonly ComposerTrackPillSegment[];
   testID: string;
   accessibilityLabel: string;
-  statusBucket: SidebarStateBucket | null;
 }): ReactElement {
   const { open } = useMenuContext("ComposerTrackPill");
   const accessibilityState = useMemo(() => ({ expanded: open }), [open]);
@@ -139,10 +145,20 @@ function ComposerTrackPillTrigger({
       {...ariaExpandedProps}
       style={pillStyle}
     >
-      <ComposerTrackMark bucket={statusBucket} />
-      <Text style={labelStyle} numberOfLines={1}>
-        {label}
-      </Text>
+      <View style={styles.segments}>
+        {segments.map((segment, index) => (
+          <View
+            key={segment.bucket ?? "plain"}
+            style={styles.segment}
+            testID={`${testID}-segment-${index}`}
+          >
+            <ComposerTrackMark bucket={segment.bucket} />
+            <Text style={labelStyle} numberOfLines={1}>
+              {segment.text}
+            </Text>
+          </View>
+        ))}
+      </View>
     </MenuTrigger>
   );
 }
@@ -250,18 +266,28 @@ export function ComposerTrackRow({
 }
 
 /**
- * The pill's leading state mark. Running is the ring every other running indicator in the app
- * uses; the rest are the dot it grows from.
+ * A segment's state mark. Running is the ring every other running indicator in the app uses; the
+ * rest are the dot it grows from.
+ *
+ * Each one is sized to the glyph you can see rather than to a slot wide enough for the largest of
+ * them. The mark leads the pill, so a box wider than its glyph is padding on both sides at once:
+ * it holds the dot off the pill's leading edge while the label runs flush to the trailing one, and
+ * it opens a gap to its own label as wide as the gap to the next segment. The ring's halo is
+ * knockout for marks that sit on top of an icon, and nothing sits under this one, so it comes off
+ * too — leaving every mark's visible edge on the same rail whatever state it is in.
  */
 function ComposerTrackMark({ bucket }: { bucket: SidebarStateBucket | null }): ReactElement | null {
   if (!bucket) {
     return null;
   }
-  return (
-    <View style={styles.mark}>
-      {bucket === "running" ? <StatusRing /> : <View style={dotColorStyle(bucket)} />}
-    </View>
-  );
+  if (bucket === "running") {
+    return (
+      <View style={styles.ringMark}>
+        <StatusRing />
+      </View>
+    );
+  }
+  return <View style={dotColorStyle(bucket)} />;
 }
 
 function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
@@ -330,14 +356,25 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: theme.borderRadius.md,
       backgroundColor: theme.colors.surface2,
     },
-    // Sized for the widest mark that can land in it, which is the ring rather than the dot. The
-    // slot is the same width whatever the state, so the label does not step sideways when the last
-    // child stops running.
-    mark: {
-      width: STATUS_RING_FRAME_SIZE,
-      height: STATUS_RING_FRAME_SIZE,
+    // Segments sit twice as far apart as a mark sits from its own text, so a count reads as
+    // belonging to the mark on its left rather than to the words on its right.
+    segments: {
+      flexDirection: "row",
       alignItems: "center",
-      justifyContent: "center",
+      flexShrink: 1,
+      minWidth: 0,
+      gap: theme.spacing[4],
+    },
+    segment: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexShrink: 1,
+      minWidth: 0,
+      gap: theme.spacing[2],
+    },
+    // Trims the ring's halo so the circle you can see is the box, like the dot's box is the dot.
+    ringMark: {
+      margin: -STATUS_RING_HALO_INSET,
     },
     dotNeedsInput: statusDot("needs_input"),
     dotFailed: statusDot("failed"),

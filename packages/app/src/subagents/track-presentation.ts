@@ -1,9 +1,7 @@
 import type { TFunction } from "i18next";
+import type { ComposerTrackPillSegment } from "@/composer/tracks";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
-import {
-  aggregateSidebarStateBuckets,
-  deriveSidebarStateBucket,
-} from "@/utils/sidebar-agent-state";
+import { deriveSidebarStateBucket, STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
 import { isFinishedSubagent } from "./archive-finished";
 import { providerSubagentLifecycleStatus } from "./provider-store";
@@ -44,44 +42,59 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
   };
 }
 
-/** The one state the collapsed pill shows, and how many children are in it. */
-interface SubagentStatusSummary {
-  bucket: Exclude<SidebarStateBucket, "done">;
+type ActiveStatusBucket = Exclude<SidebarStateBucket, "done">;
+
+/** The sidebar's list order, minus the state that earns no mark. */
+const ACTIVE_STATUS_BUCKET_ORDER = STATUS_BUCKET_ORDER.filter(
+  (bucket): bucket is ActiveStatusBucket => bucket !== "done",
+);
+
+/** One state the pill reports, and how many children are in it. */
+interface SubagentStatusCount {
+  bucket: ActiveStatusBucket;
   count: number;
 }
 
-/** Everything the collapsed pill draws. Built together so the label and the mark cannot disagree. */
+/** Everything the pill draws. Built together so no mark can end up next to another one's count. */
 export interface SubagentPillPresentation {
-  label: string;
-  statusBucket: SidebarStateBucket | null;
+  segments: ComposerTrackPillSegment[];
+  accessibilityLabel: string;
 }
 
 /**
- * What the pill says about a fan-out, and which mark it says it with.
+ * What the pill says about a fan-out, and which marks it says it with.
  *
- * The pill has room for one mark and one number, and they have to answer the same question. Left
- * to itself the mark wins and its state is read onto the number: a spinning ring beside
- * "2 subagents" says two of them are running. So while anything is happening the pill names that
- * state and counts the children in it, and only falls back to naming the total once nothing is.
+ * A mark and a number sitting together answer the same question, so the pill cannot collapse a
+ * mixed fan-out into the most urgent state the way a sidebar project row does: a red dot beside
+ * "1 failed" over a child that is still working says the fan-out has stopped. Every state present
+ * gets its own mark and its own count, in the order the sidebar's status groups list them.
  *
- * Which state that is comes from collapsing the children into the most urgent bucket among them —
- * the same rule a collapsed project row in the sidebar uses, and for the same reason.
+ * It stays one line because subagent rows only ever reach three states — see
+ * `buildSubagentRowPresentationData`, which reports no attention of its own — so the pill is two
+ * segments at worst, and falls back to naming what it opens once nothing is happening.
  */
 export function buildSubagentPillPresentation(
   t: TFunction,
   rows: readonly SubagentRow[],
 ): SubagentPillPresentation {
-  const summary = summarizeSubagentStatus(rows);
-  if (!summary) {
-    return { label: totalLabel(t, rows.length), statusBucket: null };
+  const counts = summarizeSubagentStatus(rows);
+  if (counts.length === 0) {
+    const label = totalLabel(t, rows.length);
+    return { segments: [{ bucket: null, text: label }], accessibilityLabel: label };
   }
-  return { label: statusLabel(t, summary), statusBucket: summary.bucket };
+  const labels = counts.map(({ bucket, count }) => statusLabel(t, bucket, count));
+  return {
+    segments: counts.map(({ bucket }, index) => ({ bucket, text: labels[index] ?? "" })),
+    // Marks separate the segments on screen; a screen reader needs the pause spelled out.
+    accessibilityLabel: labels.join(", "),
+  };
 }
 
-function statusLabel(t: TFunction, { bucket, count }: SubagentStatusSummary): string {
+/** Wording comes from the sidebar's status groups — one name per state across the whole app. */
+function statusLabel(t: TFunction, bucket: ActiveStatusBucket, count: number): string {
   switch (bucket) {
     case "running":
-      return t("subagents.pillLabelRunning", { count });
+      return t("subagents.pillLabelWorking", { count });
     case "failed":
       return t("subagents.pillLabelFailed", { count });
     case "needs_input":
@@ -99,18 +112,14 @@ function totalLabel(t: TFunction, total: number): string {
 }
 
 /**
- * `null` when every child is done: a finished fan-out is not worth a colour above the composer.
+ * Empty when every child is done: a finished fan-out is not worth a colour above the composer.
  */
-function summarizeSubagentStatus(rows: readonly SubagentRow[]): SubagentStatusSummary | null {
-  const buckets = rows.flatMap((row) => {
-    const bucket = buildSubagentRowPresentationData(row).statusBucket;
-    return bucket ? [bucket] : [];
+function summarizeSubagentStatus(rows: readonly SubagentRow[]): SubagentStatusCount[] {
+  const buckets = rows.map((row) => buildSubagentRowPresentationData(row).statusBucket);
+  return ACTIVE_STATUS_BUCKET_ORDER.flatMap((bucket) => {
+    const count = buckets.filter((candidate) => candidate === bucket).length;
+    return count > 0 ? [{ bucket, count }] : [];
   });
-  const bucket = aggregateSidebarStateBuckets(buckets);
-  if (bucket === "done") {
-    return null;
-  }
-  return { bucket, count: buckets.filter((candidate) => candidate === bucket).length };
 }
 
 export function countFinishedSubagents(rows: readonly SubagentRow[]): number {

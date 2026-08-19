@@ -2,7 +2,9 @@ import React, { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ComposerTrackPill, ComposerTrackRow } from "./tracks";
+import { ComposerTrackPill, ComposerTrackRow, type ComposerTrackPillSegment } from "./tracks";
+
+const SUBAGENT_SEGMENTS: ComposerTrackPillSegment[] = [{ bucket: null, text: "3 subagents" }];
 
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
@@ -66,7 +68,7 @@ describe("composer track panel", () => {
   it("dismisses itself when a row is chosen", () => {
     const onPress = vi.fn();
     mount(
-      <ComposerTrackPill testID="pill" label="3 subagents" panelTitle="Subagents">
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
         <ComposerTrackRow accessibilityLabel="Subagent one" testID="row" onPress={onPress}>
           <Text>Subagent one</Text>
         </ComposerTrackRow>
@@ -87,7 +89,7 @@ describe("composer track panel", () => {
   it("stays open for a row whose result lands in the panel", () => {
     const onPress = vi.fn();
     mount(
-      <ComposerTrackPill testID="pill" label="3 subagents" panelTitle="Subagents">
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
         <ComposerTrackRow
           accessibilityLabel="Archive finished"
           testID="row"
@@ -111,7 +113,7 @@ describe("composer track panel", () => {
     const onPress = vi.fn();
     const onAction = vi.fn();
     mount(
-      <ComposerTrackPill testID="pill" label="3 subagents" panelTitle="Subagents">
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
         <ComposerTrackRow accessibilityLabel="Subagent one" testID="row" onPress={onPress}>
           <Text>Subagent one</Text>
           <Pressable accessibilityRole="button" testID="row-archive" onPress={onAction}>
@@ -131,26 +133,27 @@ describe("composer track panel", () => {
 });
 
 describe("composer track pill status mark", () => {
-  function mountMark(statusBucket: "running" | "failed"): HTMLElement {
+  /** The mark is the glyph itself: the dot for a still state, the ring's carrier for running. */
+  function mountMark(bucket: "running" | "failed"): { mark: HTMLElement; body: HTMLElement } {
     const container = mount(
       <ComposerTrackPill
         testID="pill"
-        label="3 subagents"
+        segments={[{ bucket, text: "3 subagents" }]}
         panelTitle="Subagents"
-        statusBucket={statusBucket}
       >
         <Text>rows</Text>
       </ComposerTrackPill>,
     );
-    const mark = container.querySelector('[data-testid="pill"] > div');
-    if (!(mark instanceof HTMLElement)) {
+    const segment = container.querySelector('[data-testid="pill-segment-0"]');
+    const body = container.querySelector('[data-testid="pill"]');
+    if (!(segment?.firstElementChild instanceof HTMLElement) || !(body instanceof HTMLElement)) {
       throw new Error("pill did not render a status mark");
     }
-    return mark;
+    return { mark: segment.firstElementChild, body };
   }
 
   it("spins the shared ring while a child is running", () => {
-    const mark = mountMark("running");
+    const { mark } = mountMark("running");
     const animated = [...mark.querySelectorAll("*")].filter(
       (element) => element.getAnimations().length > 0,
     );
@@ -164,20 +167,53 @@ describe("composer track pill status mark", () => {
   });
 
   it("draws a still dot for every other state", () => {
-    const mark = mountMark("failed");
+    const { mark } = mountMark("failed");
     const animated = [...mark.querySelectorAll("*")].filter(
       (element) => element.getAnimations().length > 0,
     );
 
     expect(animated).toHaveLength(0);
-    const dot = mark.firstElementChild as HTMLElement;
-    expect(getComputedStyle(dot).backgroundColor).toBe("rgb(241, 46, 47)");
+    expect(getComputedStyle(mark).backgroundColor).toBe("rgb(241, 46, 47)");
   });
 
-  it("reserves one slot whatever the state, so the label never steps sideways", () => {
-    const running = mountMark("running").getBoundingClientRect().width;
-    const failed = mountMark("failed").getBoundingClientRect().width;
+  it("starts the circle you can see on the pill's own padding, whatever the state", () => {
+    // The inset the eye compares a leading mark against is the label's trailing one, and that one
+    // is the pill's padding. A mark boxed wider than its glyph sits further in than that while
+    // looking correctly centred in the box nobody can see.
+    for (const bucket of ["running", "failed"] as const) {
+      const { mark, body } = mountMark(bucket);
+      // The dot is its own box; the ring is drawn by the rotator inside the frame's halo.
+      const glyph = bucket === "failed" ? mark : mark.firstElementChild?.firstElementChild;
+      if (!(glyph instanceof HTMLElement)) {
+        throw new Error(`${bucket} mark did not render a glyph`);
+      }
 
-    expect(running).toBe(failed);
+      const style = getComputedStyle(body);
+      const edge = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth);
+      const inset = glyph.getBoundingClientRect().left - body.getBoundingClientRect().left;
+
+      expect(inset).toBeCloseTo(edge, 1);
+    }
+  });
+
+  it("draws every state it is given, so a running child survives a failed sibling", () => {
+    const container = mount(
+      <ComposerTrackPill
+        testID="pill"
+        segments={[
+          { bucket: "failed", text: "1 failed" },
+          { bucket: "running", text: "1 working" },
+        ]}
+        panelTitle="Subagents"
+      >
+        <Text>rows</Text>
+      </ComposerTrackPill>,
+    );
+
+    const segments = [...container.querySelectorAll('[data-testid^="pill-segment-"]')];
+    expect(segments.map((segment) => segment.textContent)).toEqual(["1 failed", "1 working"]);
+    // The ring is the only mark that animates, so its presence proves the second state survived.
+    const animated = segments[1]?.querySelectorAll("*") ?? [];
+    expect([...animated].filter((element) => element.getAnimations().length > 0)).toHaveLength(1);
   });
 });

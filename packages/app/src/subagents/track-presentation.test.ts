@@ -35,10 +35,10 @@ describe("buildSubagentPillPresentation", () => {
 
   const pill = (rows: SubagentRow[]) => buildSubagentPillPresentation(i18n.t, rows);
 
-  it("counts the children that are running, not the fan-out", () => {
+  it("counts the children that are working, not the fan-out", () => {
     expect(pill([row({ id: "a" }), row({ id: "b", status: "running" })])).toEqual({
-      label: "1 running",
-      statusBucket: "running",
+      segments: [{ bucket: "running", text: "1 working" }],
+      accessibilityLabel: "1 working",
     });
   });
 
@@ -49,32 +49,47 @@ describe("buildSubagentPillPresentation", () => {
         row({ id: "b", status: "running" }),
         row({ id: "c" }),
       ]),
-    ).toEqual({ label: "2 running", statusBucket: "running" });
+    ).toEqual({
+      segments: [{ bucket: "running", text: "2 working" }],
+      accessibilityLabel: "2 working",
+    });
   });
 
-  it("ranks a failed child above a running one, and counts the failures", () => {
+  it("keeps a working child visible behind a failed one instead of collapsing to the worst", () => {
     expect(
       pill([
         row({ id: "a", status: "running" }),
         row({ id: "b", status: "error", requiresAttention: true }),
         row({ id: "c", status: "error" }),
       ]),
-    ).toEqual({ label: "2 failed", statusBucket: "failed" });
+    ).toEqual({
+      segments: [
+        { bucket: "failed", text: "2 failed" },
+        { bucket: "running", text: "1 working" },
+      ],
+      accessibilityLabel: "2 failed, 1 working",
+    });
   });
 
   it("names what it opens once every child is done", () => {
     expect(pill([row({ id: "a" }), row({ id: "b" })])).toEqual({
-      label: "2 subagents",
-      statusBucket: null,
+      segments: [{ bucket: null, text: "2 subagents" }],
+      accessibilityLabel: "2 subagents",
     });
   });
 
   it("keeps the singular for a lone child", () => {
-    expect(pill([row({ id: "a" })])).toEqual({ label: "1 subagent", statusBucket: null });
+    expect(pill([row({ id: "a" })])).toEqual({
+      segments: [{ bucket: null, text: "1 subagent" }],
+      accessibilityLabel: "1 subagent",
+    });
   });
 
   it("has nothing to mark without rows", () => {
-    expect(pill([])).toEqual({ label: "0 subagents", statusBucket: null });
+    expect(pill([])).toEqual({
+      segments: [{ bucket: null, text: "0 subagents" }],
+      accessibilityLabel: "0 subagents",
+    });
   });
 });
 

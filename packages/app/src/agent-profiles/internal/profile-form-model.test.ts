@@ -82,6 +82,53 @@ describe("openAgentProfileForm", () => {
     expect(state.disclosure.showModelField).toBe(false);
   });
 
+  it("seeds create mode from a model seed before the catalog lands", () => {
+    const model = openAgentProfileForm({
+      mode: "create",
+      seed: { provider: "claude", modelId: "claude-opus-5", name: "Opus 5" },
+    });
+    const state = model.getState();
+
+    expect(state.name).toBe("Opus 5");
+    expect(state.provider).toBe("claude");
+    expect(state.modelId).toBe("claude-opus-5");
+    expect(state.providerDisplay).toEqual({ label: "claude" });
+    expect(state.modelDisplay).toEqual({ label: "claude-opus-5" });
+    expect(state.catalogResolution).toBe("idle");
+  });
+
+  it("upgrades a seeded model to catalog labels without touching the selection", () => {
+    const model = openAgentProfileForm({
+      mode: "create",
+      seed: { provider: "claude", modelId: "claude-opus-5", name: "Opus 5" },
+    });
+    model.applyProviderCatalog(ENTRIES);
+    const state = model.getState();
+
+    expect(state.providerDisplay).toEqual({ label: "Claude Code" });
+    expect(state.modelDisplay).toEqual({ label: "Opus 5" });
+    expect(state.modelId).toBe("claude-opus-5");
+    expect(state.canSubmit).toBe(true);
+    expect(state.submitValue).toMatchObject({
+      name: "Opus 5",
+      provider: "claude",
+      model: "claude-opus-5",
+    });
+  });
+
+  it("ignores the seed in edit mode", () => {
+    const model = openAgentProfileForm({
+      mode: "edit",
+      profile: { id: "p1", name: "UI work", provider: "claude", model: "claude-haiku-4-5" },
+      seed: { provider: "codex", modelId: "gpt-5.2-codex", name: "Nope" },
+    });
+    const state = model.getState();
+
+    expect(state.name).toBe("UI work");
+    expect(state.provider).toBe("claude");
+    expect(state.modelId).toBe("claude-haiku-4-5");
+  });
+
   it("lists only enabled providers", () => {
     const model = openWithCatalog({ mode: "create" });
 

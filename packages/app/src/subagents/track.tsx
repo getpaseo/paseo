@@ -78,9 +78,9 @@ export function SubagentsTrack({
   return (
     <ComposerTrackPill
       testID="subagents-track-header"
-      label={pill.label}
+      segments={pill.segments}
+      accessibilityLabel={pill.accessibilityLabel}
       panelTitle={t("subagents.title")}
-      statusBucket={pill.statusBucket}
     >
       {showArchiveFinished && onArchiveFinished ? (
         <ComposerTrackActions divided={rows.length > 0}>

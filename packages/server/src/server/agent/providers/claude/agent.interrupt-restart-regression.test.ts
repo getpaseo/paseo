@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 
 interface QueryMock {
   next: ReturnType<typeof vi.fn>;
@@ -15,6 +15,7 @@ interface QueryMock {
   supportedModels: ReturnType<typeof vi.fn>;
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
+  cancelAsyncMessage: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
 }
 
@@ -139,6 +140,7 @@ function createScriptedQuery(params: {
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    cancelAsyncMessage: vi.fn(async () => true),
     emit: (message: Record<string, unknown>) => {
       output.push(message);
     },
@@ -193,6 +195,18 @@ async function collectUntilTerminal(
     }
   }
   return events;
+}
+
+/** Pulls the stream forward without closing it, so the caller can keep reading afterwards. */
+async function consumeUntil(
+  stream: AsyncGenerator<AgentStreamEvent>,
+  matches: (event: AgentStreamEvent) => boolean,
+): Promise<void> {
+  while (true) {
+    const next = await stream.next();
+    if (next.done) throw new Error("Stream ended before the expected event");
+    if (matches(next.value)) return;
+  }
 }
 
 function collectAssistantText(events: AgentStreamEvent[]): string {
@@ -281,6 +295,249 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
     provider: "claude",
     reason: "Interrupted",
   });
+
+  await session.close();
+});
+
+async function startSteeredTurn(sessionId: string): Promise<{
+  session: AgentSession;
+  query: () => ScriptedQuery | null;
+  turn: AsyncGenerator<AgentStreamEvent>;
+}> {
+  let query: ScriptedQuery | null = null;
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({ prompt, sessionId });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+
+  const turn = streamSession(session, "original running prompt");
+  const start = await turn.next();
+  if (!start.value || start.value.type !== "turn_started" || !start.value.turnId) {
+    throw new Error("Expected the original Claude turn to start");
+  }
+  await waitFor(() => query?.prompts.length === 1);
+
+  const steered = await session.steerActiveTurn!("queued steer", {
+    expectedTurnId: start.value.turnId,
+    clientMessageId: "steer-client",
+  });
+  expect(steered).toEqual({ status: "accepted" });
+  await waitFor(() => query?.prompts.length === 2);
+
+  return { session, query: () => query, turn };
+}
+
+test("interrupt discards a queued steer so it cannot resume the stopped turn", async () => {
+  const { session, query, turn } = await startSteeredTurn("queued-steer-discard-session");
+
+  await session.interrupt();
+  await waitFor(() => query()?.interrupt.mock.calls.length === 1);
+
+  expect(query()?.cancelAsyncMessage).toHaveBeenCalledWith(query()?.prompts[1]?.uuid);
+  expect(await collectUntilTerminal(turn)).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled" }),
+  );
+
+  // Nothing is queued any more, so a second interrupt has no steer left to discard.
+  query()?.cancelAsyncMessage.mockClear();
+  await session.interrupt();
+  await waitFor(() => query()?.interrupt.mock.calls.length === 2);
+  expect(query()?.cancelAsyncMessage).not.toHaveBeenCalled();
+
+  await session.close();
+});
+
+test("interrupt still stops the turn when Claude has already dequeued the steer", async () => {
+  const { session, query, turn } = await startSteeredTurn("queued-steer-declined-session");
+  query()?.cancelAsyncMessage.mockResolvedValue(false);
+
+  await session.interrupt();
+  await waitFor(() => query()?.interrupt.mock.calls.length === 1);
+
+  expect(query()?.cancelAsyncMessage).toHaveBeenCalledWith(query()?.prompts[1]?.uuid);
+  expect(await collectUntilTerminal(turn)).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled" }),
+  );
+
+  await session.close();
+});
+
+test("a steer Claude has already read is no longer discardable on interrupt", async () => {
+  const { session, query, turn } = await startSteeredTurn("queued-steer-completed-session");
+
+  query()?.emit({
+    type: "command_lifecycle",
+    command_uuid: query()?.prompts[1]?.uuid,
+    state: "completed",
+  });
+  // Frames are translated in order, so the marker landing proves the lifecycle frame was read.
+  query()?.emit({ type: "assistant", message: { content: "STEER_READ" } });
+  await consumeUntil(turn, (event) => collectAssistantText([event]).includes("STEER_READ"));
+
+  await session.interrupt();
+  await waitFor(() => query()?.interrupt.mock.calls.length === 1);
+
+  expect(query()?.cancelAsyncMessage).not.toHaveBeenCalled();
+  await collectUntilTerminal(turn);
+  await session.close();
+});
+
+function buildStoppedTaskNotification(sessionId: string) {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    uuid: "task-notification-1",
+    task_id: "task-slow",
+    status: "stopped",
+    summary: "Sleep 5 seconds",
+    session_id: sessionId,
+  };
+}
+
+function buildAbortedResult(sessionId: string) {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["Request was aborted."],
+    session_id: sessionId,
+  };
+}
+
+function buildRejectedToolResult(sessionId: string) {
+  return {
+    type: "user",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "toolu_slow",
+          is_error: true,
+          content: "The user doesn't want to proceed with this tool use.",
+        },
+      ],
+    },
+    uuid: "rejected-tool-result-1",
+    session_id: sessionId,
+  };
+}
+
+async function startInterruptedToolTurn(sessionId: string): Promise<{
+  session: AgentSession;
+  query: () => ScriptedQuery | null;
+  observed: AgentStreamEvent[];
+  canceledIndex: number;
+  unsubscribe: () => void;
+}> {
+  let query: ScriptedQuery | null = null;
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    query = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query: scripted }) {
+        if (promptRecord.text !== "run the slow tool") {
+          return;
+        }
+        scripted.emit({
+          type: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_slow", name: "Bash", input: { command: "sleep 5" } },
+            ],
+          },
+          session_id: sessionId,
+        });
+      },
+    });
+    return query;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  const turn = streamSession(session, "run the slow tool");
+  await turn.next();
+  await waitFor(() => query?.prompts.length === 1);
+
+  await session.interrupt();
+  await collectUntilTerminal(turn);
+
+  const canceledIndex = observed.findIndex((event) => event.type === "turn_canceled");
+  expect(canceledIndex).toBeGreaterThanOrEqual(0);
+
+  return { session, query: () => query, observed, canceledIndex, unsubscribe };
+}
+
+/**
+ * Claude keeps reporting on the request it was told to kill: the notification for the tool it just
+ * stopped, the aborted result, then the tool rejection. None of that is new work, so none of it may
+ * put the agent back into a running turn.
+ */
+test("trailing output from an interrupted request does not start a turn", async () => {
+  const sessionId = "interrupt-window-session";
+  const { session, query, observed, canceledIndex, unsubscribe } =
+    await startInterruptedToolTurn(sessionId);
+
+  query()?.emit(buildStoppedTaskNotification(sessionId));
+  query()?.emit(buildAbortedResult(sessionId));
+  query()?.emit(buildRejectedToolResult(sessionId));
+
+  // Frames are translated in order, so the rejection landing proves the two before it were read.
+  await waitFor(() =>
+    observed.some(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "toolu_slow" &&
+        event.item.status === "failed",
+    ),
+  );
+  unsubscribe();
+
+  expect(
+    observed.slice(canceledIndex + 1).filter((event) => event.type === "turn_started"),
+  ).toEqual([]);
+
+  await session.close();
+});
+
+test("Claude can still wake into an autonomous turn once the interrupted request has settled", async () => {
+  const sessionId = "interrupt-window-then-wake-session";
+  const { session, query, observed, canceledIndex, unsubscribe } =
+    await startInterruptedToolTurn(sessionId);
+
+  query()?.emit(buildStoppedTaskNotification(sessionId));
+  query()?.emit(buildAbortedResult(sessionId));
+  query()?.emit({
+    type: "assistant",
+    message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
+    session_id: sessionId,
+  });
+  query()?.emit(buildSuccessResult(sessionId));
+
+  await waitFor(() =>
+    observed.slice(canceledIndex + 1).some((event) => event.type === "turn_completed"),
+  );
+  unsubscribe();
+
+  const afterCancel = observed.slice(canceledIndex + 1);
+  expect(afterCancel.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(collectAssistantText(afterCancel)).toContain("AUTONOMOUS_WAKE_RESPONSE");
 
   await session.close();
 });
