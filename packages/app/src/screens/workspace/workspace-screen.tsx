@@ -94,6 +94,7 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useFileDownload } from "@/hooks/use-file-download";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
@@ -120,6 +121,7 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
+import { resolveWorkspaceFileShareInput } from "@/screens/workspace/workspace-file-actions";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -161,6 +163,8 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
@@ -249,6 +253,10 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function workspaceRootOrEmpty(value: string | null): string {
+  return value ?? "";
 }
 
 function decodeSegment(value: string): string {
@@ -384,6 +392,8 @@ interface MobileWorkspaceTabSwitcherProps {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
+  onCopyFileContents: (path: string) => Promise<void> | void;
+  onShareFile: (path: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -491,6 +501,8 @@ function MobileWorkspaceTabOption({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
+  onCopyFileContents,
+  onShareFile,
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
@@ -510,6 +522,8 @@ function MobileWorkspaceTabOption({
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
+  onCopyFileContents: (path: string) => Promise<void> | void;
+  onShareFile: (path: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -524,6 +538,8 @@ function MobileWorkspaceTabOption({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
+      copyFileContents: t("workspace.tabs.menu.copyFileContents"),
+      shareFile: t("workspace.tabs.menu.shareFile"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
@@ -547,6 +563,8 @@ function MobileWorkspaceTabOption({
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyTerminalId,
+    onCopyFileContents,
+    onShareFile,
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
@@ -618,6 +636,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
+  onCopyFileContents,
+  onShareFile,
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
@@ -675,6 +695,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyTerminalId={onCopyTerminalId}
+          onCopyFileContents={onCopyFileContents}
+          onShareFile={onShareFile}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
@@ -694,6 +716,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       onCopyResumeCommand,
       onCopyAgentId,
       onCopyTerminalId,
+      onCopyFileContents,
+      onShareFile,
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
@@ -1444,6 +1468,11 @@ function WorkspaceScreenContent({
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
+  const downloadFile = useFileDownload({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    workspaceRoot: workspaceRootOrEmpty(workspaceDirectory),
+  });
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
@@ -2517,6 +2546,46 @@ function WorkspaceScreenContent({
     [toast, t],
   );
 
+  const handleCopyFileContents = useCallback(
+    async (path: string) => {
+      const target = resolveFilePreviewReadTarget({
+        path,
+        workspaceRoot: workspaceDirectory ?? undefined,
+      });
+      if (!client || !target) {
+        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        return;
+      }
+      try {
+        const file = explorerFileFromReadResult(await client.readFile(target.cwd, target.path));
+        if (file.kind !== "text" || file.content === undefined) {
+          toast.error(t("workspace.tabs.toasts.fileContentsUnavailable"));
+          return;
+        }
+        await Clipboard.setStringAsync(file.content);
+        toast.copied(t("workspace.tabs.toasts.fileContentsCopiedLabel"));
+      } catch {
+        toast.error(t("workspace.tabs.toasts.copyFailed"));
+      }
+    },
+    [client, t, toast, workspaceDirectory],
+  );
+
+  const handleShareFile = useCallback(
+    (path: string) => {
+      const download = resolveWorkspaceFileShareInput({
+        path,
+        workspaceRoot: workspaceDirectory ?? undefined,
+      });
+      if (!download) {
+        toast.error(t("common.states.downloadFailed"));
+        return;
+      }
+      downloadFile(download);
+    },
+    [downloadFile, t, toast, workspaceDirectory],
+  );
+
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
       if (!agentId) return;
@@ -3469,6 +3538,8 @@ function WorkspaceScreenContent({
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
           onCopyTerminalId={handleCopyTerminalId}
+          onCopyFileContents={handleCopyFileContents}
+          onShareFile={handleShareFile}
           onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}

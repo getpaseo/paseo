@@ -9,6 +9,8 @@ export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
   copyTerminalId: string;
+  copyFileContents: string;
+  shareFile: string;
   copyFilePath: string;
   rename: string;
   closeAbove: string;
@@ -25,6 +27,8 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
+  copyFileContents: i18n.t("workspace.tabs.menu.copyFileContents"),
+  shareFile: i18n.t("workspace.tabs.menu.shareFile"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
@@ -48,6 +52,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-left-to-line"
         | "arrow-right-to-line"
         | "copy-x"
+        | "share-2"
         | "pencil"
         | "x";
       hint?: string;
@@ -71,6 +76,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
+  onCopyFileContents?: (path: string) => Promise<void> | void;
+  onShareFile?: (path: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -228,6 +235,28 @@ export function buildWorkspaceTabMenuEntries(
 
   if (tab.target.kind === "file") {
     const filePath = tab.target.path;
+    if (surface === "mobile" && input.onCopyFileContents && input.onShareFile) {
+      entries.push({
+        kind: "item",
+        key: "copy-file-contents",
+        label: labels.copyFileContents,
+        icon: "copy",
+        testID: `${menuTestIDBase}-copy-file-contents`,
+        onSelect: () => {
+          void input.onCopyFileContents?.(filePath);
+        },
+      });
+      entries.push({
+        kind: "item",
+        key: "share-file",
+        label: labels.shareFile,
+        icon: "share-2",
+        testID: `${menuTestIDBase}-share-file`,
+        onSelect: () => {
+          void input.onShareFile?.(filePath);
+        },
+      });
+    }
     entries.push({
       kind: "item",
       key: "copy-file-path",
