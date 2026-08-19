@@ -86,10 +86,13 @@ export function getMainWindowChromeOptions(input: {
     };
   }
 
+  // SPIKE: no titleBarOverlay on Windows/Linux. The renderer draws the controls itself
+  // (packages/app/src/components/desktop/window-controls.tsx) so they sit in the header's
+  // own flex row and line up with the header icons. Without the overlay Chromium reports
+  // navigator.windowControlsOverlay.visible === false, so nothing reserves a band.
   return {
     titleBarStyle: "hidden",
     frame: false,
-    titleBarOverlay: getTitleBarOverlayOptions(input.theme),
     autoHideMenuBar: true,
   };
 }
@@ -219,6 +222,18 @@ export function registerWindowManager(): void {
     } else {
       win.maximize();
     }
+  });
+
+  ipcMain.handle("paseo:window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("paseo:window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("paseo:window:isMaximized", (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
 
   ipcMain.handle("paseo:window:isFullscreen", (event) => {

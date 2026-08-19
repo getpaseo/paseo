@@ -26,7 +26,7 @@ import { ChangesSurface } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
-import { WindowChromeSafeArea } from "@/utils/desktop-window";
+import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
@@ -38,6 +38,7 @@ import {
 } from "@/components/sidebar-resize-handle-layout";
 import { usePullRequestPanelAvailability } from "@/panels/pull-request-availability";
 import { PullRequestContent } from "@/panels/pull-request";
+import { WindowControls } from "@/components/desktop/window-controls";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
@@ -319,6 +320,7 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const ownsTopRight = useOwnsWindowChromeCorner("top-right");
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
@@ -410,6 +412,7 @@ function ExplorerSidebarContent({
               />
             )}
           </Pressable>
+          {ownsTopRight ? <WindowControls /> : null}
         </View>
       </WindowChromeSafeArea>
 

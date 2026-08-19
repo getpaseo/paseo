@@ -24,6 +24,30 @@ export async function toggleDesktopMaximize(): Promise<void> {
   await win.toggleMaximize();
 }
 
+export async function minimizeDesktopWindow(): Promise<void> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.minimize !== "function") {
+    return;
+  }
+  await win.minimize();
+}
+
+export async function closeDesktopWindow(): Promise<void> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.close !== "function") {
+    return;
+  }
+  await win.close();
+}
+
+export async function isDesktopWindowMaximized(): Promise<boolean> {
+  const win = getDesktopWindow();
+  if (!win || typeof win.isMaximized !== "function") {
+    return false;
+  }
+  return await win.isMaximized();
+}
+
 export async function isDesktopFullscreen(): Promise<boolean> {
   const win = getDesktopWindow();
   if (!win || typeof win.isFullscreen !== "function") {

@@ -104,6 +104,9 @@ export interface DesktopWindowBridge {
   toggleMaximize?: () => Promise<void>;
   setFullscreen?: (fullscreen: boolean) => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
+  minimize?: () => Promise<void>;
+  close?: () => Promise<void>;
+  isMaximized?: () => Promise<boolean>;
   updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;
   onResized?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
