@@ -6,6 +6,7 @@ import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../se
 interface OpenCodeResponse {
   data?: unknown;
   error?: unknown;
+  response?: { status: number };
 }
 
 export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
@@ -106,6 +107,7 @@ export class TestOpenCodeClient {
     sessionGet: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
+    sessionV2Prompt: [] as unknown[],
     sessionStatus: [] as unknown[],
     sessionSummarize: [] as unknown[],
     sessionUpdate: [] as unknown[],
@@ -160,6 +162,8 @@ export class TestOpenCodeClient {
     null;
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
+  sessionV2PromptImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
+  sessionV2PromptResponse: OpenCodeResponse = { data: {} };
   sessionStatusResponse: OpenCodeResponse = { data: {} };
   sessionStatusImplementation:
     | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
@@ -342,6 +346,17 @@ export class TestOpenCodeClient {
         update: async (parameters: unknown) => {
           this.calls.sessionUpdate.push(parameters);
           return this.sessionUpdateResponse;
+        },
+      },
+      v2: {
+        session: {
+          prompt: async (parameters: unknown) => {
+            this.calls.sessionV2Prompt.push(parameters);
+            if (this.sessionV2PromptImplementation) {
+              return await this.sessionV2PromptImplementation(parameters);
+            }
+            return this.sessionV2PromptResponse;
+          },
         },
       },
     } as unknown as OpencodeClient;

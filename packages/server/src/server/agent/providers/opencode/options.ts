@@ -7,7 +7,7 @@ const PermissionRuleSchema = z.union([
   z.record(z.string(), PermissionActionSchema),
 ]);
 
-// OpenCode Config.permission, maintained against @opencode-ai/sdk 1.14.46.
+// OpenCode Config.permission, maintained against @opencode-ai/sdk 1.18.18.
 export const OpenCodeProviderOptionsSchema = z
   .object({
     permission: z
