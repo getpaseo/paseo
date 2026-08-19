@@ -7,7 +7,6 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { OpenCodeEventSource } from "./opencode/event-consumer.js";
-import { OPENCODE_SERVER_STARTUP_TIMEOUT_MS } from "./opencode/server-manager.js";
 import {
   __openCodeInternals,
   OpenCodeAgentClient,
@@ -26,6 +25,11 @@ import type {
   AssistantMessageTimelineItem,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+
+// Deliberately an independent literal rather than the production constant these tests
+// guard: deriving the boundary from OPENCODE_SERVER_STARTUP_TIMEOUT_MS would keep the
+// readiness tests green if that constant were shortened below the required budget.
+const EXPECTED_STARTUP_BUDGET_MS = 30_000;
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "opencode-agent-test-"));
@@ -3317,10 +3321,21 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       const dispatch = session.startTurn("wait for transport");
       const rejection = expect(dispatch).rejects.toThrow("OpenCode event stream first record");
-      await vi.advanceTimersByTimeAsync(OPENCODE_SERVER_STARTUP_TIMEOUT_MS - 1);
+      let settled = false;
+      const markSettled = () => {
+        settled = true;
+      };
+      void dispatch.then(markSettled, markSettled);
+
+      await vi.advanceTimersByTimeAsync(EXPECTED_STARTUP_BUDGET_MS - 1);
+      // Still waiting one tick before the budget: a shorter readiness timeout would have
+      // already failed the dispatch here.
+      expect(settled).toBe(false);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
       await vi.advanceTimersByTimeAsync(1);
       await rejection;
+      expect(settled).toBe(true);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
       vi.useRealTimers();
