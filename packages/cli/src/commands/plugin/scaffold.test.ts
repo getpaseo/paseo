@@ -50,7 +50,7 @@ describe("plugin scaffold", () => {
     await Promise.all([
       writeFile(
         path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@paseo/plugin";
+        `import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const inspect = defineRpc({
@@ -62,7 +62,7 @@ export const inspect = defineRpc({
       ),
       writeFile(
         path.join(directory, "inspect.server.ts"),
-        `import type { PluginHandlerContext } from "@paseo/plugin";
+        `import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { output as ZodOutput } from "zod";
 import { inspect } from "./inspect.shared";
 
@@ -83,7 +83,7 @@ import {
   useAgent,
   usePaseo,
   useWorkspace,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
 
 export function Surface() {
   const paseo = usePaseo();
@@ -111,7 +111,7 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
       ),
       writeFile(
         path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@paseo/plugin";
+        `import type { PluginContext } from "@getpaseo/plugin";
 import { AgentPanel, Surface } from "./main.client";
 import { inspectConfig } from "./inspect.server";
 import { inspect } from "./inspect.shared";

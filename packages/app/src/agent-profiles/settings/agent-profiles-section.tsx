@@ -12,6 +12,7 @@ import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useAgentProfiles } from "../internal/use-agent-profiles";
+import { generateAgentProfileId } from "../internal/profile-id";
 import type { AgentProfileValue } from "../internal/profile-form-model";
 import { AgentProfileEditModal } from "./agent-profile-edit-modal";
 import { AgentProfileRow } from "./agent-profile-row";
@@ -19,10 +20,6 @@ import { AgentProfileRow } from "./agent-profile-row";
 const ThemedPlus = withUnistyles(Plus);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const addIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
-
-function generateAgentProfileId(): string {
-  return `agent_profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-}
 
 interface EditTarget {
   mode: "create" | "edit";

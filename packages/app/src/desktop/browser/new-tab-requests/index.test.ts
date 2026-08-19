@@ -9,6 +9,7 @@ function createLayoutWithBrowser(browserId: string): WorkspaceLayout {
     layout: createDefaultLayout(),
     target: { kind: "browser", browserId },
     now: 1,
+    explorerPaneId: null,
   }).layout;
 }
 

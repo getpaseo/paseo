@@ -2,7 +2,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { SPACING } from "@/styles/theme";
 
 export const COMPOSER_PILL_CLEARANCE = {
-  compact: SPACING[4],
+  compact: SPACING[2],
   wide: 10,
 } as const;
 export const COMPOSER_PILL_MIN_HEIGHT = 32;

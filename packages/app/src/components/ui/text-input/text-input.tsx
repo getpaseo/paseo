@@ -11,7 +11,9 @@ type NativeInput = (TextInput | PasteTextInputInstance) & {
   blur(): void;
   focus(): void;
   isFocused(): boolean;
-  setNativeProps(props: { text: string; selection?: { start: number; end: number } }): void;
+  clear?(): void;
+  replaceText?(text: string, selection?: { start: number; end: number }): void;
+  setNativeProps?(props: { text?: string; selection?: { start: number; end: number } }): void;
   setSelection?(start: number, end: number): void;
   getNativeRef?(): unknown;
 };
@@ -39,7 +41,18 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       getText: () => textRef.current,
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
-        inputRef.current?.setNativeProps({ text: nextText, ...(selection ? { selection } : {}) });
+        if (inputRef.current?.replaceText) {
+          inputRef.current.replaceText(nextText, selection);
+          return;
+        }
+        if (nextText === "") {
+          inputRef.current?.clear?.();
+        } else {
+          inputRef.current?.setNativeProps?.({
+            text: nextText,
+            ...(selection ? { selection } : {}),
+          });
+        }
         if (selection) inputRef.current?.setSelection?.(selection.start, selection.end);
       },
       getNativeRef: () => inputRef.current?.getNativeRef?.() ?? inputRef.current,

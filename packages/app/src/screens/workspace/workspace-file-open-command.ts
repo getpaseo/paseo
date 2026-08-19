@@ -8,7 +8,10 @@ interface OpenWorkspaceFileFromExplorerInput {
   filePath: string;
   persistenceKey: string | null;
   showMobileAgent: () => void;
-  openWorkspaceTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openWorkspaceTabInFocusedPane: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+  ) => string | null;
   focusWorkspaceTab: (workspaceKey: string, tabId: string) => void;
 }
 
@@ -21,7 +24,7 @@ export function openWorkspaceFileFromExplorer(input: OpenWorkspaceFileFromExplor
   if (!location) {
     return;
   }
-  const tabId = input.openWorkspaceTabFocused(
+  const tabId = input.openWorkspaceTabInFocusedPane(
     input.persistenceKey,
     createWorkspaceFileTabTarget(location),
   );

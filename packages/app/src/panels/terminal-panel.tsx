@@ -84,16 +84,13 @@ function TerminalPanel() {
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
-  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
+  const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
   const handleOpenFileExplorer = useCallback(() => {
     if (!workspaceDirectory) {
       return;
     }
-    openFileExplorerForCheckout({
-      isCompact: true,
-      checkout: { serverId, cwd: workspaceDirectory, isGit: isGitCheckout },
-    });
-  }, [isGitCheckout, openFileExplorerForCheckout, serverId, workspaceDirectory]);
+    openCompactFileExplorer({ serverId, cwd: workspaceDirectory, isGit: isGitCheckout });
+  }, [isGitCheckout, openCompactFileExplorer, serverId, workspaceDirectory]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {

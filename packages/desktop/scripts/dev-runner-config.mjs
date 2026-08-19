@@ -1,4 +1,4 @@
-export function createElectronSpawnOptions({ env, colorEnv, expoDevUrl }) {
+export function createElectronSpawnOptions({ env, colorEnv, expoDevUrl, devBuildLabel }) {
   return {
     // Electron must stay in the runner's process group. Paseo workspace scripts
     // own the terminal process group, so detaching Electron lets it survive a
@@ -8,6 +8,7 @@ export function createElectronSpawnOptions({ env, colorEnv, expoDevUrl }) {
       ...env,
       ...colorEnv,
       EXPO_DEV_URL: expoDevUrl,
+      ...(devBuildLabel ? { EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL: devBuildLabel } : {}),
     },
   };
 }
