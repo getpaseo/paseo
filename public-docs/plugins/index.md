@@ -12,6 +12,9 @@ category: Plugins
 > distribution yet. The plugin API is still evolving, so expect breaking changes and updates to
 > your plugins as Paseo evolves.
 
+See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
+surfaces and their current status.
+
 Paseo plugins add native workspace panels, Command Center items, global surfaces, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
 Plugins are trusted local code. Install only code you trust: backend code runs unsandboxed with access to the daemon machine, and client contributions run inside the Paseo app.
@@ -43,7 +46,7 @@ Plugins run on desktop, browser, iOS, and Android. Paseo ships several themes. C
 Replace `main.client.tsx` with:
 
 ```tsx
-import { type PluginWorkspacePanelProps, useWorkspace } from "@paseo/plugin";
+import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -80,7 +83,7 @@ export function WorkspaceOverview({ theme, layout, workspaceId }: PluginWorkspac
 Replace `index.ts` with:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { WorkspaceOverview } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {

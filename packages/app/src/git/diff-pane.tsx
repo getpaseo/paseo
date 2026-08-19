@@ -1019,7 +1019,9 @@ function useDiffTabNavigation({
   cwd: string;
   isMobile: boolean;
 }) {
-  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const openWorkspaceTabInFocusedPane = useWorkspaceLayoutStore(
+    (state) => state.openTabInFocusedPane,
+  );
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const persistenceKey = useMemo(
     () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
@@ -1040,12 +1042,12 @@ function useDiffTabNavigation({
       if (!persistenceKey || isMobile) {
         return;
       }
-      openWorkspaceTabFocused(persistenceKey, {
+      openWorkspaceTabInFocusedPane(persistenceKey, {
         kind: "working_diff",
         ...(path ? { focusPath: path, focusRequestId: Date.now() } : {}),
       });
     },
-    [isMobile, openWorkspaceTabFocused, persistenceKey],
+    [isMobile, openWorkspaceTabInFocusedPane, persistenceKey],
   );
   const toggleChanges = useCallback(() => {
     if (!persistenceKey || isMobile) {
@@ -1060,10 +1062,10 @@ function useDiffTabNavigation({
   const openCommit = useCallback(
     (sha: string) => {
       if (persistenceKey) {
-        openWorkspaceTabFocused(persistenceKey, { kind: "commit_diff", sha });
+        openWorkspaceTabInFocusedPane(persistenceKey, { kind: "commit_diff", sha });
       }
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openWorkspaceTabInFocusedPane, persistenceKey],
   );
   return {
     changesTabOpen,

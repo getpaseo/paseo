@@ -53,7 +53,7 @@ my-plugin/
 ```
 
 Paseo compiles TypeScript and TSX when loading the plugin, so these packages are development dependencies only.
-The generated declaration file supplies `@paseo/plugin` and `@paseo/plugin/server` types until the
+The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types until the
 SDK is distributed as a public package. Regenerate new plugins with the matching Paseo CLI when the
 SDK contract changes.
 
@@ -96,15 +96,15 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@paseo/plugin/server`. Client files import hooks from
-`@paseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks from
+`@getpaseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
 `Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from
 `layout.compact`. See `public-docs/plugins/reference.md`.
 
-| Module                 | Use it for                                               |
-| ---------------------- | -------------------------------------------------------- |
-| `@paseo/plugin`        | hooks and UI types                                       |
-| `@paseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                    | Use it for                                               |
+| ------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`        | hooks and UI types                                       |
+| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client
@@ -113,7 +113,7 @@ such as `StyleSheet.create` belong in `*.client.tsx`; placing them in `index.ts`
 server bundle.
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { Greeting } from "./greeting.client";
 import { createGreeting } from "./greeting.server";
 import { greetRpc } from "./greeting.shared";
@@ -178,7 +178,7 @@ search picker, drafts, selected pill, and submission. The plugin returns complet
 credentials and vendor API calls stay in the daemon handler.
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { search } from "./issues.server";
 import { issues, searchIssues } from "./issues.shared";
 

@@ -585,6 +585,35 @@ describe("workspace-layout-store actions", () => {
     expect(layout.focusedPaneId).toBe("explorer");
   });
 
+  it("keeps ambient browser opens out of the focused explorer pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTabFocused(workspaceKey, { kind: "browser", browserId: "browser-1" });
+    store.focusPane(workspaceKey, "explorer");
+
+    const browserTabId = store.openTabFocused(workspaceKey, {
+      kind: "browser",
+      browserId: "browser-2",
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, browserTabId as string)?.id).toBe("main");
+    expect(layout.focusedPaneId).toBe("main");
+  });
+
+  it("keeps ambient draft opens out of the focused explorer pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    store.focusPane(workspaceKey, "explorer");
+
+    const draftTabId = store.openTabFocused(workspaceKey, { kind: "draft", draftId: "draft-1" });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, draftTabId as string)?.id).toBe("main");
+    expect(layout.focusedPaneId).toBe("main");
+  });
+
   it("honours an explicit pane id over the explorer reroute", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
@@ -599,6 +628,76 @@ describe("workspace-layout-store actions", () => {
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, draftTabId as string)?.id).toBe("explorer");
     expect(layout.focusedPaneId).toBe("explorer");
+  });
+
+  it("opens user-created entity tabs in the focused explorer pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    store.focusPane(workspaceKey, "explorer");
+
+    const terminalTabId = store.openTabInFocusedPane(workspaceKey, {
+      kind: "terminal",
+      terminalId: "terminal-1",
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, terminalTabId as string)?.id).toBe("explorer");
+    expect(layout.focusedPaneId).toBe("explorer");
+  });
+
+  it("keeps an existing user-created entity tab in its original pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const terminalTabId = store.openTabInBackground(workspaceKey, {
+      kind: "terminal",
+      terminalId: "terminal-1",
+    });
+    store.showPane(workspaceKey, "explorer");
+    store.focusPane(workspaceKey, "explorer");
+
+    store.openTabInFocusedPane(workspaceKey, {
+      kind: "terminal",
+      terminalId: "terminal-1",
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, terminalTabId as string)?.id).toBe("main");
+    expect(findPaneById(layout.root, "main")).toBeTruthy();
+    expect(layout.focusedPaneId).toBe("main");
+  });
+
+  it("defers terminal reconciliation while a user terminal is being created", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.focusPane(workspaceKey, "explorer");
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      knownTerminalIds: ["terminal-1"],
+      standaloneTerminalIds: ["terminal-1"],
+      hasActivePendingTerminalCreate: true,
+    });
+
+    let layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, "terminal_terminal-1")).toBeNull();
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      knownTerminalIds: ["terminal-1"],
+      standaloneTerminalIds: ["terminal-1"],
+    });
+
+    layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, "terminal_terminal-1")?.id).toBe("main");
   });
 
   it("keeps non-entity tabs in the focused explorer pane", () => {

@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { type PluginWorkspacePanelProps, useRpc, useWorkspace } from "@paseo/plugin";
+import { type PluginWorkspacePanelProps, useRpc, useWorkspace } from "@getpaseo/plugin";
 import React, { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { incrementRpc } from "./increment.shared";

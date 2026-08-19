@@ -41,7 +41,7 @@ The manifest contains the default plugin ID:
 
 Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
-The generated declaration file supplies `@paseo/plugin` and `@paseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
+The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
 
 Add runtime-specific files as the plugin grows:
 
@@ -60,10 +60,10 @@ my-plugin/
 
 ## SDK modules
 
-| Module                 | Use it for                                               |
-| ---------------------- | -------------------------------------------------------- |
-| `@paseo/plugin`        | hooks and UI types                                       |
-| `@paseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                    | Use it for                                               |
+| ------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`        | hooks and UI types                                       |
+| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 Paseo rejects imports from `*.server` files into client modules and imports from `*.client` files into server modules. Keep shared modules free of Node and React Native runtime code.
 
@@ -72,7 +72,7 @@ Paseo rejects imports from `*.server` files into client modules and imports from
 `index.ts` wires contributions together and default-exports one contribution function. It must return cleanup, even when it has nothing to clean:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { Main } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {
@@ -90,7 +90,7 @@ Register a component, then point a sidebar item at its surface ID:
 `main.client.tsx`:
 
 ```tsx
-import type { PluginSurfaceProps } from "@paseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -119,7 +119,7 @@ export function Main({ theme, host, layout }: PluginSurfaceProps) {
 `index.ts`:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { Main } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {
@@ -162,7 +162,7 @@ Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary co
 
 Workspace and agent panels receive the same `theme` and `layout` fields.
 
-Client code can import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@paseo/plugin`, and `@paseo/plugin/server`. Install them locally for typechecking; Paseo provides the client runtime instances.
+Client code can import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, and `@getpaseo/plugin/server`. Install them locally for typechecking; Paseo provides the client runtime instances.
 
 ## Workspace panels
 
@@ -171,7 +171,7 @@ Register one panel for workspace or agent context:
 `review.client.tsx`:
 
 ```tsx
-import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@paseo/plugin";
+import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -202,7 +202,7 @@ export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgent
 `index.ts`:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { ReviewPanel } from "./review.client";
 
 export default function contribute(plugin: PluginContext) {
@@ -281,7 +281,7 @@ Open the Command Center with **⌘K** on macOS or **Ctrl+K** on Windows and Linu
 Register an action and open a panel from the callback:
 
 ```tsx
-import { defineRpc } from "@paseo/plugin/server";
+import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const refreshReview = defineRpc({
@@ -336,7 +336,7 @@ An agent callback may open either an agent panel or a workspace panel. A workspa
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
 ```tsx
-import { usePaseo } from "@paseo/plugin";
+import { usePaseo } from "@getpaseo/plugin";
 import { Pressable, Text } from "react-native";
 
 function PullRequestAction() {
@@ -377,7 +377,7 @@ Define one contract with Zod, handle it in the subprocess, and call it from the 
 `greeting.shared.ts`:
 
 ```ts
-import { defineRpc } from "@paseo/plugin/server";
+import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const greeting = defineRpc({
@@ -390,7 +390,7 @@ export const greeting = defineRpc({
 `greeting.client.tsx`:
 
 ```tsx
-import { useRpc } from "@paseo/plugin";
+import { useRpc } from "@getpaseo/plugin";
 import { greeting } from "./greeting.shared";
 
 export function GreetingButton() {
@@ -414,7 +414,7 @@ export function createGreeting({ name }: ZodOutput<typeof greeting.input>) {
 `index.ts`:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { GreetingButton } from "./greeting.client";
 import { createGreeting } from "./greeting.server";
 import { greeting } from "./greeting.shared";
@@ -474,7 +474,7 @@ An attachment source searches external resources and returns a stable text snaps
 `issues.shared.ts`:
 
 ```ts
-import { defineAttachmentSource, defineRpc } from "@paseo/plugin/server";
+import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const searchIssues = defineRpc({
@@ -519,7 +519,7 @@ export function search({ query }: ZodOutput<typeof searchIssues.input>) {
 `index.ts`:
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { search } from "./issues.server";
 import { issues, searchIssues } from "./issues.shared";
 

@@ -86,11 +86,17 @@ interface WorkspaceLayoutStore {
     target: WorkspaceTabTarget,
     options?: WorkspaceTabOpenOptions,
   ) => string | null;
+  openTabInFocusedPane: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   openChildTabFocused: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
     parentTabId: string,
     options?: WorkspaceTabOpenOptions,
+  ) => string | null;
+  openChildTabInFocusedPane: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    parentTabId: string,
   ) => string | null;
   openTabInBackground: (
     workspaceKey: string,
@@ -146,11 +152,7 @@ interface WorkspaceLayoutStore {
   purgeWorkspace: (workspaceKey: string) => void;
 }
 
-/**
- * `paneId` states which pane the user acted in — the `+` menu of a pane's tab rail,
- * a subagent link inside a pane. Without it the open is ambient (sidebar click,
- * reconcile auto-open) and the store decides the pane.
- */
+/** `paneId` is explicit placement for a pane-local affordance; omitted opens use policy. */
 export interface WorkspaceTabOpenOptions {
   paneId?: string | null;
 }
@@ -463,6 +465,17 @@ export function createWorkspaceLayoutStore(
 
           return result.tabId;
         },
+        openTabInFocusedPane: (workspaceKey, target) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return null;
+          }
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
+          const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
+          return get().openTabFocused(normalizedWorkspaceKey, target, {
+            paneId: focusedPane?.hidden === true ? null : focusedPane?.id,
+          });
+        },
         openChildTabFocused: (workspaceKey, target, parentTabId, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedParentTabId = trimNonEmpty(parentTabId);
@@ -501,6 +514,17 @@ export function createWorkspaceLayoutStore(
           });
 
           return result.tabId;
+        },
+        openChildTabInFocusedPane: (workspaceKey, target, parentTabId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return null;
+          }
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
+          const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
+          return get().openChildTabFocused(normalizedWorkspaceKey, target, parentTabId, {
+            paneId: focusedPane?.hidden === true ? null : focusedPane?.id,
+          });
         },
         openTabInBackground: (workspaceKey, target, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

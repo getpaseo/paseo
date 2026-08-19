@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0-beta.2 - 2026-08-19
+
+### Added
+
+- Added Android Studio to Open in editor ([#3531](https://github.com/getpaseo/paseo/pull/3531) by [@caikovsky](https://github.com/caikovsky))
+
+### Fixed
+
+- Fixed `npm install @getpaseo/cli@beta` failing with a 404 because the plugin SDK it depends on was never published
+- Renamed the plugin SDK package to `@getpaseo/plugin`, with `@paseo/plugin` imports still resolving for existing plugins
+- Fixed the old docked file explorer sidebar staying open next to the explorer pane after upgrading to 0.5.0-beta.1, with no way to dismiss it on Windows and Linux
+- Fixed new agents, terminals, and browser tabs opening in a background pane instead of the focused one
+
 ## 0.5.0-beta.1 - 2026-08-18
 
 ### Added

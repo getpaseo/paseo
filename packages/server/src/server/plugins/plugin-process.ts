@@ -5,10 +5,11 @@ import {
   defineRpc,
   type PluginHandlerContext,
   type PluginRpcContract,
-} from "@paseo/plugin/server";
+} from "@getpaseo/plugin/server";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
+import { isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -64,7 +65,7 @@ function register(contract: PluginRpcContract, handler: RpcHandler): void {
 const pluginAuthorRuntime = { defineAttachmentSource, defineRpc };
 
 function runtimeRequire(name: string): unknown {
-  if (name === "@paseo/plugin" || name === "@paseo/plugin/server") return pluginAuthorRuntime;
+  if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }
 

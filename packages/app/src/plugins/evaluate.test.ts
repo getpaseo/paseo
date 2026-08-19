@@ -162,11 +162,11 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
-  it("resolves @paseo/plugin/server for shared RPC contracts", () => {
+  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { defineRpc, defineAttachmentSource } = require("@paseo/plugin/server");
+        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
         const search = defineRpc({ name: "issues.search", input: {}, output: {} });
         const module = { exports: {} };
         module.exports.default = function(plugin) {

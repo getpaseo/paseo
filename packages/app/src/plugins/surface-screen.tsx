@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { PluginSurfaceProps, PluginTheme } from "@paseo/plugin";
+import type { PluginSurfaceProps, PluginTheme } from "@getpaseo/plugin";
 import { ChevronDown, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Platform, Pressable, Text, View } from "react-native";

@@ -50,7 +50,7 @@ The manifest supplies the default install ID:
 Default-export one contribution function. It must return cleanup, even when there is nothing to clean:
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 
 export default function contribute(plugin: PluginContext) {
   // Register contributions here.
@@ -67,7 +67,7 @@ mobile, and Paseo has multiple themes. Every `Text` must take its color from `th
 Use `layout.compact` for padding and stacking. Unstyled text is black and fails in dark themes.
 
 ```tsx
-import { type PluginContext, type PluginWorkspacePanelProps, useWorkspace } from "@paseo/plugin";
+import { type PluginContext, type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -123,7 +123,7 @@ the active workspace or agent. Command callbacks receive the selected host's `pa
 Plugin surfaces use React Native primitives and work across desktop, browser, iOS, and Android. Register the surface before its sidebar item. Color text from `theme.colors` and pad from `layout.compact`.
 
 ```tsx
-import type { PluginContext, PluginSurfaceProps } from "@paseo/plugin";
+import type { PluginContext, PluginSurfaceProps } from "@getpaseo/plugin";
 import React, { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -172,12 +172,12 @@ export default function contribute(plugin: PluginContext) {
 
 Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every surface and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
-Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@paseo/plugin`, and `@paseo/plugin/server`. Install dependencies locally for typechecking; Paseo supplies these runtime modules.
+Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, and `@getpaseo/plugin/server`. Install dependencies locally for typechecking; Paseo supplies these runtime modules.
 
-| Module                 | Use it for                                           |
-| ---------------------- | ---------------------------------------------------- |
-| `@paseo/plugin`        | hooks and UI types                                   |
-| `@paseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, handler types |
+| Module                    | Use it for                                           |
+| ------------------------- | ---------------------------------------------------- |
+| `@getpaseo/plugin`        | hooks and UI types                                   |
+| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, handler types |
 
 ## Choose the correct API
 
@@ -188,7 +188,7 @@ Use the existing Paseo SDK for normal Paseo operations. Use plugin RPC only for 
 `usePaseo()` borrows the selected host's current connection. Never create another client inside a surface.
 
 ```tsx
-import { usePaseo } from "@paseo/plugin";
+import { usePaseo } from "@getpaseo/plugin";
 
 function PullRequestAction() {
   const paseo = usePaseo();
@@ -221,9 +221,9 @@ The API covers workspaces, agents, providers, and daemon config. It omits connec
 Define one Zod contract, register its subprocess handler, and call it with `useRpc()`:
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
-import { useRpc } from "@paseo/plugin";
-import { defineRpc } from "@paseo/plugin/server";
+import type { PluginContext } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const greeting = defineRpc({
@@ -275,8 +275,8 @@ daemon log. Never log credentials or other secrets.
 Define a search RPC and register a declarative source:
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
-import { defineAttachmentSource, defineRpc } from "@paseo/plugin/server";
+import type { PluginContext } from "@getpaseo/plugin";
+import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const searchIssues = defineRpc({

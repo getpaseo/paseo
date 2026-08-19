@@ -73,14 +73,18 @@ afterEach(async () => {
 });
 
 describe("plugin author module externals", () => {
-  it("leaves @paseo/plugin/server external in both bundles", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-    temporaryDirectories.push(directory);
-    const entryPath = path.join(directory, "index.ts");
-    await writeFile(
-      entryPath,
-      `import type { PluginContext } from "@paseo/plugin";
-import { defineRpc } from "@paseo/plugin/server";
+  // COMPAT(plugin-sdk-scope): plugins written against the unpublished @paseo/plugin name must
+  // keep compiling. Drop that case with the specifiers in plugin-sdk-specifiers.ts.
+  it.each(["@getpaseo/plugin", "@paseo/plugin"])(
+    "leaves %s/server external in both bundles",
+    async (sdk) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+      temporaryDirectories.push(directory);
+      const entryPath = path.join(directory, "index.ts");
+      await writeFile(
+        entryPath,
+        `import type { PluginContext } from "${sdk}";
+import { defineRpc } from "${sdk}/server";
 import { z } from "zod";
 
 const ping = defineRpc({
@@ -94,12 +98,13 @@ export default function contribute(plugin: PluginContext) {
   return () => undefined;
 }
 `,
-    );
+      );
 
-    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
-    expect(clientBundle).toContain("@paseo/plugin/server");
-    expect(serverBundle).toContain("@paseo/plugin/server");
-    expect(clientBundle).not.toContain("Invalid plugin RPC method");
-    expect(serverBundle).not.toContain("Invalid plugin RPC method");
-  });
+      const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+      expect(clientBundle).toContain(`${sdk}/server`);
+      expect(serverBundle).toContain(`${sdk}/server`);
+      expect(clientBundle).not.toContain("Invalid plugin RPC method");
+      expect(serverBundle).not.toContain("Invalid plugin RPC method");
+    },
+  );
 });

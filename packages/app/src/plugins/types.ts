@@ -5,7 +5,7 @@ import type {
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginWorkspacePanelContribution,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
 
 export interface EvaluatedPlugin {
   id: string;

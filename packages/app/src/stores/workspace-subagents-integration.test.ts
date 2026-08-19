@@ -108,6 +108,7 @@ function reconcileWorkspaceTabs(workspaceKey: string, visibility: WorkspaceAgent
       terminalsHydrated: true,
       knownTerminalIds: [],
       standaloneTerminalIds: [],
+      hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
     }),
   );

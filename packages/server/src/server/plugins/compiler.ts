@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { parse } from "@babel/parser";
 import type { Plugin } from "esbuild";
+import { PLUGIN_SDK_SPECIFIERS } from "./plugin-sdk-specifiers.js";
 
 const nodeRequire = createRequire(import.meta.url);
 const ESBUILD_BINARY_PATH = "ESBUILD_BINARY_PATH";
@@ -307,15 +308,14 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     external:
       target === "client"
         ? [
-            "@paseo/plugin",
-            "@paseo/plugin/server",
+            ...PLUGIN_SDK_SPECIFIERS,
             "@tanstack/react-query",
             "react",
             "react/jsx-runtime",
             "react-native",
             "zod",
           ]
-        : ["@paseo/plugin", "@paseo/plugin/server", "zod"],
+        : [...PLUGIN_SDK_SPECIFIERS, "zod"],
     plugins: [createRuntimeBoundaryPlugin(target), createUnusedPlatformModulePlugin(target)],
     logLevel: "silent",
     treeShaking: true,

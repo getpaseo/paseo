@@ -1,7 +1,7 @@
 {
-  "name": "@paseo/plugin",
-  "version": "0.5.0-beta.1",
-  "private": true,
+  "name": "@getpaseo/plugin",
+  "version": "0.5.0-beta.2",
+  "description": "Paseo plugin SDK package",
   "files": [
     "dist",
     "!dist/**/*.map"
@@ -24,6 +24,9 @@
       "default": "./dist/host.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
     "build": "tsc -p tsconfig.json --incremental false",
@@ -36,7 +39,7 @@
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "*",
+    "@getpaseo/client": "0.5.0-beta.2",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -45,7 +48,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "*",
+    "@getpaseo/client": "0.5.0-beta.2",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

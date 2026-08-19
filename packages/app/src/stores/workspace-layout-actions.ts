@@ -213,6 +213,7 @@ export interface WorkspaceTabSnapshot {
   knownAgentIds: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
+  hasActivePendingTerminalCreate?: boolean;
   hasActivePendingDraftCreate?: boolean;
 }
 
@@ -1866,6 +1867,7 @@ function addMissingEntityTabs(input: {
   autoOpenAgentIds: Set<string>;
   representedAgentIds: Set<string>;
   standaloneTerminalIds: Set<string>;
+  hasActivePendingTerminalCreate: boolean;
   hasActivePendingDraftCreate: boolean;
   explorerPaneId: string | null;
 }): WorkspaceLayout {
@@ -1873,6 +1875,7 @@ function addMissingEntityTabs(input: {
     autoOpenAgentIds,
     representedAgentIds,
     standaloneTerminalIds,
+    hasActivePendingTerminalCreate,
     hasActivePendingDraftCreate,
     explorerPaneId,
   } = input;
@@ -1902,16 +1905,18 @@ function addMissingEntityTabs(input: {
   }
 
   const sortedTerminalIds = [...standaloneTerminalIds].sort();
-  for (const terminalId of sortedTerminalIds) {
-    if (currentTerminalIds.has(terminalId)) {
-      continue;
+  if (!hasActivePendingTerminalCreate) {
+    for (const terminalId of sortedTerminalIds) {
+      if (currentTerminalIds.has(terminalId)) {
+        continue;
+      }
+      nextLayout = openEntityTabWithoutFocusing({
+        layout: nextLayout,
+        target: { kind: "terminal", terminalId },
+        explorerPaneId,
+      });
+      currentTerminalIds.add(terminalId);
     }
-    nextLayout = openEntityTabWithoutFocusing({
-      layout: nextLayout,
-      target: { kind: "terminal", terminalId },
-      explorerPaneId,
-    });
-    currentTerminalIds.add(terminalId);
   }
   return nextLayout;
 }
@@ -1999,6 +2004,7 @@ export function reconcileWorkspaceTabs(
     autoOpenAgentIds: autoOpenSet,
     representedAgentIds,
     standaloneTerminalIds,
+    hasActivePendingTerminalCreate: snapshot.hasActivePendingTerminalCreate ?? false,
     hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,
     explorerPaneId: state.explorerPaneId,
   });

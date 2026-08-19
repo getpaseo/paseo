@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
 
-const SDK_DECLARATIONS = `declare module "@paseo/plugin/server" {
+const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
   import type { PaseoApi } from "@getpaseo/client";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 
@@ -56,7 +56,7 @@ const SDK_DECLARATIONS = `declare module "@paseo/plugin/server" {
   export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
 }
 
-declare module "@paseo/plugin" {
+declare module "@getpaseo/plugin" {
   import type { ComponentType } from "react";
   import type { PaseoApi } from "@getpaseo/client";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
@@ -64,7 +64,7 @@ declare module "@paseo/plugin" {
     PluginAttachmentSourceContribution,
     PluginHandlerContext,
     PluginRpcContract,
-  } from "@paseo/plugin/server";
+  } from "@getpaseo/plugin/server";
 
   export {
     PluginAttachmentItemSchema,
@@ -76,7 +76,7 @@ declare module "@paseo/plugin" {
     type PluginAttachmentSourceContribution,
     type PluginHandlerContext,
     type PluginRpcContract,
-  } from "@paseo/plugin/server";
+  } from "@getpaseo/plugin/server";
 
   export interface PluginTheme {
     readonly colors: {
@@ -242,7 +242,7 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const ENTRY = `import type { PluginContext } from "@paseo/plugin";
+const ENTRY = `import type { PluginContext } from "@getpaseo/plugin";
 import { MainSurface } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {
@@ -251,7 +251,7 @@ export default function contribute(plugin: PluginContext) {
 }
 `;
 
-const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@paseo/plugin";
+const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
 import React, { useMemo } from "react";
 import { Text, View } from "react-native";
 
