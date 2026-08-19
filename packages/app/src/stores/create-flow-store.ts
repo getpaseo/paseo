@@ -33,6 +33,8 @@ export function isActiveCreateFlowForDraft(input: {
 
 interface CreateFlowState {
   pendingByDraftId: Record<string, PendingCreateAttempt>;
+  /** Create attempts that are in flight, keyed by `${serverId}:${workspaceId}`. */
+  createInFlightByWorkspace: Record<string, string>;
   setPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => void;
   updateAgentId: (input: { draftId: string; agentId: string }) => void;
   markLifecycle: (input: { draftId: string; lifecycle: CreateFlowLifecycleState }) => void;
@@ -40,10 +42,22 @@ interface CreateFlowState {
   clear: (input: { draftId: string }) => void;
   clearByAgent: (input: { serverId: string; agentId: string }) => void;
   clearAll: () => void;
+  /** Synchronously claim the create slot for a workspace; returns false when one is already in flight. */
+  tryBeginCreate: (input: {
+    serverId: string;
+    workspaceId: string | null | undefined;
+    clientMessageId: string;
+  }) => boolean;
+  endCreate: (input: { serverId: string; workspaceId: string | null | undefined }) => void;
 }
 
-export const useCreateFlowStore = create<CreateFlowState>((set) => ({
+function buildCreateInFlightKey(serverId: string, workspaceId: string): string {
+  return `${serverId}:${workspaceId}`;
+}
+
+export const useCreateFlowStore = create<CreateFlowState>((set, get) => ({
   pendingByDraftId: {},
+  createInFlightByWorkspace: {},
   setPending: (pending) =>
     set((state) => ({
       pendingByDraftId: {
@@ -120,5 +134,34 @@ export const useCreateFlowStore = create<CreateFlowState>((set) => ({
       }
       return { pendingByDraftId: next };
     }),
-  clearAll: () => set({ pendingByDraftId: {} }),
+  clearAll: () => set({ pendingByDraftId: {}, createInFlightByWorkspace: {} }),
+  tryBeginCreate: ({ serverId, workspaceId, clientMessageId }) => {
+    if (!workspaceId) {
+      return true;
+    }
+    const key = buildCreateInFlightKey(serverId, workspaceId);
+    if (get().createInFlightByWorkspace[key]) {
+      return false;
+    }
+    set({
+      createInFlightByWorkspace: {
+        ...get().createInFlightByWorkspace,
+        [key]: clientMessageId,
+      },
+    });
+    return true;
+  },
+  endCreate: ({ serverId, workspaceId }) => {
+    if (!workspaceId) {
+      return;
+    }
+    const key = buildCreateInFlightKey(serverId, workspaceId);
+    set((state) => {
+      if (!state.createInFlightByWorkspace[key]) {
+        return state;
+      }
+      const { [key]: _removed, ...rest } = state.createInFlightByWorkspace;
+      return { createInFlightByWorkspace: rest };
+    });
+  },
 }));
