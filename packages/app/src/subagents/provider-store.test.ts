@@ -66,10 +66,22 @@ describe("provider subagent client store", () => {
       updatedAt: "2026-07-12T10:00:00.000Z",
       toolCallId: null,
     };
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
     useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
       kind: "upsert",
       subagent: running,
     });
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "pi",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Partial result" },
+    });
+    useProviderSubagentStore.setState({ hiddenFromTrack: new Set([key]) });
     const staleRefresh = refreshProviderSubagents(client, SERVER_ID, PARENT_ID);
 
     resetProviderSubagents(client, SERVER_ID);
@@ -81,13 +93,10 @@ describe("provider subagent client store", () => {
     });
     await staleRefresh;
 
-    expect(
-      hasRunningProviderSubagent(
-        useProviderSubagentStore.getState().descriptors,
-        SERVER_ID,
-        PARENT_ID,
-      ),
-    ).toBe(false);
+    const state = useProviderSubagentStore.getState();
+    expect(hasRunningProviderSubagent(state.descriptors, SERVER_ID, PARENT_ID)).toBe(false);
+    expect(state.timelines.has(key)).toBe(false);
+    expect(state.hiddenFromTrack.has(key)).toBe(false);
   });
 
   test("builds a shared stream model from ordered provider updates", () => {

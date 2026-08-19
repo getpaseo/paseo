@@ -545,13 +545,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     if (!isConnected || !providerSubagentsSupported || agentDirectoryStatus !== "ready") return;
-    const parentAgentIds = [
-      ...(useSessionStore.getState().sessions[serverId]?.agents.keys() ?? []),
-    ];
     let canceled = false;
     let retryDelayMs = 1_000;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     const refresh = () => {
+      const parentAgentIds = [
+        ...(useSessionStore.getState().sessions[serverId]?.agents.keys() ?? []),
+      ];
       void Promise.all(
         parentAgentIds.map((parentAgentId) =>
           refreshProviderSubagents(client, serverId, parentAgentId),

@@ -97,6 +97,8 @@ export function resetProviderSubagents(client: ProviderSubagentListClient, serve
   }
   useProviderSubagentStore.setState((state) => ({
     descriptors: new Map([...state.descriptors].filter(([key]) => !key.startsWith(prefix))),
+    timelines: new Map([...state.timelines].filter(([key]) => !key.startsWith(prefix))),
+    hiddenFromTrack: new Set([...state.hiddenFromTrack].filter((key) => !key.startsWith(prefix))),
   }));
 }
 
