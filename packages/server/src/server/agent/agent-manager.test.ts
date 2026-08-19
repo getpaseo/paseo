@@ -3017,6 +3017,69 @@ test("setAgentMode persists the selected mode across session reload", async () =
   expect(reloaded.currentModeId).toBe("full-access");
 });
 
+test("reloadAgentSession closes the previous session before resuming the replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-before-resume-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const order: string[] = [];
+
+  class OrderTrackingSession extends TestAgentSession {
+    override async close(): Promise<void> {
+      order.push("close");
+    }
+  }
+
+  class OrderTrackingClient extends TestAgentClient {
+    readonly firstSession = new OrderTrackingSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.firstSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      order.push("resume");
+      return new TestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const client = new OrderTrackingClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000307",
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    const reloaded = await manager.reloadAgentSession(snapshot.id);
+
+    expect(reloaded.id).toBe(snapshot.id);
+    expect(order).toEqual(["close", "resume"]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession completes when the previous session close hangs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
   const storagePath = join(workdir, "agents");
@@ -3543,7 +3606,7 @@ test("resumeAgentFromPersistence closes and rejects a session that cannot honor 
   }
 });
 
-test("reloadAgentSession preserves the live session when its replacement cannot honor external MCP", async () => {
+test("reloadAgentSession closes the previous session even when replacement MCP support fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const original = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
   const replacement = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
@@ -3580,7 +3643,7 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
     ).rejects.toThrow("Provider 'codex' does not support MCP servers");
 
     expect(replacement.closed).toBe(true);
-    expect(original.closed).toBe(false);
+    expect(original.closed).toBe(true);
     expect(manager.getAgent(created.id)?.session).toBe(original);
     expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
   } finally {

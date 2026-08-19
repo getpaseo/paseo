@@ -1379,6 +1379,16 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
+    // Codex holds an exclusive thread writer until the previous app-server exits.
+    // Spawning the replacement and calling thread/resume first deadlocks reload:
+    // the new process fails with "already has an active writer".
+    this.cancelRunningProviderSubagents(agentId);
+    this.logger.debug(
+      { agentId, provider },
+      "Closing previous session before reload resume",
+    );
+    await this.closeReloadedSession(existing.session, agentId);
+
     const session = handle
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
       : await client.createSession(providerLaunchConfig, launchContext);
@@ -1388,13 +1398,8 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
-      this.cancelRunningProviderSubagents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
+      await this.persistSnapshot(closedExisting);
 
       if (rehydrateFromDisk) {
         // Wipe both durable and in-memory timeline so registerSession mints a
