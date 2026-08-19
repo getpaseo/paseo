@@ -1457,6 +1457,50 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("rewinds the conversation with the current runtime MCP config on thread/fork", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({
+        cwd: "/workspace/project",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer cap-token" },
+          },
+        },
+      }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
+    appServer.completeTurn();
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
+    appServer.completeTurn();
+
+    await session.revertConversation({ messageId: "codex-first" });
+
+    const fork = appServer.requests().find((request) => request.method === "thread/fork");
+    expect(fork?.params).toMatchObject({
+      threadId: "thread-1",
+      config: {
+        mcp_servers: {
+          paseo: {
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            http_headers: { Authorization: "Bearer cap-token" },
+          },
+        },
+      },
+    });
+    expect(appServer.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("correlates a Codex user message with the submitting client message", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

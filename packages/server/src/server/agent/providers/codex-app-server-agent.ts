@@ -4548,6 +4548,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.ensureThread();
     }
 
+    const developerInstructions = composeSystemPromptParts(
+      this.config.systemPrompt,
+      this.config.daemonAppendSystemPrompt,
+    );
     await revertCodexConversation({
       client: this.client,
       threadId: this.currentThreadId,
@@ -4555,6 +4559,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       cwd: this.config.cwd ?? null,
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
+      config: this.buildCodexInnerConfig(),
+      developerInstructions: developerInstructions ?? null,
       userMessageTurns: this.codexUserMessageTurns(),
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
