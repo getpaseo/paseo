@@ -718,8 +718,23 @@ export class AgentManager {
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
       onFlush: ({ agentId, item, provider, turnId }) => {
-        const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
-        this.notifyForegroundTurnWaiters(agentId, event);
+        // This runs off a deferred timer (see AgentStreamCoalescer.scheduleFlush),
+        // so the agent's in-memory state can already be torn down by the time it
+        // fires — archived, closed, or otherwise removed between the event being
+        // buffered and the coalescing window elapsing. recordAndDispatchTimelineItem
+        // throws in that case ("Unknown agent"), and an uncaught throw out of a
+        // setTimeout callback takes the whole daemon down with it. The flush is
+        // best-effort against a live agent; drop it and move on if the agent is
+        // already gone rather than crashing every other agent's session with it.
+        try {
+          const event = this.recordAndDispatchTimelineItem(agentId, item, provider, turnId);
+          this.notifyForegroundTurnWaiters(agentId, event);
+        } catch (error) {
+          this.logger.warn(
+            { err: error, agentId },
+            "Dropped a coalesced timeline flush for an agent that is no longer tracked",
+          );
+        }
       },
     });
     this.updateProviderRegistry({
