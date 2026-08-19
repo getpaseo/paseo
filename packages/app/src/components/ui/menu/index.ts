@@ -21,6 +21,8 @@ export {
   MenuItem,
   MenuLabel,
   MenuSeparator,
+  MenuTextField,
+  menuRowContentInset,
   type ActionStatus,
   type MenuItemProps,
 } from "./menu-item";

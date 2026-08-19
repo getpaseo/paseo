@@ -140,6 +140,7 @@ interface ReorderFocusedPaneTabsInLayoutInput {
 interface CloseTabInLayoutInput {
   layout: WorkspaceLayout;
   tabId: string;
+  preserveEmptyPaneId?: string | null;
 }
 
 interface SplitPaneInLayoutInput {
@@ -211,6 +212,8 @@ export interface WorkspaceTabSnapshot {
 }
 
 const DEFAULT_PANE_ID = "main";
+export const DEFAULT_EXPLORER_PANE_ID = "explorer";
+const DEFAULT_LAYOUT_GROUP_ID = "workspace-root";
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -463,6 +466,21 @@ function findGroupPathById(
     }
   }
   return null;
+}
+
+/**
+ * The group holding the node at `targetPath`, or null when that node is the whole tree.
+ *
+ * Ask `targetPath`, never the parent path: `targetPath.slice(0, -1)` is empty both for "this node
+ * is the root" and for "this node is a direct child of the root group". Treating the second case as
+ * parentless wraps root-level panes in a redundant group on every split, which reparents the
+ * existing pane and remounts its whole subtree.
+ */
+function findParentGroup(root: SplitNodeInternal, targetPath: number[]): SplitNodeInternal | null {
+  if (targetPath.length === 0) {
+    return null;
+  }
+  return getNodeAtPath(root, targetPath.slice(0, -1));
 }
 
 function getNodeAtPath(node: SplitNodeInternal, path: number[]): SplitNodeInternal {
@@ -866,7 +884,7 @@ function insertSplitInternal(input: InsertSplitInternalInput): InsertSplitIntern
 
   const parentPath = targetPath.slice(0, -1);
   const targetIndex = targetPath[targetPath.length - 1] ?? 0;
-  const parentNode = parentPath.length > 0 ? getNodeAtPath(detached.root, parentPath) : null;
+  const parentNode = findParentGroup(detached.root, targetPath);
 
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {
     const targetSize = parentNode.group.sizes[targetIndex] ?? 0;
@@ -1051,6 +1069,22 @@ export function createDefaultLayout(): WorkspaceLayout {
   };
 }
 
+/** The desktop companion pane exists before it is first shown. */
+export function createWorkspaceLayoutWithExplorer(): WorkspaceLayout {
+  return {
+    root: createGroupNode({
+      id: DEFAULT_LAYOUT_GROUP_ID,
+      direction: "horizontal",
+      children: [
+        createPaneNode({ id: DEFAULT_PANE_ID }),
+        createPaneNode({ id: DEFAULT_EXPLORER_PANE_ID, hidden: true }),
+      ],
+      sizes: [0.5, 0.5],
+    }),
+    focusedPaneId: DEFAULT_PANE_ID,
+  };
+}
+
 export function insertSplit(
   root: SplitNode,
   targetPaneId: string,
@@ -1079,7 +1113,10 @@ export function removePaneFromTree(root: SplitNode, paneId: string): SplitNode {
 }
 
 export function removeTabFromTree(root: SplitNode, tabId: string): SplitNode {
-  return detachTabFromTree(asInternalNode(root), { tabId }).root;
+  return detachTabFromTree(asInternalNode(root), {
+    tabId,
+    preserveEmptyPaneId: DEFAULT_PANE_ID,
+  }).root;
 }
 
 function insertNewTabIntoFocusedPane(input: {
@@ -1182,6 +1219,9 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (!pane) {
     return null;
   }
+  const preserveEmptyPaneId =
+    input.preserveEmptyPaneId ??
+    (pane.id === DEFAULT_PANE_ID || pane.id === DEFAULT_EXPLORER_PANE_ID ? pane.id : null);
 
   const closeSuccessorTabId = getCloseSuccessorTabId({
     pane,
@@ -1190,7 +1230,10 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
   });
   const fallbackPaneId = findNearestSiblingPaneId(internalLayout.root, pane.id);
-  const nextRoot = removeTabFromTree(internalLayout.root, input.tabId) as SplitNodeInternal;
+  const nextRoot = detachTabFromTree(internalLayout.root, {
+    tabId: input.tabId,
+    preserveEmptyPaneId,
+  }).root;
   const parentTabIdByTabId = normalizeParentTabMap({
     raw: input.layout.parentTabIdByTabId,
     openTabIds: new Set(collectAllTabs(nextRoot).map((tab) => tab.tabId)),
@@ -1420,7 +1463,7 @@ export function splitPaneEmptyInLayout(
 
   const parentPath = targetPath.slice(0, -1);
   const targetIndex = targetPath[targetPath.length - 1] ?? 0;
-  const parentNode = parentPath.length > 0 ? getNodeAtPath(layout.root, parentPath) : null;
+  const parentNode = findParentGroup(layout.root, targetPath);
 
   let nextRoot: SplitNodeInternal;
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {

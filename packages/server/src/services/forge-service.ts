@@ -63,6 +63,7 @@ export interface PullRequestCheck {
   status: PullRequestCheckStatus;
   url: string | null;
   workflow?: string;
+  /** How long the check took, or how long it has been running. Formatted, never raw. */
   duration?: string;
   checkRunId?: number;
   workflowRunId?: number;

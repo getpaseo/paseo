@@ -463,6 +463,40 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("delivers agent-target schedules through the steer-or-interrupt path", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const steerOrReplace = vi.spyOn(manager, "steerOrReplaceActiveTurn");
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const schedule = await service.create({
+      prompt: "Check scheduled work",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agent.id },
+    });
+
+    await service.runOnce(schedule.id);
+
+    expect(steerOrReplace).toHaveBeenCalledTimes(1);
+    expect(steerOrReplace.mock.calls[0]).toEqual([
+      agent.id,
+      expect.stringContaining(`Schedule fired (id=${schedule.id}, run=`),
+      undefined,
+    ]);
+  });
+
   test("titles scheduled new agents from the schedule prompt", async () => {
     const manager = new AgentManager({
       logger: createTestLogger(),

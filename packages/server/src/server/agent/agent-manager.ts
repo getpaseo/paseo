@@ -2398,8 +2398,8 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
-    const expectedTurnId = agent.activeForegroundTurnId;
-    if (!expectedTurnId || !this.runs.hasRun(agentId) || !agent.session.steerActiveTurn) {
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId || !agent.session.steerActiveTurn) {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
@@ -2413,8 +2413,8 @@ export class AgentManager {
       return admission;
     });
     // An unavailable answer is only safe to fall back from while this admission
-    // still owns the foreground. Never let an A admission replace a later B.
-    if (result.status === "unavailable" && agent.activeForegroundTurnId !== expectedTurnId) {
+    // still owns the active turn. Never let an A admission replace a later B.
+    if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
       throw new Error("Active turn changed before steering could be delivered");
     }
     return result;
@@ -2426,8 +2426,8 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
     const agent = this.requireSessionAgent(agentId);
-    const expectedTurnId = agent.activeForegroundTurnId;
-    if (!expectedTurnId || !this.runs.hasRun(agentId)) {
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId) {
       return { status: "inactive" };
     }
 
@@ -2447,19 +2447,22 @@ export class AgentManager {
       return { status: "steered" };
     }
 
+    // Providers without autonomous steering keep their existing dispatch behavior. The shared
+    // admission may recognize the turn, but only an accepted steer can own it without replacement.
+    if (agent.activeForegroundTurnId === null && agent.activeTurnId === expectedTurnId) {
+      return { status: "inactive" };
+    }
+
     await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
-    this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     return {
       status: "replaced",
       iterator: await this.replaceAdmittedForegroundTurn(agent, expectedTurnId, prompt, options),
     };
   }
 
-  private assertSteerAdmissionOwnsForeground(
-    agent: ActiveManagedAgent,
-    expectedTurnId: string,
-  ): void {
-    if (agent.activeForegroundTurnId !== expectedTurnId || !this.runs.hasRun(agent.id)) {
+  private assertSteerAdmissionOwnsTurn(agent: ActiveManagedAgent, expectedTurnId: string): void {
+    if (agent.activeTurnId !== expectedTurnId) {
       throw new Error("Active turn changed before steering could be delivered");
     }
   }
@@ -2472,7 +2475,7 @@ export class AgentManager {
     return this.runForegroundMutation(agent.id, async () => {
       await this.drainSessionEvents(agent.id);
       this.agentStreamCoalescer.flushFor(agent.id);
-      this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
+      this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
       const barrier: SteerEventBarrier = { events: [] };
       this.steerEventBarriers.set(agent.id, barrier);
       try {
@@ -2512,7 +2515,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
-    this.assertSteerAdmissionOwnsForeground(agent, expectedTurnId);
+    this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     agent.pendingReplacement = true;
     agent.lifecycle = "running";
     this.touchUpdatedAt(agent);

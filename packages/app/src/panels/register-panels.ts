@@ -9,6 +9,7 @@ import { setupPanelRegistration } from "@/panels/setup-panel";
 import { terminalPanelRegistration } from "@/panels/terminal-panel";
 import { providerSubagentPanelRegistration } from "@/panels/provider-subagent-panel";
 import { pullRequestPanelRegistration } from "@/panels/pull-request-panel";
+import { pluginPanelRegistration } from "@/plugins/workspace-panels/panel";
 
 let panelsRegistered = false;
 
@@ -27,5 +28,6 @@ export function ensurePanelsRegistered(): void {
   registerPanel(pullRequestPanelRegistration);
   registerPanel(commitDiffPanelRegistration);
   registerPanel(workingDiffPanelRegistration);
+  registerPanel(pluginPanelRegistration);
   panelsRegistered = true;
 }

@@ -6,6 +6,7 @@ import { getServerId } from "../support/helpers/server-id";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
   expectAgentIdle,
   expectInlineWorkingIndicator,
@@ -150,7 +151,7 @@ test.describe("Viewed agent timelines", () => {
     try {
       await enableMoveTabShortcut(page);
       await openAgent(page, scenario, scenario.firstAgentId);
-      await page.getByRole("button", { name: "Split pane right" }).click();
+      await runWorkspaceActionFromCommandCenter(page, "Split pane right");
       await selectAgent(page, "Second viewed chat");
       await moveActiveTabRight(page);
       await expect(

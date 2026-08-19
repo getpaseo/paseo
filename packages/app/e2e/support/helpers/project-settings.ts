@@ -239,7 +239,7 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
   const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
   await page.getByTestId(`script-row-menu-${id}`).click();
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
 }
 
 export async function editProjectScript(page: Page, scriptName: string): Promise<void> {

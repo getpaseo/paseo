@@ -82,7 +82,7 @@ export async function openAttachmentMenu(page: Page): Promise<void> {
 export async function expectAttachmentSheetRowsOnTitleRail(page: Page): Promise<void> {
   const title = page.getByText("Add attachment", { exact: true });
   const firstItemGlyph = page
-    .getByRole("button", { name: "Add image", exact: true })
+    .getByRole("menuitem", { name: "Add image", exact: true })
     .locator("svg")
     .first();
   await waitForSettledPosition(title);

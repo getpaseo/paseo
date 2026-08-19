@@ -39,6 +39,16 @@ function taskNotification(status: string, taskId = "a1730a6215e1f5cf6"): SDKMess
   } as unknown as SDKMessage;
 }
 
+function taskProgress(usage: Record<string, number>, taskId = "a1730a6215e1f5cf6"): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_progress",
+    task_id: taskId,
+    usage,
+    last_tool_name: "Read",
+  } as unknown as SDKMessage;
+}
+
 describe("ClaudeTaskProtocolSource", () => {
   it("declares a subagent from its announcement, keyed by the Task tool_use id", () => {
     const source = new ClaudeTaskProtocolSource();
@@ -80,6 +90,93 @@ describe("ClaudeTaskProtocolSource", () => {
     // task_updated carries no tool_use_id — the mapping is the only way to route it.
     expect(source.observe(taskUpdated("completed"))).toEqual([
       { kind: "status", id: "toolu_01DgLoPMW9", status: "completed" },
+    ]);
+  });
+
+  it("keeps a resumed task on its original identity and timeline", () => {
+    const source = new ClaudeTaskProtocolSource();
+    const initial = source.observe(
+      taskStarted({ tool_use_id: "toolu_original", prompt: "First prompt" }),
+    );
+    const firstCompleted = source.observe(taskUpdated("completed"));
+    const resumed = source.observe(
+      taskStarted({ tool_use_id: "toolu_resumed", prompt: "Resumed prompt" }),
+    );
+    const resumedUsage = source.observe(taskProgress({ total_tokens: 12345 }));
+    const secondCompleted = source.observe(taskUpdated("completed"));
+
+    expect(initial).toContainEqual({
+      kind: "declared",
+      id: "toolu_original",
+      toolCallId: "toolu_original",
+      title: "general-purpose",
+      description: "Summarize hover and unistyles docs",
+    });
+    expect(initial).toContainEqual({
+      kind: "timeline",
+      id: "toolu_original",
+      item: { type: "user_message", text: "First prompt" },
+    });
+    expect(resumed).toEqual([
+      { kind: "status", id: "toolu_original", status: "running" },
+      {
+        kind: "timeline",
+        id: "toolu_original",
+        item: { type: "user_message", text: "Resumed prompt" },
+      },
+    ]);
+    expect(resumedUsage).toEqual([
+      {
+        kind: "subtitle",
+        id: "toolu_original",
+        subtitle: "general-purpose · 12.3k tokens",
+      },
+    ]);
+    expect(firstCompleted).toEqual([{ kind: "status", id: "toolu_original", status: "completed" }]);
+    expect(secondCompleted).toEqual([
+      { kind: "status", id: "toolu_original", status: "completed" },
+    ]);
+    expect(source.resolveSubagentId("toolu_original")).toBe("toolu_original");
+    expect(source.resolveSubagentId("toolu_resumed")).toBe("toolu_original");
+    expect(source.resolveSubagentId("unknown_tool")).toBeUndefined();
+    expect(
+      source.observeSidechainFrame(
+        {
+          type: "assistant",
+          message: { model: "claude-opus-5" },
+        } as unknown as SDKMessage,
+        source.resolveSubagentId("toolu_resumed") ?? "toolu_resumed",
+      ),
+    ).toEqual([
+      {
+        kind: "subtitle",
+        id: "toolu_original",
+        subtitle: "general-purpose · Opus 5 · 12.3k tokens",
+      },
+    ]);
+  });
+
+  it("declares a distinct task separately", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.observe(taskStarted({ task_id: "first", tool_use_id: "toolu_first" }));
+
+    expect(
+      source.observe(
+        taskStarted({ task_id: "second", tool_use_id: "toolu_second", prompt: "Another child" }),
+      ),
+    ).toEqual([
+      {
+        kind: "declared",
+        id: "toolu_second",
+        toolCallId: "toolu_second",
+        title: "general-purpose",
+        description: "Summarize hover and unistyles docs",
+      },
+      {
+        kind: "timeline",
+        id: "toolu_second",
+        item: { type: "user_message", text: "Another child" },
+      },
     ]);
   });
 
@@ -376,16 +473,6 @@ describe("ClaudeTaskProtocolSource", () => {
 });
 
 describe("ClaudeTaskProtocolSource usage and runtime", () => {
-  function taskProgress(usage: Record<string, number>, taskId = "a1730a6215e1f5cf6"): SDKMessage {
-    return {
-      type: "system",
-      subtype: "task_progress",
-      task_id: taskId,
-      usage,
-      last_tool_name: "Read",
-    } as unknown as SDKMessage;
-  }
-
   function assistantFrame(model: string): SDKMessage {
     return { type: "assistant", message: { model, content: [] } } as unknown as SDKMessage;
   }

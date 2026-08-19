@@ -227,6 +227,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect(Object.keys(paseo).sort()).toEqual(["agents", "config", "providers", "workspaces"]);
   expect("connect" in paseo).toBe(false);
   expect("close" in paseo).toBe(false);
+  expect("skills" in paseo.agents).toBe(false);
 });
 
 test("agent actions list the daemon directory without exposing the low-level client", async () => {
@@ -374,6 +375,27 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   );
   expect(updates).toEqual(["sdk pushed"]);
   expect(workspace.current()).toEqual(pushedWorkspace);
+
+  const titlePromise = workspace.setTitle("SDK review", "workspace-title-request");
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.title.set.request",
+    requestId: "workspace-title-request",
+    workspaceId: "workspace_sdk",
+    title: "SDK review",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.title.set.response",
+      payload: {
+        requestId: "workspace-title-request",
+        workspaceId: "workspace_sdk",
+        accepted: true,
+        title: "SDK review",
+        error: null,
+      },
+    }),
+  );
+  await expect(titlePromise).resolves.toEqual({ title: "SDK review" });
 
   unsubscribe();
   ws.message(

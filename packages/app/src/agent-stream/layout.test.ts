@@ -150,7 +150,7 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
-  it("does not borrow an assistant footer across adjacent tagged tool-only turns", () => {
+  it("places one response footer after an adjacent tagged tool-only turn", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const nextTool = toolCall("next-tool", 2, "turn-2");
     const layout = layoutFor({
@@ -159,14 +159,14 @@ describe("layoutStream", () => {
       timingIds: [priorAssistant.id],
     });
 
-    expect(layout.auxiliaryTurnFooter).toBeNull();
+    expect(layout.auxiliaryTurnFooter?.itemId).toBe(priorAssistant.id);
     expect(footerOwners(layout)).toEqual([priorAssistant.id]);
   });
 
   it("recomputes cached history layout when only the live boundary turn changes", () => {
     const priorAssistant = assistantMessage("prior", 1, undefined, "turn-1");
     const history = [priorAssistant];
-    const liveHead = [toolCall("live-tool", 2, "turn-1")];
+    const liveHead: StreamItem[] = [{ ...userMessage("live-user", 2), turnId: "turn-1" }];
     const strategy = strategyFor("web");
     const first = layoutStream({
       strategy,

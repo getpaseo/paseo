@@ -147,6 +147,27 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("records host-owned plugin lifecycle events", async () => {
+    const directory = await createPlugin(
+      "lifecycle",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("lifecycle", []);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+
+    await runtime.startPlugin("lifecycle", directory);
+    await runtime.stopPluginById("lifecycle");
+
+    expect(
+      runtime.getLogs("lifecycle").map(({ stream, message }) => ({ stream, message })),
+    ).toEqual([
+      { stream: "stdout", message: "[paseo] Loading plugin" },
+      { stream: "stdout", message: "[paseo] Plugin ready" },
+      { stream: "stdout", message: "[paseo] Stopping plugin" },
+      { stream: "stdout", message: "[paseo] Plugin stopped" },
+    ]);
+  });
+
   it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
     const directory = await createPlugin(
       "output",
@@ -162,13 +183,20 @@ describe("PluginRuntime", () => {
     child.stdout.write("final stdout");
     await runtime.stopPluginById("output");
 
-    expect(runtime.getLogs("output").map(({ stream, message }) => ({ stream, message }))).toEqual([
+    const logs = runtime.getLogs("output");
+    expect(
+      logs
+        .filter((entry) => !entry.message.startsWith("[paseo]"))
+        .map(({ stream, message }) => ({ stream, message })),
+    ).toEqual([
       { stream: "stdout", message: "first" },
       { stream: "stderr", message: "problem" },
       { stream: "stderr", message: "final stderr" },
       { stream: "stdout", message: "final stdout" },
     ]);
-    expect(runtime.getLogs("output").map((entry) => entry.sequence)).toEqual([1, 2, 3, 4]);
+    expect(logs.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: logs.length }, (_, index) => index + 1),
+    );
   });
 
   it("writes plugin output through the daemon logger with structured identity fields", async () => {
@@ -187,14 +215,14 @@ describe("PluginRuntime", () => {
 
     child.stderr.write("connection failed\n");
 
-    expect(records.find((record) => record.msg === "Plugin output")).toMatchObject({
+    expect(records.find((record) => record.message === "connection failed")).toMatchObject({
       module: "plugins",
       pluginId: "tagged-output",
-      sequence: 1,
+      sequence: 3,
       stream: "stderr",
       message: "connection failed",
     });
-    expect(records.find((record) => record.msg === "Plugin output")?.timestamp).toEqual(
+    expect(records.find((record) => record.message === "connection failed")?.timestamp).toEqual(
       expect.any(String),
     );
     await runtime.stopAll();
@@ -221,8 +249,14 @@ describe("PluginRuntime", () => {
     child.stderr.write("y".repeat(20 * 1024));
     await runtime.stopPluginById("noisy");
     const logs = runtime.getLogs("noisy");
-    expect(logs).toHaveLength(16);
-    expect(logs.at(-1)).toMatchObject({ stream: "stderr", message: "y".repeat(16 * 1024) });
+    expect(logs.length).toBeLessThanOrEqual(500);
+    expect(
+      logs.reduce((bytes, entry) => bytes + Buffer.byteLength(entry.message), 0),
+    ).toBeLessThanOrEqual(256 * 1024);
+    expect(logs.every((entry) => Buffer.byteLength(entry.message) <= 16 * 1024)).toBe(true);
+    expect(logs).toContainEqual(
+      expect.objectContaining({ stream: "stderr", message: "y".repeat(16 * 1024) }),
+    );
   });
 
   it("captures output emitted during initialization and cleanup across reloads", async () => {
@@ -261,6 +295,27 @@ describe("PluginRuntime", () => {
     expect(logs.map((entry) => entry.sequence)).toEqual(
       Array.from({ length: logs.length }, (_, index) => index + 1),
     );
+  });
+
+  it("retains compilation failures in the plugin stderr tail", async () => {
+    const directory = await createPlugin("broken-compile", `export default function contribute( {`);
+    const runtime = createTestRuntime();
+
+    await expect(runtime.startPlugin("broken-compile", directory)).rejects.toThrow();
+
+    expect(
+      runtime.getLogs("broken-compile").map(({ stream, message }) => ({ stream, message })),
+    ).toEqual([
+      {
+        stream: "stdout",
+        message: "[paseo] Loading plugin",
+      },
+      {
+        stream: "stderr",
+        message: expect.stringContaining("Plugin failed to load:"),
+      },
+    ]);
+    await runtime.stopAll();
   });
 
   it("waits for the old subprocess to exit before starting its replacement", async () => {
@@ -467,6 +522,10 @@ function HelloSurface() {
   return <Text>Hello from native UI</Text>;
 }
 
+function ReviewPanel() {
+  return <Text>Workspace review panel</Text>;
+}
+
 export default function contribute(plugin: any) {
   plugin.handle(greetRpc, async (input: { name: string }) => ({
     message: "Hello, " + input.name,
@@ -474,6 +533,8 @@ export default function contribute(plugin: any) {
   }));
   plugin.addSurface("main", HelloSurface);
   plugin.addSidebarItem({ id: "hello", title: "Hello", icon: "Sparkles", surface: "main" });
+  plugin.addWorkspacePanel({ id: "review", title: "Review", icon: "Scan", context: "workspace", Component: ReviewPanel });
+  plugin.addCommandCenterItem({ id: "open-review", title: "Open review", icon: "Scan", context: "workspace", onSelect() {} });
   plugin.addAttachmentSource(attachments);
   return () => undefined;
 }`,
@@ -487,6 +548,8 @@ export default function contribute(plugin: any) {
     expect(catalog[0]?.id).toBe("hello");
     expect(catalog[0]?.clientBundle).toContain("Hello from native UI");
     expect(catalog[0]?.clientBundle).toContain("Attach example issue");
+    expect(catalog[0]?.clientBundle).toContain("Workspace review panel");
+    expect(catalog[0]?.clientBundle).toContain("Open review");
     expect(catalog[0]?.clientBundle).not.toContain("node:os");
     expect(catalog[0]?.clientBundle).not.toContain("get: () => from[key]");
     await expect(runtime.invoke("hello", "greet", { name: "Paseo" })).resolves.toMatchObject({
@@ -494,6 +557,170 @@ export default function contribute(plugin: any) {
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
 
+    await runtime.stopAll();
+  });
+
+  it("keeps client and server modules in their target runtime", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    temporaryDirectories.push(directory);
+    await Promise.all([
+      writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: "split-runtime" }),
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "index.ts"),
+        `import type { PluginContext } from "@paseo/plugin";
+import { Surface } from "./surface.client";
+import { inspectRpc } from "./inspect.shared";
+import { inspectHost } from "./inspect.server";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(inspectRpc, inspectHost);
+  plugin.addSurface("main", Surface);
+  return () => undefined;
+}`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "surface.client.tsx"),
+        `import React from "react";
+import { StyleSheet, Text } from "react-native";
+
+const styles = StyleSheet.create({ label: { fontWeight: "600" } });
+
+export function Surface() {
+  return <Text style={styles.label}>Client-only surface</Text>;
+}`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "inspect.shared.ts"),
+        `import { defineRpc } from "@paseo/plugin";
+import { z } from "zod";
+
+export const inspectRpc = defineRpc({
+  name: "inspect",
+  input: z.object({}),
+  output: z.object({ platform: z.string() }),
+});`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "inspect.server.ts"),
+        `import { platform } from "node:os";
+import type { z } from "zod";
+import { inspectRpc } from "./inspect.shared";
+
+export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
+  return { platform: platform() };
+}`,
+        "utf8",
+      ),
+    ]);
+    const runtime = createTestRuntime();
+
+    await runtime.startPlugin("split-runtime", directory);
+
+    const plugin = runtime.catalog()[0];
+    expect(plugin?.clientBundle).toContain("Client-only surface");
+    expect(plugin?.clientBundle).not.toContain("node:os");
+    await expect(runtime.invoke("split-runtime", "inspect", {})).resolves.toMatchObject({
+      platform: expect.any(String),
+    });
+    await runtime.stopAll();
+  });
+
+  it("rejects server imports from client-only modules", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    temporaryDirectories.push(directory);
+    await Promise.all([
+      writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: "cross-runtime-import" }),
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "index.ts"),
+        `import type { PluginContext } from "@paseo/plugin";
+import { Surface } from "./surface.client";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addSurface("main", Surface);
+  return () => undefined;
+}`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "surface.client.tsx"),
+        `import { readSecret } from "./secret.server";
+export function Surface() { return readSecret(); }`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "secret.server.ts"),
+        `export function readSecret() { return null; }`,
+        "utf8",
+      ),
+    ]);
+    const runtime = createTestRuntime();
+
+    await expect(runtime.startPlugin("cross-runtime-import", directory)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
+    await runtime.stopAll();
+  });
+
+  it("rejects client imports from server-only modules", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    temporaryDirectories.push(directory);
+    await Promise.all([
+      writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: "cross-runtime-import" }),
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "index.ts"),
+        `import type { PluginContext } from "@paseo/plugin";
+import { inspect } from "./inspect.server";
+import { inspectRpc } from "./inspect.shared";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(inspectRpc, inspect);
+  return () => undefined;
+}`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "inspect.shared.ts"),
+        `import { defineRpc } from "@paseo/plugin";
+import { z } from "zod";
+export const inspectRpc = defineRpc({
+  name: "inspect",
+  input: z.object({}),
+  output: z.object({}),
+});`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "inspect.server.ts"),
+        `import { Surface } from "./surface.client";
+export function inspect() { void Surface; return {}; }`,
+        "utf8",
+      ),
+      writeFile(
+        path.join(directory, "surface.client.tsx"),
+        `export function Surface() { return null; }`,
+        "utf8",
+      ),
+    ]);
+    const runtime = createTestRuntime();
+
+    await expect(runtime.startPlugin("cross-runtime-import", directory)).rejects.toThrow(
+      "client-only module cannot be imported into the plugin server bundle",
+    );
     await runtime.stopAll();
   });
 

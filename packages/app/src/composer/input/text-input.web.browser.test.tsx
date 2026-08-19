@@ -1,12 +1,14 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ComposerTextInput } from "./text-input.web";
+import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
+import type { EditingTextInputHandle as ComposerTextInputHandle } from "@/components/ui/text-input";
 
 interface MountedInput {
   root: Root;
   container: HTMLDivElement;
   textarea: HTMLTextAreaElement;
+  inputRef: React.MutableRefObject<ComposerTextInputHandle | null>;
 }
 
 interface TextRecorder {
@@ -16,7 +18,10 @@ interface TextRecorder {
 
 const mountedInputs: MountedInput[] = [];
 
-function mountInput(onChangeText: (text: string) => void): MountedInput {
+function mountInput(
+  onChangeText: (text: string) => void,
+  inputRef: React.MutableRefObject<ComposerTextInputHandle | null> = React.createRef(),
+): MountedInput {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -24,7 +29,8 @@ function mountInput(onChangeText: (text: string) => void): MountedInput {
   act(() => {
     root.render(
       <ComposerTextInput
-        text=""
+        ref={inputRef}
+        initialValue=""
         multiline={true}
         onChangeText={onChangeText}
         testID="composer-input"
@@ -37,7 +43,7 @@ function mountInput(onChangeText: (text: string) => void): MountedInput {
     throw new Error("Composer text input did not render a textarea");
   }
 
-  const mounted = { root, container, textarea };
+  const mounted = { root, container, textarea, inputRef };
   mountedInputs.push(mounted);
   return mounted;
 }
@@ -84,7 +90,7 @@ describe("ComposerTextInput web IME composition", () => {
       typeFromIme(mounted.textarea, "locally typed");
       mounted.root.render(
         <ComposerTextInput
-          text=""
+          initialValue=""
           multiline={true}
           onChangeText={recorder.onChangeText}
           placeholder="rerender with stale publication"
@@ -106,7 +112,7 @@ describe("ComposerTextInput web IME composition", () => {
       mounted.textarea.value = "你好";
       mounted.root.render(
         <ComposerTextInput
-          text=""
+          initialValue=""
           multiline={true}
           onChangeText={recorder.onChangeText}
           placeholder="rerender while composing"
@@ -135,7 +141,7 @@ describe("ComposerTextInput web IME composition", () => {
       mounted.textarea.value = "你好";
       mounted.root.render(
         <ComposerTextInput
-          text="你"
+          initialValue="你"
           multiline={true}
           onChangeText={ignoreTextChange}
           placeholder="second composition"
@@ -147,16 +153,44 @@ describe("ComposerTextInput web IME composition", () => {
     expect(mounted.textarea.value).toBe("你好");
   });
 
-  it("does not report committed text twice when the input event already reported it", () => {
+  it("defers Korean IME input events until composition commits", () => {
     const changes: string[] = [];
     const mounted = mountInput((text) => changes.push(text));
 
     act(() => {
       dispatchComposition(mounted.textarea, "compositionstart");
-      typeFromIme(mounted.textarea, "你好");
+      typeFromIme(mounted.textarea, "ㅎ");
+      typeFromIme(mounted.textarea, "하");
+      typeFromIme(mounted.textarea, "한");
+    });
+
+    expect(changes).toEqual([]);
+
+    act(() => {
       dispatchComposition(mounted.textarea, "compositionend");
     });
 
-    expect(changes).toEqual(["你好"]);
+    expect(changes).toEqual(["한"]);
+  });
+
+  it("reads the live DOM value for send-path text extraction during composition", () => {
+    const inputRef = React.createRef<ComposerTextInputHandle>();
+    const mounted = mountInput(ignoreTextChange, inputRef);
+    let queuedText = "";
+
+    act(() => {
+      dispatchComposition(mounted.textarea, "compositionstart");
+      typeFromIme(mounted.textarea, "old한");
+      queuedText = mounted.inputRef.current?.getText() ?? "";
+    });
+
+    expect(queuedText).toBe("old한");
+    expect(mounted.textarea.value).toBe("old한");
+
+    act(() => {
+      mounted.inputRef.current?.replaceText("");
+    });
+
+    expect(mounted.textarea.value).toBe("");
   });
 });

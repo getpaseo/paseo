@@ -8,6 +8,8 @@ export const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 
 const changesPreferencesSchema = z.strictObject({
   layout: z.enum(["unified", "split"]).optional(),
+  desktopTreeVisible: z.boolean().optional(),
+  // Read the former overloaded preference once so existing installations keep their desktop tree.
   viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
   hideWhitespace: z.boolean().optional(),
@@ -16,7 +18,7 @@ const changesPreferencesSchema = z.strictObject({
 
 export interface ChangesPreferences {
   layout: "unified" | "split";
-  viewMode: "flat" | "tree";
+  desktopTreeVisible: boolean;
   wrapLines: boolean;
   hideWhitespace: boolean;
   commitsCollapsed: boolean;
@@ -24,7 +26,7 @@ export interface ChangesPreferences {
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   layout: "unified",
-  viewMode: "flat",
+  desktopTreeVisible: false,
   wrapLines: false,
   hideWhitespace: false,
   commitsCollapsed: true,
@@ -54,7 +56,12 @@ export async function loadChangesPreferencesFromStorage(
     changesPreferencesSchema,
   );
   if (stored) {
-    return { ...DEFAULT_CHANGES_PREFERENCES, ...stored };
+    const { viewMode, ...currentPreferences } = stored;
+    return {
+      ...DEFAULT_CHANGES_PREFERENCES,
+      ...currentPreferences,
+      desktopTreeVisible: stored.desktopTreeVisible ?? viewMode === "tree",
+    };
   }
 
   const legacyWrapLines = await loadLegacyWrapLinesPreference(storage);

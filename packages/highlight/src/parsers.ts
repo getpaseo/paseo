@@ -15,8 +15,11 @@ import { parser as rustParser } from "@lezer/rust";
 import { parser as xmlParser } from "@lezer/xml";
 import { parser as yamlParser } from "@lezer/yaml";
 import { csharpLanguage } from "@replit/codemirror-lang-csharp";
+import { nixLanguage } from "@replit/codemirror-lang-nix";
 import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
+import { parser as svelteBaseParser } from "./svelte/parser.js";
+import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 
 function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
@@ -48,6 +51,8 @@ const languagesByExtension: Record<string, Language> = {
   // HTML
   html: language(htmlParser),
   htm: language(htmlParser),
+  // Svelte
+  svelte: language(svelteBaseParser.configure({ wrap: configureNesting(defaultNesting) })),
   // XML
   xml: language(xmlParser),
   // Java
@@ -69,6 +74,8 @@ const languagesByExtension: Record<string, Language> = {
   dart: StreamLanguage.define(dart),
   // C#
   cs: csharpLanguage,
+  // Nix
+  nix: nixLanguage,
   // Elixir
   ex: language(elixirParser),
   exs: language(elixirParser),

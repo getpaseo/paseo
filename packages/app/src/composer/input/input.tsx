@@ -2,7 +2,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
-  TextInput,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
@@ -59,8 +58,15 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeightMirror } from "./height-mirror";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
-import { ComposerTextInput } from "./text-input";
-import type { ComposerTextInputHandle } from "./text-input-types";
+import {
+  EditingTextInput,
+  type EditingTextInputHandle as ComposerTextInputHandle,
+  type EditingTextInputProps,
+} from "@/components/ui/text-input";
+
+const ComposerTextInput = withUnistyles(EditingTextInput, (theme) => ({
+  placeholderTextColor: theme.colors.surface4,
+}));
 import {
   resolveSendTooltipLabel,
   resolveSubmitAccessibilityLabel,
@@ -141,9 +147,10 @@ export interface MessageInputProps {
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
-  /** Controls what the default send action (Enter, send button, dictation) does
-   *  when the agent is running. "interrupt" sends immediately, "queue" queues. */
-  defaultSendBehavior?: "interrupt" | "steer" | "queue";
+  /** Controls what the default send action (Enter, send button, dictation) does when the agent is
+   *  running. "interrupt" and "steer" send immediately, "queue" queues. Required so the default
+   *  lives only in DEFAULT_CLIENT_SETTINGS. */
+  defaultSendBehavior: "interrupt" | "steer" | "queue";
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
   /** Optional handler used when submit button is in loading state. */
@@ -622,7 +629,7 @@ interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
   textInputRef: React.Ref<ComposerTextInputHandle>;
-  textInputStyle: React.ComponentProps<typeof TextInput>["style"];
+  textInputStyle: EditingTextInputProps["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
   placeholder: string;
   accessibilityLabel: string;
@@ -662,7 +669,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       <ComposerTextInput
         ref={props.textInputRef}
         dataSet={COMPOSER_INPUT_DATASET}
-        text={props.value}
+        initialValue={props.value}
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
         accessibilityLabel={props.accessibilityLabel}
@@ -1126,7 +1133,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
-    defaultSendBehavior: props.defaultSendBehavior ?? "interrupt",
+    defaultSendBehavior: props.defaultSendBehavior,
     onQueue: props.onQueue,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
@@ -1966,16 +1973,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "absolute",
     top: 0,
     right: 0,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
   },
   textInput: {
     width: "100%",
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-    lineHeight: theme.fontSize.sm * 1.4,
+    lineHeight: theme.fontSize.base * 1.4,
     ...(isWeb
       ? ({
           outlineStyle: "none",
@@ -2050,7 +2057,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   sendButtonLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.accentForeground,
   },
@@ -2063,7 +2070,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
   },
   buttonDisabled: {

@@ -13,6 +13,7 @@ describe("parseSidebarRowItems", () => {
       host: true,
       changeRequest: true,
       services: true,
+      labels: true,
     });
   });
 

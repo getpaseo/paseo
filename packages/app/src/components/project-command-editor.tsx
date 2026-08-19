@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { PASEO_PLATFORMS, type PaseoPlatform } from "@getpaseo/protocol/paseo-config-schema";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { EditingTextInput } from "@/components/ui/text-input";
 import {
   changeCommandFormat,
   type CommandDraft,
@@ -125,11 +126,11 @@ function SingleCommandInput({
   }
 
   return (
-    <TextInput
+    <EditingTextInput
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       multiline
-      value={value}
+      initialValue={value}
       onChangeText={onChangeText}
       onBlur={onBlur}
       placeholder={placeholder}
@@ -211,11 +212,11 @@ function PlatformCommandInput({
   }
 
   return (
-    <TextInput
+    <EditingTextInput
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       multiline
-      value={value}
+      initialValue={value}
       onChangeText={handleChange}
       placeholder={placeholder}
       placeholderTextColor={styles.placeholderColor.color}
@@ -274,7 +275,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   formatLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   platformFields: {
     gap: theme.spacing[3],
@@ -284,7 +285,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   modalLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   modalMultilineInput: {
     color: theme.colors.foreground,
@@ -300,7 +301,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   fieldError: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   placeholderColor: {
     color: theme.colors.foregroundMuted,
