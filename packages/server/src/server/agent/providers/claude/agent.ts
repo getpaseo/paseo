@@ -2026,6 +2026,12 @@ class ClaudeAgentSession implements AgentSession {
   /** The exact SDK query/input pair that owns the current foreground turn. */
   private activeForegroundQuery: Query | null = null;
   private activeForegroundInput: AsyncMessageInput<SDKUserMessage> | null = null;
+  /**
+   * Steers pushed into the live SDK input that Claude may not have read yet. Interrupting the turn
+   * has to discard them, or the SDK dequeues one and resumes the turn we just stopped. SDK user
+   * UUIDs are provider-private; never let them escape the adapter boundary.
+   */
+  private readonly queuedSteerUuids = new Set<string>();
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
@@ -2266,7 +2272,8 @@ class ClaudeAgentSession implements AgentSession {
     if (this.resolveSlashCommandInvocation(prompt)) {
       return { status: "unavailable" };
     }
-    if (this.compacting || this.activeForegroundTurnId !== options.expectedTurnId) {
+    const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    if (this.compacting || activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
 
@@ -2280,13 +2287,16 @@ class ClaudeAgentSession implements AgentSession {
     const message = this.toSdkUserMessage(prompt);
     message.priority = "next";
     if (
-      this.activeForegroundTurnId !== options.expectedTurnId ||
+      (this.activeForegroundTurnId ?? this.autonomousTurn?.id) !== options.expectedTurnId ||
       this.activeForegroundQuery !== query ||
       this.activeForegroundInput !== input ||
       this.query !== query ||
       this.input !== input
     ) {
       return { status: "unavailable" };
+    }
+    if (message.uuid) {
+      this.queuedSteerUuids.add(message.uuid);
     }
     input.push(message);
     return { status: "accepted" };
@@ -3479,6 +3489,8 @@ class ClaudeAgentSession implements AgentSession {
         this.syncTurnState("foreground turn terminal");
       } else if (this.autonomousTurn) {
         this.autonomousTurn = null;
+        this.activeForegroundQuery = null;
+        this.activeForegroundInput = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("autonomous turn terminal");
       }
@@ -3492,6 +3504,8 @@ class ClaudeAgentSession implements AgentSession {
     this.autonomousTurn = {
       id: this.createTurnId("autonomous"),
     };
+    this.activeForegroundQuery = this.query;
+    this.activeForegroundInput = this.input;
     this.activeTurnHasAssistantText = false;
     this.contextUsage.beginTurn();
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
@@ -3504,6 +3518,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
     this.autonomousTurn = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("autonomous turn completed");
   }
@@ -3707,13 +3723,26 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
+  /**
+   * Claude keeps talking about the request it was told to kill — the notification for the tool it
+   * just stopped, trailing assistant output. That is not new work, so it must not open a turn: the
+   * only message that would close that turn is the result shouldSuppressStaleResult drops, leaving
+   * the agent stuck reporting "running" forever.
+   */
+  private shouldStartAutonomousTurn(message: SDKMessage): boolean {
+    if (this.activeForegroundTurnId || this.pendingInterruptAbort) {
+      return false;
+    }
+    return this.isAssistantishMessage(message);
+  }
+
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
 
     const isForeground = Boolean(this.activeForegroundTurnId);
-    if (!isForeground && this.isAssistantishMessage(message)) {
+    if (this.shouldStartAutonomousTurn(message)) {
       this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
@@ -3870,6 +3899,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.pendingInterruptAbort = true;
+    await this.discardQueuedSteers(queryToInterrupt);
     try {
       await this.awaitWithTimeout(
         queryToInterrupt.interrupt(),
@@ -3877,6 +3907,31 @@ class ClaudeAgentSession implements AgentSession {
       );
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
+    }
+  }
+
+  /**
+   * Interrupt means interrupt: a steer Claude never read dies with the turn instead of resuming it.
+   * A steer already dequeued cannot be recalled, and does not need to be — the interrupt kills it.
+   */
+  private async discardQueuedSteers(query: Query): Promise<void> {
+    const uuids = [...this.queuedSteerUuids];
+    this.queuedSteerUuids.clear();
+    if (uuids.length === 0) return;
+    // The SDK runtime supports this, but its public Query type has not caught up. Keep the
+    // compatibility escape hatch inside the Claude adapter.
+    const cancelAsyncMessage = (
+      query as Query & {
+        cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
+      }
+    ).cancelAsyncMessage;
+    if (!cancelAsyncMessage) return;
+    for (const uuid of uuids) {
+      try {
+        await cancelAsyncMessage.call(query, uuid);
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to discard a queued Claude steer");
+      }
     }
   }
 
@@ -3926,6 +3981,8 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
 
+    this.forgetReadSteer(message);
+
     switch (message.type) {
       case "system":
         this.appendSystemMessageEvents(message, events);
@@ -3958,6 +4015,13 @@ class ClaudeAgentSession implements AgentSession {
     return events;
   }
 
+  /** Once Claude has read a steer there is nothing left to discard on interrupt. */
+  private forgetReadSteer(message: unknown): void {
+    const lifecycle = readClaudeCommandLifecycle(message);
+    if (!lifecycle || lifecycle.state === "queued") return;
+    this.queuedSteerUuids.delete(lifecycle.commandUuid);
+  }
+
   private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
     const item = this.taskState.observe(message);
     if (item) events.push({ type: "timeline", provider: "claude", item });
@@ -3970,24 +4034,26 @@ class ClaudeAgentSession implements AgentSession {
     message: SDKMessage,
     parentToolUseId: string,
   ): AgentStreamEvent[] {
+    const canonicalSubagentId = this.taskProtocolSource.resolveSubagentId(parentToolUseId);
     // Once a CLI announces its tasks it announces all of them, so a frame for one that was never
     // declared is work the filter already rejected — a workflow child, ambient housekeeping, a
     // grandchild announced in someone else's session. Attributing it anyway materializes exactly
     // what the filter prevents: a nameless descriptor stuck running, plus a timeline no surface
     // can open, both held for the session's lifetime.
-    if (
-      this.taskProtocolSource.announcesTasks &&
-      !this.taskProtocolSource.isDeclared(parentToolUseId)
-    ) {
+    if (this.taskProtocolSource.announcesTasks && !canonicalSubagentId) {
       return [];
     }
     // The child's own frames are the only place its model appears; the task protocol does not
     // announce it. Read per frame rather than snapshotting, since a provider can swap models
     // mid-flight on overload or refusal fallback.
     const runtimeEvents = foldSubagentObservations(
-      this.taskProtocolSource.observeSidechainFrame(message, parentToolUseId),
+      this.taskProtocolSource.observeSidechainFrame(
+        message,
+        canonicalSubagentId ?? parentToolUseId,
+      ),
     ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
-    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, parentToolUseId)];
+    const routedId = canonicalSubagentId ?? parentToolUseId;
+    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, routedId)];
   }
 
   /**
@@ -6094,4 +6160,25 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
     }
   }
   return null;
+}
+
+interface ClaudeCommandLifecycle {
+  commandUuid: string;
+  state: "queued" | "started" | "completed";
+}
+
+/** Runtime-only Claude frames are validated here because the SDK's public union omits them. */
+function readClaudeCommandLifecycle(message: unknown): ClaudeCommandLifecycle | null {
+  const record = toObjectRecord(message);
+  if (record?.type !== "command_lifecycle") return null;
+  if (
+    typeof record.command_uuid !== "string" ||
+    !["queued", "started", "completed"].includes(String(record.state))
+  ) {
+    return null;
+  }
+  return {
+    commandUuid: record.command_uuid,
+    state: record.state as ClaudeCommandLifecycle["state"],
+  };
 }

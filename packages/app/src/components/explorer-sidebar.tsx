@@ -17,13 +17,19 @@ import { formatPrTabLabel, PullRequestTabIcon } from "@/git/pull-request-panel";
 import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/stores/panel-store";
 import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { HEADER_INNER_HEIGHT } from "@/constants/layout";
-import { GitDiffPane } from "@/git/diff-pane";
+import {
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  HEADER_TOP_PADDING_MOBILE,
+} from "@/constants/layout";
+import { ChangesSurface } from "@/git/diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
 import { useHasOwnedWindowChromeObstruction, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { RetainedPanelActivity } from "@/components/retained-panel";
+import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
+import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
 import {
@@ -82,9 +88,10 @@ export function CompactExplorerSidebar({
     workspaceRoot,
     isGit,
   });
+  const usePanelKeyboardPadding = shouldUseCompactExplorerKeyboardPadding({ isGit, explorerTab });
   const { style: mobileKeyboardInsetStyle } = useKeyboardShiftStyle({
     mode: "padding",
-    enabled: true,
+    enabled: usePanelKeyboardPadding,
   });
   const { gesture: closeGesture } = useCloseFileExplorerGesture();
 
@@ -104,12 +111,19 @@ export function CompactExplorerSidebar({
   const mobileSidebarStyle = useMemo(
     () => [
       {
-        paddingTop: insets.top,
+        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+        paddingBottom: usePanelKeyboardPadding ? 0 : insets.bottom,
         backgroundColor: theme.colors.surfaceSidebar,
       },
       mobileKeyboardInsetStyle,
     ],
-    [insets.top, theme.colors.surfaceSidebar, mobileKeyboardInsetStyle],
+    [
+      insets.bottom,
+      insets.top,
+      mobileKeyboardInsetStyle,
+      theme.colors.surfaceSidebar,
+      usePanelKeyboardPadding,
+    ],
   );
 
   return (
@@ -318,6 +332,16 @@ function ExplorerSidebarContent({
     !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
+  const availableTabs = useMemo<ExplorerTab[]>(() => {
+    const tabs: ExplorerTab[] = isGit ? ["changes", "files"] : ["files"];
+    if (isGit && showPrTab) tabs.push("pr");
+    return tabs;
+  }, [isGit, showPrTab]);
+  const { mountedTabIds } = useMountedTabSet({
+    activeTabId: resolvedTab,
+    allTabIds: availableTabs,
+    cap: availableTabs.length,
+  });
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
@@ -391,31 +415,37 @@ function ExplorerSidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {resolvedTab === "changes" && (
-          <ChangedFilesPane
-            serverId={serverId}
-            workspaceId={workspaceId}
-            workspaceRoot={workspaceRoot}
-            isOpen={isOpen}
-            onOpenFile={onOpenFile}
-          />
-        )}
-        {resolvedTab === "files" && (
-          <FilesPane
-            serverId={serverId}
-            workspaceId={workspaceId}
-            workspaceRoot={workspaceRoot}
-            onOpenFile={onOpenFile}
-          />
-        )}
-        {resolvedTab === "pr" && (
-          <PrTabContent
-            serverId={serverId}
-            workspaceId={workspaceId}
-            cwd={workspaceRoot}
-            prPane={prPane}
-          />
-        )}
+        {mountedTabIds.has("changes") ? (
+          <RetainedPanel active={resolvedTab === "changes"}>
+            <ChangedFilesPane
+              serverId={serverId}
+              workspaceId={workspaceId}
+              workspaceRoot={workspaceRoot}
+              isOpen={isOpen}
+              onOpenFile={onOpenFile}
+            />
+          </RetainedPanel>
+        ) : null}
+        {mountedTabIds.has("files") ? (
+          <RetainedPanel active={resolvedTab === "files"}>
+            <FilesPane
+              serverId={serverId}
+              workspaceId={workspaceId}
+              workspaceRoot={workspaceRoot}
+              onOpenFile={onOpenFile}
+            />
+          </RetainedPanel>
+        ) : null}
+        {mountedTabIds.has("pr") ? (
+          <RetainedPanel active={resolvedTab === "pr"}>
+            <PrTabContent
+              serverId={serverId}
+              workspaceId={workspaceId}
+              cwd={workspaceRoot}
+              prPane={prPane}
+            />
+          </RetainedPanel>
+        ) : null}
       </View>
     </View>
   );
@@ -433,7 +463,7 @@ function ChangedFilesPane({
 >) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   return (
-    <GitDiffPane
+    <ChangesSurface
       host="explorer"
       serverId={serverId}
       workspaceId={workspaceId}
@@ -487,7 +517,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   header: {
     position: "relative",
-    height: HEADER_INNER_HEIGHT,
+    height: {
+      xs: HEADER_INNER_HEIGHT_MOBILE,
+      md: HEADER_INNER_HEIGHT,
+    },
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -510,7 +543,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
   tabText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

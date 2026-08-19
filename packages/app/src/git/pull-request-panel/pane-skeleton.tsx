@@ -82,7 +82,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   sectionTitle: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
     paddingHorizontal: theme.spacing[3],

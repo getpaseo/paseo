@@ -54,6 +54,71 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("collects contextual workspace panels and Command Center items", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPanel() { return null; }
+        plugin.addWorkspacePanel({
+          id: "review",
+          title: "Review",
+          icon: "Scan",
+          context: "agent",
+          Component: ReviewPanel,
+        });
+        plugin.addCommandCenterItem({
+          id: "open-review",
+          title: "Open review",
+          icon: "Scan",
+          context: "agent",
+          onSelect() {},
+        });
+      `),
+    );
+
+    expect(
+      plugin.workspacePanels.map(({ id, title, icon, context }) => ({
+        id,
+        title,
+        icon,
+        context,
+      })),
+    ).toEqual([{ id: "review", title: "Review", icon: "Scan", context: "agent" }]);
+    expect(
+      plugin.commandCenterItems.map(({ id, title, icon, context }) => ({
+        id,
+        title,
+        icon,
+        context,
+      })),
+    ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
+  });
+
+  it("rejects duplicate workspace panel and Command Center ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function Panel() { return null; }
+          const panel = { id: "review", title: "Review", icon: "Scan", context: "workspace", Component: Panel };
+          plugin.addWorkspacePanel(panel);
+          plugin.addWorkspacePanel(panel);
+        `),
+      ),
+    ).toThrow("Duplicate workspace panel: review");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          const item = { id: "review", title: "Review", icon: "Scan", context: "global", onSelect() {} };
+          plugin.addCommandCenterItem(item);
+          plugin.addCommandCenterItem(item);
+        `),
+      ),
+    ).toThrow("Duplicate Command Center item: review");
+  });
+
   it("rejects duplicate attachment source ids", () => {
     expect(() =>
       evaluatePluginClientBundle(

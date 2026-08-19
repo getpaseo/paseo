@@ -98,6 +98,7 @@ import {
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
+import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
@@ -551,6 +552,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceLabelService: WorkspaceLabelService | null;
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
@@ -602,6 +604,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly advertiseRelayConfig: boolean;
   private readonly directorySync = new DirectorySyncService();
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
 
   constructor(
     server: HTTPServer,
@@ -647,6 +650,8 @@ export class VoiceAssistantWebSocketServer {
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
     pluginRuntime?: SessionOptions["pluginRuntime"],
+    orchestrationSkills?: SessionOptions["orchestrationSkills"],
+    workspaceLabelService?: WorkspaceLabelService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -662,10 +667,12 @@ export class VoiceAssistantWebSocketServer {
     this.browserToolsBroker = browserToolsBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
+    this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.workspaceLabelService = workspaceLabelService ?? null;
     const requiredServices = requireWebSocketServices({
       scheduleService,
       checkoutDiffManager,
@@ -1425,6 +1432,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceLabelService: this.workspaceLabelService ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
@@ -1433,6 +1441,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
       pluginRuntime: this.pluginRuntime,
+      orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
@@ -1639,6 +1648,8 @@ export class VoiceAssistantWebSocketServer {
       features: {
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
+        // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
+        ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1665,6 +1676,8 @@ export class VoiceAssistantWebSocketServer {
         plugins: true,
         pluginManagement: true,
         pluginLogs: true,
+        // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
+        skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.

@@ -73,12 +73,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     color: theme.colors.palette.amber[500],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   actions: {
     flexShrink: 0,

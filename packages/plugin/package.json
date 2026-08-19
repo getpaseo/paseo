@@ -27,6 +27,9 @@
     "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "use-sync-external-store": "^1.6.0"
+  },
   "devDependencies": {
     "@getpaseo/client": "0.4.0",
     "@types/node": "^20.9.0",

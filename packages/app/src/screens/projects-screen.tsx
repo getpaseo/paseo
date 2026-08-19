@@ -180,7 +180,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorsBanner: {
     borderWidth: 1,
@@ -192,7 +192,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorsBannerText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   row: {
     gap: theme.spacing[3],
@@ -217,7 +217,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   iconFallbackText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,

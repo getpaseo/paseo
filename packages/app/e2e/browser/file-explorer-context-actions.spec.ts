@@ -111,6 +111,21 @@ test.afterEach(async () => {
   await workspace?.cleanup();
 });
 
+test("file explorer rows share the workspace title opacity treatment", async ({ page }) => {
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const row = page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByTestId(/^file-explorer-row-\d+$/)
+    .first();
+  const name = row.getByTestId(/-name$/);
+  await expect(row).toHaveCSS("opacity", "1");
+  await expect(name).toHaveCSS("opacity", "0.76");
+  await row.hover();
+  await expect(name).toHaveCSS("opacity", "1");
+});
+
 test("creates, renames, copies, and deletes entries through the file explorer", async ({
   context,
   page,

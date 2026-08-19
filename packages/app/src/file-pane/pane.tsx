@@ -852,22 +852,22 @@ const styles = StyleSheet.create((theme) => ({
   loadingText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   binaryMetaText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   previewScrollContainer: {
     flex: 1,

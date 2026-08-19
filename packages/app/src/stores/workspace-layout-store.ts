@@ -15,6 +15,8 @@ import {
   collectAllTabs,
   convertDraftToAgentInLayout,
   createDefaultLayout,
+  createWorkspaceLayoutWithExplorer,
+  DEFAULT_EXPLORER_PANE_ID,
   findPaneById,
   findPaneContainingTab,
   focusPaneInLayout,
@@ -50,6 +52,7 @@ export {
   collectAllPanes,
   collectAllTabs,
   createDefaultLayout,
+  createWorkspaceLayoutWithExplorer,
   findPaneById,
   findPaneContainingTab,
   getFocusedBrowserId,
@@ -78,13 +81,26 @@ interface WorkspaceLayoutStore {
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   explorerPaneIdByWorkspace: Record<string, string | null>;
   acknowledgedPullRequestByWorkspace: Record<string, string>;
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    options?: WorkspaceTabOpenOptions,
+  ) => string | null;
   openChildTabFocused: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
     parentTabId: string,
+    options?: WorkspaceTabOpenOptions,
   ) => string | null;
-  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabInBackground: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    options?: WorkspaceTabOpenOptions,
+  ) => string | null;
+  openTabInExplorerPaneBackground: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+  ) => string | null;
   ensureExplorerPane: (workspaceKey: string) => EnsureExplorerPaneResult | null;
   openTabInExplorerPaneFocused: (
     workspaceKey: string,
@@ -130,6 +146,15 @@ interface WorkspaceLayoutStore {
   purgeWorkspace: (workspaceKey: string) => void;
 }
 
+/**
+ * `paneId` states which pane the user acted in — the `+` menu of a pane's tab rail,
+ * a subagent link inside a pane. Without it the open is ambient (sidebar click,
+ * reconcile auto-open) and the store decides the pane.
+ */
+export interface WorkspaceTabOpenOptions {
+  paneId?: string | null;
+}
+
 interface EnsureExplorerPaneResult {
   paneId: string;
   created: boolean;
@@ -140,7 +165,9 @@ interface WorkspaceFocusRestorationState {
   tokens: string[];
 }
 
-const MAX_TREE_DEPTH = 4;
+// The root companion split is always present for the hidden explorer pane.
+// Preserve four user-created split levels beneath it.
+const MAX_TREE_DEPTH = 5;
 
 const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
   provider: z.string(),
@@ -183,6 +210,21 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("setup"), workspaceId: z.string() }),
   z.strictObject({ kind: z.literal("commit_diff"), sha: z.string() }),
+  z.discriminatedUnion("context", [
+    z.strictObject({
+      kind: z.literal("plugin"),
+      pluginId: z.string(),
+      panelId: z.string(),
+      context: z.literal("workspace"),
+    }),
+    z.strictObject({
+      kind: z.literal("plugin"),
+      pluginId: z.string(),
+      panelId: z.string(),
+      context: z.literal("agent"),
+      agentId: z.string(),
+    }),
+  ]),
 ]);
 const WorkspaceTabStorageSchema = z.strictObject({
   tabId: z.string(),
@@ -278,7 +320,65 @@ function getWorkspaceLayout(
   state: Record<string, WorkspaceLayout>,
   workspaceKey: string,
 ): WorkspaceLayout {
-  return normalizeLayout(state[workspaceKey] ?? createDefaultLayout());
+  return normalizeLayout(state[workspaceKey] ?? createWorkspaceLayoutWithExplorer());
+}
+
+export function resolveExplorerPaneId(
+  layout: WorkspaceLayout,
+  registeredPaneId: string | null | undefined,
+): string | null {
+  const registeredPane = findPaneById(layout.root, registeredPaneId ?? null);
+  if (registeredPane) {
+    return registeredPane.id;
+  }
+  const defaultPane = findPaneById(layout.root, DEFAULT_EXPLORER_PANE_ID);
+  return defaultPane?.id ?? null;
+}
+
+function ensurePersistedExplorerPane(input: {
+  layout: WorkspaceLayout;
+  registeredPaneId: string | null | undefined;
+  ids: WorkspaceLayoutIdSource;
+}): { layout: WorkspaceLayout; paneId: string } | null {
+  const existingPaneId = resolveExplorerPaneId(input.layout, input.registeredPaneId);
+  if (existingPaneId) {
+    return { layout: input.layout, paneId: existingPaneId };
+  }
+  const targetPaneId =
+    findPaneById(input.layout.root, input.layout.focusedPaneId)?.id ??
+    collectAllPanes(input.layout.root)[0]?.id;
+  if (!targetPaneId) {
+    return null;
+  }
+  const split = splitPaneEmptyInLayout({
+    layout: input.layout,
+    targetPaneId,
+    position: "right",
+    createNodeId: input.ids.createNodeId,
+    maxTreeDepth: MAX_TREE_DEPTH,
+  });
+  if (!split) {
+    return null;
+  }
+  const hiddenLayout = setPaneHiddenInLayout({
+    layout: split.layout,
+    paneId: split.paneId,
+    hidden: true,
+  });
+  return { layout: hiddenLayout ?? split.layout, paneId: split.paneId };
+}
+
+function getOpenTabPlacement(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  options: WorkspaceTabOpenOptions | undefined,
+): { layout: WorkspaceLayout; paneId: string | null; explorerPaneId: string | null } {
+  const layout = getWorkspaceLayout(state.layoutByWorkspace, workspaceKey);
+  return {
+    layout,
+    paneId: trimNonEmpty(options?.paneId),
+    explorerPaneId: resolveExplorerPaneId(layout, state.explorerPaneIdByWorkspace[workspaceKey]),
+  };
 }
 
 function withoutFocusRestoration(
@@ -332,7 +432,7 @@ export function createWorkspaceLayoutStore(
         focusRestorationByWorkspace: {},
         explorerPaneIdByWorkspace: {},
         acknowledgedPullRequestByWorkspace: {},
-        openTabFocused: (workspaceKey, target) => {
+        openTabFocused: (workspaceKey, target, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
@@ -340,7 +440,7 @@ export function createWorkspaceLayoutStore(
           }
 
           const result = openTabInLayoutFocused({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
             target: normalizedTarget,
             now: Date.now(),
           });
@@ -363,7 +463,7 @@ export function createWorkspaceLayoutStore(
 
           return result.tabId;
         },
-        openChildTabFocused: (workspaceKey, target, parentTabId) => {
+        openChildTabFocused: (workspaceKey, target, parentTabId, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedParentTabId = trimNonEmpty(parentTabId);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
@@ -372,7 +472,7 @@ export function createWorkspaceLayoutStore(
           }
 
           const result = openTabInLayoutFocused({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
             target: normalizedTarget,
             now: Date.now(),
           });
@@ -402,7 +502,7 @@ export function createWorkspaceLayoutStore(
 
           return result.tabId;
         },
-        openTabInBackground: (workspaceKey, target) => {
+        openTabInBackground: (workspaceKey, target, options) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
@@ -410,7 +510,7 @@ export function createWorkspaceLayoutStore(
           }
 
           const result = openTabInLayoutBackground({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
             target: normalizedTarget,
             now: Date.now(),
           });
@@ -432,6 +532,50 @@ export function createWorkspaceLayoutStore(
 
           return result.tabId;
         },
+        openTabInExplorerPaneBackground: (workspaceKey, target) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+          if (!normalizedWorkspaceKey || !normalizedTarget) {
+            return null;
+          }
+
+          let tabId: string | null = null;
+          set((state) => {
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const explorerPaneId = resolveExplorerPaneId(
+              layout,
+              state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+            );
+            const explorerPane = findPaneById(layout.root, explorerPaneId);
+            if (!explorerPane) {
+              return state;
+            }
+
+            // A new tab is placed straight into the explorer pane, hidden or not.
+            // A tab already open elsewhere stays where the user put it — this open
+            // must not move, reveal, or focus anything.
+            const result = openTabInLayoutBackground({
+              layout,
+              target: normalizedTarget,
+              now: Date.now(),
+              paneId: explorerPane.id,
+              explorerPaneId: explorerPane.id,
+            });
+
+            tabId = result.tabId;
+            return {
+              explorerPaneIdByWorkspace: {
+                ...state.explorerPaneIdByWorkspace,
+                [normalizedWorkspaceKey]: explorerPane.id,
+              },
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: result.layout,
+              },
+            };
+          });
+          return tabId;
+        },
         ensureExplorerPane: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
@@ -440,9 +584,15 @@ export function createWorkspaceLayoutStore(
 
           const store = get();
           const layout = getWorkspaceLayout(store.layoutByWorkspace, normalizedWorkspaceKey);
-          const explorerPaneId = store.explorerPaneIdByWorkspace[normalizedWorkspaceKey] ?? null;
+          const explorerPaneId = resolveExplorerPaneId(
+            layout,
+            store.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
           const explorerPane = findPaneById(layout.root, explorerPaneId);
           if (explorerPane) {
+            if (store.explorerPaneIdByWorkspace[normalizedWorkspaceKey] !== explorerPane.id) {
+              store.setExplorerPaneId(normalizedWorkspaceKey, explorerPane.id);
+            }
             store.focusPane(normalizedWorkspaceKey, explorerPane.id);
             return { paneId: explorerPane.id, created: false };
           }
@@ -476,9 +626,15 @@ export function createWorkspaceLayoutStore(
             return null;
           }
           const parentTabId = trimNonEmpty(input.parentTabId);
+          const placement = { paneId: explorerPane.paneId };
           const tabId = parentTabId
-            ? get().openChildTabFocused(normalizedWorkspaceKey, normalizedTarget, parentTabId)
-            : get().openTabFocused(normalizedWorkspaceKey, normalizedTarget);
+            ? get().openChildTabFocused(
+                normalizedWorkspaceKey,
+                normalizedTarget,
+                parentTabId,
+                placement,
+              )
+            : get().openTabFocused(normalizedWorkspaceKey, normalizedTarget, placement);
           if (!tabId) {
             return null;
           }
@@ -497,38 +653,26 @@ export function createWorkspaceLayoutStore(
             return;
           }
 
-          set((state) => {
-            if (
-              state.acknowledgedPullRequestByWorkspace[normalizedWorkspaceKey] ===
-              normalizedIdentity
-            ) {
-              return state;
-            }
-
-            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
-            const explorerPaneId = state.explorerPaneIdByWorkspace[normalizedWorkspaceKey] ?? null;
-            const explorerPane = findPaneById(layout.root, explorerPaneId);
-            const placementLayout = explorerPane
-              ? (focusPaneInLayout({ layout, paneId: explorerPane.id }) ?? layout)
-              : layout;
-            const result = openTabInLayoutFocused({
-              layout: placementLayout,
-              target: { kind: "pull_request" },
-              now: Date.now(),
-            });
-
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              acknowledgedPullRequestByWorkspace: {
-                ...state.acknowledgedPullRequestByWorkspace,
-                [normalizedWorkspaceKey]: normalizedIdentity,
-              },
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: result.layout,
-              },
-            };
+          if (
+            get().acknowledgedPullRequestByWorkspace[normalizedWorkspaceKey] === normalizedIdentity
+          ) {
+            return;
+          }
+          // A detected pull request is a background add: the tab appears in the
+          // explorer pane, but nothing is revealed and focus never moves.
+          const tabId = get().openTabInExplorerPaneBackground(normalizedWorkspaceKey, {
+            kind: "pull_request",
           });
+          if (!tabId) {
+            return;
+          }
+
+          set((state) => ({
+            acknowledgedPullRequestByWorkspace: {
+              ...state.acknowledgedPullRequestByWorkspace,
+              [normalizedWorkspaceKey]: normalizedIdentity,
+            },
+          }));
         },
         closeTab: (workspaceKey, tabId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -538,9 +682,20 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const explorerPaneId = resolveExplorerPaneId(
+              layout,
+              state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+            );
+            const closingPane = findPaneContainingTab(layout.root, normalizedTabId);
+            const preserveEmptyPaneId =
+              closingPane?.id === "main" || closingPane?.id === explorerPaneId
+                ? closingPane.id
+                : null;
             const nextLayout = closeTabInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              layout,
               tabId: normalizedTabId,
+              preserveEmptyPaneId,
             });
             if (!nextLayout) {
               return state;
@@ -668,6 +823,10 @@ export function createWorkspaceLayoutStore(
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                explorerPaneId: resolveExplorerPaneId(
+                  currentLayout,
+                  state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+                ),
               },
               snapshot,
             );
@@ -1237,11 +1396,30 @@ export function createWorkspaceLayoutStore(
           if (!result.success) {
             return currentState;
           }
+          const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
+          const explorerPaneIdByWorkspace: Record<string, string | null> = {
+            ...result.data.explorerPaneIdByWorkspace,
+          };
+          for (const [workspaceKey, persistedLayout] of Object.entries(
+            result.data.layoutByWorkspace,
+          )) {
+            const explorer = ensurePersistedExplorerPane({
+              layout: normalizeLayout(persistedLayout),
+              registeredPaneId: explorerPaneIdByWorkspace[workspaceKey],
+              ids,
+            });
+            if (!explorer) {
+              layoutByWorkspace[workspaceKey] = normalizeLayout(persistedLayout);
+              continue;
+            }
+            layoutByWorkspace[workspaceKey] = explorer.layout;
+            explorerPaneIdByWorkspace[workspaceKey] = explorer.paneId;
+          }
           return {
             ...currentState,
-            layoutByWorkspace: result.data.layoutByWorkspace,
+            layoutByWorkspace,
             splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
-            explorerPaneIdByWorkspace: result.data.explorerPaneIdByWorkspace ?? {},
+            explorerPaneIdByWorkspace,
             acknowledgedPullRequestByWorkspace:
               result.data.acknowledgedPullRequestByWorkspace ?? {},
           };

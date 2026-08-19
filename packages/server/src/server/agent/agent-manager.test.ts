@@ -1783,6 +1783,48 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
   }
 });
 
+test("steers a tracked autonomous turn without creating a replacement run", async () => {
+  const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-steer-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { claude: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    session.pushEvent({ type: "turn_started", provider: "claude", turnId: "active-turn-0" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.activeTurnId).toBe("active-turn-0"));
+
+    const result = await startAgentRun(manager, agent.id, "autonomous follow-up", logger, {
+      activeTurnBehavior: "steer",
+      runOptions: { clientMessageId: "autonomous-follow-up-client" },
+    });
+
+    expect(result).toEqual({ disposition: "steered" });
+    expect(session.steerCount).toBe(1);
+    expect(session.interruptCount).toBe(0);
+    expect(manager.getAgent(agent.id)?.activeTurnId).toBe("active-turn-0");
+    expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBeNull();
+    expect(manager.getTimeline(agent.id)).toContainEqual(
+      expect.objectContaining({
+        type: "user_message",
+        text: "autonomous follow-up",
+        clientMessageId: "autonomous-follow-up-client",
+      }),
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("isolated rewind falls back from steering to the normal replacement path", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   session.steerResult = "unavailable";

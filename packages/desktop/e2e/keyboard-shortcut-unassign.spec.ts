@@ -156,13 +156,13 @@ test("a rebound shortcut lists its new keys in the shortcuts cheat sheet", async
   await page.keyboard.press("Alt+Shift+K");
   await page.getByText("Done", { exact: true }).click();
 
-  const reboundKeys = page.getByText("⌥+Shift+K", { exact: true });
+  const reboundKeys = page.getByText("⌥⇧K", { exact: true });
   await expect(reboundKeys).toBeVisible();
   await expect(defaultKeys).toHaveCount(0);
 
   const dialog = await openCheatSheet(page);
   const row = dialog.getByTestId(`shortcut-help-row-${SHORTCUTS_ROW}`);
-  await expect(row.getByText("⌥+Shift+K", { exact: true })).toBeVisible();
+  await expect(row.getByText("⌥⇧K", { exact: true })).toBeVisible();
   // The whole point: the cheat sheet stops advertising the shipped default.
   await expect(row.getByText("?", { exact: true })).toHaveCount(0);
 });

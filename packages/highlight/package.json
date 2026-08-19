@@ -27,7 +27,6 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@codemirror/autocomplete": "6.20.3",
     "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "^6.5.3",
     "@lezer/common": "^1.5.0",
@@ -39,6 +38,7 @@
     "@lezer/java": "^1.1.3",
     "@lezer/javascript": "^1.5.4",
     "@lezer/json": "^1.0.3",
+    "@lezer/lr": "^1.4.8",
     "@lezer/markdown": "^1.6.2",
     "@lezer/php": "^1.0.5",
     "@lezer/python": "^1.1.18",
@@ -47,7 +47,6 @@
     "@lezer/yaml": "^1.0.4",
     "@replit/codemirror-lang-csharp": "^6.2.0",
     "@replit/codemirror-lang-nix": "^6.0.1",
-    "@replit/codemirror-lang-svelte": "^6.0.0",
     "lezer-elixir": "^1.1.2"
   },
   "devDependencies": {

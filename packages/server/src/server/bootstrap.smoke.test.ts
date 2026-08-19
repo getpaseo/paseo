@@ -111,6 +111,14 @@ describe("paseo daemon bootstrap", () => {
     config.agentClients = createTestAgentClients();
     config.agentStoragePath = path.join(paseoHome, "agents");
     config.isDev = true;
+    config.speech = {
+      providers: {
+        dictationStt: { provider: "local", explicit: true, enabled: false },
+        voiceTurnDetection: { provider: "local", explicit: true, enabled: false },
+        voiceStt: { provider: "local", explicit: true, enabled: false },
+        voiceTts: { provider: "local", explicit: true, enabled: false },
+      },
+    };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
     let client: DaemonClient | null = null;
     let proxyUpstream: http.Server | null = null;

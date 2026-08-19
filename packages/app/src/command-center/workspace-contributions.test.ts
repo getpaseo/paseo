@@ -114,7 +114,7 @@ describe("workspace command center contributions", () => {
     for (const contribution of contributions) contribution.run();
 
     expect(fixture.dispatched).toEqual([
-      { id: "workspace.tab.new", scope: "workspace" },
+      { id: "workspace.agent.new", scope: "workspace" },
       { id: "workspace.terminal.new", scope: "workspace" },
       { id: "workspace.browser.new", scope: "workspace" },
       { id: "workspace.pane.split.right", scope: "workspace" },

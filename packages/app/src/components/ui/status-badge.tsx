@@ -42,7 +42,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 3,
   },
   pillText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

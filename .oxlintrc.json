@@ -95,6 +95,11 @@
           {
             "paths": [
               {
+                "name": "react-native",
+                "importNames": ["TextInput"],
+                "message": "Use EditingTextInput from @/components/ui/text-input. Raw TextInput bypasses editing-surface authority and IME safety."
+              },
+              {
                 "name": "@tanstack/react-query",
                 "importNames": ["useQuery", "useInfiniteQuery", "useQueries"],
                 "message": "App reads must go through useReplicaQuery/useFetchQuery from @/data/query. Grandfathered files may only leave the override burn-down list."
@@ -120,6 +125,11 @@
           "error",
           {
             "paths": [
+              {
+                "name": "react-native",
+                "importNames": ["TextInput"],
+                "message": "Use EditingTextInput from @/components/ui/text-input. Raw TextInput bypasses editing-surface authority and IME safety."
+              },
               {
                 "name": "react-native-unistyles",
                 "importNames": ["useUnistyles"],
@@ -167,6 +177,11 @@
           "error",
           {
             "paths": [
+              {
+                "name": "react-native",
+                "importNames": ["TextInput"],
+                "message": "Use EditingTextInput from @/components/ui/text-input. Raw TextInput bypasses editing-surface authority and IME safety."
+              },
               {
                 "name": "react-native-unistyles",
                 "importNames": ["useUnistyles"],
@@ -255,6 +270,11 @@
           {
             "paths": [
               {
+                "name": "react-native",
+                "importNames": ["TextInput"],
+                "message": "Use EditingTextInput from @/components/ui/text-input. Raw TextInput bypasses editing-surface authority and IME safety."
+              },
+              {
                 "name": "@tanstack/react-query",
                 "importNames": ["useQuery", "useInfiniteQuery", "useQueries"],
                 "message": "App reads must go through useReplicaQuery/useFetchQuery from @/data/query. Grandfathered files may only leave the override burn-down list."
@@ -273,6 +293,26 @@
         "packages/app/src/components/project-picker-modal.tsx",
         "packages/app/src/desktop/components/pair-device-section.tsx",
         "packages/app/src/screens/new-workspace-screen.tsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "react-native",
+                "importNames": ["TextInput"],
+                "message": "Use EditingTextInput from @/components/ui/text-input. Raw TextInput bypasses editing-surface authority and IME safety."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/app/src/components/ui/text-input/**/*.{ts,tsx}",
+        "packages/app/src/agent-stream/scroll-keyboard-dismiss/use-scroll-keyboard-dismiss.ts"
       ],
       "rules": {
         "no-restricted-imports": "off"
