@@ -1383,10 +1383,7 @@ export class AgentManager {
     // Spawning the replacement and calling thread/resume first deadlocks reload:
     // the new process fails with "already has an active writer".
     this.cancelRunningProviderSubagents(agentId);
-    this.logger.debug(
-      { agentId, provider },
-      "Closing previous session before reload resume",
-    );
+    this.logger.debug({ agentId, provider }, "Closing previous session before reload resume");
     await this.closeReloadedSession(existing.session, agentId);
 
     const session = handle
