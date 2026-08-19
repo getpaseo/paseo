@@ -490,9 +490,10 @@ export function AgentList({
           style: "destructive",
           onPress: () => {
             void (async () => {
-              // Deleting a session that is currently in voice mode would leave
-              // capture/keep-awake attached to a session that no longer exists;
-              // stop it first (only when this agent is the active voice target).
+              // Tear down voice first when this agent is the active target.
+              // stopVoice() best-effort-releases capture/keep-awake even if a
+              // daemon setVoiceMode(false) call fails, so permanent delete can
+              // proceed without leaving mic/wake locks attached to a gone agent.
               if (voiceRuntime?.isVoiceModeForAgent(serverId, agentId)) {
                 await voiceRuntime.stopVoice().catch(() => undefined);
               }

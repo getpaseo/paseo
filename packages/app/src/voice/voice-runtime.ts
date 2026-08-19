@@ -797,6 +797,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }));
 
       try {
+        // Each teardown step is best-effort. A sequential hard-fail (e.g.
+        // setVoiceMode rejecting) must not skip stopCapture / keep-awake
+        // cleanup — callers such as permanent session delete rely on local
+        // resources being released even when the daemon call fails.
         stopCue();
         uploader.reset();
         state.transportReady = false;
@@ -805,9 +809,9 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         deps.engine.clearQueue();
         activeSession?.adapter.setAssistantAudioPlaying(false);
         if (activeSession) {
-          await activeSession.adapter.setVoiceMode(false);
+          await activeSession.adapter.setVoiceMode(false).catch(() => undefined);
         }
-        await deps.engine.stopCapture();
+        await deps.engine.stopCapture().catch(() => undefined);
         await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       } finally {
         if (state.generation === generation) {
