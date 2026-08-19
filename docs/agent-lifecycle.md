@@ -157,7 +157,7 @@ Provider descriptors may include one compact subtitle. The provider owns its con
 
 ### Pi provider subagents
 
-Pi's RPC stream does not expose extension event-bus messages. Paseo's injected Pi extension listens for `pi-subagents` async start and completion events and forwards them through the RPC extension-notification channel. Foreground subagents need no bridge because their tool call keeps the parent turn running.
+Pi's RPC stream does not expose extension event-bus messages. Paseo's injected Pi extension listens for async start and completion events from supported subagent extensions, including background `Agent` runs from `@tintinweb/pi-subagents`, and forwards them through the RPC extension-notification channel. Foreground subagents need no bridge because their tool call keeps the parent turn running. The provider protocol has no queued state, so queued Pi children count as running activity until they settle.
 
 ### Claude provider subagents: the task protocol
 

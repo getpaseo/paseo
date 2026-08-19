@@ -167,6 +167,55 @@ describe("Pi tool call mapper", () => {
     });
   });
 
+  test("maps Tintinweb Agent calls to sub-agent detail", () => {
+    const toolCall = parseToolArgs("Agent", {
+      subagent_type: "Explore",
+      description: "Trace the Pi mapper",
+      prompt: "Find every Pi tool-call mapping path.",
+      run_in_background: false,
+    });
+    const result = parseToolResult({
+      content: [{ type: "text", text: "The mapping starts in mapToolDetail.\n" }],
+      details: { status: "completed", agentId: "agent-1" },
+    });
+
+    expect(mapToolDetail(toolCall, result)).toEqual({
+      type: "sub_agent",
+      subAgentType: "Explore",
+      description: "Trace the Pi mapper",
+      log: "The mapping starts in mapToolDetail.",
+    });
+  });
+
+  test("maps background Tintinweb Agent launches instead of showing raw JSON", () => {
+    const toolCall = parseToolArgs("Agent", {
+      subagent_type: "Plan",
+      description: "Plan the integration",
+      prompt: "Design the lifecycle bridge.",
+      run_in_background: true,
+    });
+
+    expect(mapToolDetail(toolCall, null)).toEqual({
+      type: "sub_agent",
+      subAgentType: "Plan",
+      description: "Plan the integration",
+      log: "",
+    });
+  });
+
+  test("keeps unrelated Agent tools on the unknown fallback", () => {
+    const toolCall = parseToolArgs("Agent", {
+      subagent_type: "Explore",
+      operation: "list",
+    });
+
+    expect(mapToolDetail(toolCall, null)).toEqual({
+      type: "unknown",
+      input: { subagent_type: "Explore", operation: "list" },
+      output: null,
+    });
+  });
+
   test("normalizes Pi MCP proxy calls from requested tool args while running", () => {
     const toolCall = parseToolArgs("mcp", {
       tool: "paseo_list_models",

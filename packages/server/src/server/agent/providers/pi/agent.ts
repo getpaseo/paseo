@@ -695,13 +695,46 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  const activePiSubagentIds = new Set();
 	  let subagentContext;
-	  const unsubscribeSubagentStarted = pi.events.on("subagent:async-started", (payload) => {
-	    reportSubagentStarted(subagentContext, payload);
-	  });
-	  const unsubscribeSubagentCompleted = pi.events.on("subagent:async-complete", (payload) => {
-	    reportSubagentCompleted(subagentContext, payload);
-	  });
+	  const unsubscribeSubagentEvents = [
+	    pi.events.on("subagent:async-started", (payload) => {
+	      const id = subagentId(payload);
+	      if (id) activePiSubagentIds.add(id);
+	      reportSubagentStarted(subagentContext, payload);
+	    }),
+	    pi.events.on("subagent:async-complete", (payload) => {
+	      const id = subagentId(payload);
+	      if (id) activePiSubagentIds.delete(id);
+	      reportSubagentCompleted(subagentContext, payload);
+	    }),
+	    pi.events.on("subagents:created", (payload) => {
+	      const id = subagentId(payload);
+	      if (!id || payload?.isBackground !== true) return;
+	      // This event is the background marker and can also mean queued. Paseo treats queued work as active.
+	      activePiSubagentIds.add(id);
+	      reportSubagent(subagentContext, {
+	        id,
+	        title: typeof payload.type === "string" ? payload.type : "Pi subagent",
+	        description: typeof payload.description === "string" ? payload.description : undefined,
+	        status: "running",
+	        cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+	      });
+	    }),
+	    pi.events.on("subagents:completed", (payload) => {
+	      const id = subagentId(payload);
+	      if (!id || !activePiSubagentIds.delete(id)) return;
+	      reportSubagent(subagentContext, { id, status: "completed" });
+	    }),
+	    pi.events.on("subagents:failed", (payload) => {
+	      const id = subagentId(payload);
+	      if (!id || !activePiSubagentIds.delete(id)) return;
+	      reportSubagent(subagentContext, {
+	        id,
+	        status: payload?.status === "stopped" ? "canceled" : "failed",
+	      });
+	    }),
+	  ];
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -739,9 +772,12 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  });
 
 	  pi.on("session_shutdown", async () => {
+	    for (const id of activePiSubagentIds) {
+	      reportSubagent(subagentContext, { id, status: "canceled" });
+	    }
 	    subagentContext = undefined;
-	    unsubscribeSubagentStarted?.();
-	    unsubscribeSubagentCompleted?.();
+	    activePiSubagentIds.clear();
+	    for (const unsubscribe of unsubscribeSubagentEvents) unsubscribe?.();
 	  });
 
 	  pi.on("message_end", async (event) => {

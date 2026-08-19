@@ -1128,6 +1128,78 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test("reports Tintinweb background Agent lifecycle through the Paseo extension", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = await client.createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const extensionEvents = new Map<string, Set<PaseoExtensionEventListener>>();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!, extensionEvents);
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: { getEntries: () => [] },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const emitExtensionEvent = (name: string, payload: unknown) => {
+      extensionEvents.get(name)?.forEach((listener) => listener(payload));
+    };
+
+    await listeners.get("session_start")?.({}, context);
+    notifications.length = 0;
+    emitExtensionEvent("subagents:created", {
+      id: "foreground-1",
+      type: "Explore",
+      description: "Do not add a provider child",
+      isBackground: false,
+    });
+    emitExtensionEvent("subagents:completed", { id: "foreground-1", status: "completed" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-1",
+      type: "Explore",
+      description: "Trace the Pi mapper",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:completed", { id: "run-1", status: "steered" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-2",
+      type: "Plan",
+      description: "Plan a focused change",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-2", status: "stopped" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-3",
+      type: "general-purpose",
+      description: "Implement the change",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-3", status: "aborted" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-4",
+      type: "Explore",
+      description: "Cancel on shutdown",
+      isBackground: true,
+    });
+    await listeners.get("session_shutdown")?.({}, context);
+
+    expect(notifications).toEqual([
+      'PASEO_PI_SUBAGENT {"id":"run-1","title":"Explore","description":"Trace the Pi mapper","status":"running"}',
+      'PASEO_PI_SUBAGENT {"id":"run-1","status":"completed"}',
+      'PASEO_PI_SUBAGENT {"id":"run-2","title":"Plan","description":"Plan a focused change","status":"running"}',
+      'PASEO_PI_SUBAGENT {"id":"run-2","status":"canceled"}',
+      'PASEO_PI_SUBAGENT {"id":"run-3","title":"general-purpose","description":"Implement the change","status":"running"}',
+      'PASEO_PI_SUBAGENT {"id":"run-3","status":"failed"}',
+      'PASEO_PI_SUBAGENT {"id":"run-4","title":"Explore","description":"Cancel on shutdown","status":"running"}',
+      'PASEO_PI_SUBAGENT {"id":"run-4","status":"canceled"}',
+    ]);
+
+    expect([...extensionEvents.values()].every((eventListeners) => eventListeners.size === 0)).toBe(
+      true,
+    );
+    await session.close();
+  });
+
   test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

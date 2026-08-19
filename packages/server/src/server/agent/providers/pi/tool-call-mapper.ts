@@ -396,7 +396,17 @@ function isTaskToolCall(toolCall: PiTrackedToolCall): boolean {
   if (toolCall.toolName === "task") {
     return true;
   }
-  if (toolCall.toolName !== "subagent" || !isRecord(toolCall.args)) {
+  if (!isRecord(toolCall.args)) {
+    return false;
+  }
+  if (toolCall.toolName === "Agent") {
+    return (
+      readNonEmptyString(toolCall.args.subagent_type) !== undefined &&
+      readNonEmptyString(toolCall.args.description) !== undefined &&
+      readNonEmptyString(toolCall.args.prompt) !== undefined
+    );
+  }
+  if (toolCall.toolName !== "subagent") {
     return false;
   }
   return (
@@ -410,8 +420,12 @@ function mapTaskToolDetail(args: unknown, result: PiToolResult): ToolCallDetail 
   const argRecord = isRecord(args) ? args : {};
   return {
     type: "sub_agent",
-    subAgentType: readNonEmptyString(argRecord.agent),
-    description: readNonEmptyString(argRecord.task),
+    subAgentType:
+      readNonEmptyString(argRecord.agent) ?? readNonEmptyString(argRecord.subagent_type),
+    description:
+      readNonEmptyString(argRecord.task) ??
+      readNonEmptyString(argRecord.description) ??
+      readNonEmptyString(argRecord.prompt),
     log: extractTextFromToolResult(result)?.trim() ?? "",
   };
 }
