@@ -80,6 +80,14 @@ export interface DesktopRuntimeConfig {
   dialogOpenResult?: string | string[] | null;
   editorTargets?: DesktopEditorTargetConfig[];
   editorRecordPath?: string;
+  /**
+   * Host platform reported to the app. Defaults to darwin, which is what most specs want.
+   * The app-drawn window controls only render off macOS, so a spec covering them asks for
+   * win32 or linux here.
+   */
+  platform?: string;
+  /** Initial window state reported by the window bridge, and mutated by its own calls. */
+  windowState?: { maximized?: boolean; fullscreen?: boolean };
 }
 
 interface DesktopEditorTargetConfig {
@@ -108,6 +116,8 @@ declare global {
     __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
     __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
     __desktopDaemonStartRequested?: boolean;
+    /** Every window-bridge call the app made, in order, for specs to assert against. */
+    __windowControlCalls?: string[];
   }
 }
 
@@ -175,6 +185,22 @@ export async function installDesktopRuntime(
       }
     }
 
+    // Window state the bridge reports and its own calls mutate, so a spec can click a
+    // control and assert the app re-reads the new state through onResized.
+    let windowMaximized = cfg.windowState?.maximized ?? false;
+    let windowFullscreen = cfg.windowState?.fullscreen ?? false;
+    const resizeListeners: Array<() => void> = [];
+    window.__windowControlCalls = [];
+
+    function recordWindowCall(name: string) {
+      window.__windowControlCalls?.push(name);
+    }
+
+    function notifyResized() {
+      // Copy first: a listener is free to dispose itself while being called.
+      for (const listener of resizeListeners.slice()) listener();
+    }
+
     const desktopBridge: {
       platform: string;
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -184,12 +210,23 @@ export async function installDesktopRuntime(
       };
       getPendingOpenProject: () => Promise<string | null>;
       events: { on: () => Promise<() => void> };
+      window: {
+        getCurrentWindow: () => {
+          isMaximized: () => Promise<boolean>;
+          isFullscreen: () => Promise<boolean>;
+          toggleMaximize: () => Promise<void>;
+          setFullscreen: (fullscreen: boolean) => Promise<void>;
+          minimize: () => Promise<void>;
+          close: () => Promise<void>;
+          onResized: (handler: () => void) => Promise<() => void>;
+        };
+      };
       editor?: {
         listTargets: () => Promise<DesktopEditorTargetConfig[]>;
         openTarget: (input: DesktopEditorOpenRecord) => Promise<void>;
       };
     } = {
-      platform: "darwin",
+      platform: cfg.platform ?? "darwin",
       invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === "check_app_update") {
           return cfg.updateAvailable
@@ -281,6 +318,35 @@ export async function installDesktopRuntime(
       },
       getPendingOpenProject: async () => null,
       events: { on: async () => () => undefined },
+      window: {
+        getCurrentWindow: () => ({
+          isMaximized: async () => windowMaximized,
+          isFullscreen: async () => windowFullscreen,
+          toggleMaximize: async () => {
+            recordWindowCall("toggleMaximize");
+            windowMaximized = !windowMaximized;
+            notifyResized();
+          },
+          setFullscreen: async (fullscreen: boolean) => {
+            recordWindowCall(`setFullscreen:${fullscreen}`);
+            windowFullscreen = fullscreen;
+            notifyResized();
+          },
+          minimize: async () => {
+            recordWindowCall("minimize");
+          },
+          close: async () => {
+            recordWindowCall("close");
+          },
+          onResized: async (handler: () => void) => {
+            resizeListeners.push(handler);
+            return () => {
+              const index = resizeListeners.indexOf(handler);
+              if (index >= 0) resizeListeners.splice(index, 1);
+            };
+          },
+        }),
+      },
     };
 
     if (cfg.editorTargets) {
