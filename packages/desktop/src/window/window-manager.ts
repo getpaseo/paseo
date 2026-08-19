@@ -454,6 +454,9 @@ export function shouldReportProcessGone(reason: string): boolean {
 /** How long a requested close may take before the window is torn down regardless. */
 const CLOSE_GRACE_MS = 2000;
 
+/** How long after "Wait" to re-offer recovery if the renderer is still hung. */
+const HUNG_RECHECK_MS = 20000;
+
 interface WindowFailurePrompt {
   message: string;
   detail: string;
@@ -481,6 +484,14 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
   // second event would leave the user answering a question about a renderer that no longer
   // exists, and "Wait" would dismiss the only recovery path they had. Queue instead.
   let queued: WindowFailurePrompt | null = null;
+  let hung = false;
+  let waitTimer: NodeJS.Timeout | null = null;
+
+  function clearWaitTimer(): void {
+    if (!waitTimer) return;
+    clearTimeout(waitTimer);
+    waitTimer = null;
+  }
 
   function closeWindow(): void {
     // close() rather than destroy(): the window-state persistence flush hangs off the close
@@ -501,6 +512,7 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
       return;
     }
     prompting = true;
+    let choice: string | undefined;
     try {
       const { buttons, defaultId, cancelId } = buildFailurePromptButtons(input.waitable);
       const { response } = await dialog.showMessageBox(win, {
@@ -513,7 +525,7 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
         noLink: true,
       });
       if (win.isDestroyed()) return;
-      const choice = buttons[response];
+      choice = buttons[response];
       if (choice === "Reload") {
         queued = null;
         win.reload();
@@ -521,8 +533,27 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
         queued = null;
         closeWindow();
       }
+    } catch {
+      // The window can be closed from the taskbar, Alt+F4 or an app quit while this dialog is
+      // open, which rejects showMessageBox with "Object has been destroyed". Nothing is left to
+      // recover at that point, and these callers are fire-and-forget, so swallow it rather than
+      // raise an unhandled rejection in the main process.
+      return;
     } finally {
       prompting = false;
+    }
+
+    // Choosing Wait means "leave it alone", so an identical hang prompt must not reappear
+    // immediately. Drop any queued hang, and re-offer only if the window is still hung later:
+    // `unresponsive` fires once per episode, so without this a permanently hung window would
+    // never be offered a way out again.
+    if (choice === "Wait") {
+      if (queued?.waitable) queued = null;
+      clearWaitTimer();
+      waitTimer = setTimeout(() => {
+        waitTimer = null;
+        if (hung && !win.isDestroyed()) void prompt(input);
+      }, HUNG_RECHECK_MS);
     }
 
     const next = queued;
@@ -536,12 +567,21 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
   // process is gone for good, and it reads as terminal; only this window's renderer died, the
   // app is still running, and Reload fixes it. VS Code words its prompts the same way.
   win.on("unresponsive", () => {
+    hung = true;
     void prompt({
       message: "This window is not responding",
       detail: "Wait for it to recover, reload it, or close it.",
       waitable: true,
     });
   });
+
+  win.on("responsive", () => {
+    hung = false;
+    clearWaitTimer();
+    if (queued?.waitable) queued = null;
+  });
+
+  win.on("closed", clearWaitTimer);
 
   win.webContents.on("render-process-gone", (_event, details) => {
     if (!shouldReportProcessGone(details.reason)) return;

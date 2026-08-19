@@ -221,10 +221,44 @@ function installBootWindowControls(): void {
   root.appendChild(style);
   root.appendChild(container);
 
-  // Hand over as soon as the app renders its own set, and take back over if they ever go away.
-  const sync = () => {
-    container.style.display = document.querySelector(APP_CONTROL_SELECTOR) ? "none" : "flex";
+  // Hand over as soon as the app renders its own set, and take back over if they ever go away
+  // (a route with no header, or focus mode, legitimately has none).
+  //
+  // This observer watches the whole document for the whole session, so it has to be cheap: the
+  // check is coalesced into one microtask per mutation batch, and writes only when the answer
+  // changed, which makes ordinary DOM churn - streamed tokens, terminal output - a no-op.
+  let scheduled = false;
+  // window.setTimeout in the sandboxed renderer returns a number, not a Node timer handle.
+  let reshowTimer: number | null = null;
+
+  const apply = (display: string) => {
+    if (container.style.display !== display) container.style.display = display;
   };
+
+  const sync = () => {
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      if (document.querySelector(APP_CONTROL_SELECTOR)) {
+        // Hide immediately: two visible sets at once is the one state that must never be seen.
+        if (reshowTimer) {
+          window.clearTimeout(reshowTimer);
+          reshowTimer = null;
+        }
+        apply("none");
+        return;
+      }
+      // Re-showing waits a beat, so a header that unmounts and remounts within a frame or two
+      // during navigation does not flash the fallback.
+      if (reshowTimer) return;
+      reshowTimer = window.setTimeout(() => {
+        reshowTimer = null;
+        if (!document.querySelector(APP_CONTROL_SELECTOR)) apply("flex");
+      }, 250);
+    });
+  };
+
   sync();
   new MutationObserver(sync).observe(root, { childList: true, subtree: true });
 }

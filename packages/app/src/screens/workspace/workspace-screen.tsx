@@ -1310,7 +1310,6 @@ function shouldShowWorkspaceScreenHeader(input: {
   return !input.isFocusModeEnabled || input.isMobile;
 }
 
-
 function buildWorkspaceTerminalScopeKey(serverId: string, workspaceId: string): string | null {
   if (!serverId || !workspaceId) {
     return null;
@@ -3508,6 +3507,7 @@ function WorkspaceScreenContent({
           onReorderTabs={handleReorderTabsInFocusedPane}
           focusModeEnabled={desktopFocusModeEnabled}
           onExitFocusMode={toggleFocusMode}
+          mountWindowControls={!showScreenHeader}
         />
       ) : null}
 
