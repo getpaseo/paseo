@@ -1321,7 +1321,6 @@ interface WorkspaceChromeRowProps extends Omit<
   "workspaceRoot"
 > {
   children: ReactNode;
-  explorerOpen: boolean;
   portalHostName: string;
   showExplorerSidebar: boolean;
   workspaceRoot: string | null;
@@ -1329,17 +1328,27 @@ interface WorkspaceChromeRowProps extends Omit<
 
 function WorkspaceChromeRow({
   children,
-  explorerOpen,
   portalHostName,
   showExplorerSidebar,
   workspaceRoot,
   ...explorerProps
 }: WorkspaceChromeRowProps) {
-  const explorerRendered = showExplorerSidebar && explorerOpen && workspaceRoot !== null;
+  // Corner ownership has to follow what actually renders, not what is conceptually open.
+  // ExplorerSidebar returns null unless the desktop file-explorer flag is set, and that flag
+  // is persisted, so a profile from an older build can still show it. When it does render it
+  // sits beside the center column at the window's top edge and owns the top-right corner;
+  // when it does not, the center column's full-width header owns both. Deriving this from the
+  // explorer *pane* state instead is what left the header unpadded with its icons under the
+  // window controls on Windows and Linux.
+  const isDesktopExplorerSidebarOpen = usePanelStore((state) =>
+    selectIsFileExplorerOpen(state, { isCompact: false }),
+  );
+  const explorerSidebarVisible =
+    showExplorerSidebar && workspaceRoot !== null && isDesktopExplorerSidebarOpen;
 
   return (
     <View style={styles.threePaneRow}>
-      <WindowChromeRegion corners={explorerRendered ? "top-left" : "both"}>
+      <WindowChromeRegion corners={explorerSidebarVisible ? "top-left" : "both"}>
         <FloatingPanelPortalHostNameProvider hostName={portalHostName}>
           {children}
         </FloatingPanelPortalHostNameProvider>
@@ -1347,7 +1356,7 @@ function WorkspaceChromeRow({
 
       <FloatingPanelPortalHost name={portalHostName} />
 
-      {showExplorerSidebar && workspaceRoot ? (
+      {explorerSidebarVisible && workspaceRoot ? (
         <WindowChromeRegion corners="top-right">
           <ExplorerSidebar {...explorerProps} workspaceRoot={workspaceRoot} />
         </WindowChromeRegion>
@@ -3656,7 +3665,6 @@ function WorkspaceScreenContent({
             <WorkspaceChromeRow
               portalHostName={workspaceFloatingPanelPortalHostName}
               showExplorerSidebar={showExplorerSidebar}
-              explorerOpen={isExplorerOpen}
               serverId={normalizedServerId}
               workspaceId={normalizedWorkspaceId}
               workspaceRoot={workspaceDirectory}

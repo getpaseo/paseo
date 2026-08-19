@@ -10,7 +10,8 @@ import {
 } from "@/constants/layout";
 import { getDesktopWindow } from "@/desktop/electron/window";
 import { isNative } from "@/constants/platform";
-
+import { useWindowControlsOverlay } from "@/hooks/use-window-controls-overlay";
+import type { WindowControlsOverlayMeasurement } from "@/utils/window-controls-overlay";
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
 type WindowChromeSafeAreaPlacement = "inline" | "below";
 
@@ -80,17 +81,28 @@ export function resolveWindowChromeObstruction(input: {
   isElectron: boolean;
   isMac: boolean;
   isFullscreen: boolean;
+  measurement: WindowControlsOverlayMeasurement | null;
 }): WindowChromeObstruction {
   if (!input.isElectron || input.isFullscreen) return EMPTY_OBSTRUCTION;
-  if (input.isMac) {
+  if (input.measurement === null) {
+    if (input.isMac) {
+      return {
+        topLeft: { width: DESKTOP_TRAFFIC_LIGHT_WIDTH, height: DESKTOP_TRAFFIC_LIGHT_HEIGHT },
+        topRight: null,
+      };
+    }
     return {
-      topLeft: { width: DESKTOP_TRAFFIC_LIGHT_WIDTH, height: DESKTOP_TRAFFIC_LIGHT_HEIGHT },
-      topRight: null,
+      topLeft: null,
+      topRight: { width: DESKTOP_WINDOW_CONTROLS_WIDTH, height: DESKTOP_WINDOW_CONTROLS_HEIGHT },
     };
   }
+  if (!input.measurement.visible) {
+    return EMPTY_OBSTRUCTION;
+  }
+  const { insets } = input.measurement;
   return {
-    topLeft: null,
-    topRight: { width: DESKTOP_WINDOW_CONTROLS_WIDTH, height: DESKTOP_WINDOW_CONTROLS_HEIGHT },
+    topLeft: insets.leftWidth > 0 ? { width: insets.leftWidth, height: insets.height } : null,
+    topRight: insets.rightWidth > 0 ? { width: insets.rightWidth, height: insets.height } : null,
   };
 }
 
@@ -112,6 +124,7 @@ export function resolveWindowChromeSafeArea(input: {
 export function WindowChromeProvider({ children }: { children: ReactNode }) {
   const [isElectronReady, setIsElectronReady] = useState(getIsElectronRuntime);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const measurement = useWindowControlsOverlay();
 
   useEffect(() => {
     let active = true;
@@ -187,8 +200,9 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
         isElectron: isElectronReady,
         isMac: getIsElectronRuntimeMac(),
         isFullscreen,
+        measurement,
       }),
-    [isElectronReady, isFullscreen],
+    [isElectronReady, isFullscreen, measurement],
   );
   return (
     <WindowChromeContext.Provider value={obstruction}>

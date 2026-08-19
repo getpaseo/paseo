@@ -79,7 +79,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    // flex-end, not space-between: the leading group already grows to fill the row, so the
+    // two behave identically until the trailing actions outgrow the space left for them.
+    // At that point space-between overflows at the end, pushing the actions through the
+    // window-control reservation and off the window. flex-end overflows at the start, so
+    // extra actions expand leftward into the title, which truncates.
+    justifyContent: "flex-end",
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
     userSelect: "none",

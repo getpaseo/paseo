@@ -53,7 +53,37 @@ function rectsIntersect(left, right) {
   );
 }
 
-function getWindowChromeObstruction(platform, innerWidth) {
+/**
+ * Live window-control geometry, or null where Chromium reports no overlay
+ * (macOS traffic-light builds, fullscreen). The app reserves the measured value,
+ * so a hardcoded rectangle here drifts from what the renderer actually pads.
+ */
+async function readWindowControlsOverlayInsets(page) {
+  return page.evaluate(() => {
+    const overlay = navigator.windowControlsOverlay;
+    if (!overlay || overlay.visible !== true) return null;
+    const rect = overlay.getTitlebarAreaRect();
+    const rectRight = rect.x + rect.width;
+    return {
+      leftWidth: Math.max(0, Math.round(rect.x)),
+      rightWidth: Math.max(0, Math.round(window.innerWidth - rectRight)),
+      height: Math.round(rect.height),
+    };
+  });
+}
+
+function getWindowChromeObstruction(platform, innerWidth, overlayInsets) {
+  if (overlayInsets) {
+    const onLeft = overlayInsets.leftWidth > 0;
+    const width = onLeft ? overlayInsets.leftWidth : overlayInsets.rightWidth;
+    return {
+      corner: onLeft ? "top-left" : "top-right",
+      left: onLeft ? 0 : innerWidth - width,
+      top: 0,
+      width,
+      height: overlayInsets.height,
+    };
+  }
   if (platform === "darwin") {
     return { corner: "top-left", left: 0, top: 0, width: 78, height: 45 };
   }
@@ -105,9 +135,10 @@ async function inspectSettingsGeometry(page) {
   });
 }
 
-function settingsGeometryClearsWindowChrome(geometry, platform) {
-  const obstruction = getWindowChromeObstruction(platform, geometry.innerWidth);
-  const consumer = platform === "darwin" ? geometry.backButtonRect : geometry.detailHeaderLeftRect;
+function settingsGeometryClearsWindowChrome(geometry, platform, overlayInsets) {
+  const obstruction = getWindowChromeObstruction(platform, geometry.innerWidth, overlayInsets);
+  const consumer =
+    obstruction.corner === "top-left" ? geometry.backButtonRect : geometry.detailHeaderLeftRect;
   return Boolean(consumer && !rectsIntersect(consumer, obstruction));
 }
 
@@ -154,6 +185,10 @@ async function inspectTitlebarRegions(page) {
       }
       [data-electron-verify-interactive="true"] {
         outline: 3px solid #1677ff !important;
+        outline-offset: -3px !important;
+      }
+      [data-electron-verify-overlay-offender="true"] {
+        outline: 3px solid #fa8c16 !important;
         outline-offset: -3px !important;
       }
     `;
@@ -430,8 +465,9 @@ async function inspectHalfScreenSettingsLayout(page, platform) {
     await outerAppSidebarSettings.waitFor({ state: "hidden", timeout: 10_000 });
 
     const details = await inspectSettingsGeometry(page);
-    const obstruction = getWindowChromeObstruction(platform, details.innerWidth);
-    const clearsWindowChrome = settingsGeometryClearsWindowChrome(details, platform);
+    const overlayInsets = await readWindowControlsOverlayInsets(page);
+    const obstruction = getWindowChromeObstruction(platform, details.innerWidth, overlayInsets);
+    const clearsWindowChrome = settingsGeometryClearsWindowChrome(details, platform, overlayInsets);
     const sidebarRight = details.sidebarRect
       ? details.sidebarRect.left + details.sidebarRect.width
       : null;
@@ -575,6 +611,7 @@ async function clearTitlebarAnnotations(page) {
       "data-electron-verify-drag",
       "data-electron-verify-resizer",
       "data-electron-verify-interactive",
+      "data-electron-verify-overlay-offender",
     ]) {
       for (const element of document.querySelectorAll(`[${attribute}]`)) {
         element.removeAttribute(attribute);
@@ -603,6 +640,88 @@ function evaluateTrafficLightAvoidance(dragRegionCheck) {
     firstInteractive &&
     !rectsIntersect(firstInteractive, { left: 0, top: 0, width: 78, height: 45 }),
   );
+}
+
+async function inspectWindowControlsOverlayClearance(page) {
+  return page.evaluate((interactiveSelector) => {
+    const overlay = navigator.windowControlsOverlay;
+    if (!overlay || overlay.visible !== true) {
+      return {
+        supported: Boolean(overlay),
+        skipped: true,
+        passed: true,
+        reason: overlay
+          ? "navigator.windowControlsOverlay is not visible"
+          : "navigator.windowControlsOverlay is unavailable in this environment",
+        titlebarAreaRect: null,
+        bands: [],
+        innerWidth: window.innerWidth,
+        offendingCount: 0,
+        offendingElements: [],
+      };
+    }
+
+    // getTitlebarAreaRect() is the strip the controls do NOT cover, so the
+    // controls occupy whatever is left of it and whatever is right of it.
+    const rect = overlay.getTitlebarAreaRect();
+    const innerWidth = window.innerWidth;
+    const rectRight = rect.x + rect.width;
+    const bands = [
+      { side: "left", left: 0, width: Math.max(0, rect.x), height: rect.height },
+      {
+        side: "right",
+        left: rectRight,
+        width: Math.max(0, innerWidth - rectRight),
+        height: rect.height,
+      },
+    ].filter((band) => band.width > 0 && band.height > 0);
+
+    function describeOffender(element, bounds, side) {
+      const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+      return {
+        tagName: element.tagName.toLowerCase(),
+        name:
+          element.getAttribute("aria-label") ??
+          element.getAttribute("data-testid") ??
+          (text ? text.slice(0, 80) : null),
+        role: element.getAttribute("role"),
+        band: side,
+        rect: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
+      };
+    }
+
+    function findOccupiedBand(bounds) {
+      return bands.find(
+        (band) =>
+          bounds.left < band.left + band.width &&
+          bounds.left + bounds.width > band.left &&
+          bounds.top < band.height &&
+          bounds.top + bounds.height > 0,
+      );
+    }
+
+    const offendingElements = [];
+    for (const element of document.querySelectorAll(interactiveSelector)) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) continue;
+      if (window.getComputedStyle(element).visibility === "hidden") continue;
+      const band = findOccupiedBand(bounds);
+      if (!band) continue;
+      element.setAttribute("data-electron-verify-overlay-offender", "true");
+      offendingElements.push(describeOffender(element, bounds, band.side));
+    }
+
+    return {
+      supported: true,
+      skipped: false,
+      passed: offendingElements.length === 0,
+      titlebarAreaRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      bands,
+      innerWidth,
+      offendingCount: offendingElements.length,
+      offendingElements,
+    };
+  }, INTERACTIVE_SELECTOR);
 }
 
 async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results) {
@@ -725,6 +844,16 @@ async function main() {
     const dragRegionCheck = await inspectTitlebarRegions(page);
     const dragScreenshot = await captureScreenshot(page, "03-drag-region.png");
     await collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results);
+
+    const overlayClearance = await inspectWindowControlsOverlayClearance(page);
+    const overlayScreenshot = await captureScreenshot(page, "04-window-controls-overlay.png");
+    results.push({
+      check: "window-controls-overlay-clearance",
+      pass: overlayClearance.skipped ? true : overlayClearance.passed,
+      skipped: overlayClearance.skipped,
+      details: overlayClearance,
+      screenshot: overlayScreenshot,
+    });
 
     const fullscreenDetails = await inspectFullscreenWindowChrome(page, desktopDetection.platform);
     results.push({

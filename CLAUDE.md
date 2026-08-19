@@ -35,6 +35,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/unistyles.md](docs/unistyles.md)                             | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order                                                       |
 | [docs/floating-panels.md](docs/floating-panels.md)                 | Anchored popovers — Portal/Modal escape for Android, lifecycle gates, keyboard-shared-value, status-bar offset, the flash      |
 | [docs/menus.md](docs/menus.md)                                     | The menu engine — popover vs sheet, submenu pages, hover intent, when a decision earns a submenu                               |
+| [docs/window-chrome.md](docs/window-chrome.md)                     | Window controls overlay — measuring the real inset, both corners, the events that drop updates                                 |
 | [docs/expo-router.md](docs/expo-router.md)                         | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
 | [docs/file-icons.md](docs/file-icons.md)                           | Material icon theme integration for the file explorer                                                                          |
 | [docs/providers.md](docs/providers.md)                             | Adding a new agent provider end-to-end                                                                                         |
