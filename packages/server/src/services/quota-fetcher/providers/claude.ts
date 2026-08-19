@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
@@ -297,19 +297,60 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
-async function readClaudeKeychainCredentials(): Promise<unknown | null> {
+export type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
+
+// Claude Code derives the Keychain account from $USER and falls back when the username
+// carries a character a Keychain account may not, which every email-shaped corporate
+// login does. Reproduce the derivation rather than guessing: the account is the only
+// thing that tells its item apart from the ones older versions left behind.
+const CLAUDE_KEYCHAIN_ACCOUNT_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const CLAUDE_KEYCHAIN_FALLBACK_ACCOUNT = "claude-code-user";
+
+export function claudeKeychainAccount(
+  user: string = process.env["USER"] || userInfo().username,
+): string {
+  return CLAUDE_KEYCHAIN_ACCOUNT_PATTERN.test(user) ? user : CLAUDE_KEYCHAIN_FALLBACK_ACCOUNT;
+}
+
+async function runSecurityCommand(args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
-      { timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS },
-    );
-    const raw = stdout.trim();
-    if (!raw) return null;
-    return JSON.parse(raw);
+    const { stdout } = await execFileAsync("security", args, {
+      timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS,
+    });
+    return stdout.trim() || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The Claude Code credentials, from the item Claude Code writes rather than whichever
+ * item the Keychain happens to find first.
+ *
+ * Several items share this service name — one per account convention Claude Code has
+ * used over time — and a lookup that names no account returns the first match, which is
+ * the oldest and whose token expired long ago. Naming the account selects the live item;
+ * the account-less lookup stays behind it for versions that predate the convention.
+ */
+export async function readClaudeKeychainCredentials(
+  run: ClaudeKeychainCommandRunner = runSecurityCommand,
+  account: string = claudeKeychainAccount(),
+): Promise<unknown | null> {
+  const lookups = [
+    ["find-generic-password", "-a", account, "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+    ["find-generic-password", "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+  ];
+
+  for (const args of lookups) {
+    const raw = await run(args);
+    if (!raw) continue;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      // Unparseable blob: keep going, a later lookup may still hold a readable item.
+    }
+  }
+  return null;
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
