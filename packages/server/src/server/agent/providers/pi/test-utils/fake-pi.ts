@@ -125,6 +125,7 @@ export class FakePiSession implements PiRuntimeSession {
   compactError: Error | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
+  getSessionStatsError: Error | null = null;
   promptAck: PiPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   readonly branchRequests: string[] = [];
@@ -250,6 +251,9 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
+    if (this.getSessionStatsError) {
+      throw this.getSessionStatsError;
+    }
     return this.stats;
   }
 

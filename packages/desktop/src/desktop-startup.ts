@@ -3,7 +3,6 @@ export interface DesktopStartupDependencies {
   runCliPassthroughIfRequested: () => Promise<boolean>;
   inheritLoginShellEnv: () => void;
   bootstrapGui: () => Promise<void>;
-  autoUpdateInstalledSkills?: () => void;
 }
 
 export async function runDesktopStartup(deps: DesktopStartupDependencies): Promise<void> {
@@ -13,5 +12,4 @@ export async function runDesktopStartup(deps: DesktopStartupDependencies): Promi
 
   deps.inheritLoginShellEnv();
   await deps.bootstrapGui();
-  deps.autoUpdateInstalledSkills?.();
 }

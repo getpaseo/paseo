@@ -85,10 +85,12 @@ describe("TaskListRow", () => {
     container.remove();
   });
 
-  it("keeps pending tasks muted", () => {
+  it("keeps a pending task's ring quieter than its label, so it does not read as a checkbox", () => {
     act(() => root.render(<TaskListRow task={pendingTask} />));
 
-    expect(container.querySelector('[data-icon="Circle"]')?.getAttribute("color")).toBe("#muted");
+    expect(container.querySelector('[data-icon="Circle"]')?.getAttribute("color")).toBe(
+      "#extra-muted",
+    );
     expect(container.querySelector("[data-color]")?.getAttribute("data-color")).toBe("#muted");
   });
 

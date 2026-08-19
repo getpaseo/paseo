@@ -466,7 +466,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 9,
   },
   projectTitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   section: {
@@ -475,7 +475,7 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: -theme.spacing[2],
   },
   errorText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.destructive,
     lineHeight: 20,
   },

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectHostEntry, ProjectSummary, WorkspaceSummary } from "@/utils/projects";
 import type { ProjectHostError, UseProjectsResult } from "@/hooks/use-projects";
 
-const { theme, projectsState, navigate } = vi.hoisted(() => ({
+const { theme, projectsState, push } = vi.hoisted(() => ({
   theme: {
     spacing: { 0: 0, 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
     iconSize: { sm: 14, md: 20 },
@@ -37,7 +37,7 @@ const { theme, projectsState, navigate } = vi.hoisted(() => ({
       refetch: vi.fn(),
     } as UseProjectsResult,
   },
-  navigate: vi.fn(),
+  push: vi.fn(),
 }));
 
 vi.mock("react-native", () => {
@@ -125,7 +125,7 @@ vi.mock("lucide-react-native", () => {
 });
 
 vi.mock("expo-router", () => ({
-  router: { navigate },
+  router: { push },
 }));
 
 vi.mock("react-i18next", () => ({
@@ -281,7 +281,7 @@ describe("ProjectsScreen", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     setProjectsState({});
-    navigate.mockReset();
+    push.mockReset();
   });
 
   afterEach(() => {
@@ -334,8 +334,8 @@ describe("ProjectsScreen", () => {
       row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
 
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/settings/hosts/host-a/projects/project-a");
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith("/settings/hosts/host-a/projects/project-a");
   });
 
   it("does not render a kebab menu on the row", () => {

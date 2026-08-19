@@ -1,9 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { BrowserElementAttachment } from "@/attachments/types";
 import {
   getOverlayRoot,
@@ -207,7 +208,7 @@ export function BrowserElementAnnotationCard({
           placeholder={t("workspace.browser.annotate.placeholder")}
           style={styles.annotationInput}
           uniProps={annotationInputMapping}
-          value={comment}
+          initialValue={comment}
         />
         <View style={styles.annotationActions}>
           <Button variant="ghost" size="sm" onPress={onCancel}>
@@ -263,7 +264,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   annotationTitle: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "600",
     color: theme.colors.foreground,
   },
@@ -275,13 +276,13 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   annotationElement: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     marginBottom: theme.spacing[2],
   },
   annotationInput: {
     minHeight: 64,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,

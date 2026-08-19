@@ -1,6 +1,10 @@
 import { Buffer } from "buffer";
 import { z } from "zod";
-import { AgentStatusSchema, AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentStatusSchema,
+  AgentTimelineItemPayloadSchema,
+  WorkspaceGitHubRuntimePayloadSchema,
+} from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import {
   normalizeProjectDescriptor,
@@ -31,6 +35,8 @@ const TimelinePositionSchema = z.strictObject({
 const TimelineItemBaseShape = {
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
+  // COMPAT(active-turn-membership): absent on caches written before turn membership.
+  turnId: z.string().optional(),
   timestamp: IsoDateSchema,
 };
 
@@ -229,6 +235,10 @@ const StoredWorkspaceSchema = z.strictObject({
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
+  // Optional because entries written before labels existed have none. A cached workspace that
+  // dropped them painted its row without its chips and stayed that way: the directory cursor is
+  // current on reconnect, so the daemon has nothing newer to send back.
+  labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
@@ -236,6 +246,7 @@ const StoredWorkspaceSchema = z.strictObject({
   diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
   scripts: z.array(WorkspaceScriptSchema),
   gitRuntime: WorkspaceGitRuntimeSchema,
+  githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
 });
 
@@ -320,6 +331,7 @@ function timelineBase(item: StreamItem) {
   return {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
 }
@@ -394,6 +406,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
   switch (item.kind) {
@@ -550,6 +563,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     name: workspace.name,
     title: workspace.title ?? null,
     pinnedAt: workspace.pinnedAt ?? null,
+    labels: workspace.labels,
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
@@ -569,6 +583,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
       terminalId: script.terminalId,
     })),
     gitRuntime: workspace.gitRuntime,
+    githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
   };
 }

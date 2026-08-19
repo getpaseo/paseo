@@ -36,6 +36,8 @@ function reloadableConfig(
       maxProcessConcurrency: git.maxProcessConcurrency ?? 8,
     },
     app: { baseUrl: "https://app.paseo.sh" },
+    pluginsEnabled: persisted.pluginsEnabled ?? false,
+    plugins: persisted.plugins ?? {},
   };
 }
 
@@ -938,6 +940,31 @@ describe("DaemonConfigStore reload", () => {
     });
     expect(store.get().browserTools.enabled).toBe(true);
     expect(store.get().git).toEqual({ maxProcessesPerSecond: 12, maxProcessConcurrency: 3 });
+  });
+
+  test("applies the global plugin switch in both directions", () => {
+    const { paseoHome, store, persisted } = createReloadableStore({
+      initialPersisted: { version: 1, pluginsEnabled: false },
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("pluginsEnabled", (value) => changes.push(value));
+
+    writeConfig(paseoHome, { ...persisted, pluginsEnabled: true });
+    expect(store.reload()).toEqual({
+      appliedPaths: ["pluginsEnabled"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().pluginsEnabled).toBe(true);
+
+    writeConfig(paseoHome, { ...persisted, pluginsEnabled: false });
+    expect(store.reload()).toEqual({
+      appliedPaths: ["pluginsEnabled"],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().pluginsEnabled).toBe(false);
+    expect(changes).toEqual([true, false]);
   });
 
   test("classifies every leaf when a parent subtree is added", () => {

@@ -1,7 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { QueryClientProvider } from "@tanstack/react-query";
 import type { PluginSurfaceProps } from "@paseo/plugin";
-import { PluginRpcProvider } from "@paseo/plugin/host";
 import { ChevronDown, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
@@ -20,6 +18,13 @@ import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
 import { rememberPluginContributionHost } from "./sidebar-groups";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
+import { createPluginSurfaceRuntime } from "./surface-runtime";
+import { PluginRuntimeBoundary } from "./runtime-boundary";
+import {
+  getPluginSurfaceContributionServerIds,
+  resolvePluginSurfaceContribution,
+  type PluginSurfaceContributionIdentity,
+} from "./surface-contribution";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const EMPTY_THEME_DTO: Record<string, unknown> = {};
@@ -48,25 +53,23 @@ const ThemedPluginHeaderIcon = withUnistyles(PluginHeaderIcon);
 
 function SurfaceRenderer({
   Surface,
-  invoke,
+  runtime,
   plugin,
   layout,
   host,
   themeDto = EMPTY_THEME_DTO,
 }: {
   Surface: ComponentType<PluginSurfaceProps>;
-  invoke(method: string, input: unknown): Promise<unknown>;
+  runtime: NonNullable<ReturnType<typeof createPluginSurfaceRuntime>>;
   plugin: NonNullable<ReturnType<typeof useInstalledPlugin>>;
   layout: PluginSurfaceProps["layout"];
   host: PluginSurfaceProps["host"];
   themeDto?: Record<string, unknown>;
 }) {
   return (
-    <QueryClientProvider client={plugin.queryClient}>
-      <PluginRpcProvider invoke={invoke}>
-        <Surface theme={themeDto} host={host} layout={layout} />
-      </PluginRpcProvider>
-    </QueryClientProvider>
+    <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
+      <Surface theme={themeDto} host={host} layout={layout} />
+    </PluginRuntimeBoundary>
   );
 }
 
@@ -81,12 +84,12 @@ function resolvePlatform(): PluginSurfaceProps["layout"]["platform"] {
 function PluginHostSwitcher({
   serverId,
   pluginId,
-  contributionId,
+  identity,
   serverIds,
 }: {
   serverId: string;
   pluginId: string;
-  contributionId: string;
+  identity: PluginSurfaceContributionIdentity;
   serverIds: string[];
 }) {
   const allHosts = useHosts();
@@ -99,10 +102,10 @@ function PluginHostSwitcher({
   const selectedLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const selectHost = useCallback(
     (nextServerId: string) => {
-      rememberPluginContributionHost(`${pluginId}/${contributionId}`, nextServerId);
-      router.replace(buildPluginSurfaceRoute(nextServerId, pluginId, contributionId));
+      rememberPluginContributionHost(`${pluginId}/${identity.kind}/${identity.id}`, nextServerId);
+      router.replace(buildPluginSurfaceRoute(nextServerId, pluginId, identity));
     },
-    [contributionId, pluginId],
+    [identity, pluginId],
   );
   const openPicker = useCallback(() => setOpen(true), []);
   const show = serverIds.length > 1 && hosts.length > 1;
@@ -141,35 +144,35 @@ export function PluginSurfaceScreen() {
   const params = useLocalSearchParams<{
     serverId?: string | string[];
     pluginId?: string | string[];
-    surfaceId?: string | string[];
+    contributionKind?: string | string[];
+    contributionId?: string | string[];
   }>();
   const serverId = routeParam(params.serverId);
   const pluginId = routeParam(params.pluginId);
-  const contributionId = routeParam(params.surfaceId);
+  const contributionKind = routeParam(params.contributionKind);
+  const contributionId = routeParam(params.contributionId);
+  const identity = useMemo<PluginSurfaceContributionIdentity | null>(() => {
+    if (contributionKind !== "sidebar" && contributionKind !== "surface") return null;
+    return { kind: contributionKind, id: contributionId };
+  }, [contributionId, contributionKind]);
   const plugin = useInstalledPlugin(serverId, pluginId);
   const installations = usePluginInstallations(pluginId);
   const hosts = useHosts();
   const client = useHostRuntimeClient(serverId);
+  const runtime = useMemo(() => createPluginSurfaceRuntime(client, pluginId), [client, pluginId]);
   const compact = useIsCompactFormFactor();
-  const sidebarItem = plugin?.sidebarItems.find((entry) => entry.id === contributionId) ?? null;
-  const surface = plugin?.surfaces.find((entry) => entry.id === sidebarItem?.surface) ?? null;
+  const { sidebarItem, surface } = useMemo(
+    () => resolvePluginSurfaceContribution(plugin, identity),
+    [identity, plugin],
+  );
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const contributionServerIds = useMemo(
     () =>
-      installations
-        .filter((entry) => entry.sidebarItems.some((item) => item.id === contributionId))
-        .map((entry) => entry.serverId),
-    [contributionId, installations],
+      identity ? getPluginSurfaceContributionServerIds(installations, pluginId, identity) : [],
+    [identity, installations, pluginId],
   );
-  const title = sidebarItem?.title ?? (pluginId || "Plugin");
+  const title = sidebarItem?.title ?? surface?.id ?? (pluginId || "Plugin");
   const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
-  const invoke = useCallback(
-    async (method: string, input: unknown) => {
-      if (!client) throw new Error("Plugin host is offline");
-      return client.invokePluginRpc(pluginId, method, input);
-    },
-    [client, pluginId],
-  );
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
@@ -192,12 +195,14 @@ export function PluginSurfaceScreen() {
   const headerRight = useMemo(
     () => (
       <>
-        <PluginHostSwitcher
-          serverId={serverId}
-          pluginId={pluginId}
-          contributionId={contributionId}
-          serverIds={contributionServerIds}
-        />
+        {identity ? (
+          <PluginHostSwitcher
+            serverId={serverId}
+            pluginId={pluginId}
+            identity={identity}
+            serverIds={contributionServerIds}
+          />
+        ) : null}
         <HeaderToggleButton
           accessibilityLabel="Close plugin"
           onPress={close}
@@ -210,22 +215,22 @@ export function PluginSurfaceScreen() {
         </HeaderToggleButton>
       </>
     ),
-    [close, contributionId, contributionServerIds, pluginId, serverId],
+    [close, contributionServerIds, identity, pluginId, serverId],
   );
 
   return (
     <View style={styles.screen}>
       <ScreenHeader left={headerLeft} right={headerRight} />
       <View style={styles.body}>
-        {plugin && surface ? (
+        {plugin && surface && runtime ? (
           <SurfaceErrorBoundary
-            key={`${serverId}/${pluginId}/${contributionId}`}
+            key={`${serverId}/${pluginId}/${identity?.kind}/${contributionId}`}
             installation={plugin}
             Surface={surface.Component}
           >
             <ThemedSurfaceRenderer
               Surface={surface.Component}
-              invoke={invoke}
+              runtime={runtime}
               plugin={plugin}
               host={host}
               layout={layout}
@@ -233,7 +238,9 @@ export function PluginSurfaceScreen() {
             />
           </SurfaceErrorBoundary>
         ) : (
-          <Text style={styles.errorText}>This plugin surface is unavailable.</Text>
+          <Text style={styles.errorText}>
+            {plugin && surface ? "Plugin host is offline." : "This plugin surface is unavailable."}
+          </Text>
         )}
       </View>
     </View>
@@ -265,6 +272,6 @@ const styles = StyleSheet.create((theme) => ({
   hostSwitcherText: {
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

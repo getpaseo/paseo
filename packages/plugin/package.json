@@ -27,7 +27,11 @@
     "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "use-sync-external-store": "^1.6.0"
+  },
   "devDependencies": {
+    "@getpaseo/client": "0.4.0",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -36,6 +40,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@getpaseo/client": "0.4.0",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

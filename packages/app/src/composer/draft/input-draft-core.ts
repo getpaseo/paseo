@@ -57,7 +57,7 @@ export function hasDraftContent(input: {
   text: string;
   attachments: UserComposerAttachment[];
 }): boolean {
-  return input.text.trim().length > 0 || input.attachments.length > 0;
+  return input.text.length > 0 || input.attachments.length > 0;
 }
 
 export function areAttachmentsEqual(input: {

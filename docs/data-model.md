@@ -57,6 +57,8 @@ $PASEO_HOME/
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
+│   ├── workspace-labels.json            # Shared host-local label catalog
+│   ├── workspace-labels.transaction.json # Recoverable catalog/assignment compound commit
 │   └── icons/                           # Host-local custom project icon images
 ├── runtime/
 │   └── managed-processes/
@@ -175,6 +177,10 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 Single file, validated with `PersistedConfigSchema`.
 
+`agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
+`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
+skill directories and keeps config plus filesystem convergence behind one serialized owner.
+
 `paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
 fields and their removal/default semantics; session handlers and the CLI only relay the structured
@@ -218,6 +224,9 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     local: { modelsDir: string }
   },
   agents: {
+    skills?: {
+      selection?: { mode: "all" } | { mode: "custom", skills: string[] }
+    },
     // ProviderOverrideSchema; legacy entries with `command: { mode, ... }` are migrated to the
     // current shape on load via `migrateProviderSettings`. Custom provider IDs must declare
     // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.
@@ -226,6 +235,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
       providers: [{ provider, model?, thinkingOptionId? }]
     }
   },
+  pluginsEnabled: boolean,
+  plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
     dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
     voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
@@ -436,9 +447,34 @@ Array of workspace records. A workspace is a specific working directory within a
 | `updatedAt`                    | `string` (ISO 8601)                             |                                                                                                                                                                                               |
 | `archivedAt`                   | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
+| `labels`                       | `string[]?`                                     | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
 | `pinnedAt`                     | `string \| null` (ISO 8601)                     | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Workspace label catalog
+
+**Path:** `$PASEO_HOME/projects/workspace-labels.json`
+
+The catalog is shared by every workspace on one host. A definition contains a display name and one
+of the ten identity colour names (`WORKSPACE_LABEL_COLORS` in
+`packages/protocol/src/workspace-labels.ts`); trimmed, collapsed, case-insensitive name identity is
+unique within that file. Definitions have no portable ID or principal owner and remain after their
+last assignment. Editing a label takes a new name, a new colour, or both in one commit, so the two
+fields cannot land half-applied. Workspaces store label names, so a rename and a delete rewrite
+workspace assignments through one serialized compound commit while a recolour is catalog-only; a
+rename onto a name the host already has is refused rather than merged. A prepared
+`workspace-labels.transaction.json` contains both before and after images. The daemon writes the
+catalog and workspace files, then atomically changes the transaction to committed; that phase
+change is the durable commit point. Recovery rolls prepared transactions back before either
+directory is served. A committed marker proves both data files were already written, so recovery
+only loads the current catalog and retries marker cleanup; it never reapplies stale workspace
+after-images over later registry mutations. A request rejected before the commit point therefore
+cannot take effect after restart. If the live daemon cannot determine or restore the durable state,
+the workspace registry freezes every write and later label mutations fail with
+`workspace_label_storage_uncertain` until daemon restart performs recovery. Reads remain available,
+but may reflect the last acknowledged cache until restart. Workspace directory and catalog updates
+publish only after the commit point; publication failure does not roll durable state back.
 
 `projectId` is still a real FK: workspace records should have a matching project record. Read-only
 history surfaces tolerate transient orphaned workspaces by omitting those rows so one bad FK cannot

@@ -12,7 +12,7 @@ async function pressSettingsToggleShortcut(page: import("@playwright/test").Page
 
 async function expectSendBehavior(
   page: import("@playwright/test").Page,
-  expected: "interrupt" | "queue",
+  expected: "interrupt" | "queue" | "steer",
 ) {
   await expect
     .poll(async () => {

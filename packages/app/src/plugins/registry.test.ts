@@ -8,6 +8,8 @@ function bundle(marker: string): string {
       function Surface() { return ${JSON.stringify(marker)}; }
       plugin.addSurface("main", Surface);
       plugin.addSidebarItem({ id: "main", title: "Example", icon: "Blocks", surface: "main" });
+      plugin.addWorkspacePanel({ id: "review", title: "Review", icon: "Blocks", context: "workspace", Component: Surface });
+      plugin.addCommandCenterItem({ id: "open-review", title: "Open review", icon: "Blocks", context: "workspace", onSelect() {} });
       return function() { globalThis.__pluginCleanups = (globalThis.__pluginCleanups || 0) + 1; };
     };
     return module.exports;
@@ -85,6 +87,8 @@ describe("PluginRegistry", () => {
 
     const second = pluginRegistry.getSnapshot()[0];
     expect(second).not.toBe(first);
+    expect(second?.workspacePanels.map((panel) => panel.id)).toEqual(["review"]);
+    expect(second?.commandCenterItems.map((item) => item.id)).toEqual(["open-review"]);
     expect(first?.queryClient.getQueryData(["attachment-search"])).toBeUndefined();
     expect(Reflect.get(globalThis, "__pluginCleanups")).toBe(1);
   });

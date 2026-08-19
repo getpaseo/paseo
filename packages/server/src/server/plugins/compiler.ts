@@ -5,9 +5,20 @@ import { build, type Plugin } from "esbuild";
 
 type PluginBuildTarget = "client" | "server";
 
+interface SourceRange {
+  start: number;
+  end: number;
+}
+
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
   client: new Set(["handle"]),
-  server: new Set(["addSurface", "addSidebarItem", "addAttachmentSource"]),
+  server: new Set([
+    "addSurface",
+    "addSidebarItem",
+    "addWorkspacePanel",
+    "addCommandCenterItem",
+    "addAttachmentSource",
+  ]),
 };
 
 function registrationName(statement: unknown, contextName: string): string | null {
@@ -48,7 +59,7 @@ function defaultPluginFunction(programBody: unknown[]): { body: object; contextN
       Reflect.get(statement, "type") === "ExportDefaultDeclaration",
   );
   if (defaultExports.length !== 1) {
-    throw new Error("Plugin index.tsx must have exactly one default export function");
+    throw new Error("Plugin entry point must have exactly one default export function");
   }
   const declaration = Reflect.get(defaultExports[0] as object, "declaration");
   const declarationType =
@@ -82,7 +93,7 @@ function collectRemovedRegistrationRanges(
   node: unknown,
   contextName: string,
   removedNames: ReadonlySet<string>,
-  ranges: Array<{ start: number; end: number }>,
+  ranges: SourceRange[],
 ): void {
   if (node === null || typeof node !== "object") return;
   if (Reflect.get(node, "type") === "ExpressionStatement") {
@@ -91,7 +102,9 @@ function collectRemovedRegistrationRanges(
       const start = Reflect.get(node, "start");
       const end = Reflect.get(node, "end");
       if (typeof start !== "number" || typeof end !== "number") {
-        throw new Error(`Could not locate plugin context ${name} registration in index.tsx`);
+        throw new Error(
+          `Could not locate plugin context ${name} registration in plugin entry point`,
+        );
       }
       ranges.push({ start, end });
       return;
@@ -107,25 +120,79 @@ function collectRemovedRegistrationRanges(
   }
 }
 
-function removeOppositeTargetRegistrations(source: string, target: PluginBuildTarget): string {
+function moduleTarget(specifier: string): PluginBuildTarget | null {
+  if (/\.client(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "client";
+  if (/\.server(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "server";
+  return null;
+}
+
+function collectOppositeTargetImportRanges(
+  programBody: unknown[],
+  target: PluginBuildTarget,
+  ranges: SourceRange[],
+): void {
+  for (const statement of programBody) {
+    if (
+      statement === null ||
+      typeof statement !== "object" ||
+      Reflect.get(statement, "type") !== "ImportDeclaration"
+    ) {
+      continue;
+    }
+    const source = Reflect.get(statement, "source");
+    const specifier =
+      source !== null && typeof source === "object" ? Reflect.get(source, "value") : null;
+    if (typeof specifier !== "string") continue;
+    const importedTarget = moduleTarget(specifier);
+    if (importedTarget === null || importedTarget === target) continue;
+    const start = Reflect.get(statement, "start");
+    const end = Reflect.get(statement, "end");
+    if (typeof start !== "number" || typeof end !== "number") {
+      throw new Error(`Could not locate ${importedTarget}-only import in plugin entry point`);
+    }
+    ranges.push({ start, end });
+  }
+}
+
+function filterEntrypoint(source: string, target: PluginBuildTarget): string {
   const ast = parse(source, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
   });
   const pluginFunction = defaultPluginFunction(ast.program.body);
-  const ranges: Array<{ start: number; end: number }> = [];
+  const ranges: SourceRange[] = [];
   collectRemovedRegistrationRanges(
     pluginFunction.body,
     pluginFunction.contextName,
     REGISTRATIONS_REMOVED_BY_TARGET[target],
     ranges,
   );
+  collectOppositeTargetImportRanges(ast.program.body, target, ranges);
 
   let output = source;
-  for (const range of ranges.toReversed()) {
+  for (const range of ranges.toSorted((left, right) => right.start - left.start)) {
     output = `${output.slice(0, range.start)}${output.slice(range.end)}`;
   }
   return output;
+}
+
+function createRuntimeBoundaryPlugin(target: PluginBuildTarget): Plugin {
+  return {
+    name: `paseo-plugin-${target}-runtime-boundary`,
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /\.(?:client|server)(?:\.[cm]?[jt]sx?)?$/ }, (args) => {
+        const importedTarget = moduleTarget(args.path);
+        if (importedTarget === null || importedTarget === target) return null;
+        return {
+          errors: [
+            {
+              text: `${importedTarget}-only module cannot be imported into the plugin ${target} bundle: ${args.path}`,
+            },
+          ],
+        };
+      });
+    },
+  };
 }
 
 function wrapCommonJsBundle(code: string): string {
@@ -162,7 +229,7 @@ function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
   const source = await readFile(entryPath, "utf8");
-  const filteredSource = removeOppositeTargetRegistrations(source, target);
+  const filteredSource = filterEntrypoint(source, target);
   const result = await build({
     stdin: {
       contents: filteredSource,
@@ -185,7 +252,8 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
             "zod",
           ]
         : ["@paseo/plugin", "zod"],
-    plugins: [createUnusedPlatformModulePlugin(target)],
+    plugins: [createRuntimeBoundaryPlugin(target), createUnusedPlatformModulePlugin(target)],
+    logLevel: "silent",
     treeShaking: true,
     write: false,
   });

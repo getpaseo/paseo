@@ -1,8 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 import { escapeRegex } from "./regex";
+import { openChangesPanel as openWorkspaceChangesPanel } from "./workspace-tabs";
 
-// The branch switcher lives in the git diff panel's Changes header (right-side
-// ExplorerSidebar), not in the workspace header. It renders as a button whose
+// The branch switcher lives in the Changes tab, not in the workspace header. It renders as a button whose
 // accessible name carries the current branch ("Current branch: <name>. Press to
 // switch branch."). Matching on the accessible name keeps these helpers tied to
 // what a screen reader user hears, and it proves the panel resolved a real
@@ -16,17 +16,9 @@ function branchSwitcherTrigger(page: Page, branchName: string) {
     .first();
 }
 
-// Opens the right-side explorer and lands on the Changes tab, where the branch
-// switcher and diff live. Git checkouts default to the Changes tab when the
-// explorer opens, so this is enough to reveal the switcher on desktop and mobile.
+// Opens the fixed pane and lands on the Changes tab, where the switcher and diff live.
 export async function openChangesPanel(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-explorer-toggle").first()).toBeVisible({
-    timeout: 30_000,
-  });
-  await page.getByTestId("workspace-explorer-toggle").first().click();
-  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true }).first();
-  await expect(changesTab).toBeVisible({ timeout: 30_000 });
-  await changesTab.click();
+  await openWorkspaceChangesPanel(page);
   await expect(page.getByTestId("changes-header").filter({ visible: true }).first()).toBeVisible({
     timeout: 30_000,
   });

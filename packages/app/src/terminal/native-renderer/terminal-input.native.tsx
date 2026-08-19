@@ -1,12 +1,15 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
   StyleSheet,
-  TextInput,
   type NativeSyntheticEvent,
   type StyleProp,
   type TextInputKeyPressEventData,
   type TextStyle,
 } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { resolveNativeTerminalKey, type NativeTerminalKey } from "./terminal-key-events";
 
 export const TERMINAL_INPUT_CONTEXT_MENU_HIDDEN = true;
@@ -40,8 +43,53 @@ interface TerminalInputProps {
   style?: StyleProp<TextStyle>;
 }
 
+// Scripts produced by CJK IMEs when they commit or update a candidate. The
+// native input does not expose marked-text ranges, so the committed script is
+// the only reliable distinction between composition and ordinary autocorrect.
+const CJK_COMPOSITION_PATTERN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
+
+// Only ASCII travels the keypress path. An IME script reports the jamo it is
+// composing, which the text-change diff below immediately contradicts, so
+// forwarding both would put two conflicting characters on the wire.
 function isPrintableKey(key: string): boolean {
-  return key.length === 1 && key >= " " && key !== "\x7f";
+  return key.length === 1 && key >= " " && key <= "~";
+}
+
+function getCommonPrefixLength(left: string[], right: string[]): number {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) {
+    index += 1;
+  }
+  return index;
+}
+
+/**
+ * What the terminal receives for an edit that is not a plain append.
+ *
+ * CJK IMEs rewrite their composing suffix in place. Korean updates one
+ * syllable at a time (`ㅎ` -> `하` -> `한`), while Chinese and Japanese replace
+ * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
+ * those are appends, so rub out the rewritten suffix and send the replacement.
+ *
+ * The inserted suffix must contain a CJK script. Ordinary autocorrect and
+ * suggestion replacements stay swallowed: the hidden input can edit text the
+ * terminal has already committed, and the terminal cannot take it back.
+ */
+function resolveCompositionEdit(previousText: string, text: string): string {
+  const previousCharacters = Array.from(previousText);
+  const nextCharacters = Array.from(text);
+  const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
+  const removed = previousCharacters.slice(commonPrefixLength);
+  const inserted = nextCharacters.slice(commonPrefixLength).join("");
+  if (removed.length === 0 || inserted.length === 0) {
+    return "";
+  }
+  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
+    return "";
+  }
+  return `${"\x7f".repeat(removed.length)}${inserted}`;
 }
 
 export function resolveTerminalInputFocusRequest(input: {
@@ -57,6 +105,11 @@ export function resolveTerminalInputFocusRequest(input: {
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
   let submittedText: string | null = null;
+  // A swallowed replacement leaves the terminal holding text the buffer no
+  // longer describes. A composition rubout deletes from the terminal, so it
+  // would delete whatever is actually sitting there rather than the character
+  // the buffer thinks it is replacing. Stay off until the input state resets.
+  let replacementDesynced = false;
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
@@ -65,7 +118,10 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         return { data: "", key: terminalKey, shouldClear: false };
       }
       if (key === "Backspace") {
-        previousText = previousText.slice(0, -1);
+        previousText = Array.from(previousText).slice(0, -1).join("");
+        if (replacementDesynced) {
+          return { data: "", shouldClear: false };
+        }
         return { data: "\x7f", shouldClear: false };
       }
       if (key === "Enter" || key === "Return" || key === "return") {
@@ -84,6 +140,7 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         submittedText = null;
         if (text === lateSubmitText) {
           previousText = "";
+          replacementDesynced = false;
           return { data: "", shouldClear: false };
         }
       }
@@ -95,12 +152,20 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
+        replacementDesynced = false;
         return { data: "", shouldClear: true };
       }
 
       if (!text.startsWith(previousText)) {
+        let compositionEdit = "";
+        if (!replacementDesynced) {
+          compositionEdit = resolveCompositionEdit(previousText, text);
+        }
+        if (compositionEdit === "") {
+          replacementDesynced = true;
+        }
         previousText = text;
-        return { data: "", shouldClear: false };
+        return { data: compositionEdit, shouldClear: false };
       }
 
       const appendedText = text.slice(previousText.length);
@@ -112,13 +177,14 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     },
     reset(): void {
       previousText = "";
+      replacementDesynced = false;
     },
   };
 }
 
 export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>(
   function TerminalInput({ isKeyboardVisible, onFocus, onInput, onTerminalKey, style }, ref) {
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<EditingTextInputHandle>(null);
     const isFocusedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
     const inputState = useMemo(() => createTerminalTextInputState(), []);
@@ -134,7 +200,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
 
     const resetNativeInput = useCallback(() => {
       inputState.reset();
-      inputRef.current?.clear();
+      inputRef.current?.replaceText("");
     }, [inputState]);
 
     const showNativeKeyboard = useCallback(() => {
@@ -240,6 +306,9 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     );
 
     return (
+      // No keyboardType prop: `ascii-capable` drops the globe key on iOS, which
+      // is how you reach the Korean layout. Terminal safety comes from
+      // autoCorrect/spellCheck/autoCapitalize being off, not from the layout.
       <TextInput
         ref={inputRef}
         accessibilityLabel="Terminal input"
@@ -248,10 +317,9 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         autoCorrect={false}
         caretHidden={true}
         contextMenuHidden={TERMINAL_INPUT_CONTEXT_MENU_HIDDEN}
-        defaultValue=""
+        initialValue=""
         blurOnSubmit={false}
         importantForAutofill="no"
-        keyboardType="ascii-capable"
         multiline={true}
         onChangeText={handleChangeText}
         onBlur={handleBlur}

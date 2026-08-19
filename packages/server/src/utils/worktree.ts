@@ -1322,6 +1322,10 @@ async function resolveWorktreeSourcePlan({
         branchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         metadataBaseRef: resolvedBaseBranch,
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+          headRef: newBranchName,
+          localBranchName: newBranchName,
+        }),
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
@@ -1342,6 +1346,10 @@ async function resolveWorktreeSourcePlan({
         return {
           branchName,
           metadataBaseRefName: source.branchName,
+          changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+            headRef: branchName,
+            localBranchName: branchName,
+          }),
           addArguments: ["-b", branchName, "--no-track", source.branchName],
         };
       }
@@ -1349,6 +1357,10 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: source.branchName,
         metadataBaseRefName: source.branchName,
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+          headRef: source.branchName,
+          localBranchName: source.branchName,
+        }),
         addArguments: [source.branchName],
       };
     }
