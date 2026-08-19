@@ -98,6 +98,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
+    onReadingPositionChange,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -158,6 +159,29 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         historyRowRevision?.contentById.has(item.id) ? { ...item } : item,
       ),
     [displayStateHistoryRows, historyRowRevision?.contentById],
+  );
+  const historyRowsRef = useRef<StreamItem[]>([]);
+  historyRowsRef.current = historyRows;
+
+  // The chat outline rail needs a reading position. Web reports the row near a
+  // fixed reading line; the native list approximates it with viewability (the
+  // first visible row, which on the inverted list is the newest visible one).
+  const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 25 }), []);
+  const handleViewableItemsChanged = useStableEvent(
+    ({ viewableItems }: { viewableItems: Array<{ item: StreamItem }> }) => {
+      onReadingPositionChange?.(viewableItems[0]?.item?.id ?? null);
+    },
+  );
+  // Rows are not measured, so scrollToIndex can miss an unrendered window; fall
+  // back to an offset estimate so the rail jump still lands.
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      flatListRef.current?.scrollToOffset({
+        offset: info.averageItemLength * info.index,
+        animated: true,
+      });
+    },
+    [],
   );
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
     const metrics = streamViewportMetricsRef.current;
@@ -375,6 +399,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
           agentId,
           reason,
         });
+      },
+      scrollToMessage: (itemId: string) => {
+        const index = historyRowsRef.current.findIndex((row) => row.id === itemId);
+        if (index >= 0) {
+          flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+        }
       },
       prepareForViewportChange: () => {
         bottomAnchorController.prepareForStickyViewportChange();
@@ -625,6 +655,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator
       inverted
+      viewabilityConfig={viewabilityConfig}
+      onViewableItemsChanged={handleViewableItemsChanged}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
     />
   );
 }

@@ -198,7 +198,7 @@ export function CombinedModelSelector({
       onEditProfile={onEditProfile ? handleEditProfile : undefined}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
-      scrolling={isWeb ? "independent" : "sheet"}
+      scrolling="independent"
     />
   ) : (
     <View style={styles.sheetLoadingState}>
