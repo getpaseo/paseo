@@ -451,22 +451,47 @@ export function shouldReportProcessGone(reason: string): boolean {
   return reason !== "clean-exit";
 }
 
+/** How long a requested close may take before the window is torn down regardless. */
+const CLOSE_GRACE_MS = 2000;
+
+interface WindowFailurePrompt {
+  message: string;
+  detail: string;
+  waitable: boolean;
+}
+
 export function setupWindowFailureRecovery(win: BrowserWindow): void {
   let prompting = false;
+  // A window can go unresponsive and then die while its dialog is still open. Dropping the
+  // second event would leave the user answering a question about a renderer that no longer
+  // exists, and "Wait" would dismiss the only recovery path they had. Queue instead.
+  let queued: WindowFailurePrompt | null = null;
 
-  async function prompt(input: {
-    message: string;
-    detail: string;
-    waitable: boolean;
-  }): Promise<void> {
-    if (prompting || win.isDestroyed()) return;
+  function closeWindow(): void {
+    // close() rather than destroy(): the window-state persistence flush hangs off the close
+    // event, and destroy() does not emit it, so tearing the window down directly would leave
+    // the next launch restoring stale geometry. A hung renderer can still swallow the close,
+    // so fall back to destroy() once the grace period is up.
+    win.close();
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.destroy();
+    }, CLOSE_GRACE_MS);
+  }
+
+  async function prompt(input: WindowFailurePrompt): Promise<void> {
+    if (win.isDestroyed()) return;
+    if (prompting) {
+      // Keep the newest description of the problem; a crash supersedes a hang.
+      queued = input;
+      return;
+    }
     prompting = true;
     try {
       const buttons = input.waitable ? ["Wait", "Reload", "Close"] : ["Reload", "Close"];
       const { response } = await dialog.showMessageBox(win, {
         type: "warning",
         buttons,
-        defaultId: input.waitable ? 0 : 0,
+        defaultId: 0,
         cancelId: input.waitable ? 0 : 1,
         message: input.message,
         detail: input.detail,
@@ -475,12 +500,20 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
       if (win.isDestroyed()) return;
       const choice = buttons[response];
       if (choice === "Reload") {
+        queued = null;
         win.reload();
       } else if (choice === "Close") {
-        win.destroy();
+        queued = null;
+        closeWindow();
       }
     } finally {
       prompting = false;
+    }
+
+    const next = queued;
+    queued = null;
+    if (next && !win.isDestroyed()) {
+      await prompt(next);
     }
   }
 

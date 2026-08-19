@@ -6,26 +6,29 @@ import { installDesktopRuntime } from "./support/runtime";
 // The app draws its own minimise/maximise/close on Windows and Linux, so these buttons are
 // ordinary DOM and can be driven in the renderer suite. macOS keeps OS traffic lights, which is
 // why the runtime stub reports win32 here.
+//
+// Everything is located by role and accessible name rather than test ID: these are the semantics
+// a screen reader and the OS see, so a regression in them should fail a test rather than pass
+// quietly behind a stable test ID.
+const control = (page: Parameters<typeof gotoAppShell>[0], name: string) =>
+  page.getByRole("button", { name, exact: true });
+
 test.describe("App-drawn window controls", () => {
-  test("renders one set, labelled, and each button calls its own bridge method", async ({
-    page,
-  }) => {
+  test("renders one set, and each button calls its own bridge method", async ({ page }) => {
     await installDesktopRuntime(page, { serverId: getServerId(), platform: "win32" });
     await gotoAppShell(page);
 
-    const minimize = page.getByTestId("window-control-minimize");
-    const middle = page.getByTestId("window-control-maximize");
-    const close = page.getByTestId("window-control-close");
+    const minimize = control(page, "Minimize");
+    const maximize = control(page, "Maximize");
+    const close = control(page, "Close");
 
     await expect(minimize).toBeVisible();
-    await expect(middle).toBeVisible();
+    await expect(maximize).toBeVisible();
     await expect(close).toBeVisible();
 
     // Two surfaces both mounting a set is the bug corner ownership exists to prevent.
-    await expect(page.getByTestId("window-control-close")).toHaveCount(1);
-
-    await expect(minimize).toHaveAttribute("aria-label", "Minimize");
-    await expect(close).toHaveAttribute("aria-label", "Close");
+    await expect(minimize).toHaveCount(1);
+    await expect(close).toHaveCount(1);
 
     await minimize.click();
     await close.click();
@@ -36,17 +39,17 @@ test.describe("App-drawn window controls", () => {
     await installDesktopRuntime(page, { serverId: getServerId(), platform: "win32" });
     await gotoAppShell(page);
 
-    const middle = page.getByTestId("window-control-maximize");
-    await expect(middle).toHaveAttribute("aria-label", "Maximize");
+    await expect(control(page, "Maximize")).toBeVisible();
 
     // The bridge flips its own state and fires the resize event the app subscribes to, so this
-    // also covers the subscription rather than just the label.
-    await middle.click();
-    await expect(middle).toHaveAttribute("aria-label", "Restore");
+    // also covers the subscription rather than just the accessible name.
+    await control(page, "Maximize").click();
+    await expect(control(page, "Restore")).toBeVisible();
+    await expect(control(page, "Maximize")).toHaveCount(0);
     expect(await page.evaluate(() => window.__windowControlCalls)).toEqual(["toggleMaximize"]);
 
-    await middle.click();
-    await expect(middle).toHaveAttribute("aria-label", "Maximize");
+    await control(page, "Restore").click();
+    await expect(control(page, "Maximize")).toBeVisible();
   });
 
   test("fullscreen reads as Restore and leaves fullscreen rather than maximising", async ({
@@ -59,14 +62,13 @@ test.describe("App-drawn window controls", () => {
     });
     await gotoAppShell(page);
 
-    const middle = page.getByTestId("window-control-maximize");
     // Windows reports isMaximized() === false while fullscreen; keying off that alone used to
-    // label an already-full window "Maximize".
-    await expect(middle).toHaveAttribute("aria-label", "Restore");
+    // offer "Maximize" on a window that already filled the screen.
+    await expect(control(page, "Restore")).toBeVisible();
 
-    await middle.click();
+    await control(page, "Restore").click();
     expect(await page.evaluate(() => window.__windowControlCalls)).toEqual(["setFullscreen:false"]);
-    await expect(middle).toHaveAttribute("aria-label", "Maximize");
+    await expect(control(page, "Maximize")).toBeVisible();
   });
 
   test("macOS renders no app-drawn controls, because the OS draws traffic lights", async ({
@@ -75,7 +77,8 @@ test.describe("App-drawn window controls", () => {
     await installDesktopRuntime(page, { serverId: getServerId(), platform: "darwin" });
     await gotoAppShell(page);
 
-    await expect(page.getByTestId("window-control-close")).toHaveCount(0);
-    await expect(page.getByTestId("window-control-minimize")).toHaveCount(0);
+    await expect(control(page, "Minimize")).toHaveCount(0);
+    await expect(control(page, "Maximize")).toHaveCount(0);
+    await expect(control(page, "Close")).toHaveCount(0);
   });
 });

@@ -146,8 +146,17 @@ export function WindowControls() {
   );
 }
 
-// Windows paints the close button's glyph white on its red hover fill.
-const closeGlyphColor = () => ({ color: "#ffffff" });
+/**
+ * The close button's hover pair is an OS caption convention, not app palette: Windows paints
+ * the maximise-row close button red with a white glyph, and every app that draws its own
+ * hardcodes it (VS Code uses rgba(232,17,35,0.9); custom-electron-titlebar #e81123). The
+ * theme's `destructive` is #c44a4a, which would read as an app-styled danger button rather
+ * than a caption close, so these two stay literal and stay together.
+ */
+const WINDOWS_CAPTION_CLOSE_HOVER = "#c42b1c";
+const WINDOWS_CAPTION_CLOSE_GLYPH = "#ffffff";
+
+const closeGlyphColor = () => ({ color: WINDOWS_CAPTION_CLOSE_GLYPH });
 
 const styles = StyleSheet.create((theme) => ({
   row: {
@@ -185,6 +194,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   closeSurfaceHovered: {
-    backgroundColor: "#c42b1c",
+    backgroundColor: WINDOWS_CAPTION_CLOSE_HOVER,
   },
 }));
