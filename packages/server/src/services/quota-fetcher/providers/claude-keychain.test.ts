@@ -14,7 +14,17 @@ describe("claudeKeychainAccount", () => {
   // Corporate logins are email addresses, and "@" fails Claude Code's pattern. This is
   // the case that produced the bug: the account is not the username here.
   it("falls back to claude-code-user when the username carries a rejected character", () => {
-    expect(claudeKeychainAccount("thomas.benoit@yousign.com")).toBe("claude-code-user");
+    expect(claudeKeychainAccount("first.last@example.com")).toBe("claude-code-user");
+  });
+
+  // The provider never passes an account, so the default is the only path that runs in
+  // production. Without this, the wiring between $USER and the lookup is untested.
+  it("reads the username from $USER when no account is given", () => {
+    vi.stubEnv("USER", "ci-runner");
+    expect(claudeKeychainAccount()).toBe("ci-runner");
+
+    vi.stubEnv("USER", "first.last@example.com");
+    expect(claudeKeychainAccount()).toBe("claude-code-user");
   });
 });
 
@@ -53,6 +63,22 @@ describe("readClaudeKeychainCredentials", () => {
     expect(run).toHaveBeenNthCalledWith(2, ["find-generic-password", "-w", "-s", SERVICE]);
   });
 
+  // An item can parse and still be useless: a partially written or signed-out blob carries
+  // no access token. Returning it would strand a working legacy item behind it, which is
+  // worse than the bug this lookup exists to fix — that user sees usage today.
+  it("falls through when the account item carries no access token", async () => {
+    const run = vi.fn(async (args: string[]) =>
+      args.includes("-a")
+        ? JSON.stringify({ claudeAiOauth: { subscriptionType: "team" } })
+        : JSON.stringify({ claudeAiOauth: { accessToken: "at_legacy" } }),
+    );
+
+    const credentials = await readClaudeKeychainCredentials(run, "claude-code-user");
+
+    expect(credentials).toEqual({ claudeAiOauth: { accessToken: "at_legacy" } });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("is null when the Keychain holds no item at all", async () => {
     const run = vi.fn(async () => null);
 
@@ -62,11 +88,13 @@ describe("readClaudeKeychainCredentials", () => {
   // A truncated or non-JSON blob must not shadow an item a later lookup could still read.
   it("tries the next lookup when the item does not parse", async () => {
     const run = vi.fn(async (args: string[]) =>
-      args.includes("-a") ? "not-json" : JSON.stringify({ claudeAiOauth: {} }),
+      args.includes("-a")
+        ? "not-json"
+        : JSON.stringify({ claudeAiOauth: { accessToken: "at_legacy" } }),
     );
 
     expect(await readClaudeKeychainCredentials(run, "claude-code-user")).toEqual({
-      claudeAiOauth: {},
+      claudeAiOauth: { accessToken: "at_legacy" },
     });
   });
 });

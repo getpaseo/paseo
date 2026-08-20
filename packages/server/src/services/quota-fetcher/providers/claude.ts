@@ -331,6 +331,12 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
  * used over time — and a lookup that names no account returns the first match, which is
  * the oldest and whose token expired long ago. Naming the account selects the live item;
  * the account-less lookup stays behind it for versions that predate the convention.
+ *
+ * A lookup counts as a hit only when its item carries an access token. Parsing is not
+ * enough: a partially written or signed-out blob parses fine, and returning it would
+ * strand a working item behind it — leaving a user whose usage works today without any,
+ * which is worse than the bug this ordering exists to fix. Deciding usability is the
+ * selector's job precisely because it is what tells it whether to keep looking.
  */
 export async function readClaudeKeychainCredentials(
   run: ClaudeKeychainCommandRunner = runSecurityCommand,
@@ -344,11 +350,14 @@ export async function readClaudeKeychainCredentials(
   for (const args of lookups) {
     const raw = await run(args);
     if (!raw) continue;
+    let parsed: unknown;
     try {
-      return JSON.parse(raw);
+      parsed = JSON.parse(raw);
     } catch {
-      // Unparseable blob: keep going, a later lookup may still hold a readable item.
+      continue;
     }
+    const creds = ClaudeCredentialsSchema.safeParse(parsed);
+    if (creds.success && creds.data.claudeAiOauth?.accessToken) return parsed;
   }
   return null;
 }
