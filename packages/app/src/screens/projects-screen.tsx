@@ -7,6 +7,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIcons } from "@/projects/icons";
+import { createProjectIconTarget } from "@/projects/icon-target";
 import { settingsStyles } from "@/styles/settings";
 import { openProjectSettings } from "@/navigation/settings-navigation";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
@@ -35,13 +36,13 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const scopedErrors = hostErrors.filter((error) => error.serverId === serverId);
   const iconTargets = useMemo(
     () =>
-      hostProjects.map(({ project, host }) => ({
-        serverId: host.serverId,
-        projectViewKey: project.viewKey,
-        projectId: host.projectId,
-        iconWorkingDir: host.repoRoot,
-        customIconRevision: host.customIconRevision,
-      })),
+      hostProjects.flatMap(({ project, host }) => {
+        const target = createProjectIconTarget({
+          projectViewKey: project.viewKey,
+          placement: { ...host, iconWorkingDir: host.repoRoot },
+        });
+        return target ? [target] : [];
+      }),
     [hostProjects],
   );
   const iconDataByProjectViewKey = useProjectIcons({
