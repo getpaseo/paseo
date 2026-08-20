@@ -8,6 +8,7 @@ import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { selectIsCompactFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import { isWeb } from "@/constants/platform";
@@ -99,8 +100,11 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
   const model = useActiveCompactExplorerSidebarModel(enabled);
   const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const openWorkspaceTabInFocusedPane = useWorkspaceLayoutStore(
-    (state) => state.openTabInFocusedPane,
+  const openTab = useWorkspaceLayoutStore((state) => state.openTab);
+  const openWorkspaceTabInFocusedPane = useCallback(
+    (workspaceKey: string, target: WorkspaceTabTarget) =>
+      openTab({ workspaceKey, target, intent: "reveal" }),
+    [openTab],
   );
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
 

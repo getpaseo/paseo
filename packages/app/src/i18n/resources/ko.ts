@@ -554,7 +554,6 @@ export const ko: TranslationResources = {
       loading: "불러오는 중...",
       modified: "저장되지 않은 변경사항",
       loadingAgentTitle: "에이전트 제목 불러오는 중",
-      emptyPane: "이 창에 탭이 없습니다.",
       fallback: {
         newAgent: "새 에이전트",
         setup: "설정",
@@ -597,6 +596,7 @@ export const ko: TranslationResources = {
         newBrowser: "새 브라우저",
         maximizePane: "창 최대화",
         restorePane: "창 복원",
+        closePane: "창 닫기",
         exitFocusMode: "집중 모드 종료",
         splitRight: "창을 오른쪽으로 분할",
         splitDown: "창을 아래로 분할",
@@ -606,10 +606,10 @@ export const ko: TranslationResources = {
         terminalProfilesMenu: "터미널 프로필",
         editTerminalProfiles: "프로필 편집…",
       },
-      explorer: {
-        open: "탐색기 열기",
-        close: "탐색기 닫기",
-        toggle: "탐색기 토글",
+      sidePanel: {
+        open: "사이드 패널 열기",
+        close: "사이드 패널 닫기",
+        toggle: "사이드 패널 토글",
         changes: "변경 사항",
         files: "파일",
       },
@@ -709,6 +709,10 @@ export const ko: TranslationResources = {
         startFailed: "{{scriptName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
       },
+    },
+    tree: {
+      showFolderTree: "폴더 트리 표시",
+      hideFolderTree: "폴더 트리 숨기기",
     },
     git: {
       actions: {
@@ -862,8 +866,6 @@ export const ko: TranslationResources = {
         split: "나란히 보기 diff",
         switchToUnified: "통합 diff로 전환",
         switchToSplit: "나란히 보기 diff로 전환",
-        showTreeView: "폴더 트리 표시",
-        hideTreeView: "폴더 트리 숨기기",
         options: "Diff 옵션",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
@@ -1928,6 +1930,11 @@ export const ko: TranslationResources = {
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
+      sidePanelRouting: {
+        label: "보조 탭을 사이드 패널에서 열기",
+        description:
+          "파일 링크, 풀 리퀘스트, 설정 진행 상황이 포커스된 창이 아니라 작업 옆에서 열립니다",
+      },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
@@ -2111,11 +2118,11 @@ export const ko: TranslationResources = {
         toggleCommandCenter: "명령 센터 토글",
         showKeyboardShortcuts: "키보드 단축키 표시",
         toggleLeftSidebar: "왼쪽 사이드바 토글",
-        toggleRightSidebar: "오른쪽 사이드바 토글",
+        toggleRightSidebar: "사이드 패널 토글",
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
-        toggleExplorerPaneMaximization: "탐색기 창 최대화 전환",
+        toggleExplorerPaneMaximization: "사이드 패널 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",

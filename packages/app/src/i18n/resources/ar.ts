@@ -553,7 +553,6 @@ export const ar: TranslationResources = {
       loading: "تحميل...",
       modified: "تغييرات غير محفوظة",
       loadingAgentTitle: "جارٍ تحميل عنوان الوكيل",
-      emptyPane: "لا توجد علامات تبويب في هذا الجزء.",
       fallback: {
         newAgent: "وكيل جديد",
         setup: "يثبت",
@@ -595,6 +594,7 @@ export const ar: TranslationResources = {
         newBrowser: "متصفح جديد",
         maximizePane: "تكبير الجزء",
         restorePane: "استعادة الجزء",
+        closePane: "إغلاق الجزء",
         exitFocusMode: "إنهاء وضع التركيز",
         splitRight: "تقسيم الجزء الأيمن",
         splitDown: "تقسيم الجزء لأسفل",
@@ -604,10 +604,10 @@ export const ar: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
       },
-      explorer: {
-        open: "افتح المستكشف",
-        close: "إغلاق المستكشف",
-        toggle: "تبديل المستكشف",
+      sidePanel: {
+        open: "افتح اللوحة الجانبية",
+        close: "إغلاق اللوحة الجانبية",
+        toggle: "تبديل اللوحة الجانبية",
         changes: "التغييرات",
         files: "ملفات",
       },
@@ -709,6 +709,10 @@ export const ar: TranslationResources = {
         startFailed: "فشل بدء تشغيل{{scriptName}}",
         stopFailed: "فشل إيقاف{{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "إظهار شجرة المجلدات",
+      hideFolderTree: "إخفاء شجرة المجلدات",
     },
     git: {
       actions: {
@@ -855,8 +859,6 @@ export const ar: TranslationResources = {
         split: "فرق جنبًا إلى جنب",
         switchToUnified: "التبديل إلى الفرق الموحد",
         switchToSplit: "التبديل إلى الفرق جنبًا إلى جنب",
-        showTreeView: "إظهار شجرة المجلدات",
-        hideTreeView: "إخفاء شجرة المجلدات",
         options: "خيارات الفرق",
         hideWhitespace: "إخفاء المسافة البيضاء",
         showWhitespace: "إظهار المسافة البيضاء",
@@ -1917,6 +1919,11 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      sidePanelRouting: {
+        label: "فتح علامات التبويب المساعدة في اللوحة الجانبية",
+        description:
+          "تفتح روابط الملفات وطلبات السحب وتقدم الإعداد بجوار عملك بدلاً من الجزء المركّز عليه",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
@@ -2100,11 +2107,11 @@ export const ar: TranslationResources = {
         toggleCommandCenter: "تبديل مركز القيادة",
         showKeyboardShortcuts: "إظهار اختصارات لوحة المفاتيح",
         toggleLeftSidebar: "تبديل الشريط الجانبي الأيسر",
-        toggleRightSidebar: "تبديل الشريط الجانبي الأيمن",
+        toggleRightSidebar: "تبديل اللوحة الجانبية",
         toggleBothSidebars: "تبديل كلا الشريطين الجانبيين",
         toggleSettings: "تبديل الإعدادات",
         toggleFocusMode: "تبديل وضع التركيز",
-        toggleExplorerPaneMaximization: "تبديل تكبير جزء المستكشف",
+        toggleExplorerPaneMaximization: "تبديل تكبير اللوحة الجانبية",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
         cycleAgentMode: "تبديل وضع الوكيل",

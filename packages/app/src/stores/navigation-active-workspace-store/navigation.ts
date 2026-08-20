@@ -100,9 +100,10 @@ export function navigateToWorkspace(
       : [];
     const attentionAgentId = pickAttentionAgent(workspaceAgents);
     if (attentionAgentId && resolvedWorkspaceId) {
-      deps.openTabFocused(`${input.serverId}:${resolvedWorkspaceId}`, {
-        kind: "agent",
-        agentId: attentionAgentId,
+      deps.openTab({
+        workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
+        target: { kind: "agent", agentId: attentionAgentId },
+        intent: "reveal",
       });
     }
   }

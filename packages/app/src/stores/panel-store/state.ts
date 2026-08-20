@@ -25,8 +25,8 @@ export const DEFAULT_SIDEBAR_WIDTH = 320;
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 600;
 
-export const DEFAULT_TREE_RAIL_WIDTH = 320;
-export const MIN_TREE_RAIL_WIDTH = 200;
+export const DEFAULT_TREE_RAIL_WIDTH = 260;
+export const MIN_TREE_RAIL_WIDTH = 180;
 export const MAX_TREE_RAIL_WIDTH = 600;
 
 export interface PanelLayoutInput {
@@ -151,6 +151,7 @@ export const PanelPersistedStateSchema = z.strictObject({
   explorerShowHiddenFiles: z.boolean().optional(),
   explorerFilesSplitRatio: z.number().optional(),
   treeRailWidth: z.number().optional(),
+  fileTreeVisible: z.boolean().optional(),
 });
 
 type MigratablePanelState = z.infer<typeof PanelPersistedStateSchema>;
@@ -193,8 +194,10 @@ function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   }
 }
 
+// v16 narrowed the rail. Existing installs almost all carry the old 320 default,
+// so the reset is what makes the narrower rail visible to anyone but a new user.
 function migrateTreeRailWidth(state: MigratablePanelState, version: number): void {
-  if (version < 13 || typeof state.treeRailWidth !== "number") {
+  if (version < 16 || typeof state.treeRailWidth !== "number") {
     delete state.explorerFilesSplitRatio;
     state.treeRailWidth = DEFAULT_TREE_RAIL_WIDTH;
     return;
@@ -248,6 +251,9 @@ export function migratePanelState(persistedState: unknown, version: number): Mig
     state.explorerShowHiddenFiles = true;
   }
   migrateTreeRailWidth(state, version);
+  if (typeof state.fileTreeVisible !== "boolean") {
+    state.fileTreeVisible = true;
+  }
   if (version < 12) {
     // Compact panel position is transient UI state. Cold starts always begin
     // at content, regardless of what an older version persisted.

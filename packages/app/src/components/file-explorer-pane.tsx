@@ -24,7 +24,7 @@ import {
 } from "react-native";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import * as Clipboard from "expo-clipboard";
 import { ChevronDown, Eye, EyeOff, FilePlus, FolderPlus, RotateCw } from "lucide-react-native";
@@ -38,6 +38,11 @@ import {
   WORKSPACE_TREE_LOADING_ICON_SIZE,
 } from "@/components/tree-primitives";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  PaneContentToolbar,
+  paneContentToolbarIconSize,
+  paneContentToolbarIconButtonStyle,
+} from "@/components/ui/pane-content-toolbar";
 import {
   useOverlayFlatListScrollbar,
   type OverlayFlatListScrollbar,
@@ -136,8 +141,11 @@ function sortTriggerStyle({
   return [styles.sortTrigger, (Boolean(hovered) || pressed) && styles.sortTriggerHovered];
 }
 
-function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.iconButton, (Boolean(hovered) || pressed) && styles.iconButtonHovered];
+function iconButtonStyle(
+  isCompact: boolean,
+  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
+) {
+  return paneContentToolbarIconButtonStyle({ hovered, pressed }, false, isCompact);
 }
 
 type ExplorerListRow =
@@ -1041,6 +1049,11 @@ export function FileExplorerPane({
     });
   }, [requestDirectoryListing]);
 
+  const toolbarIconButtonStyle = useCallback(
+    (state: PressableStateCallbackType) => iconButtonStyle(isCompact, state),
+    [isCompact],
+  );
+
   if (!hasWorkspaceScope) {
     return (
       <View style={styles.centerState}>
@@ -1058,6 +1071,7 @@ export function FileExplorerPane({
     >
       <FileExplorerPaneContent
         error={error}
+        isCompact={isCompact}
         showInitialLoading={showInitialLoading}
         showBackFromError={showBackFromError}
         listRows={listRows}
@@ -1073,7 +1087,7 @@ export function FileExplorerPane({
         handleBackFromError={handleBackFromError}
         handleRetry={handleRetry}
         sortTriggerStyle={sortTriggerStyle}
-        iconButtonStyle={iconButtonStyle}
+        iconButtonStyle={toolbarIconButtonStyle}
       />
     </View>
   );
@@ -1132,6 +1146,7 @@ function RootCreationContextTarget({
 
 interface FileExplorerPaneContentProps {
   error: string | null;
+  isCompact: boolean;
   showInitialLoading: boolean;
   showBackFromError: boolean;
   listRows: ExplorerListRow[];
@@ -1155,6 +1170,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   const { t } = useTranslation();
   const {
     error,
+    isCompact,
     showInitialLoading,
     showBackFromError,
     listRows,
@@ -1229,7 +1245,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
 
   return (
     <View style={[styles.treePane, styles.treePaneFill]}>
-      <View style={styles.paneHeader} testID="files-pane-header">
+      <PaneContentToolbar style={styles.paneHeader} testID="files-pane-header">
         <Pressable
           onPress={handleSortCycle}
           style={sortTriggerStyleProp}
@@ -1251,7 +1267,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 accessibilityLabel={t("workspace.fileActions.newFile")}
                 testID="files-new-file"
               >
-                <FilePlus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <FilePlus
+                  size={paneContentToolbarIconSize(isCompact)}
+                  color={theme.colors.foregroundMuted}
+                />
               </Pressable>
               <Pressable
                 onPress={handleNewFolderAtRoot}
@@ -1261,7 +1280,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 accessibilityLabel={t("workspace.fileActions.newFolder")}
                 testID="files-new-folder"
               >
-                <FolderPlus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <FolderPlus
+                  size={paneContentToolbarIconSize(isCompact)}
+                  color={theme.colors.foregroundMuted}
+                />
               </Pressable>
             </>
           ) : null}
@@ -1275,9 +1297,15 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
             testID="files-hidden-toggle"
           >
             {showHiddenFiles ? (
-              <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              <Eye
+                size={paneContentToolbarIconSize(isCompact)}
+                color={theme.colors.foregroundMuted}
+              />
             ) : (
-              <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              <EyeOff
+                size={paneContentToolbarIconSize(isCompact)}
+                color={theme.colors.foregroundMuted}
+              />
             )}
           </Pressable>
           <Pressable
@@ -1295,14 +1323,20 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           >
             <View style={styles.refreshIcon}>
               {isRefreshFetching ? (
-                <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <LoadingSpinner
+                  size={paneContentToolbarIconSize(isCompact)}
+                  color={theme.colors.foregroundMuted}
+                />
               ) : (
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <RotateCw
+                  size={paneContentToolbarIconSize(isCompact)}
+                  color={theme.colors.foregroundMuted}
+                />
               )}
             </View>
           </Pressable>
         </View>
-      </View>
+      </PaneContentToolbar>
       <ContextMenu>
         <RootCreationContextTarget enabled={Boolean(onNewEntryAtRoot)}>
           {listRows.length === 0 ? (
@@ -1662,13 +1696,10 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   paneHeader: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingRight: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   sortTrigger: {
     flexDirection: "row",
@@ -1805,16 +1836,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-  },
-  iconButton: {
-    width: 22,
-    height: 22,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconButtonHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   iconButtonActive: {
     backgroundColor: theme.colors.surface2,
