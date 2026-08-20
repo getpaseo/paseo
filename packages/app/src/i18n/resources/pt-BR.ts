@@ -208,6 +208,9 @@ export const ptBR: TranslationResources = {
       implement: "Implementar",
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
+      planApproved: "Aprovado",
+      planRejected: "Rejeitado",
+      planDismissed: "Descartado",
     },
   },
   agentPanel: {

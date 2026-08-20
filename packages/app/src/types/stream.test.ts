@@ -341,6 +341,69 @@ describe("stream reducer tool call idempotency", () => {
     assert.deepStrictEqual(merged, incoming);
   });
 
+  it("lets a plan card's later status win over a dismissal", () => {
+    const callId = "toolu_plan";
+    const detail: ToolCallDetail = { type: "plan", text: "# Plan\n\n- step one" };
+    // A turn cancel dismisses the plan, then Claude's real tool_result decides it. The generic
+    // merge treats canceled as sticky, which would disagree with the server's projection and
+    // leave the live card reading Dismissed where a reload reads Approved.
+    const dismissed = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "plan_approval",
+        status: "canceled",
+        detail,
+      }),
+      new Date("2025-01-01T12:00:00Z"),
+    );
+    expect(findToolByCallId(dismissed, callId)?.payload.data.status).toBe("canceled");
+
+    const decided = reduceStreamUpdate(
+      dismissed,
+      canonicalToolTimeline({
+        provider: "claude",
+        callId,
+        name: "plan_approval",
+        status: "completed",
+        detail,
+      }),
+      new Date("2025-01-01T12:00:01Z"),
+    );
+
+    expect(findToolByCallId(decided, callId)?.payload.data.status).toBe("completed");
+  });
+
+  it("keeps a canceled non-plan tool call canceled when a completion follows", () => {
+    const callId = "shell-canceled";
+    const canceled = reduceStreamUpdate(
+      [],
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "canceled",
+        detail: { type: "shell", command: "npm test", cwd: "/tmp/repo" },
+      }),
+      new Date("2025-01-01T12:00:00Z"),
+    );
+
+    const completed = reduceStreamUpdate(
+      canceled,
+      canonicalToolTimeline({
+        provider: "codex",
+        callId,
+        name: "shell",
+        status: "completed",
+        detail: { type: "shell", command: "npm test", cwd: "/tmp/repo" },
+      }),
+      new Date("2025-01-01T12:00:01Z"),
+    );
+
+    expect(findToolByCallId(completed, callId)?.payload.data.status).toBe("canceled");
+  });
+
   it("returns the same state array when status, error, detail, and metadata are identical", () => {
     const callId = "idempotent-tool-call";
     const initialState = reduceStreamUpdate(

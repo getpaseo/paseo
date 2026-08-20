@@ -176,6 +176,60 @@ describe("projectTimelineRows", () => {
     expect(tool?.collapsed).toContain("tool_lifecycle");
   });
 
+  test("a dismissed plan card flips in place when the real result lands after it", () => {
+    // Typing a follow-up dismisses the plan mid-turn; Claude's tool_result arrives afterwards
+    // carrying the same tool_use id. Both rows must collapse to one card, not two.
+    const planDetail = { type: "plan" as const, text: "# Plan\n\n- step one" };
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: {
+          type: "tool_call",
+          name: "plan_approval",
+          callId: "toolu_plan",
+          status: "running",
+          detail: planDetail,
+        },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: {
+          type: "tool_call",
+          name: "plan_approval",
+          callId: "toolu_plan",
+          status: "canceled",
+          detail: planDetail,
+        },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: {
+          type: "tool_call",
+          name: "plan_approval",
+          callId: "toolu_plan",
+          status: "failed",
+          detail: planDetail,
+          error: { message: "Plan rejected" },
+        },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      callId: "toolu_plan",
+      status: "failed",
+      detail: planDetail,
+      error: { message: "Plan rejected" },
+    });
+  });
+
   test("returns canonical rows unchanged in canonical mode", () => {
     const rows: AgentTimelineRow[] = [
       {

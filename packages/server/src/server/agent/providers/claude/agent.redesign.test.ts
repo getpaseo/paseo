@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Logger } from "pino";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -1106,6 +1110,547 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
     });
     expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
     expect(await session.getCurrentMode()).toBe("bypassPermissions");
+  } finally {
+    await session.close();
+  }
+});
+
+type RedesignTestSession = Awaited<ReturnType<typeof createSession>>;
+
+function exitPlanModeTranscript(
+  toolUseId: string,
+  planText: string,
+  result: { content: string; isError?: boolean },
+): Record<string, unknown>[] {
+  return [
+    {
+      type: "assistant",
+      uuid: `assistant-${toolUseId}`,
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: toolUseId, name: "ExitPlanMode", input: { plan: planText } },
+        ],
+      },
+    },
+    {
+      type: "user",
+      uuid: `user-${toolUseId}`,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content: result.content,
+            ...(result.isError ? { is_error: true } : {}),
+          },
+        ],
+      },
+    },
+  ];
+}
+
+interface ExitPlanModeCallEntry {
+  planText: string | null;
+  supersededEmitted: boolean;
+}
+
+// Registers a plan the way the live path does: the permission callback fires from canUseTool
+// before the complete assistant message reaches handleToolUseStart, so this is routinely the
+// only write that lands before the turn is canceled.
+function rememberPlan(session: RedesignTestSession, toolUseId: string, planText: string | null) {
+  asInternals<{
+    rememberExitPlanModeCall: (id: string, text: string | null) => void;
+  }>(session).rememberExitPlanModeCall(toolUseId, planText);
+}
+
+function exitPlanModeCalls(session: RedesignTestSession): Map<string, ExitPlanModeCallEntry> {
+  return asInternals<{ exitPlanModeCalls: Map<string, ExitPlanModeCallEntry> }>(session)
+    .exitPlanModeCalls;
+}
+
+// Swaps pushToolCall for a collector so flush behaviour can be read without standing up the
+// full event pipeline.
+function capturePushedToolCalls(session: RedesignTestSession): AgentTimelineItem[] {
+  const pushed: AgentTimelineItem[] = [];
+  (
+    session as unknown as {
+      pushToolCall: (item: AgentTimelineItem | null, items?: AgentTimelineItem[]) => void;
+    }
+  ).pushToolCall = (item, items) => {
+    if (!item) return;
+    // Mirror the real signature: with a target array the item is collected there instead of
+    // being emitted, which is how handleToolResult returns its items to the caller.
+    if (items) {
+      items.push(item);
+      return;
+    }
+    pushed.push(item);
+  };
+  return pushed;
+}
+
+async function replayHistoryPlanCard(
+  session: RedesignTestSession,
+  entries: Record<string, unknown>[],
+): Promise<Extract<AgentTimelineItem, { type: "tool_call" }> | undefined> {
+  asInternals<{ ingestPersistedHistory: (content: string) => void }>(
+    session,
+  ).ingestPersistedHistory(entries.map((entry) => JSON.stringify(entry)).join("\n"));
+  // The plan replays as a running plan_approval (the tool_use) that flips to a resolved one
+  // (the tool_result); return the resolved (terminal) card.
+  let resolved: Extract<AgentTimelineItem, { type: "tool_call" }> | undefined;
+  for await (const event of session.streamHistory()) {
+    if (
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.name === "plan_approval" &&
+      event.item.status !== "running"
+    ) {
+      resolved = event.item;
+    }
+  }
+  return resolved;
+}
+
+test("replays an approved ExitPlanMode from the transcript as a completed plan card", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const planText = "# Ship it\n\n- step one\n- step two";
+    const card = await replayHistoryPlanCard(
+      session,
+      exitPlanModeTranscript("toolu_approved", planText, {
+        content: "User has approved your plan. You can now start coding.",
+      }),
+    );
+    expect(card).toBeDefined();
+    expect(card).toMatchObject({ status: "completed", detail: { type: "plan", text: planText } });
+  } finally {
+    await session.close();
+  }
+});
+
+test("replays a rejected ExitPlanMode from the transcript as a failed plan card", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const planText = "# Maybe later\n\n- do the thing";
+    const card = await replayHistoryPlanCard(
+      session,
+      exitPlanModeTranscript("toolu_rejected", planText, {
+        content: "Denied by user",
+        isError: true,
+      }),
+    );
+    expect(card).toBeDefined();
+    expect(card).toMatchObject({ status: "failed", detail: { type: "plan", text: planText } });
+  } finally {
+    await session.close();
+  }
+});
+
+test("replays an interrupted ExitPlanMode from the transcript as a canceled plan card", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const planText = "# On second thought\n\n- never mind";
+    const card = await replayHistoryPlanCard(
+      session,
+      exitPlanModeTranscript("toolu_interrupted", planText, {
+        content: "[Request interrupted by user for tool use]",
+        isError: true,
+      }),
+    );
+    expect(card).toBeDefined();
+    expect(card).toMatchObject({ status: "canceled", detail: { type: "plan", text: planText } });
+  } finally {
+    await session.close();
+  }
+});
+
+test("resolves an interrupted live plan to a plan card (not a failed Tool)", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{
+      handleToolResult: (block: Record<string, unknown>, items: AgentTimelineItem[]) => void;
+    }>(session);
+    // The running plan_approval (pushed by handleToolUseStart) registered the plan text.
+    rememberPlan(session, "toolu_interrupted_plan", "# Do the thing");
+    const items: AgentTimelineItem[] = [];
+    // Interrupted plan: the tool_result arrives orphaned (cache cleared by the turn restart).
+    internal.handleToolResult(
+      {
+        type: "tool_result",
+        tool_use_id: "toolu_interrupted_plan",
+        is_error: true,
+        content: "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+      },
+      items,
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      detail: { type: "plan", text: "# Do the thing" },
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+test("still renders a normal orphaned failed tool_result as a tool call", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{
+      flushPendingToolCalls: () => void;
+      handleToolResult: (block: Record<string, unknown>, items: AgentTimelineItem[]) => void;
+    }>(session);
+    // A plan in the registry must not make every later orphaned result look like a plan.
+    rememberPlan(session, "toolu_unrelated_plan", "# Unrelated plan");
+    internal.flushPendingToolCalls();
+    const items: AgentTimelineItem[] = [];
+    internal.handleToolResult(
+      {
+        type: "tool_result",
+        tool_use_id: "toolu_some_other_tool",
+        is_error: true,
+        content: "boom",
+      },
+      items,
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "tool_call", status: "failed" });
+    expect(items[0]).not.toMatchObject({ name: "plan_approval" });
+  } finally {
+    await session.close();
+  }
+});
+
+test("resolves the plan text from planFilePath when input.plan is empty (CC 2.0.51+)", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-claude-"));
+  const plansDir = path.join(configDir, "plans");
+  fs.mkdirSync(plansDir);
+  const planFile = path.join(plansDir, "plan.md");
+  fs.writeFileSync(planFile, "# Plan from file\n\n- step one");
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  try {
+    const internal = asInternals<{
+      resolvePlanTextFromToolInput: (input: Record<string, unknown> | null) => string | null;
+    }>(session);
+    expect(internal.resolvePlanTextFromToolInput({ plan: "", planFilePath: planFile })).toBe(
+      "# Plan from file\n\n- step one",
+    );
+    // Missing file: the read throws and is swallowed -> no recoverable text.
+    expect(
+      internal.resolvePlanTextFromToolInput({ planFilePath: path.join(plansDir, "gone.md") }),
+    ).toBeNull();
+    // input.plan wins over the file when present.
+    expect(internal.resolvePlanTextFromToolInput({ plan: "inline", planFilePath: planFile })).toBe(
+      "inline",
+    );
+    // A non-regular path (directory) is rejected, not read — guards against FIFO/device paths.
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: plansDir })).toBeNull();
+    // An oversized file is not read, so a hostile path can't exhaust memory / stall the loop.
+    const hugeFile = path.join(plansDir, "huge.md");
+    fs.writeFileSync(hugeFile, "#".repeat(1024 * 1024 + 1));
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: hugeFile })).toBeNull();
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    fs.rmSync(configDir, { recursive: true, force: true });
+    await session.close();
+  }
+});
+
+test("refuses a planFilePath outside the Claude plans directory", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-claude-"));
+  const plansDir = path.join(configDir, "plans");
+  fs.mkdirSync(plansDir);
+  const secret = path.join(configDir, "secret.env");
+  fs.writeFileSync(secret, "API_KEY=super-secret");
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  try {
+    const internal = asInternals<{
+      resolvePlanTextFromToolInput: (input: Record<string, unknown> | null) => string | null;
+    }>(session);
+    // A model-named path outside the plans directory is never read, so a plan card can't be
+    // used to surface a file the agent's own Read rules would have denied.
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: secret })).toBeNull();
+    // Traversal out of the plans directory is rejected too.
+    expect(
+      internal.resolvePlanTextFromToolInput({
+        planFilePath: path.join(plansDir, "..", "secret.env"),
+      }),
+    ).toBeNull();
+    // And a symlink planted inside the plans directory can't redirect the read.
+    const link = path.join(plansDir, "link.md");
+    fs.symlinkSync(secret, link);
+    expect(internal.resolvePlanTextFromToolInput({ planFilePath: link })).toBeNull();
+    // A FIFO inside the plans directory is rejected without blocking. Without O_NONBLOCK the
+    // open would park the event loop until a writer showed up, which is never.
+    if (process.platform !== "win32") {
+      const fifo = path.join(plansDir, "fifo.md");
+      childProcess.execFileSync("mkfifo", [fifo]);
+      expect(internal.resolvePlanTextFromToolInput({ planFilePath: fifo })).toBeNull();
+    }
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    fs.rmSync(configDir, { recursive: true, force: true });
+    await session.close();
+  }
+});
+
+test("flushPendingToolCalls resolves an abandoned plan to a dismissed card", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{
+      toolUseCache: Map<string, { id: string; name: string; started: boolean; input: unknown }>;
+      flushPendingToolCalls: () => void;
+    }>(session);
+    const pushed = capturePushedToolCalls(session);
+    internal.toolUseCache.set("toolu_abandoned", {
+      id: "toolu_abandoned",
+      name: "ExitPlanMode",
+      started: true,
+      input: { plan: "# Abandoned plan" },
+    });
+    rememberPlan(session, "toolu_abandoned", "# Abandoned plan");
+
+    internal.flushPendingToolCalls();
+
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0]).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      status: "canceled",
+      detail: { type: "plan", text: "# Abandoned plan" },
+    });
+    // The registry deliberately survives the flush: Claude's tool_result arrives after the
+    // turn is canceled and the id is the only thing that still identifies it as a plan.
+    expect(exitPlanModeCalls(session).get("toolu_abandoned")).toMatchObject({
+      planText: "# Abandoned plan",
+      supersededEmitted: true,
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+test("flushPendingToolCalls dismisses a plan that never reached the tool_use cache", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{ flushPendingToolCalls: () => void }>(session);
+    const pushed = capturePushedToolCalls(session);
+    // The live shape: the permission fired from canUseTool, so nothing ever populated
+    // toolUseCache. The old code emitted nothing at all here.
+    rememberPlan(session, "toolu_no_cache_entry", "# Uncached plan");
+
+    internal.flushPendingToolCalls();
+
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0]).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      status: "canceled",
+      detail: { type: "plan", text: "# Uncached plan" },
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+test("two flushes emit exactly one dismissed card for the same plan", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{ flushPendingToolCalls: () => void }>(session);
+    const pushed = capturePushedToolCalls(session);
+    rememberPlan(session, "toolu_double_flush", "# Plan");
+
+    internal.flushPendingToolCalls();
+    internal.flushPendingToolCalls();
+
+    expect(pushed).toHaveLength(1);
+  } finally {
+    await session.close();
+  }
+});
+
+test("flushPendingToolCalls emits nothing for a plan whose text never resolved", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{ flushPendingToolCalls: () => void }>(session);
+    const pushed = capturePushedToolCalls(session);
+    rememberPlan(session, "toolu_textless", null);
+
+    internal.flushPendingToolCalls();
+
+    expect(pushed).toEqual([]);
+  } finally {
+    await session.close();
+  }
+});
+
+test("the ExitPlanMode registry is bounded and keeps the newest entries", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const max = 32;
+    const overflow = 5;
+    for (let i = 0; i < max + overflow; i += 1) {
+      rememberPlan(session, `toolu_${i}`, `# Plan ${i}`);
+    }
+    const calls = exitPlanModeCalls(session);
+    expect(calls.size).toBe(max);
+    expect(calls.has("toolu_0")).toBe(false);
+    expect(calls.has(`toolu_${overflow - 1}`)).toBe(false);
+    expect(calls.has(`toolu_${overflow}`)).toBe(true);
+    expect(calls.has(`toolu_${max + overflow - 1}`)).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("a later empty registration cannot erase resolved plan text", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    // handlePermissionRequest resolves the text from planFilePath; handleToolUseStart then
+    // arrives with an empty input.plan and must not clobber it.
+    rememberPlan(session, "toolu_upgrade_only", "# Resolved from file");
+    rememberPlan(session, "toolu_upgrade_only", null);
+    expect(exitPlanModeCalls(session).get("toolu_upgrade_only")?.planText).toBe(
+      "# Resolved from file",
+    );
+  } finally {
+    await session.close();
+  }
+});
+
+test("a plan rejected by typing a follow-up settles on the same card as a reload", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{
+      flushPendingToolCalls: () => void;
+      handleToolResult: (block: Record<string, unknown>, items: AgentTimelineItem[]) => void;
+    }>(session);
+    const planText = "# Dummy Implementation Plan\n\n- step one";
+    const pushed = capturePushedToolCalls(session);
+    // Typing a follow-up cancels the turn before Claude's tool_result arrives.
+    rememberPlan(session, "toolu_typed_reject", planText);
+    internal.flushPendingToolCalls();
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0]).toMatchObject({
+      name: "plan_approval",
+      status: "canceled",
+      callId: "toolu_typed_reject",
+    });
+
+    // The real tool_result lands after the flush and must flip the card in place.
+    const items: AgentTimelineItem[] = [];
+    internal.handleToolResult(
+      {
+        type: "tool_result",
+        tool_use_id: "toolu_typed_reject",
+        is_error: true,
+        content: "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+      },
+      items,
+    );
+    expect(items).toHaveLength(1);
+    const live = items[0];
+    expect(live).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      status: "failed",
+      callId: "toolu_typed_reject",
+      detail: { type: "plan", text: planText },
+    });
+    // The regression this guards: the result used to fall through to a generic tool row.
+    expect(live).not.toMatchObject({ name: "tool" });
+    expect(live).not.toMatchObject({ detail: { type: "unknown" } });
+
+    // Live and reload must agree.
+    const replayed = await replayHistoryPlanCard(
+      session,
+      exitPlanModeTranscript("toolu_replayed_reject", planText, {
+        content: "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+        isError: true,
+      }),
+    );
+    expect(replayed).toBeDefined();
+    expect(replayed?.status).toBe(
+      (live as Extract<AgentTimelineItem, { type: "tool_call" }>).status,
+    );
+    expect(replayed?.detail).toEqual(
+      (live as Extract<AgentTimelineItem, { type: "tool_call" }>).detail,
+    );
+  } finally {
+    await session.close();
+  }
+});
+
+test("classifies an array-shaped interrupted result as superseded (canceled)", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  try {
+    const internal = asInternals<{
+      handleToolResult: (block: Record<string, unknown>, items: AgentTimelineItem[]) => void;
+    }>(session);
+    rememberPlan(session, "toolu_array_interrupt", "# Plan");
+    const items: AgentTimelineItem[] = [];
+    // Claude commonly sends tool_result content as an array of text blocks.
+    internal.handleToolResult(
+      {
+        type: "tool_result",
+        tool_use_id: "toolu_array_interrupt",
+        is_error: true,
+        content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+      },
+      items,
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: "tool_call",
+      name: "plan_approval",
+      status: "canceled",
+    });
   } finally {
     await session.close();
   }

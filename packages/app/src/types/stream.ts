@@ -1101,13 +1101,20 @@ export function mergeAgentToolCallItem(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): AgentToolCallItem {
-  const mergedStatus = mergeAgentToolCallStatus(existing.payload.data.status, data.status);
+  const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
+  // A plan card is emitted twice on purpose: a turn cancel dismisses it, then Claude's real
+  // tool_result flips it to its actual outcome. The generic merge treats canceled as sticky,
+  // which would leave the live card reading Dismissed where a reload reads Approved. The
+  // server's projection is last-status-wins (timeline-projection.ts), so match it here.
+  const mergedStatus =
+    mergedDetail.type === "plan"
+      ? data.status
+      : mergeAgentToolCallStatus(existing.payload.data.status, data.status);
   const mergedError =
     mergedStatus === "failed"
       ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
       : null;
   const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
-  const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
   return {
     ...existing,

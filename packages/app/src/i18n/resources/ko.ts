@@ -208,6 +208,9 @@ export const ko: TranslationResources = {
       implement: "구현",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
+      planApproved: "승인됨",
+      planRejected: "거부됨",
+      planDismissed: "취소됨",
     },
   },
   agentPanel: {

@@ -205,6 +205,9 @@ export const en = {
       implement: "Implement",
       question: "How would you like to proceed?",
       proposedPlan: "Proposed plan",
+      planApproved: "Approved",
+      planRejected: "Rejected",
+      planDismissed: "Dismissed",
     },
   },
   agentPanel: {

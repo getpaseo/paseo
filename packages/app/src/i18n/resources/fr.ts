@@ -210,6 +210,9 @@ export const fr: TranslationResources = {
       implement: "Mettre en œuvre",
       question: "Comment souhaitez-vous procéder?",
       proposedPlan: "Plan proposé",
+      planApproved: "Approuvé",
+      planRejected: "Rejeté",
+      planDismissed: "Ignoré",
     },
   },
   agentPanel: {

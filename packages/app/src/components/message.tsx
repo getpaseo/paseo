@@ -3043,6 +3043,38 @@ interface ToolCallProps {
   maxDetailHeight?: number;
 }
 
+interface PlanCardPresentation {
+  outcome?: "approved" | "rejected" | "superseded";
+  collapsible: boolean;
+}
+
+// `plan_approval` is Claude's plan, anchored at the ExitPlanMode position. While it's running
+// the plan is pending and shown by the permission card, so nothing renders here (no duplicate);
+// once it resolves, the same item flips in place to the decided card. The decision maps from the
+// terminal status (completed -> approved, failed -> rejected, canceled -> superseded). Other plan
+// cards (e.g. Codex's inline plan) stay as-is. Returns null when the card must not render.
+function resolvePlanCardPresentation(
+  toolName: string,
+  status: ToolCallProps["status"],
+): PlanCardPresentation | null {
+  if (toolName !== "plan_approval") {
+    return { collapsible: false };
+  }
+  if (status === "failed") {
+    return { outcome: "rejected", collapsible: true };
+  }
+  if (status === "canceled") {
+    return { outcome: "superseded", collapsible: true };
+  }
+  if (status === "completed") {
+    return { outcome: "approved", collapsible: true };
+  }
+  // Still running. Rendering it here would double up with the permission card for the whole
+  // time the plan is pending, which is every plan. The cost is that a plan whose daemon was
+  // killed before any tool_result stays running forever and never gets a card.
+  return null;
+}
+
 export const ToolCall = memo(function ToolCall({
   toolName,
   args,
@@ -3173,9 +3205,15 @@ export const ToolCall = memo(function ToolCall({
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
+    const plan = resolvePlanCardPresentation(toolName, status);
+    if (!plan) {
+      return null;
+    }
     return (
       <PlanCard
         text={effectiveDetail.text}
+        outcome={plan.outcome}
+        collapsible={plan.collapsible}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />

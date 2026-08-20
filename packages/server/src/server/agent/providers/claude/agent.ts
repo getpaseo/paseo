@@ -365,6 +365,116 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
+
+// Cap for reading a model-supplied planFilePath. A plan is markdown text; 1 MiB is generous
+// and bounds a hostile/corrupt path from exhausting memory or stalling the event loop.
+const MAX_PLAN_FILE_BYTES = 1024 * 1024;
+
+// planFilePath is model-supplied, so the read is contained to the directory Claude Code writes
+// plans into. Without this the daemon would read any path the model names and publish it as
+// plan text, which sidesteps the agent's own Read permission rules (a user who denies
+// Read(./.env) would still see it surfaced through a plan card).
+function claudePlansDir(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  return path.join(configDir, "plans");
+}
+
+function isInsideDir(candidate: string, dir: string): boolean {
+  const relative = path.relative(dir, candidate);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+// Reads a plan file whose path has already passed the containment check. The descriptor is
+// opened once and stat'd and read through that same descriptor, so the file cannot be swapped
+// between the check and the read. O_NOFOLLOW rejects a path that became a symlink after it was
+// resolved; O_NONBLOCK stops a FIFO from parking the event loop before fstat can reject it.
+// Both are absent on Windows, where the containment check and the fstat still apply.
+function readContainedPlanFile(resolved: string): string | null {
+  const flags =
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+  const fd = fs.openSync(resolved, flags);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_PLAN_FILE_BYTES) {
+      return null;
+    }
+    const buffer = Buffer.alloc(stat.size);
+    const read = fs.readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.subarray(0, read).toString("utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// The ExitPlanMode registry outlives the turn (see exitPlanModeCalls), so it needs its own
+// bound. A session realistically holds a handful of plans; 32 is far above that and keeps a
+// pathological agent from growing the map without limit.
+const MAX_TRACKED_EXIT_PLAN_MODE_CALLS = 32;
+
+type PlanCardOutcome = "approved" | "rejected" | "superseded";
+
+interface ExitPlanModeCall {
+  /** Null until a write site resolves the plan text; a textless plan emits no card. */
+  planText: string | null;
+  /** Latched once a flush emitted the superseded card, so a second flush can't duplicate it. */
+  supersededEmitted: boolean;
+}
+
+// The running plan card anchored at the ExitPlanMode position. Hidden by the client while
+// running (the pending plan is shown by the permission card); its tool_result flips it in
+// place to the resolved card. Same callId (the ExitPlanMode tool_use id) is the anchor.
+function buildRunningPlanCardItem(
+  callId: string,
+  planText: string,
+): Extract<AgentTimelineItem, { type: "tool_call" }> {
+  return {
+    type: "tool_call",
+    callId,
+    name: "plan_approval",
+    detail: { type: "plan", text: planText },
+    status: "running",
+    error: null,
+  };
+}
+
+// Builds the resolved-plan card timeline item (used by handleExitPlanModeResult for both the
+// live stream and a transcript replay). The decision rides the tool-call status:
+// approved -> completed, rejected -> failed, superseded (interrupt) -> canceled.
+function buildPlanCardItem(
+  callId: string,
+  planText: string,
+  outcome: PlanCardOutcome,
+): Extract<AgentTimelineItem, { type: "tool_call" }> {
+  const detail = { type: "plan" as const, text: planText };
+  if (outcome === "approved") {
+    return {
+      type: "tool_call",
+      callId,
+      name: "plan_approval",
+      detail,
+      status: "completed",
+      error: null,
+    };
+  }
+  if (outcome === "rejected") {
+    return {
+      type: "tool_call",
+      callId,
+      name: "plan_approval",
+      detail,
+      status: "failed",
+      error: { message: "Plan rejected" },
+    };
+  }
+  return {
+    type: "tool_call",
+    callId,
+    name: "plan_approval",
+    detail,
+    status: "canceled",
+    error: null,
+  };
+}
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface SlashCommandInvocation {
@@ -700,6 +810,19 @@ function splitClaudeToolResultImages(content: unknown): {
     return block;
   });
   return { images, text };
+}
+
+// Renders the images pulled out of a tool_result as assistant markdown, appended after the
+// tool_call they came from (matching how Codex emits them).
+function pushToolResultImages(images: ProviderImageOutput[], items: AgentTimelineItem[]): void {
+  for (const image of images) {
+    const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
+      materialize: materializeProviderImage,
+    });
+    if (imageItem) {
+      items.push(imageItem);
+    }
+  }
 }
 
 function normalizeClaudeTranscriptText(value: unknown): string | null {
@@ -2038,6 +2161,15 @@ class ClaudeAgentSession implements AgentSession {
   private planResumeMode: PermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
+  // Every ExitPlanMode tool_use this session has seen, keyed by tool_use id.
+  //
+  // Deliberately session-scoped: unlike toolUseCache this survives flushPendingToolCalls,
+  // because the turn is what ends, not the session. Typing a follow-up cancels the turn
+  // *before* Claude's tool_result arrives, so if this were cleared on flush the result would
+  // land unidentifiable — tool_result blocks carry no tool_name — and degrade into a generic
+  // "tool" row instead of the resolved plan card. Bounded by
+  // MAX_TRACKED_EXIT_PLAN_MODE_CALLS; pruned per id on resolution and cleared on close().
+  private exitPlanModeCalls = new Map<string, ExitPlanModeCall>();
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
   private pendingPermissions = new Map<string, PendingPermission>();
@@ -2486,17 +2618,8 @@ class ClaudeAgentSession implements AgentSession {
           ? "bypassPermissions"
           : "acceptEdits";
         await this.setMode(targetMode);
-        this.pushToolCall(
-          mapClaudeCompletedToolCall({
-            name: "plan_approval",
-            callId: pending.request.id,
-            input: pending.request.input ?? null,
-            output: {
-              approved: true,
-              actionId: selectedActionId ?? "implement",
-            },
-          }),
-        );
+        // The resolved plan card comes from ExitPlanMode's tool_result (handleToolResult),
+        // which flips the running plan_approval card in place — no separate push needed.
       }
       const updatedInput =
         pending.request.kind === "question"
@@ -2583,6 +2706,7 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
+    this.exitPlanModeCalls.clear();
     this.taskProtocolSource.reset();
     this.input?.end();
     this.query?.close?.();
@@ -4492,8 +4616,27 @@ class ClaudeAgentSession implements AgentSession {
     if (options.toolUseID) {
       metadata.toolUseId = options.toolUseID;
     }
-    if (toolName === "ExitPlanMode" && typeof input.plan === "string") {
-      metadata.planText = input.plan;
+    if (toolName === "ExitPlanMode") {
+      // Resolve the plan text, falling back to the saved plan file — Claude Code 2.0.51+
+      // leaves input.plan empty and writes a planFilePath. Without the fallback the
+      // permission card and the anchored running card would be blank on that path.
+      const planText = this.resolvePlanTextFromToolInput(input);
+      if (planText) {
+        metadata.planText = planText;
+      }
+      if (options.toolUseID) {
+        // Register unconditionally. Live, the permission fires from canUseTool before the
+        // complete assistant message reaches handleToolUseStart, so this is routinely the
+        // only write that happens before a turn cancel — and the id is what keeps the later
+        // tool_result identifiable as a plan.
+        this.rememberExitPlanModeCall(options.toolUseID, planText);
+        if (planText) {
+          // Anchor (or refresh) the running plan card at this position with the complete plan
+          // text. callId = the ExitPlanMode tool_use id, so its tool_result flips it in place
+          // (and updates any partial card handleToolUseStart pushed from streamed input).
+          this.pushToolCall(buildRunningPlanCardItem(options.toolUseID, planText));
+        }
+      }
     }
     const toolDetail =
       kind === "tool"
@@ -4569,16 +4712,33 @@ class ClaudeAgentSession implements AgentSession {
 
   private flushPendingToolCalls() {
     for (const [id, entry] of this.toolUseCache) {
-      if (entry.started) {
-        this.pushToolCall(
-          mapClaudeCanceledToolCall({
-            name: entry.name,
-            callId: id,
-            input: entry.input ?? null,
-            output: null,
-          }),
-        );
+      // Plans are resolved from exitPlanModeCalls below, never from this loop: the cache entry
+      // is often missing entirely (the permission fires before the assistant message lands) and
+      // a plan must never fall through to a raw canceled ExitPlanMode row.
+      if (entry.name === "ExitPlanMode") {
+        continue;
       }
+      if (!entry.started) {
+        continue;
+      }
+      this.pushToolCall(
+        mapClaudeCanceledToolCall({
+          name: entry.name,
+          callId: id,
+          input: entry.input ?? null,
+          output: null,
+        }),
+      );
+    }
+    // An abandoned plan resolves as a dismissed card rather than vanishing. If Claude's
+    // tool_result still arrives it shares this callId and flips the card in place to its real
+    // outcome, so the registry deliberately survives the flush.
+    for (const [id, call] of this.exitPlanModeCalls) {
+      if (call.planText === null || call.supersededEmitted) {
+        continue;
+      }
+      call.supersededEmitted = true;
+      this.pushToolCall(buildPlanCardItem(id, call.planText, "superseded"));
     }
     this.toolUseCache.clear();
     this.sidechainTracker.clear();
@@ -4682,6 +4842,15 @@ class ClaudeAgentSession implements AgentSession {
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
+      // Clients drop a permission card only on permission_resolved (respondToPermission emits
+      // it on the answered path). Without this, dropping the request server-side leaves the
+      // card on screen forever — visible when a typed follow-up cancels a pending plan.
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: "claude",
+        requestId: id,
+        resolution: { behavior: "deny", message: error.message, interrupt: true },
+      });
     }
   }
 
@@ -5007,6 +5176,23 @@ class ClaudeAgentSession implements AgentSession {
     }
     entry.started = true;
     this.toolUseCache.set(entry.id, entry);
+    // Render the plan as a single `plan_approval` card anchored at this position. It stays
+    // hidden (running) while the permission is pending, then its tool_result flips it to the
+    // resolved card (approved/rejected) in place — identically for the live stream and a
+    // transcript replay, so the card is always correctly ordered. The plan text is cached by
+    // tool_use id so an interrupted plan (whose entry the turn restart clears) can still
+    // resolve.
+    if (entry.name === "ExitPlanMode") {
+      // Live, the tool_use input streams in after this fires, so the plan text may not be
+      // ready yet — handlePermissionRequest anchors the card with the full input. On a
+      // transcript replay the input is already complete, so anchor it here.
+      const planText = this.resolvePlanTextFromToolInput(entry.input);
+      this.rememberExitPlanModeCall(entry.id, planText);
+      if (planText) {
+        this.pushToolCall(buildRunningPlanCardItem(entry.id, planText), items);
+      }
+      return;
+    }
     this.pushToolCall(
       mapClaudeRunningToolCall({
         name: entry.name,
@@ -5021,6 +5207,11 @@ class ClaudeAgentSession implements AgentSession {
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
     const entry =
       typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
+    // ExitPlanMode flips its running plan_approval card to the resolved card in place
+    // (approved/rejected/superseded) — same path live and on transcript replay. See the method.
+    if (this.handleExitPlanModeResult(entry, block, items)) {
+      return;
+    }
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
     const toolName = entry?.name ?? blockToolName ?? "tool";
     const callId =
@@ -5056,18 +5247,123 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    for (const image of images) {
-      const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
-        materialize: materializeProviderImage,
-      });
-      if (imageItem) {
-        items.push(imageItem);
-      }
-    }
+    pushToolResultImages(images, items);
 
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
     }
+  }
+
+  // Flips the running `plan_approval` card (pushed by handleToolUseStart) to its resolved
+  // state when ExitPlanMode's tool_result arrives — same callId, so it updates in place at
+  // the plan's position. Outcome comes from the result: success -> approved, interrupt ->
+  // superseded, else rejected. This is the single source of the resolved card for both the
+  // live stream and a transcript replay. Returns true when handled.
+  private handleExitPlanModeResult(
+    entry: ToolUseCacheEntry | undefined,
+    block: ClaudeContentChunk,
+    items: AgentTimelineItem[],
+  ): boolean {
+    const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : null;
+    const isExitPlanMode =
+      entry?.name === "ExitPlanMode" ||
+      (toolUseId !== null && this.exitPlanModeCalls.has(toolUseId));
+    if (!isExitPlanMode) {
+      return false;
+    }
+    const callId = toolUseId ?? entry?.id ?? null;
+    const planText =
+      (entry ? this.resolvePlanTextFromToolInput(entry.input) : null) ??
+      (toolUseId !== null ? (this.exitPlanModeCalls.get(toolUseId)?.planText ?? null) : null);
+    if (callId && planText) {
+      this.pushToolCall(
+        buildPlanCardItem(callId, planText, this.resolveExitPlanModeHistoryOutcome(block)),
+        items,
+      );
+    } else {
+      // Identified as a plan but the text never resolved. Emit nothing and still return true:
+      // a blank plan card reads worse than none, and claiming the result suppresses the
+      // generic "tool" row it would otherwise fall through to.
+      this.logger.debug(
+        { toolUseId },
+        "ExitPlanMode result without resolvable plan text; emitting no plan card",
+      );
+    }
+    if (toolUseId !== null) {
+      this.toolUseCache.delete(toolUseId);
+      this.sidechainTracker.delete(toolUseId);
+      this.exitPlanModeCalls.delete(toolUseId);
+    }
+    return true;
+  }
+
+  // Records an ExitPlanMode tool_use id so its tool_result stays identifiable, and upgrades the
+  // plan text when a later write site resolves it. Registration is unconditional: the id alone
+  // is what keeps the result out of the generic tool-call branch, even before any text exists.
+  private rememberExitPlanModeCall(toolUseId: string, planText: string | null): void {
+    const existing = this.exitPlanModeCalls.get(toolUseId);
+    if (existing) {
+      // Only ever upgrade. A late handleToolUseStart carrying an empty input.plan must not
+      // erase text handlePermissionRequest already resolved from planFilePath.
+      if (planText) {
+        existing.planText = planText;
+      }
+      return;
+    }
+    this.exitPlanModeCalls.set(toolUseId, { planText, supersededEmitted: false });
+    // Map iterates in insertion order, so the oldest entry is the front one.
+    while (this.exitPlanModeCalls.size > MAX_TRACKED_EXIT_PLAN_MODE_CALLS) {
+      const oldest = this.exitPlanModeCalls.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      this.exitPlanModeCalls.delete(oldest.value);
+    }
+  }
+
+  private resolvePlanTextFromToolInput(input: AgentMetadata | null | undefined): string | null {
+    const plan = input?.plan;
+    if (typeof plan === "string" && plan.trim().length > 0) {
+      return plan;
+    }
+    // Claude Code 2.0.51+ may write the plan to a file and leave input.plan empty.
+    const filePath = input?.planFilePath;
+    if (typeof filePath === "string" && filePath.length > 0) {
+      try {
+        // realpath first: containment has to hold for the file actually opened, or a symlink
+        // inside the plans directory would point the read anywhere.
+        const resolved = fs.realpathSync(path.resolve(filePath));
+        const plansDir = fs.realpathSync(claudePlansDir());
+        if (!isInsideDir(resolved, plansDir)) {
+          this.logger.warn(
+            { filePath },
+            "ExitPlanMode planFilePath outside the Claude plans directory; refusing to read",
+          );
+          return null;
+        }
+        const text = readContainedPlanFile(resolved);
+        if (text && text.trim().length > 0) {
+          return text;
+        }
+      } catch (error) {
+        // A deleted or unreadable plan file is expected (plans outlive their files), so this
+        // degrades to no card rather than failing the turn. Logged so a genuine I/O fault is
+        // still diagnosable.
+        this.logger.debug({ err: error, filePath }, "Could not read ExitPlanMode planFilePath");
+      }
+    }
+    return null;
+  }
+
+  private resolveExitPlanModeHistoryOutcome(block: ClaudeContentChunk): PlanCardOutcome {
+    if (!block.is_error) {
+      return "approved";
+    }
+    const resultText = coerceToolResultContentToString(block.content);
+    if (/\[Request interrupted by user/i.test(resultText)) {
+      return "superseded";
+    }
+    return "rejected";
   }
 
   private buildToolOutput(
@@ -5347,6 +5643,18 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.applyToolInput(entry, normalized);
     this.toolUseCache.set(toolId, entry);
+    if (entry.name === "ExitPlanMode") {
+      // Keep ExitPlanMode as a single plan_approval card (see handleToolUseStart); never emit
+      // the raw ExitPlanMode running row. Anchor from the streamed input.plan once present;
+      // the planFilePath fallback runs later in handlePermissionRequest (one bounded read).
+      const plan = entry.input?.plan;
+      const planText = typeof plan === "string" && plan.trim().length > 0 ? plan : null;
+      this.rememberExitPlanModeCall(toolId, planText);
+      if (planText) {
+        this.pushToolCall(buildRunningPlanCardItem(toolId, planText));
+      }
+      return;
+    }
     this.pushToolCall(
       mapClaudeRunningToolCall({
         name: entry.name,
