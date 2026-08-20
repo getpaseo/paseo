@@ -1254,7 +1254,7 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("loads archived Codex history without resuming the native thread", async () => {
+  test("loads archived Codex history without resuming an unarchived native thread", async () => {
     const threadRequests: string[] = [];
     const appServer = createFakeCodexAppServer({
       "thread/loaded/list": () => {
@@ -1263,7 +1263,7 @@ describe("Codex app-server provider", () => {
       },
       "thread/resume": () => {
         threadRequests.push("thread/resume");
-        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+        return { thread: { id: "archived-thread-id" } };
       },
       "thread/read": () => {
         threadRequests.push("thread/read");
@@ -1276,7 +1276,7 @@ describe("Codex app-server provider", () => {
       purpose: "history",
     });
 
-    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
+    expect(threadRequests).toEqual(["thread/read"]);
     await session.close();
     appServer.assertNoErrors();
   });
