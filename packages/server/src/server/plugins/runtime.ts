@@ -359,6 +359,10 @@ export class PluginRuntime {
             resolve(message.methods);
           } else if (message.type === "fatal") {
             fail(new Error(message.error));
+          } else if (message.type === "plugin_event") {
+            // contribute() may emit synchronously, before the child reports ready
+            // and before `loaded` exists — deliver by id instead of dropping.
+            this.emitPluginEvent(pluginId, message.eventName, message.data);
           } else if (loaded) {
             this.handleChildMessage(loaded, message);
           }
@@ -397,12 +401,11 @@ export class PluginRuntime {
     return loaded;
   }
 
+  private emitPluginEvent(pluginId: string, eventName: string, data: unknown): void {
+    for (const listener of this.eventListeners) listener(pluginId, eventName, data);
+  }
+
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
-    if (message.type === "plugin_event") {
-      for (const listener of this.eventListeners)
-        listener(loaded.id, message.eventName, message.data);
-      return;
-    }
     if (message.type !== "result" && message.type !== "error") return;
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;

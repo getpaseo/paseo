@@ -577,26 +577,34 @@ export default function contribute(plugin: PluginContext) {
     plugin.emit("pong", { echo: input.value, marker: "EMIT_PAYLOAD_MARKER" });
     return { ok: true };
   });
+  plugin.emit("boot", { phase: "contribute" });
   return () => undefined;
 }`,
     );
     const runtime = createTestRuntime();
+    const received: Array<[string, string, unknown]> = [];
+    const unsubscribe = runtime.subscribeToEvents((pluginId, eventName, data) => {
+      received.push([pluginId, eventName, data]);
+    });
+
     await runtime.startPlugin("ping-plugin", directory);
 
     // The client bundle must never see an emit() call execute: it strips the whole
     // statement the same way it strips handle() registrations from the client target.
     expect(runtime.catalog()[0]?.clientBundle).not.toContain("EMIT_PAYLOAD_MARKER");
 
-    const received: Array<[string, string, unknown]> = [];
-    const unsubscribe = runtime.subscribeToEvents((pluginId, eventName, data) => {
-      received.push([pluginId, eventName, data]);
-    });
+    // Events emitted synchronously from contribute() arrive before the ready
+    // handshake completes — they must be delivered, not dropped.
+    expect(received).toEqual([["ping-plugin", "boot", { phase: "contribute" }]]);
 
     await expect(runtime.invoke("ping-plugin", "ping", { value: 5 })).resolves.toEqual({
       ok: true,
     });
 
-    expect(received).toEqual([["ping-plugin", "pong", { echo: 5, marker: "EMIT_PAYLOAD_MARKER" }]]);
+    expect(received).toEqual([
+      ["ping-plugin", "boot", { phase: "contribute" }],
+      ["ping-plugin", "pong", { echo: 5, marker: "EMIT_PAYLOAD_MARKER" }],
+    ]);
 
     unsubscribe();
     await runtime.stopAll();
