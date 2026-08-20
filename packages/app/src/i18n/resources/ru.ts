@@ -558,7 +558,6 @@ export const ru: TranslationResources = {
       loading: "Загрузка...",
       modified: "Несохранённые изменения",
       loadingAgentTitle: "Название агента загрузки",
-      emptyPane: "На этой панели нет вкладок.",
       fallback: {
         newAgent: "Новый агент",
         setup: "Настраивать",
@@ -600,6 +599,7 @@ export const ru: TranslationResources = {
         newBrowser: "Новый браузер",
         maximizePane: "Развернуть панель",
         restorePane: "Восстановить панель",
+        closePane: "Закрыть панель",
         exitFocusMode: "Выйти из режима фокусировки",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
@@ -609,10 +609,10 @@ export const ru: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
       },
-      explorer: {
-        open: "Открыть проводник",
-        close: "Закрыть проводник",
-        toggle: "Переключить проводник",
+      sidePanel: {
+        open: "Открыть боковую панель",
+        close: "Закрыть боковую панель",
+        toggle: "Переключить боковую панель",
         changes: "Изменения",
         files: "Файлы",
       },
@@ -715,6 +715,10 @@ export const ru: TranslationResources = {
         startFailed: "Не удалось запустить{{scriptName}}",
         stopFailed: "Не удалось остановить{{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Показать дерево папок",
+      hideFolderTree: "Скрыть дерево папок",
     },
     git: {
       actions: {
@@ -878,8 +882,6 @@ export const ru: TranslationResources = {
         split: "Параллельная разница",
         switchToUnified: "Переключить на объединенный diff",
         switchToSplit: "Переключить на diff рядом",
-        showTreeView: "Показать дерево папок",
-        hideTreeView: "Скрыть дерево папок",
         options: "Параметры diff",
         hideWhitespace: "Скрыть пробелы",
         showWhitespace: "Показать пробелы",
@@ -1954,6 +1956,11 @@ export const ru: TranslationResources = {
         description: "Строки, хранящиеся во встроенном буфере терминала.",
         accessibilityLabel: "Линии прокрутки Terminal",
       },
+      sidePanelRouting: {
+        label: "Открывать вспомогательные вкладки в боковой панели",
+        description:
+          "Ссылки на файлы, пул-реквесты и ход настройки открываются рядом с вашей работой, а не в активной панели",
+      },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
         description:
@@ -2141,11 +2148,11 @@ export const ru: TranslationResources = {
         toggleCommandCenter: "Переключить командный центр",
         showKeyboardShortcuts: "Показать сочетания клавиш",
         toggleLeftSidebar: "Переключить левую боковую панель",
-        toggleRightSidebar: "Переключить правую боковую панель",
+        toggleRightSidebar: "Переключить боковую панель",
         toggleBothSidebars: "Переключить обе боковые панели",
         toggleSettings: "Переключить настройки",
         toggleFocusMode: "Переключить режим фокусировки",
-        toggleExplorerPaneMaximization: "Переключить разворачивание панели Проводника",
+        toggleExplorerPaneMaximization: "Переключить разворачивание боковой панели",
         cycleTheme: "Циклическая тема",
         focusMessageInput: "Фокус ввода сообщения",
         cycleAgentMode: "Переключить режим агента",

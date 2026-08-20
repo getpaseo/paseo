@@ -343,7 +343,7 @@ test.describe("Half-screen desktop layout", () => {
       await openFilesPanel(page);
       const explorerToggle = page.getByTestId("workspace-explorer-toggle").first();
       await expect(page.getByTestId("workspace-tab-files").filter({ visible: true })).toBeVisible();
-      await expect(explorerToggle).toHaveAccessibleName("Close explorer");
+      await expect(explorerToggle).toHaveAccessibleName("Close side panel");
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
       await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
 
@@ -351,7 +351,7 @@ test.describe("Half-screen desktop layout", () => {
       await expect(page.getByTestId("workspace-tab-files").filter({ visible: true })).toHaveCount(
         0,
       );
-      await expect(explorerToggle).toHaveAccessibleName("Open explorer");
+      await expect(explorerToggle).toHaveAccessibleName("Open side panel");
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
     } finally {
       await workspace.cleanup();

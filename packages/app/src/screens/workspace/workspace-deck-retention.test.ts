@@ -4,6 +4,7 @@ import {
   getNextWorkspaceDeckExpirationDelay,
   orderWorkspaceSelectionsForStableRender,
   reconcileRetainedWorkspaceSelections,
+  resolveWorkspaceDeckRetentionLimit,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
   WORKSPACE_DECK_INACTIVE_TTL_MS,
@@ -29,6 +30,23 @@ function retainedWorkspaceIds(
 }
 
 describe("reconcileRetainedWorkspaceSelections", () => {
+  it("retains only the active workspace on native", () => {
+    const entries = reconcileRetainedWorkspaceSelections({
+      currentEntries: [retained("A", null)],
+      activeSelection: workspace("B"),
+      now: 2,
+      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative: true }),
+    });
+
+    expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
+  });
+
+  it("retains the desktop deck limit on web", () => {
+    expect(resolveWorkspaceDeckRetentionLimit({ isNative: false })).toBe(
+      WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+    );
+  });
+
   it("retains inactive workspaces for ten minutes across app-wide routes", () => {
     const retainedEntries = [retained("A", 1_000), retained("B", 2_000)];
 

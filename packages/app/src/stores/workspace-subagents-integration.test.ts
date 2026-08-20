@@ -254,7 +254,7 @@ describe("workspace subagents integration", () => {
     ).toEqual([child.id]);
   });
 
-  it("opens a subagent in the explorer pane when focused", () => {
+  it("opens a subagent in the side panel when focused", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -275,22 +275,26 @@ describe("workspace subagents integration", () => {
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
     const store = useWorkspaceLayoutStore.getState();
-    const tabId = store.openTabInExplorerPaneFocused(workspaceKey!, {
+    const paneId = store.showSidePanel(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
       target: { kind: "agent", agentId: child.id },
+      intent: "reveal",
       parentTabId: `agent_${parent.id}`,
+      placement: { mode: "prefer", paneId },
     });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];
-    const explorerPaneId = state.explorerPaneIdByWorkspace[workspaceKey!];
+    const sidePanelPaneId = state.sidePanelPaneIdByWorkspace[workspaceKey!];
 
-    expect(explorerPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerPaneId);
-    expect(findPaneById(layout.root, explorerPaneId!)?.hidden).toBeUndefined();
-    expect(layout.focusedPaneId).toBe(explorerPaneId);
+    expect(sidePanelPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(sidePanelPaneId);
+    expect(findPaneById(layout.root, sidePanelPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe(sidePanelPaneId);
   });
 
-  it("opens a provider subagent in the explorer pane when focused", () => {
+  it("opens a provider subagent in the side panel when focused", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -298,18 +302,22 @@ describe("workspace subagents integration", () => {
     expect(workspaceKey).toBeTruthy();
 
     const store = useWorkspaceLayoutStore.getState();
-    const tabId = store.openTabInExplorerPaneFocused(workspaceKey!, {
+    const paneId = store.showSidePanel(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
       target: { kind: "provider_subagent", parentAgentId: "parent-agent", subagentId: "task-1" },
+      intent: "reveal",
       parentTabId: "agent_parent-agent",
+      placement: { mode: "prefer", paneId },
     });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];
-    const explorerPaneId = state.explorerPaneIdByWorkspace[workspaceKey!];
+    const sidePanelPaneId = state.sidePanelPaneIdByWorkspace[workspaceKey!];
 
-    expect(explorerPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerPaneId);
-    expect(findPaneById(layout.root, explorerPaneId!)?.hidden).toBeUndefined();
-    expect(layout.focusedPaneId).toBe(explorerPaneId);
+    expect(sidePanelPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(sidePanelPaneId);
+    expect(findPaneById(layout.root, sidePanelPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe(sidePanelPaneId);
   });
 });

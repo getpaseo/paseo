@@ -40,9 +40,15 @@ export function useLiveFile(input: {
   return {
     file: snapshot.observation?.status === "ready" ? snapshot.observation.file : null,
     error: snapshot.read.status === "error" ? snapshot.read.error : null,
-    isFetching: snapshot.read.status === "pending",
+    // Effects start reads after the first render. An enabled target is therefore
+    // already in the producer's initial/retargeting display state.
+    isFetching:
+      input.enabled &&
+      (snapshot.read.status === "pending" ||
+        (snapshot.read.status === "idle" && snapshot.observation === null)),
     isRetrying: snapshot.read.status === "pending" && snapshot.read.requested,
     refresh: model.refresh,
     model,
+    snapshot,
   };
 }

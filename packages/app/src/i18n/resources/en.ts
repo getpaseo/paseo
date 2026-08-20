@@ -552,7 +552,6 @@ export const en = {
       loading: "Loading...",
       modified: "Unsaved changes",
       loadingAgentTitle: "Loading agent title",
-      emptyPane: "No tabs in this pane.",
       fallback: {
         newAgent: "New agent",
         setup: "Setup",
@@ -594,6 +593,7 @@ export const en = {
         newBrowser: "New browser",
         maximizePane: "Maximize pane",
         restorePane: "Restore pane",
+        closePane: "Close pane",
         exitFocusMode: "Exit focus mode",
         splitRight: "Split pane right",
         splitDown: "Split pane down",
@@ -603,10 +603,10 @@ export const en = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
       },
-      explorer: {
-        open: "Open explorer",
-        close: "Close explorer",
-        toggle: "Toggle explorer",
+      sidePanel: {
+        open: "Open side panel",
+        close: "Close side panel",
+        toggle: "Toggle side panel",
         changes: "Changes",
         files: "Files",
       },
@@ -706,6 +706,10 @@ export const en = {
         startFailed: "Failed to start {{scriptName}}",
         stopFailed: "Failed to stop {{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Show folder tree",
+      hideFolderTree: "Hide folder tree",
     },
     git: {
       actions: {
@@ -865,8 +869,6 @@ export const en = {
         split: "Side-by-side diff",
         switchToUnified: "Switch to unified diff",
         switchToSplit: "Switch to side-by-side diff",
-        showTreeView: "Show folder tree",
-        hideTreeView: "Hide folder tree",
         options: "Diff options",
         hideWhitespace: "Hide whitespace",
         showWhitespace: "Show whitespace",
@@ -1982,6 +1984,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      sidePanelRouting: {
+        label: "Open supporting tabs in the Side panel",
+        description:
+          "File links, pull requests, and setup progress open beside your work instead of in the focused pane",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
@@ -2165,11 +2172,11 @@ export const en = {
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",
-        toggleRightSidebar: "Toggle right sidebar",
+        toggleRightSidebar: "Toggle side panel",
         toggleBothSidebars: "Toggle both sidebars",
         toggleSettings: "Toggle settings",
         toggleFocusMode: "Toggle focus mode",
-        toggleExplorerPaneMaximization: "Toggle Explorer pane maximization",
+        toggleExplorerPaneMaximization: "Toggle Side panel maximization",
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
         cycleAgentMode: "Cycle agent mode",
