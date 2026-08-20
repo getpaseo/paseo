@@ -27,7 +27,7 @@ import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openExplorerSurface } from "@/workspace-tabs/explorer-surface";
+import { openSidePanelView } from "@/workspace-tabs/side-panel";
 import {
   AssistantMessage,
   SpeakMessage,
@@ -456,7 +456,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           setCurrentPath: false,
         });
 
-        openExplorerSurface({
+        openSidePanelView({
           isCompact: isMobile,
           workspaceKey: buildWorkspaceTabPersistenceKey({
             serverId: resolvedServerId,

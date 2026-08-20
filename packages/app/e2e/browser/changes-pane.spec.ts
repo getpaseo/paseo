@@ -648,7 +648,7 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
 
 test("desktop Changes toggles a navigation tree beside the expanded diff document", async ({
   page,
-}) => {
+}, testInfo) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
@@ -658,6 +658,41 @@ test("desktop Changes toggles a navigation tree beside the expanded diff documen
   await expect(page.getByTestId("changes-layout-split")).toHaveCount(0);
   // The tree toggle is the one icon action that stays outside the overflow menu.
   await expect(page.getByTestId("changes-toggle-tree")).toBeVisible();
+  const [changesToolbarBox, treeToggleBox, optionsBox, treeGlyphBox, optionsGlyphBox] =
+    await Promise.all([
+      page.getByTestId("changes-header").boundingBox(),
+      page.getByTestId("changes-toggle-tree").boundingBox(),
+      page.getByRole("button", { name: "Diff options" }).boundingBox(),
+      page.getByTestId("changes-toggle-tree").locator("svg").boundingBox(),
+      page.getByRole("button", { name: "Diff options" }).locator("svg").boundingBox(),
+    ]);
+  if (!changesToolbarBox || !treeToggleBox || !optionsBox || !treeGlyphBox || !optionsGlyphBox) {
+    throw new Error("Changes toolbar geometry could not be measured");
+  }
+  expect(changesToolbarBox.height).toBe(36);
+  expect(treeToggleBox.width).toBe(24);
+  expect(treeToggleBox.height).toBe(24);
+  expect(optionsBox.width).toBe(24);
+  expect(optionsBox.height).toBe(24);
+  expect(treeGlyphBox.width).toBe(14);
+  expect(treeGlyphBox.height).toBe(14);
+  expect(optionsGlyphBox.width).toBe(14);
+  expect(optionsGlyphBox.height).toBe(14);
+  const diffOptions = page.getByRole("button", { name: "Diff options" });
+  const diffOptionsRestBackground = await diffOptions.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await diffOptions.hover();
+  const diffOptionsHoverBackground = await diffOptions.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  expect(diffOptionsHoverBackground).not.toBe(diffOptionsRestBackground);
+  await page.getByTestId("changes-toggle-tree").hover();
+  expect(
+    await page
+      .getByTestId("changes-toggle-tree")
+      .evaluate((element) => getComputedStyle(element).backgroundColor),
+  ).toBe(diffOptionsHoverBackground);
   await expect(page.getByTestId("changes-toggle-collapse-all")).toHaveCount(0);
   await expect(page.getByTestId("changes-toggle-layout")).toHaveCount(0);
 
@@ -675,6 +710,12 @@ test("desktop Changes toggles a navigation tree beside the expanded diff documen
 
   await scrollToLowerUnwrappedDiffRows(page);
   await page.getByTestId("changes-toggle-tree").click();
+  await expect(page.getByTestId("changes-toggle-tree")).toHaveAttribute("aria-selected", "true");
+  expect(
+    await page
+      .getByTestId("changes-toggle-tree")
+      .evaluate((element) => getComputedStyle(element).backgroundColor),
+  ).toBe(diffOptionsHoverBackground);
   const tree = changesTree(page);
   const content = changesContent(page);
   await expect(tree.getByTestId("diff-folder-src")).toBeVisible();
@@ -735,7 +776,38 @@ test("desktop Changes toggles a navigation tree beside the expanded diff documen
   await expect(tree.getByTestId("diff-tree-file-0")).toHaveCount(0);
 
   await page.getByTestId("changes-toggle-tree").click();
+  await expect(page.getByTestId("changes-toggle-tree")).toHaveAttribute("aria-selected", "false");
   await expectFlatFileList(page);
+  const screenshot = testInfo.outputPath("changes-toolbar.png");
+  await page.screenshot({ path: screenshot });
+  await testInfo.attach("changes-toolbar", { path: screenshot, contentType: "image/png" });
+});
+
+test("compact Changes keeps its options control touch-sized", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+  await page.setViewportSize({ width: 480, height: 900 });
+
+  const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
+  const [optionsBox, glyphBox] = await Promise.all([
+    options.boundingBox(),
+    options.locator("svg").boundingBox(),
+  ]);
+  if (!optionsBox || !glyphBox) {
+    throw new Error("Compact Changes options geometry could not be measured");
+  }
+  expect(optionsBox.width).toBe(32);
+  expect(optionsBox.height).toBe(32);
+  expect(glyphBox.width).toBe(18);
+  expect(glyphBox.height).toBe(18);
+
+  await options.click();
+  const wrapLines = page.getByText("Wrap long lines", { exact: true });
+  await expect(wrapLines).toBeVisible();
+  await wrapLines.click();
+  await options.click();
+  await expect(page.getByTestId("changes-toggle-wrap-lines")).toContainText("Scroll long lines");
 });
 
 test("canvas diff stays sharp while its workspace pane is resized", async ({ page }) => {
@@ -875,6 +947,7 @@ test("split canvas creates a review on the changed side and keeps it in that col
   const workspace = await createWorkspaceWithMountedTabDiff();
   await configureDiffPresentation(page, { layout: "split", wrapLines: false });
   await openWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
   await startReviewOnFirstChangedLine(page, "right");
   const [editor, body] = await Promise.all([
     page.getByTestId("inline-review-editor").boundingBox(),
@@ -1004,6 +1077,7 @@ test("canvas diff copies only the selected split side", async ({ context, page }
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configureDiffPresentation(page, { layout: "split", wrapLines: false });
   await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
   const before = await readSelectionPaintSamples(page, "right");
   await dragAddedTextRange(page, {
     lines,
@@ -1027,6 +1101,7 @@ test("canvas diff copies exact wrapped fragments", async ({ context, page }) => 
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await configureDiffPresentation(page, { layout: "unified", wrapLines: true });
   await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "unified", wrapLines: true });
   await dragAddedTextRange(page, {
     lines: [content],
     wrapped: true,
@@ -1149,6 +1224,31 @@ async function configureDiffPresentation(
     },
     { preferencesKey: CHANGES_PREFERENCES_KEY, presentation: requestedPresentation },
   );
+}
+
+async function setOpenChangesPresentation(
+  page: Page,
+  requestedPresentation: { layout: "unified" | "split"; wrapLines: boolean },
+): Promise<void> {
+  const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
+
+  await options.click();
+  const layoutItem = page.getByTestId("changes-toggle-layout");
+  const currentLayout = (await layoutItem.locator("svg").count()) === 2 ? "split" : "unified";
+  if (currentLayout !== requestedPresentation.layout) {
+    await layoutItem.click();
+  } else {
+    await page.keyboard.press("Escape");
+  }
+
+  await options.click();
+  const wrapItem = page.getByTestId("changes-toggle-wrap-lines");
+  const currentWrapLines = (await wrapItem.locator("svg").count()) === 2;
+  if (currentWrapLines !== requestedPresentation.wrapLines) {
+    await wrapItem.click();
+  } else {
+    await page.keyboard.press("Escape");
+  }
 }
 
 async function holdBrowserFontLoads(page: Page): Promise<void> {

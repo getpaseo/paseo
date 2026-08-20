@@ -73,6 +73,7 @@ function BrowserPanel() {
 
 export const browserPanelRegistration: PanelRegistration<"browser"> = {
   kind: "browser",
+  resourceKey: (target) => target.browserId,
   component: BrowserPanel,
   useDescriptor: useBrowserPanelDescriptor,
 };

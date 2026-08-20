@@ -561,7 +561,6 @@ export const ptBR: TranslationResources = {
       loading: "Carregando...",
       modified: "Alterações não salvas",
       loadingAgentTitle: "Carregando título do agente",
-      emptyPane: "Nenhuma aba neste painel.",
       fallback: {
         newAgent: "Novo agente",
         setup: "Configuração",
@@ -603,6 +602,7 @@ export const ptBR: TranslationResources = {
         newBrowser: "Novo navegador",
         maximizePane: "Maximizar painel",
         restorePane: "Restaurar painel",
+        closePane: "Fechar painel",
         exitFocusMode: "Sair do modo de foco",
         splitRight: "Dividir painel à direita",
         splitDown: "Dividir painel abaixo",
@@ -612,10 +612,10 @@ export const ptBR: TranslationResources = {
         terminalProfilesMenu: "Perfis de terminal",
         editTerminalProfiles: "Editar perfis…",
       },
-      explorer: {
-        open: "Abrir explorador",
-        close: "Fechar explorador",
-        toggle: "Alternar explorador",
+      sidePanel: {
+        open: "Abrir painel lateral",
+        close: "Fechar painel lateral",
+        toggle: "Alternar painel lateral",
         changes: "Alterações",
         files: "Arquivos",
       },
@@ -716,6 +716,10 @@ export const ptBR: TranslationResources = {
         startFailed: "Falha ao iniciar {{scriptName}}",
         stopFailed: "Falha ao parar {{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Mostrar árvore de pastas",
+      hideFolderTree: "Ocultar árvore de pastas",
     },
     git: {
       actions: {
@@ -881,8 +885,6 @@ export const ptBR: TranslationResources = {
         split: "Diff lado a lado",
         switchToUnified: "Alternar para diff unificado",
         switchToSplit: "Alternar para diff lado a lado",
-        showTreeView: "Mostrar árvore de pastas",
-        hideTreeView: "Ocultar árvore de pastas",
         options: "Opções do diff",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
@@ -1954,6 +1956,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      sidePanelRouting: {
+        label: "Abrir abas de apoio no painel lateral",
+        description:
+          "Links de arquivo, pull requests e progresso da configuração abrem ao lado do seu trabalho em vez do painel em foco",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:
@@ -2138,11 +2145,11 @@ export const ptBR: TranslationResources = {
         toggleCommandCenter: "Alternar central de comandos",
         showKeyboardShortcuts: "Mostrar atalhos de teclado",
         toggleLeftSidebar: "Alternar barra lateral esquerda",
-        toggleRightSidebar: "Alternar barra lateral direita",
+        toggleRightSidebar: "Alternar painel lateral",
         toggleBothSidebars: "Alternar ambas as barras laterais",
         toggleSettings: "Alternar Configurações",
         toggleFocusMode: "Alternar modo de foco",
-        toggleExplorerPaneMaximization: "Alternar maximização do painel Explorador",
+        toggleExplorerPaneMaximization: "Alternar maximização do painel lateral",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
         cycleAgentMode: "Alternar modo do agente",

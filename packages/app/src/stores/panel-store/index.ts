@@ -76,6 +76,9 @@ export interface PanelState {
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
   treeRailWidth: number;
+  // File panel's tree rail. The changes panel keeps its own flag in
+  // `useChangesPreferences`; the two rails open and close independently.
+  fileTreeVisible: boolean;
 
   // Actions
   toggleFocusMode: () => void;
@@ -103,6 +106,7 @@ export interface PanelState {
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
   setTreeRailWidth: (width: number) => void;
+  toggleFileTreeVisible: () => void;
 }
 
 const DEFAULT_DESKTOP_OPEN = isWeb;
@@ -137,6 +141,7 @@ export const usePanelStore = create<PanelState>()(
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
       treeRailWidth: DEFAULT_TREE_RAIL_WIDTH,
+      fileTreeVisible: true,
 
       toggleFocusMode: () =>
         set((state) => ({
@@ -278,10 +283,11 @@ export const usePanelStore = create<PanelState>()(
       toggleExplorerShowHiddenFiles: () =>
         set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),
       setTreeRailWidth: (width) => set({ treeRailWidth: clampTreeRailWidth(width) }),
+      toggleFileTreeVisible: () => set((state) => ({ fileTreeVisible: !state.fileTreeVisible })),
     }),
     {
       name: "panel-state",
-      version: 15,
+      version: 16,
       storage: createValidatedPersistStorage(AsyncStorage, PanelPersistedStateSchema),
       migrate: (persistedState, version) => migratePanelState(persistedState, version),
       partialize: (state) => ({
@@ -295,6 +301,7 @@ export const usePanelStore = create<PanelState>()(
         explorerSortOption: state.explorerSortOption,
         explorerShowHiddenFiles: state.explorerShowHiddenFiles,
         treeRailWidth: state.treeRailWidth,
+        fileTreeVisible: state.fileTreeVisible,
       }),
     },
   ),

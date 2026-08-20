@@ -90,7 +90,7 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openExplorerSurface } from "@/workspace-tabs/explorer-surface";
+import { openSidePanelView } from "@/workspace-tabs/side-panel";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem, TodoEntry } from "@/types/stream";
@@ -437,6 +437,7 @@ export function AgentConversationPanel() {
 
 export const agentPanelRegistration: PanelRegistration<"agent"> = {
   kind: "agent",
+  resourceKey: (target) => target.agentId,
   component: AgentConversationPanel,
   useDescriptor: useAgentPanelDescriptor,
 };
@@ -1592,7 +1593,7 @@ function ActiveAgentComposer({
       if (attachment.kind !== "review") {
         return;
       }
-      openExplorerSurface({
+      openSidePanelView({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
         checkout: { serverId, cwd: attachment.attachment.cwd, isGit: true },

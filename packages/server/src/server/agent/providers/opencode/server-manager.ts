@@ -21,6 +21,12 @@ import {
   type OpenCodeEventSource,
 } from "./event-consumer.js";
 
+/**
+ * Budget for an OpenCode server to become usable after spawn. Plugin-heavy installs
+ * routinely need well over ten seconds on a cold start, so every wait that depends on
+ * the server finishing its boot shares this budget.
+ */
+export const OPENCODE_SERVER_STARTUP_TIMEOUT_MS = 30_000;
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
@@ -388,7 +394,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         if (!started) {
           failStartup(new Error(buildStartupErrorMessage("OpenCode server startup timeout")));
         }
-      }, 30_000);
+      }, OPENCODE_SERVER_STARTUP_TIMEOUT_MS);
 
       serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();

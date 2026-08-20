@@ -5,11 +5,8 @@ import {
 } from "@/attachments/workspace-attachments-store";
 import {
   buildReviewDraftKey,
-  buildReviewDraftScopeKey,
   useInlineReviewController,
-  useResolvedDiffMode,
   useReviewAttachmentSnapshot,
-  useSetDiffModeOverride,
 } from "@/review";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -21,6 +18,9 @@ interface UseWorkingDiffOptions {
   ignoreWhitespace: boolean;
   enabled: boolean;
   queryScope?: string;
+  mode?: "uncommitted" | "base";
+  baseRef?: string;
+  onModeChange?: (mode: "uncommitted" | "base") => void;
 }
 
 export function useWorkingDiff({
@@ -30,6 +30,9 @@ export function useWorkingDiff({
   ignoreWhitespace,
   enabled,
   queryScope,
+  mode,
+  baseRef: selectedBaseRef,
+  onModeChange,
 }: UseWorkingDiffOptions) {
   const {
     status,
@@ -43,38 +46,26 @@ export function useWorkingDiff({
   const statusErrorMessage =
     status?.error?.message ??
     (isStatusError && statusError instanceof Error ? statusError.message : null);
-  const baseRef = gitStatus?.baseRef ?? undefined;
+  const baseRef = selectedBaseRef ?? gitStatus?.baseRef ?? undefined;
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const currentBranchName =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
 
-  const reviewDraftScopeKey = useMemo(
-    () =>
-      buildReviewDraftScopeKey({
-        serverId,
-        workspaceId,
-        cwd,
-        baseRef,
-        ignoreWhitespace,
-      }),
-    [baseRef, cwd, ignoreWhitespace, serverId, workspaceId],
-  );
-  const diffMode = useResolvedDiffMode({
-    scopeKey: reviewDraftScopeKey,
-    hasUncommittedChanges,
-  });
-  const setDiffModeOverride = useSetDiffModeOverride();
   const selectDiffMode = useCallback(
-    (mode: "uncommitted" | "base") => {
-      setDiffModeOverride({
-        scopeKey: reviewDraftScopeKey,
-        override: { serverId, cwd, mode, isDirtyAtSelection: hasUncommittedChanges },
-      });
+    (nextMode: "uncommitted" | "base") => {
+      if (onModeChange) {
+        onModeChange(nextMode);
+        return;
+      }
+      // A Changes surface always supplies its tab-owned presentation. Keep this
+      // fallback deterministic for legacy non-tab consumers without mutating
+      // workspace-wide review preferences.
     },
-    [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride],
+    [onModeChange],
   );
   const selectUncommitted = useCallback(() => selectDiffMode("uncommitted"), [selectDiffMode]);
   const selectBase = useCallback(() => selectDiffMode("base"), [selectDiffMode]);
+  const diffMode = mode ?? (hasUncommittedChanges ? "uncommitted" : "base");
 
   const {
     files,

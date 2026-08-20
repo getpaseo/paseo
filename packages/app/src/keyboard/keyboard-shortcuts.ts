@@ -953,7 +953,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle right sidebar",
+      label: "Toggle side panel",
     },
   },
   {
@@ -964,7 +964,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle right sidebar",
+      label: "Toggle side panel",
     },
   },
   {
