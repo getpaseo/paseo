@@ -1177,6 +1177,7 @@ export const ko: TranslationResources = {
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",
+      importedSessionWorkspaceMissing: "가져온 세션에 워크스페이스 정보가 없습니다",
     },
     tooltips: {
       project: "Choose the project",

@@ -1204,6 +1204,8 @@ export const es: TranslationResources = {
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
+      importedSessionWorkspaceMissing:
+        "La sesión importada no contiene información del espacio de trabajo",
     },
     tooltips: {
       project: "Choose the project",

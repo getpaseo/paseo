@@ -1193,6 +1193,8 @@ export const ru: TranslationResources = {
       createWorktreeFailed: "Не удалось создать рабочее дерево.",
       composerStateRequired: "Требуется состояние композитора.",
       selectModel: "Выберите модель",
+      importedSessionWorkspaceMissing:
+        "В импортированном сеансе отсутствуют сведения о рабочем пространстве",
     },
     tooltips: {
       project: "Choose the project",

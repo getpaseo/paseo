@@ -9,8 +9,16 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+  Inbox,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
+import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -87,7 +95,11 @@ import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
-import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  AgentSnapshotPayload,
+  ForgeSearchItem,
+} from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -116,6 +128,7 @@ import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
+import { importedSessionWorkspaceNavigation } from "./new-workspace-import-session";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
@@ -1336,12 +1349,15 @@ interface NewWorkspaceFormStackInput {
     profiles: readonly TerminalProfile[];
     disabled: boolean;
   };
+  importSession: {
+    onOpen: () => void;
+  };
 }
 
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = input;
+  const { isCompact, isPending, project, host, isolation, base, launch, importSession } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
@@ -1514,6 +1530,31 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     />
   );
 
+  const importSessionControl = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Pressable
+          onPress={importSession.onOpen}
+          disabled={isPending}
+          style={badgePressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("importSession.title")}
+          testID="new-workspace-import-session"
+        >
+          <View style={styles.badgeIconBox}>
+            <Inbox size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </View>
+          <Text style={styles.badgeText} numberOfLines={1}>
+            {t("importSession.title")}
+          </Text>
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{t("importSession.title")}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+
   return isCompact ? (
     <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
       <FormRow>{projectControl}</FormRow>
@@ -1521,6 +1562,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
+      <FormRow>{importSessionControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
       {isolationControl ? null : <View style={styles.baseSpacer} />}
       {baseControl ? null : <View style={styles.baseSpacer} />}
@@ -1533,6 +1575,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       {baseControl}
       <View style={styles.launchSpacer} />
       {launchControl}
+      {importSessionControl}
     </View>
   );
 }
@@ -1578,6 +1621,7 @@ export function NewWorkspaceScreen({
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [importSessionOpen, setImportSessionOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
@@ -1944,6 +1988,22 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
+  const handleOpenImportSession = useCallback(() => setImportSessionOpen(true), []);
+  const handleCloseImportSession = useCallback(() => setImportSessionOpen(false), []);
+  const handleImportedSession = useCallback(
+    (agent: AgentSnapshotPayload) => {
+      const navigation = importedSessionWorkspaceNavigation(selectedServerId, agent);
+      if (!navigation) {
+        const message = t("newWorkspace.errors.importedSessionWorkspaceMissing");
+        setErrorMessage(message);
+        toast.error(message);
+        return;
+      }
+      navigateToWorkspace(navigation);
+    },
+    [selectedServerId, t, toast],
+  );
+
   const buildCreateWorktreeInput = useCallback(
     (input: {
       cwd: string;
@@ -2275,6 +2335,9 @@ export function NewWorkspaceScreen({
       profiles: terminalProfiles,
       disabled: isPending,
     },
+    importSession: {
+      onOpen: handleOpenImportSession,
+    },
   });
 
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
@@ -2350,6 +2413,14 @@ export function NewWorkspaceScreen({
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </ReanimatedAnimated.View>
       </View>
+      <ImportSessionSheet
+        visible={importSessionOpen}
+        client={client}
+        serverId={selectedServerId}
+        cwd={selectedSourceDirectory}
+        onClose={handleCloseImportSession}
+        onImported={handleImportedSession}
+      />
     </FileDropZone>
   );
 }
@@ -2400,6 +2471,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   formStackDesktop: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     marginBottom: theme.spacing[8],
     // The badge adds its own left padding; offset it so the project icon's left

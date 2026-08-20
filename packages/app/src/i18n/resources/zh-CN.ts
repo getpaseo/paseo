@@ -1159,6 +1159,7 @@ export const zhCN: TranslationResources = {
       createWorktreeFailed: "创建 worktree 失败",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
+      importedSessionWorkspaceMissing: "导入的会话缺少 workspace 信息",
     },
     tooltips: {
       project: "Choose the project",
