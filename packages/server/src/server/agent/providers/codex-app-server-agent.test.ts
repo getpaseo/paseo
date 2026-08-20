@@ -175,6 +175,119 @@ function deferred<T>() {
 }
 
 describe("Codex active-turn steering admission", () => {
+  test("a steer without the clearing contract leaves permissions open", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+
+    await expect(
+      session.steerActiveTurn!("background notification", { expectedTurnId: paseoTurnId }),
+    ).resolves.toEqual({ status: "accepted" });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    const requestId = session.getPendingPermissions()[0]!.id;
+    await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("a clearing steer denies every pending permission through its provider handler", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const commandPermission = waitForNextPermission(session);
+    appServer.requestCommandApproval({
+      itemId: "command-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      command: "git status",
+      cwd: "/workspace/project",
+      reason: "Needs approval",
+    });
+    await commandPermission;
+
+    const filePermission = waitForNextPermission(session);
+    appServer.requestFileChangeApproval({
+      itemId: "file-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      reason: "Apply the patch",
+    });
+    await filePermission;
+
+    const questionPermission = waitForNextPermission(session);
+    appServer.requestUserInput({
+      itemId: "question-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      questions: [
+        {
+          id: "choice",
+          header: "Choice",
+          question: "Which option?",
+          options: [{ label: "One" }, { label: "Two" }],
+        },
+      ],
+    });
+    await questionPermission;
+
+    const mcpPermission = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "native-A",
+      serverName: "browser",
+      message: "Open this page?",
+      requestedSchema: { type: "object", properties: {} },
+    });
+    await mcpPermission;
+
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+    expect(session.getPendingPermissions()).toHaveLength(5);
+
+    await expect(
+      session.steerActiveTurn!("review this instead", {
+        expectedTurnId: paseoTurnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(session.getPendingPermissions()).toEqual([]);
+    await expect(appServer.waitForApprovalDecision("command-1")).resolves.toEqual({
+      decision: "decline",
+    });
+    await expect(appServer.waitForApprovalDecision("file-1")).resolves.toEqual({
+      decision: "decline",
+    });
+    await expect(appServer.waitForApprovalDecision("question-1")).resolves.toEqual({ answers: {} });
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "decline",
+      content: null,
+      _meta: null,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          name: "plan_approval",
+          detail: { type: "plan", text: "Ship the thing" },
+          metadata: expect.objectContaining({ approved: false }),
+        }),
+      }),
+    );
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("does not steer B when A completes while command resolution is pending", async () => {
     const commandResolution = deferred<{ commandName: string } | null>();
     const resolverEntered = deferred<void>();
@@ -5547,5 +5660,66 @@ describe("Codex importable sessions", () => {
       },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
     ]);
+  });
+});
+
+describe("Codex denied plan approvals", () => {
+  function planApprovalRows(events: AgentStreamEvent[]) {
+    return events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "plan_approval",
+    );
+  }
+
+  function createPlanSession(): { session: CodexTestSession; events: AgentStreamEvent[] } {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+    return { session, events };
+  }
+
+  function pendingPlanRequestId(session: CodexTestSession): string {
+    const [request] = session.getPendingPermissions?.() ?? [];
+    if (!request) throw new Error("expected a pending plan permission");
+    return request.id;
+  }
+
+  test("answering the card with a denial records the plan decision", async () => {
+    const { session, events } = createPlanSession();
+    const requestId = pendingPlanRequestId(session);
+
+    await session.respondToPermission?.(requestId, {
+      behavior: "deny",
+      message: "The user answered with a message instead of approving.",
+    });
+
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
+      detail: { type: "plan", text: "Ship the thing" },
+      metadata: { approved: false },
+    });
+  });
+
+  test("a plan superseded by a new prompt records the same decision", () => {
+    const { session, events } = createPlanSession();
+
+    castInternals<{ dismissPendingPlanApprovals: (message: string) => void }>(
+      session,
+    ).dismissPendingPlanApprovals("Dismissed by a new prompt");
+
+    // dismissPendingPlanApprovals goes straight to resolvePlanPermission, so a
+    // row emitted from the response handler would miss this route entirely.
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
+      detail: { type: "plan", text: "Ship the thing" },
+      metadata: { approved: false },
+    });
   });
 });

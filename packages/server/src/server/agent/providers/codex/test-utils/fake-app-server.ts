@@ -92,6 +92,19 @@ export interface FakeCodexAppServer {
     reason: string;
   }): void;
   waitForCommandApprovalDecision(itemId: string): Promise<unknown>;
+  requestFileChangeApproval(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    reason: string;
+  }): void;
+  requestUserInput(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    questions: Array<Record<string, unknown>>;
+  }): void;
+  waitForApprovalDecision(itemId: string): Promise<unknown>;
   requestMcpElicitation(params: {
     threadId: string;
     turnId: string | null;
@@ -516,6 +529,35 @@ export function createFakeCodexAppServer(
       );
     },
     async waitForCommandApprovalDecision(itemId) {
+      return await this.waitForApprovalDecision(itemId);
+    },
+    requestFileChangeApproval(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/fileChange/requestApproval",
+          params,
+        })}\n`,
+      );
+    },
+    requestUserInput(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/tool/requestUserInput",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForApprovalDecision(itemId) {
       const requestId = approvalRequestIds.get(itemId);
       if (requestId === undefined) {
         throw new Error(`No pending fake Codex app-server approval for ${itemId}`);
