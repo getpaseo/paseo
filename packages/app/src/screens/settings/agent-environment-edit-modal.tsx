@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentEnvironmentFormat } from "@getpaseo/protocol/agent-environment";
@@ -7,6 +7,7 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 export interface AgentEnvironmentCommandDraft {
   command: string;
@@ -49,8 +50,8 @@ export function AgentEnvironmentEditModal({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  const commandInputRef = useRef<TextInput>(null);
-  const timeoutInputRef = useRef<TextInput>(null);
+  const commandInputRef = useRef<EditingTextInputHandle>(null);
+  const timeoutInputRef = useRef<EditingTextInputHandle>(null);
 
   const handleCommandChange = useCallback((value: string) => {
     setCommand(value);
