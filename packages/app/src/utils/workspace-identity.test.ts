@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity, resolveWorkspaceRouteId } from "./workspace-identity";
+import {
+  normalizeWorkspacePath,
+  resolveWorkspaceMapKeyByIdentity,
+  resolveWorkspaceRouteId,
+} from "./workspace-identity";
+
+it.each([
+  [" /workspace/project/ ", "/workspace/project"],
+  ["C:\\workspace\\project\\", "C:/workspace/project"],
+])("normalizes equivalent workspace paths: %s", (input, expected) => {
+  expect(normalizeWorkspacePath(input)).toBe(expected);
+});
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,

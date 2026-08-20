@@ -101,6 +101,7 @@ import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
 import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 interface AddProjectFlowProps {
   request: AddProjectFlowRequest;
@@ -518,10 +519,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         setPageStatus(current, "workspace-search", { isSubmitting: true, error: null }),
       );
       try {
-        const normalizedPath = path.trim().toLowerCase();
-        const existingWorkspace = sessionWorkspaces
-          ? Array.from(sessionWorkspaces.values()).find(
-              (workspace) => workspace.workspaceDirectory.trim().toLowerCase() === normalizedPath,
+        const normalizedPath = normalizeWorkspacePath(path);
+        const existingWorkspace = normalizedPath
+          ? Array.from(sessionWorkspaces?.values() ?? []).find(
+              (workspace) => workspace.workspaceDirectory === normalizedPath,
             )
           : null;
         if (existingWorkspace) {
