@@ -16,7 +16,8 @@ system-injected.
 
 - Apply the same behavior in the shared Expo stream on native, browser, and Electron.
 - Fold only settled visible responses that end with a final assistant message.
-- Keep the active response, errors, and still-running tools visible.
+- Fold completed, failed, and canceled tool calls once a settled response has a final answer.
+- Keep the active response, response-level errors, and still-running tools visible.
 - Let the user expand or collapse each response for the lifetime of the open agent view.
 - Preserve stable committed-history references while live-head rows stream.
 
@@ -40,9 +41,10 @@ boundary indexes the same display rows passed into layout and virtualization.
 ## Validation
 
 - Focused projection tests cover collapse, expansion, active responses, cross-turn responses,
-  tail/head boundaries, protected rows, split Markdown blocks, incomplete answers, and live-head
-  reference stability.
-- A focused component test verifies that collapsing work never hides the final answer.
+  tail/head boundaries, protected rows, failed and canceled tools, split Markdown blocks, incomplete
+  answers, and live-head reference stability.
+- A real browser journey verifies that collapsing work never hides the complete final answer and
+  that the disclosure restores and refolds the response work.
 - Run app type checking, repository linting, formatting checks, and the i18n resource test.
 - Inspect the final diff and test the disclosure manually on desktop and mobile-sized layouts.
 

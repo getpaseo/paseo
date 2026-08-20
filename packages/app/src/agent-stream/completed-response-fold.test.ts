@@ -41,7 +41,7 @@ function thought(id: string, second: number, turnId = id): StreamItem {
 function tool(
   id: string,
   second: number,
-  status: "running" | "completed" = "completed",
+  status: "running" | "completed" | "failed" | "canceled" = "completed",
   turnId = id,
 ): StreamItem {
   return {
@@ -56,7 +56,7 @@ function tool(
         callId: id,
         name: "shell",
         status,
-        error: null,
+        error: status === "failed" ? { message: "Synthetic tool failure" } : null,
         detail: { type: "unknown", input: null, output: null },
       },
     },
@@ -185,7 +185,7 @@ describe("projectCompletedResponseFolds", () => {
     expect(result.foldsByAnchorItemId.get("final")?.responseId).toBe("final");
   });
 
-  it("keeps errors and still-running tools visible around a collapsed response", () => {
+  it("keeps response-level errors and still-running tools visible around a collapsed response", () => {
     const error: StreamItem = {
       kind: "activity_log",
       id: "error",
@@ -205,6 +205,20 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "running", "error", "final"]);
+  });
+
+  it("folds failed and canceled tool calls after a settled final answer", () => {
+    const result = project({
+      tail: [
+        user("user", 1, "turn-1"),
+        tool("failed", 2, "failed", "turn-1"),
+        tool("canceled", 3, "canceled", "turn-1"),
+        assistant("final", 4, "turn-1"),
+      ],
+    });
+
+    expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
+    expect(result.foldsByAnchorItemId.get("final")?.expanded).toBe(false);
   });
 
   it("does not fold when work continues after the last assistant message", () => {
