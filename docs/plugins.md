@@ -210,7 +210,11 @@ that predates it does not, and the plugin fails to start there. Daemons advertis
 a host without it contributes no themes.
 
 The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
-so equal themes on several hosts coalesce the way sidebar contributions do. The app resolves that id
+so equal themes on several hosts coalesce the way sidebar contributions do. Two hosts can answer
+that id with different palettes, so picking a theme records its host through
+`rememberPluginContributionHost` and resolution prefers it; a peer connecting or dropping then does
+not repaint the app. Without a preference the sorted registry snapshot decides, so the result is
+stable rather than arrival-ordered. The app resolves that id
 against the installed catalog on every change; an id nothing contributes falls back to the default
 preference instead of painting the reserved slot's placeholder colors.
 

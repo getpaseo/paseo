@@ -2,7 +2,13 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { buildPluginTheme, collectPluginThemes, findPluginTheme, toPluginTheme } from "./theme";
+import {
+  buildPluginTheme,
+  collectPluginThemes,
+  findPluginTheme,
+  rememberPluginThemeHost,
+  toPluginTheme,
+} from "./theme";
 import type { InstalledPlugin } from "./types";
 
 const MOCHA: PluginThemeContribution = {
@@ -19,6 +25,11 @@ const MOCHA: PluginThemeContribution = {
     mutedForeground: "#a6adc8",
     ring: "#6c7086",
   },
+};
+
+const MOCHA_FORK: PluginThemeContribution = {
+  ...MOCHA,
+  colors: { ...MOCHA.colors, background: "#11111b", highlight: "#f5c2e7" },
 };
 
 function installed(serverId: string, themes: PluginThemeContribution[]): InstalledPlugin {
@@ -96,6 +107,8 @@ describe("buildPluginTheme", () => {
   });
 });
 
+const SUPPORTED = new Set(["host-a", "host-b", "host-z"]);
+
 describe("collectPluginThemes", () => {
   it("coalesces the same contribution across hosts", () => {
     const options = collectPluginThemes(
@@ -119,6 +132,35 @@ describe("collectPluginThemes", () => {
     );
 
     expect(options.map((option) => option.id)).toEqual(["catppuccin/theme/mocha"]);
+  });
+
+  // Two hosts, same plugin and theme id, different palettes. The picked host has to survive a peer
+  // connecting or dropping, or the app repaints with no settings change. The remembered host is
+  // module state, so this runs the whole sequence in one test rather than leaning on test order.
+  it("pins the palette to the picked host across peer connect and disconnect", () => {
+    const bothHosts = () =>
+      collectPluginThemes(
+        [installed("host-a", [MOCHA]), installed("host-z", [MOCHA_FORK])],
+        SUPPORTED,
+      );
+
+    const beforePick = bothHosts();
+    expect(beforePick).toHaveLength(1);
+    expect(beforePick[0]?.serverId).toBe("host-a");
+    expect(beforePick[0]?.contribution).toBe(MOCHA);
+
+    const onlyHostZ = collectPluginThemes([installed("host-z", [MOCHA_FORK])], SUPPORTED);
+    expect(onlyHostZ[0]).toBeDefined();
+    rememberPluginThemeHost(onlyHostZ[0]);
+
+    const afterPick = bothHosts();
+    expect(afterPick).toHaveLength(1);
+    expect(afterPick[0]?.serverId).toBe("host-z");
+    expect(afterPick[0]?.contribution).toBe(MOCHA_FORK);
+
+    const withoutHostZ = collectPluginThemes([installed("host-a", [MOCHA])], SUPPORTED);
+    expect(withoutHostZ[0]?.serverId).toBe("host-a");
+    expect(withoutHostZ[0]?.contribution).toBe(MOCHA);
   });
 });
 

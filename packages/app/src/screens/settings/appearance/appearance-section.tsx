@@ -40,7 +40,7 @@ import {
   type Theme,
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
-import { usePluginThemes, type PluginThemeOption } from "@/plugins/theme";
+import { rememberPluginThemeHost, usePluginThemes, type PluginThemeOption } from "@/plugins/theme";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
 
@@ -135,13 +135,13 @@ function ThemeMenuItem({ themeValue, selected, onChange }: ThemeMenuItemProps) {
 interface PluginThemeMenuItemProps {
   option: PluginThemeOption;
   selected: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (option: PluginThemeOption) => void;
 }
 
 function PluginThemeMenuItem({ option, selected, onSelect }: PluginThemeMenuItemProps) {
   const handleSelect = useCallback(() => {
-    onSelect(option.id);
-  }, [onSelect, option.id]);
+    onSelect(option);
+  }, [onSelect, option]);
   const leading = useMemo(
     () => <ThemeSwatch color={option.contribution.colors.background} />,
     [option.contribution.colors.background],
@@ -158,7 +158,7 @@ interface ThemeRowProps {
   pluginThemes: PluginThemeOption[];
   selectedPluginTheme: PluginThemeOption | null;
   onChange: (theme: BuiltInThemePreference) => void;
-  onSelectPluginTheme: (id: string) => void;
+  onSelectPluginTheme: (option: PluginThemeOption) => void;
 }
 
 function ThemeRow({
@@ -547,8 +547,9 @@ export function AppearanceSection() {
   );
 
   const handlePluginThemeChange = useCallback(
-    (pluginThemeId: string) => {
-      void updateSettings({ theme: PLUGIN_THEME_SLOT, pluginThemeId });
+    (option: PluginThemeOption) => {
+      rememberPluginThemeHost(option);
+      void updateSettings({ theme: PLUGIN_THEME_SLOT, pluginThemeId: option.id });
     },
     [updateSettings],
   );

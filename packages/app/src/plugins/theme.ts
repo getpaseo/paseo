@@ -4,6 +4,10 @@ import type { PluginTheme, PluginThemeContribution } from "@getpaseo/plugin";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { buildDarkSemanticColors, buildDarkTheme, darkTheme, type Theme } from "@/styles/theme";
 import { useInstalledPlugins } from "./registry";
+import {
+  getPreferredPluginContributionHost,
+  rememberPluginContributionHost,
+} from "./sidebar-groups";
 import type { InstalledPlugin } from "./types";
 
 export function toPluginTheme(theme: Theme): PluginTheme {
@@ -75,25 +79,55 @@ export function buildPluginTheme(contribution: PluginThemeContribution): typeof 
   );
 }
 
+export interface PluginThemeTarget {
+  serverId: string;
+  contribution: PluginThemeContribution;
+}
+
 export interface PluginThemeOption {
   /** Persisted selection id. Stable across hosts so the same plugin coalesces to one entry. */
   id: string;
+  /** The host the palette came from, so the picker can remember it on selection. */
+  serverId: string;
   contribution: PluginThemeContribution;
+}
+
+/**
+ * Two hosts can offer the same plugin and theme id with different palettes. Prefer the host the
+ * theme was picked from, the way a sidebar contribution prefers its remembered host, so connecting
+ * or dropping another peer does not repaint the app. Without a preference the registry snapshot is
+ * already sorted by server id, so the first target is stable rather than arrival-ordered.
+ */
+function selectThemeTarget(id: string, targets: PluginThemeTarget[]): PluginThemeTarget {
+  const rememberedHostId = getPreferredPluginContributionHost(id);
+  const remembered = targets.find((target) => target.serverId === rememberedHostId);
+  return remembered ?? targets[0];
 }
 
 export function collectPluginThemes(
   plugins: InstalledPlugin[],
   supportedHosts: ReadonlySet<string>,
 ): PluginThemeOption[] {
-  const options = new Map<string, PluginThemeOption>();
+  const targetsById = new Map<string, PluginThemeTarget[]>();
   for (const plugin of plugins) {
     if (!supportedHosts.has(plugin.serverId)) continue;
     for (const contribution of plugin.themes) {
       const id = `${plugin.id}/theme/${contribution.id}`;
-      if (!options.has(id)) options.set(id, { id, contribution });
+      const targets = targetsById.get(id);
+      const target = { serverId: plugin.serverId, contribution };
+      if (targets) targets.push(target);
+      else targetsById.set(id, [target]);
     }
   }
-  return [...options.values()];
+  return [...targetsById].map(([id, targets]) => {
+    const selected = selectThemeTarget(id, targets);
+    return { id, serverId: selected.serverId, contribution: selected.contribution };
+  });
+}
+
+/** Pin the palette to the host the user picked it from. */
+export function rememberPluginThemeHost(option: PluginThemeOption): void {
+  rememberPluginContributionHost(option.id, option.serverId);
 }
 
 function supportedThemeHosts(support: ReadonlyMap<string, boolean>): Set<string> {
