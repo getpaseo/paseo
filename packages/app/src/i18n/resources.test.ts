@@ -239,6 +239,12 @@ describe("translation resources", () => {
     expect(en.agentControls.hints.model).toBe("Change model");
     expect(en.agentControls.hints.mode).toBe("Change mode");
     expect(en.agentControls.features.title).toBe("Features");
+    expect(en.agentControls.features.autoAccept.tooltipOn).toBe(
+      "Auto Accept: On — permission prompts are auto-approved",
+    );
+    expect(en.agentControls.features.autoAccept.tooltipOff).toBe(
+      "Auto Accept: Off — click to auto-approve permission prompts",
+    );
     expect(en.agentControls.mode.title).toBe("Mode");
     expect(en.agentStream.permission.required).toBe("Permission Required");
     expect(en.agentStream.permission.proposedPlan).toBe("Proposed plan");

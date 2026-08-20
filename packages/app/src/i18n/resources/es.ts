@@ -184,6 +184,11 @@ export const es: TranslationResources = {
       open: "Funciones de agente abierto",
       on: "En",
       off: "Apagado",
+      autoAccept: {
+        tooltipOn: "Auto Accept: Activado — los avisos de permiso se aprueban automáticamente",
+        tooltipOff:
+          "Auto Accept: Desactivado — haz clic para aprobar automáticamente los avisos de permiso",
+      },
     },
     mode: {
       title: "Modo",

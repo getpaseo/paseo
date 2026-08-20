@@ -181,6 +181,10 @@ export const en = {
       open: "Open agent features",
       on: "On",
       off: "Off",
+      autoAccept: {
+        tooltipOn: "Auto Accept: On — permission prompts are auto-approved",
+        tooltipOff: "Auto Accept: Off — click to auto-approve permission prompts",
+      },
     },
     mode: {
       title: "Mode",

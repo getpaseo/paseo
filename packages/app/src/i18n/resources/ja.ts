@@ -184,6 +184,10 @@ export const ja: TranslationResources = {
       open: "エージェント機能を開く",
       on: "オン",
       off: "オフ",
+      autoAccept: {
+        tooltipOn: "Auto Accept: オン — 権限プロンプトは自動承認されます",
+        tooltipOff: "Auto Accept: オフ — クリックすると権限プロンプトを自動承認します",
+      },
     },
     mode: {
       title: "モード",
