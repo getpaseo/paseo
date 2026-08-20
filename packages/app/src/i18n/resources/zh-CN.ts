@@ -413,6 +413,7 @@ export const zhCN: TranslationResources = {
     },
     fileActions: {
       openFile: "打开文件",
+      openIn: "在 {{target}} 中打开",
       copyPath: "复制路径",
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",

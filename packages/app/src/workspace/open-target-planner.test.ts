@@ -84,6 +84,37 @@ describe("planWorkspaceOpenTargets", () => {
     });
   });
 
+  it("plans a nested directory as the editor workspace", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/specs",
+      directoryPath: "repos/sample-android-app",
+      desktopTargets: [
+        {
+          id: "android-studio",
+          label: "Android Studio",
+          kind: "editor",
+          icon: { kind: "symbol", name: "terminal" },
+        },
+      ],
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    });
+
+    expect(targets).toEqual([
+      {
+        source: "desktop",
+        id: "android-studio",
+        label: "Android Studio",
+        editorId: "android-studio",
+        icon: { kind: "symbol", name: "terminal" },
+        openInput: {
+          editorId: "android-studio",
+          workspacePath: "/specs/repos/sample-android-app",
+        },
+      },
+    ]);
+  });
+
   it("passes custom target ids through as strings", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",

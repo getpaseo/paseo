@@ -411,6 +411,7 @@ export const en = {
     },
     fileActions: {
       openFile: "Open file",
+      openIn: "Open in {{target}}",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",
       revealIn: "Reveal in {{target}}",

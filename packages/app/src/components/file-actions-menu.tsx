@@ -4,6 +4,7 @@ import {
   Copy,
   CopyPlus,
   Download,
+  ExternalLink,
   FilePlus,
   FileText,
   FolderMinus,
@@ -39,6 +40,8 @@ interface FileActionsContextMenuContentProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
   onOpenFile?: () => void;
+  onOpenInEditor?: () => void;
+  editorTargetName?: string;
   onCopyPath?: () => void;
   onCopyRelativePath?: () => void;
   onReveal?: () => void;
@@ -65,6 +68,8 @@ export function FileActionsContextMenuContent({
   fileKind,
   fileExists = true,
   onOpenFile,
+  onOpenInEditor,
+  editorTargetName,
   onCopyPath,
   onCopyRelativePath,
   onReveal,
@@ -82,6 +87,18 @@ export function FileActionsContextMenuContent({
   testIDPrefix,
 }: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
+  const openInEditorAction = useMemo<FileAction | null>(
+    () =>
+      fileKind === "directory" && onOpenInEditor && editorTargetName
+        ? {
+            key: "open-in-editor",
+            label: t("workspace.fileActions.openIn", { target: editorTargetName }),
+            icon: ExternalLink,
+            onSelect: onOpenInEditor,
+          }
+        : null,
+    [editorTargetName, fileKind, onOpenInEditor, t],
+  );
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
     const specs: Array<FileAction | null> = [
@@ -117,6 +134,7 @@ export function FileActionsContextMenuContent({
             onSelect: onOpenFile,
           }
         : null,
+      openInEditorAction,
       onRename
         ? {
             key: "rename",
@@ -214,6 +232,7 @@ export function FileActionsContextMenuContent({
     onNewFile,
     onNewFolder,
     onOpenFile,
+    openInEditorAction,
     onRename,
     onReveal,
     onRevert,
