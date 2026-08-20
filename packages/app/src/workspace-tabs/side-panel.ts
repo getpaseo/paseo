@@ -112,12 +112,15 @@ export function openSupportingTab(input: OpenSupportingTabInput): string | null 
   });
 
   if (background) {
-    return store.openTabInBackground(workspaceKey, input.target, placement);
+    return store.openTab({ workspaceKey, target: input.target, intent: "background", placement });
   }
-  const parentTabId = input.parentTabId?.trim() || null;
-  return parentTabId
-    ? store.openChildTabFocused(workspaceKey, input.target, parentTabId, placement)
-    : store.openTabFocused(workspaceKey, input.target, placement);
+  return store.openTab({
+    workspaceKey,
+    target: input.target,
+    intent: "reveal",
+    placement,
+    parentTabId: input.parentTabId ?? undefined,
+  });
 }
 
 /**
@@ -214,9 +217,11 @@ export function toggleSidePanel(input: SidePanelInput): void {
 
   // Without splits there is no pane to reveal, so the toggle has to produce a tab.
   if (!canUseSidePanelPane(input)) {
-    useWorkspaceLayoutStore
-      .getState()
-      .openTabFocused(input.workspaceKey, SIDE_PANEL_VIEW_TARGETS.changes);
+    useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: input.workspaceKey,
+      target: SIDE_PANEL_VIEW_TARGETS.changes,
+      intent: "reveal",
+    });
     return;
   }
   showSidePanel(input);

@@ -81,24 +81,20 @@ test.describe("Side panel", () => {
         await expect(closePaneButton(page)).toHaveCount(0);
       });
 
-      await test.step("closing the empty Side panel hides it, and it comes back", async () => {
+      await test.step("closing its final tab hides the Side panel, and it reopens empty", async () => {
         const changesTab = sidePanel(page).getByTestId("workspace-tab-working_diff");
         await changesTab.hover();
         await page
           .locator('[data-testid^="workspace-working-diff-close-"]')
           .filter({ visible: true })
           .click();
-        await expect(emptyState(sidePanel(page))).toBeVisible({ timeout: 15_000 });
-        await capture(page, testInfo, "03-empty-side-panel-offers-close");
-
-        await emptyState(sidePanel(page)).getByRole("button", { name: "Close pane" }).click();
         await expect(sidePanel(page)).toHaveCount(0, { timeout: 15_000 });
-        await capture(page, testInfo, "04-side-panel-hidden");
+        await capture(page, testInfo, "03-side-panel-hidden-after-final-tab-close");
 
         await sidePanelToggle(page).click();
         await expect(sidePanel(page)).toBeVisible({ timeout: 15_000 });
         await expect(emptyState(sidePanel(page))).toBeVisible();
-        await capture(page, testInfo, "05-side-panel-revealed-again");
+        await capture(page, testInfo, "04-side-panel-revealed-empty");
       });
     } finally {
       await workspace.cleanup();
@@ -185,7 +181,9 @@ test.describe("Side panel", () => {
     }
   });
 
-  test("a pane's own menu claims a view that is open elsewhere", async ({ page }, testInfo) => {
+  test("a pane's own menu creates an independent view when one is open elsewhere", async ({
+    page,
+  }, testInfo) => {
     const workspace = await seedWorkspace({ repoPrefix: "side-panel-claim-" });
 
     try {
@@ -208,11 +206,10 @@ test.describe("Side panel", () => {
       await expect(mainPane(page).getByTestId("workspace-tab-working_diff")).toBeVisible({
         timeout: 15_000,
       });
-      // Claimed, not copied — and the Side panel it left is still there, now empty.
-      await expect(sidePanel(page).getByTestId("workspace-tab-working_diff")).toHaveCount(0);
-      await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(1);
-      await expect(emptyState(sidePanel(page))).toBeVisible();
-      await capture(page, testInfo, "09-changes-moved-to-main-pane");
+      await expect(sidePanel(page).getByTestId("workspace-tab-working_diff")).toHaveCount(1);
+      await expect(mainPane(page).getByTestId("workspace-tab-working_diff")).toHaveCount(1);
+      await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(2);
+      await capture(page, testInfo, "09-independent-changes-in-both-panes");
     } finally {
       await workspace.cleanup();
     }

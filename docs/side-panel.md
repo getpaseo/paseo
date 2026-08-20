@@ -56,6 +56,9 @@ it empties or the user dismisses it:
 
 - **Close pane** on the side panel **hides** it; its tabs are waiting on the next reveal.
 - **Close pane** on any other pane **removes** it.
+- Closing the Side panel's final tab hides the pane. Revealing it returns the empty launcher.
+  This is close-only: claiming or dragging that tab to another pane leaves the empty Side panel
+  visible.
 - Nothing takes the last visible pane away. `closePane` will not remove it, and
   neither `closePane` nor `hideSidePanel` will hide it — including the header toggle
   reaching `hideSidePanel` after every other pane is gone. The gate is one check in

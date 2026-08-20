@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,6 +18,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import { ChangesSurface } from "@/git/diff-pane";
+import { changesStateSchema, defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
@@ -329,6 +330,9 @@ function ChangedFilesPane({
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  const [changesState, setChangesState] = useState<ChangesState>(() =>
+    changesStateSchema.parse(defaultChangesState),
+  );
   return (
     <ChangesSurface
       host="explorer"
@@ -338,6 +342,8 @@ function ChangedFilesPane({
       enabled={isOpen}
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
+      state={changesState}
+      onStateChange={setChangesState}
     />
   );
 }

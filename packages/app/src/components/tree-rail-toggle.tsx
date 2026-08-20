@@ -4,6 +4,10 @@ import { useTranslation } from "react-i18next";
 import { FolderTree } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  paneContentToolbarIconSize,
+  paneContentToolbarIconButtonStyle,
+} from "@/components/ui/pane-content-toolbar";
 import type { Theme } from "@/styles/theme";
 
 const ThemedFolderTree = withUnistyles(FolderTree);
@@ -26,24 +30,24 @@ export function TreeRailToggle({
   const { t } = useTranslation();
   const label = t(visible ? "workspace.tree.hideFolderTree" : "workspace.tree.showFolderTree");
   const buttonStyle = useMemo(
-    () =>
-      ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) => [
-        styles.button,
-        (visible || Boolean(hovered) || pressed) && styles.buttonSelected,
-      ],
+    () => (state: { hovered?: boolean; pressed: boolean }) =>
+      paneContentToolbarIconButtonStyle(state, visible),
     [visible],
   );
+  const accessibilityState = useMemo(() => ({ selected: visible }), [visible]);
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={label}
+          accessibilityState={accessibilityState}
+          aria-selected={visible}
           testID={testID}
           style={buttonStyle}
           onPress={onToggle}
         >
-          <ThemedFolderTree size={14} uniProps={iconColorMapping} />
+          <ThemedFolderTree size={paneContentToolbarIconSize(false)} uniProps={iconColorMapping} />
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
@@ -54,20 +58,6 @@ export function TreeRailToggle({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[1],
-    minWidth: { xs: 32, sm: 32, md: 24 },
-    height: { xs: 32, sm: 32, md: 24 },
-    paddingHorizontal: { xs: theme.spacing[2], sm: theme.spacing[2], md: theme.spacing[1] },
-    borderRadius: theme.borderRadius.base,
-    flexShrink: 0,
-  },
-  buttonSelected: {
-    backgroundColor: theme.colors.surface2,
-  },
   tooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,

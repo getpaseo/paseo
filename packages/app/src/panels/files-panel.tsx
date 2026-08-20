@@ -60,6 +60,7 @@ function FilesPanel() {
 
 export const filesPanelRegistration: PanelRegistration<"files"> = {
   kind: "files",
+  resourceKey: () => "files",
   component: FilesPanel,
   useDescriptor: useFilesPanelDescriptor,
 };

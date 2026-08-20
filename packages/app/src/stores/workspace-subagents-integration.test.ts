@@ -276,12 +276,13 @@ describe("workspace subagents integration", () => {
 
     const store = useWorkspaceLayoutStore.getState();
     const paneId = store.showSidePanel(workspaceKey!) as string;
-    const tabId = store.openChildTabFocused(
-      workspaceKey!,
-      { kind: "agent", agentId: child.id },
-      `agent_${parent.id}`,
-      { mode: "prefer", paneId },
-    );
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
+      target: { kind: "agent", agentId: child.id },
+      intent: "reveal",
+      parentTabId: `agent_${parent.id}`,
+      placement: { mode: "prefer", paneId },
+    });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];
@@ -302,12 +303,13 @@ describe("workspace subagents integration", () => {
 
     const store = useWorkspaceLayoutStore.getState();
     const paneId = store.showSidePanel(workspaceKey!) as string;
-    const tabId = store.openChildTabFocused(
-      workspaceKey!,
-      { kind: "provider_subagent", parentAgentId: "parent-agent", subagentId: "task-1" },
-      "agent_parent-agent",
-      { mode: "prefer", paneId },
-    );
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
+      target: { kind: "provider_subagent", parentAgentId: "parent-agent", subagentId: "task-1" },
+      intent: "reveal",
+      parentTabId: "agent_parent-agent",
+      placement: { mode: "prefer", paneId },
+    });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];

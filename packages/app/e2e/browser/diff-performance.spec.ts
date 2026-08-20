@@ -77,7 +77,7 @@ diffPerfDescribe("Diff canvas performance", () => {
       await page.setViewportSize({ width: 1400, height: 900 });
       await page.goto(buildHostWorkspaceRoute(getServerId(), created.workspace.id));
       await waitForWorkspaceTabsVisible(page);
-      await page.getByRole("button", { name: "Open side panel" }).click();
+      await openChangesPanel(page);
       await expect(page.getByTestId("git-diff-canvas")).toBeVisible({ timeout: 30_000 });
 
       await expectSingleCanvasSurface(page);

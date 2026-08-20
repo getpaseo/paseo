@@ -87,6 +87,8 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import type { Theme } from "@/styles/theme";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -1183,7 +1185,15 @@ function ResolvedWorkspaceDesktopTabsRow({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
   });
-  const openTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const openTab = useWorkspaceLayoutStore((state) => state.openTab);
+  const openNewTab = useCallback(
+    (
+      requestedWorkspaceKey: string,
+      target: WorkspaceTabTarget,
+      placement?: WorkspaceTabPlacement,
+    ) => openTab({ workspaceKey: requestedWorkspaceKey, target, intent: "new", placement }),
+    [openTab],
+  );
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -1427,9 +1437,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       }
       // Picked from this pane's own menu, so the tab belongs here even if it is
       // currently open somewhere else.
-      openTabFocused(workspaceKey, target, paneId ? { mode: "pane", paneId } : undefined);
+      openNewTab(workspaceKey, target, paneId ? { mode: "pane", paneId } : undefined);
     },
-    [openTabFocused, paneId, workspaceKey],
+    [openNewTab, paneId, workspaceKey],
   );
   const handleOpenChanges = useCallback(() => openPanelTarget(CHANGES_TARGET), [openPanelTarget]);
   const handleOpenFiles = useCallback(() => openPanelTarget(FILES_TARGET), [openPanelTarget]);

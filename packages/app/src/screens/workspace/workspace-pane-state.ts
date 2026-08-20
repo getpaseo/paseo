@@ -58,6 +58,7 @@ function normalizeWorkspaceTab(tab: WorkspaceTab): WorkspaceTab | null {
     tabId,
     target,
     createdAt: tab.createdAt,
+    state: tab.state,
   };
 }
 
@@ -98,6 +99,7 @@ function normalizeWorkspacePaneTabs(tabs: WorkspaceTab[]): NormalizeWorkspacePan
         tabId: normalizedTab.tabId,
         kind: normalizedTab.target.kind,
         target: normalizedTab.target,
+        state: normalizedTab.state,
       },
     });
   }

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   defaultWorkspaceLayoutIds,
@@ -16,6 +17,7 @@ import {
   collectAllPanes,
   collectAllTabs,
   convertDraftToAgentInLayout,
+  createTabInLayout,
   createDefaultLayout,
   AMBIENT_PLACEMENT,
   createWorkspaceLayoutWithSidePanel,
@@ -31,14 +33,15 @@ import {
   moveTabToPaneInLayout,
   normalizeLayout,
   openTabInLayoutBackground,
-  openTabInLayoutFocused,
+  replaceTabTargetInLayout,
+  revealTargetInLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
-  retargetTabInLayout,
   setPaneHiddenInLayout,
+  setTabStateInLayout,
   splitPaneEmptyInLayout,
   splitPaneInLayout,
   stripEphemeralTabsFromLayout,
@@ -81,6 +84,16 @@ export type {
   WorkspaceTabSnapshot,
 };
 
+export type WorkspaceTabOpenIntent = "new" | "reveal" | "background";
+export interface OpenWorkspaceTabInput {
+  workspaceKey: string;
+  target: WorkspaceTabTarget;
+  intent: WorkspaceTabOpenIntent;
+  placement?: WorkspaceTabPlacement;
+  parentTabId?: string;
+  state?: JsonValue;
+}
+
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
@@ -89,28 +102,19 @@ interface WorkspaceLayoutStore {
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   sidePanelPaneIdByWorkspace: Record<string, string | null>;
-  openTabFocused: (
-    workspaceKey: string,
-    target: WorkspaceTabTarget,
-    placement?: WorkspaceTabPlacement,
-  ) => string | null;
-  openChildTabFocused: (
-    workspaceKey: string,
-    target: WorkspaceTabTarget,
-    parentTabId: string,
-    placement?: WorkspaceTabPlacement,
-  ) => string | null;
-  openTabInBackground: (
-    workspaceKey: string,
-    target: WorkspaceTabTarget,
-    placement?: WorkspaceTabPlacement,
-  ) => string | null;
+  openTab: (input: OpenWorkspaceTabInput) => string | null;
   /** Reveals the side panel without putting anything in it. Returns its pane id. */
   showSidePanel: (workspaceKey: string) => string | null;
   hideSidePanel: (workspaceKey: string) => void;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
-  retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  replaceTab: (
+    workspaceKey: string,
+    tabId: string,
+    target: WorkspaceTabTarget,
+    state?: JsonValue,
+  ) => string | null;
+  setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
@@ -220,6 +224,7 @@ const WorkspaceTabStorageSchema = z.strictObject({
   tabId: z.string(),
   target: WorkspaceTabTargetStorageSchema,
   createdAt: z.number(),
+  state: z.json().optional(),
 });
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
   z.discriminatedUnion("kind", [
@@ -266,6 +271,14 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function createWorkspaceTabInstanceId(): string {
+  const value =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `tab_${value}`;
 }
 
 function addAgentIdToWorkspaceSet(
@@ -466,19 +479,36 @@ export function createWorkspaceLayoutStore(
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         sidePanelPaneIdByWorkspace: {},
-        openTabFocused: (workspaceKey, target, options) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+        openTab: (input) => {
+          const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
           }
-
-          const result = openTabInLayoutFocused({
-            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
+          const placement = getOpenTabPlacement(get(), normalizedWorkspaceKey, input.placement);
+          let result;
+          if (input.intent === "new") {
+            result = createTabInLayout({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+              createTabId: createWorkspaceTabInstanceId,
+              state: input.state,
+            });
+          } else if (input.intent === "background") {
+            result = openTabInLayoutBackground({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+            });
+          } else {
+            result = revealTargetInLayout({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+              createTabId: createWorkspaceTabInstanceId,
+            });
+          }
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace:
@@ -491,79 +521,15 @@ export function createWorkspaceLayoutStore(
                   ),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
+              [normalizedWorkspaceKey]: input.parentTabId
+                ? attachParentTab({
+                    layout: result.layout,
+                    childTabId: result.tabId,
+                    parentTabId: input.parentTabId,
+                  })
+                : result.layout,
             },
           }));
-
-          return result.tabId;
-        },
-        openChildTabFocused: (workspaceKey, target, parentTabId, options) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedParentTabId = trimNonEmpty(parentTabId);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedParentTabId || !normalizedTarget) {
-            return null;
-          }
-
-          const result = openTabInLayoutFocused({
-            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
-          set((state) => {
-            const layout = attachParentTab({
-              layout: result.layout,
-              childTabId: result.tabId,
-              parentTabId: normalizedParentTabId,
-            });
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              hiddenAgentIdsByWorkspace:
-                normalizedTarget.kind !== "agent"
-                  ? state.hiddenAgentIdsByWorkspace
-                  : removeAgentIdFromWorkspaceSet(
-                      state.hiddenAgentIdsByWorkspace,
-                      normalizedWorkspaceKey,
-                      normalizedTarget.agentId,
-                    ),
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: layout,
-              },
-            };
-          });
-
-          return result.tabId;
-        },
-        openTabInBackground: (workspaceKey, target, options) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedTarget) {
-            return null;
-          }
-
-          const result = openTabInLayoutBackground({
-            ...getOpenTabPlacement(get(), normalizedWorkspaceKey, options),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
-          set((state) => ({
-            hiddenAgentIdsByWorkspace:
-              normalizedTarget.kind !== "agent"
-                ? state.hiddenAgentIdsByWorkspace
-                : removeAgentIdFromWorkspaceSet(
-                    state.hiddenAgentIdsByWorkspace,
-                    normalizedWorkspaceKey,
-                    normalizedTarget.agentId,
-                  ),
-            layoutByWorkspace: {
-              ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
-            },
-          }));
-
           return result.tabId;
         },
         showSidePanel: (workspaceKey) => {
@@ -641,11 +607,19 @@ export function createWorkspaceLayoutStore(
               closingPane?.id === "main" || closingPane?.id === sidePanelPaneId
                 ? closingPane.id
                 : null;
-            const nextLayout = closeTabInLayout({
+            const closedLayout = closeTabInLayout({
               layout,
               tabId: normalizedTabId,
               preserveEmptyPaneId,
             });
+            const nextLayout =
+              closedLayout && closingPane?.id === sidePanelPaneId && closingPane.tabIds.length === 1
+                ? (setPaneHiddenInLayout({
+                    layout: closedLayout,
+                    paneId: sidePanelPaneId,
+                    hidden: true,
+                  }) ?? closedLayout)
+                : closedLayout;
             if (!nextLayout) {
               return state;
             }
@@ -684,27 +658,21 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
-        retargetTab: (workspaceKey, tabId, target) => {
+        replaceTab: (workspaceKey, tabId, target, tabState) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTabId = trimNonEmpty(tabId);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedTarget) {
-            return null;
-          }
-
-          const result = retargetTabInLayout({
+          if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedTarget) return null;
+          const result = replaceTabTargetInLayout({
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             tabId: normalizedTabId,
             target: normalizedTarget,
+            createTabId: createWorkspaceTabInstanceId,
+            state: tabState,
           });
-          if (!result) {
-            return null;
-          }
-
+          if (!result) return null;
           set((state) => ({
-            ...(result.layout.focusedPaneId !== null
-              ? (withoutFocusRestoration(state, normalizedWorkspaceKey) ?? {})
-              : {}),
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -718,8 +686,26 @@ export function createWorkspaceLayoutStore(
               [normalizedWorkspaceKey]: result.layout,
             },
           }));
-
           return result.tabId;
+        },
+        setTabState: (workspaceKey, tabId, tabState) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return;
+          set((state) => {
+            const layout = setTabStateInLayout({
+              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              tabId: normalizedTabId,
+              state: tabState,
+            });
+            if (!layout) return state;
+            return {
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: layout,
+              },
+            };
+          });
         },
         convertDraftToAgent: (workspaceKey, tabId, agentId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
