@@ -1694,6 +1694,8 @@ export class VoiceAssistantWebSocketServer {
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: true,
+        // COMPAT(workspaceCreateExistingBranch): added in v0.5.0, remove gate after 2027-02-20.
+        workspaceCreateExistingBranch: true,
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: true,
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.

@@ -3,6 +3,13 @@ import type { PickerItem } from "./new-workspace-picker-item";
 
 export type WorktreeSourceMode = "new-branch" | "existing-branch";
 
+export function resolveWorktreeSourceMode(
+  requestedMode: WorktreeSourceMode,
+  supportsExistingBranch: boolean,
+): WorktreeSourceMode {
+  return supportsExistingBranch ? requestedMode : "new-branch";
+}
+
 export interface WorktreeCheckoutRequest {
   action: "branch-off" | "checkout";
   refName: string;

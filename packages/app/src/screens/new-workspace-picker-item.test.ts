@@ -3,6 +3,7 @@ import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import {
   type BranchPickerDetail,
   branchPickerOptionId,
+  buildAvailableWorktreeBranchItems,
   buildBranchPickerItems,
   buildPickerOptionData,
   defaultBasePickerItem,
@@ -27,6 +28,32 @@ describe("branchPickerOptionId", () => {
     expect(branchPickerOptionId("refs/heads/origin/main")).not.toBe(
       branchPickerOptionId("refs/remotes/origin/main"),
     );
+  });
+});
+
+describe("buildAvailableWorktreeBranchItems", () => {
+  it("only offers local branches that Git is not using in another worktree", () => {
+    expect(
+      buildAvailableWorktreeBranchItems([
+        {
+          name: "main",
+          committerDate: 3,
+          hasLocal: true,
+          hasRemote: true,
+          isCheckedOut: true,
+        },
+        { name: "feature/local", committerDate: 2, hasLocal: true, hasRemote: false },
+        { name: "feature/remote", committerDate: 1, hasLocal: false, hasRemote: true },
+      ]),
+    ).toEqual([
+      {
+        kind: "branch",
+        name: "feature/local",
+        refName: "refs/heads/feature/local",
+        accessibilityLabel: "feature/local, local branch",
+        committerDate: 2,
+      },
+    ]);
   });
 });
 

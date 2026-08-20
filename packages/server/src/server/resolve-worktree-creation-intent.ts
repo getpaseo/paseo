@@ -1,5 +1,6 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
 import type { WorktreeSource } from "../utils/worktree.js";
+import { branchNameFromRef } from "../utils/worktree-metadata.js";
 
 export type WorktreeCreationIntent = WorktreeSource;
 
@@ -84,11 +85,15 @@ export async function resolveWorktreeCreationIntent(
       });
     }
 
-    const branchName = input.refName?.trim();
+    const refName = input.refName?.trim() ?? "";
+    const branchName = branchNameFromRef(refName);
     if (branchName) {
       return {
         kind: "checkout-branch",
         branchName,
+        // COMPAT(exactExistingBranch): added in v0.5.0, remove after 2027-02-20.
+        // Older clients sent short names and expect an occupied branch to be copied with a suffix.
+        ...(refName.startsWith("refs/") ? { exactBranch: true } : {}),
       };
     }
 

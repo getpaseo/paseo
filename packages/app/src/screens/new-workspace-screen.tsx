@@ -97,6 +97,8 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
+  branchPickerOptionId,
+  buildAvailableWorktreeBranchItems,
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
@@ -108,6 +110,7 @@ import {
 } from "./new-workspace-picker-item";
 import {
   buildWorktreeCheckoutRequest,
+  resolveWorktreeSourceMode,
   type WorktreeSourceMode,
 } from "./new-workspace-worktree-source";
 import {
@@ -1661,6 +1664,13 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  // COMPAT(workspaceCreateExistingBranch): added in v0.5.0, remove gate after 2027-02-20.
+  // Older hosts may support multiple workspaces without promising that workspace creation honors
+  // action="checkout" and refName. Gate that intent once here instead of version-checking callers.
+  const supportsWorkspaceCreateExistingBranch = useHostFeature(
+    selectedServerId,
+    "workspaceCreateExistingBranch",
+  );
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
@@ -1673,6 +1683,10 @@ export function NewWorkspaceScreen({
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [worktreeSourcePickerOpen, setWorktreeSourcePickerOpen] = useState(false);
   const [worktreeSourceMode, setWorktreeSourceMode] = useState<WorktreeSourceMode>("new-branch");
+  const effectiveWorktreeSourceMode = resolveWorktreeSourceMode(
+    worktreeSourceMode,
+    supportsWorkspaceCreateExistingBranch,
+  );
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
@@ -1888,23 +1902,32 @@ export function NewWorkspaceScreen({
     ],
     [],
   );
+  const worktreeBranchItems = useMemo(
+    () => buildAvailableWorktreeBranchItems(branchDetails),
+    [branchDetails],
+  );
+  const worktreeBranchItemById = useMemo(
+    () => new Map(worktreeBranchItems.map((item) => [branchPickerOptionId(item.refName), item])),
+    [worktreeBranchItems],
+  );
   const worktreeBranchOptions = useMemo(
-    () => options.filter((option) => itemById.get(option.id)?.kind === "branch"),
-    [itemById, options],
+    () =>
+      worktreeBranchItems.map((item) => ({
+        id: branchPickerOptionId(item.refName),
+        label: pickerItemLabel(item),
+      })),
+    [worktreeBranchItems],
   );
-  const defaultBranchItem = useMemo(
-    () => (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus],
-  );
+  const defaultBranchItem = worktreeBranchItems[0] ?? null;
   const selectedWorktreeItem = useMemo(() => {
-    if (worktreeSourceMode !== "existing-branch") return selectedItem ?? baseItem;
+    if (effectiveWorktreeSourceMode !== "existing-branch") return selectedItem ?? baseItem;
     if (selectedItem?.kind === "branch") return selectedItem;
     return defaultBranchItem;
-  }, [baseItem, defaultBranchItem, selectedItem, worktreeSourceMode]);
+  }, [baseItem, defaultBranchItem, effectiveWorktreeSourceMode, selectedItem]);
   const selectedWorktreeOptionId = useMemo(() => {
     if (!selectedWorktreeItem) return "";
     if (selectedWorktreeItem.kind === "branch") {
-      return `branch:${selectedWorktreeItem.refName}`;
+      return branchPickerOptionId(selectedWorktreeItem.refName);
     }
     return selectedOptionId;
   }, [selectedOptionId, selectedWorktreeItem]);
@@ -1916,13 +1939,15 @@ export function NewWorkspaceScreen({
     return displayItem ? pickerItemLabel(displayItem) : "main";
   }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
-    (item: PickerItem) => {
+    (item: PickerItem | null) => {
       const nextAttachments = syncPickerPrAttachment({
         attachments: chatDraft.attachments,
         item,
       });
 
-      dispatchPickerSelection({ type: "picker-selected", item });
+      dispatchPickerSelection(
+        item ? { type: "picker-selected", item } : { type: "target-changed" },
+      );
       chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
@@ -1931,11 +1956,14 @@ export function NewWorkspaceScreen({
 
   const handleSelectOption = useCallback(
     (id: string) => {
-      const item = itemById.get(id);
+      const item =
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? worktreeBranchItemById.get(id)
+          : itemById.get(id);
       if (!item) return;
       selectPickerItem(item);
     },
-    [itemById, selectPickerItem],
+    [effectiveWorktreeSourceMode, itemById, selectPickerItem, worktreeBranchItemById],
   );
 
   const handleSelectWorktreeSourceMode = useCallback(
@@ -1944,11 +1972,11 @@ export function NewWorkspaceScreen({
         id === "existing-branch" ? "existing-branch" : "new-branch";
       setWorktreeSourceMode(nextMode);
       setWorktreeSourcePickerOpen(false);
-      if (nextMode === "existing-branch" && selectedItem?.kind !== "branch" && defaultBranchItem) {
+      if (nextMode === "existing-branch") {
         selectPickerItem(defaultBranchItem);
       }
     },
-    [defaultBranchItem, selectedItem?.kind, selectPickerItem],
+    [defaultBranchItem, selectPickerItem],
   );
 
   const clearPickerSelectionForTargetChange = useCallback(
@@ -2139,9 +2167,9 @@ export function NewWorkspaceScreen({
         : null;
       let checkoutRequest: PickerCheckoutRequest | undefined;
       if (checkoutStatusForCreate) {
-        if (worktreeSourceMode === "existing-branch") {
+        if (effectiveWorktreeSourceMode === "existing-branch") {
           checkoutRequest = buildWorktreeCheckoutRequest({
-            mode: worktreeSourceMode,
+            mode: effectiveWorktreeSourceMode,
             item: selectedWorktreeItem,
           });
         } else {
@@ -2188,7 +2216,7 @@ export function NewWorkspaceScreen({
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
-      worktreeSourceMode,
+      effectiveWorktreeSourceMode,
     ],
   );
 
@@ -2423,13 +2451,13 @@ export function NewWorkspaceScreen({
     worktreeSource: {
       anchorRef: worktreeSourcePickerAnchorRef,
       open: () => setWorktreeSourcePickerOpen(true),
-      mode: worktreeSourceMode,
+      mode: effectiveWorktreeSourceMode,
       options: worktreeSourceOptions,
       onSelect: handleSelectWorktreeSourceMode,
       openState: worktreeSourcePickerOpen,
       onOpenChange: setWorktreeSourcePickerOpen,
       renderOption: renderWorktreeSourceOption,
-      show: showRefPicker,
+      show: showRefPicker && supportsWorkspaceCreateExistingBranch,
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -2437,16 +2465,23 @@ export function NewWorkspaceScreen({
       selectedSourceDirectory,
       selectedItem: selectedWorktreeItem,
       triggerLabel:
-        worktreeSourceMode === "existing-branch" ? worktreeBranchTriggerLabel : triggerLabel,
-      title: worktreeSourceMode === "existing-branch" ? "Branch" : "Base branch",
-      options: worktreeSourceMode === "existing-branch" ? worktreeBranchOptions : options,
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? worktreeBranchTriggerLabel
+          : triggerLabel,
+      title: effectiveWorktreeSourceMode === "existing-branch" ? "Branch" : "Base branch",
+      options: effectiveWorktreeSourceMode === "existing-branch" ? worktreeBranchOptions : options,
       selectedOptionId:
-        worktreeSourceMode === "existing-branch" ? selectedWorktreeOptionId : selectedOptionId,
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? selectedWorktreeOptionId
+          : selectedOptionId,
       onSelect: handleSelectOption,
       openState: pickerOpen,
       onOpenChange: handlePickerOpenChange,
       setSearchQuery: setPickerSearchQuery,
-      emptyText: pickerEmptyText,
+      emptyText:
+        effectiveWorktreeSourceMode === "existing-branch" && !branchSuggestionsQuery.isFetching
+          ? "No available local branches."
+          : pickerEmptyText,
       renderOption: renderPickerOption,
       showRefPicker,
     },

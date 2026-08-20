@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWorktreeCheckoutRequest,
+  resolveWorktreeSourceMode,
   worktreeSlugForPickerItem,
   type WorktreeSourceMode,
 } from "./new-workspace-worktree-source";
@@ -16,6 +17,11 @@ function branch(refName: string, name = "feature/login"): PickerItem {
 }
 
 describe("new workspace worktree source", () => {
+  it("falls back to new-branch when the host does not advertise existing-branch creation", () => {
+    expect(resolveWorktreeSourceMode("existing-branch", false)).toBe("new-branch");
+    expect(resolveWorktreeSourceMode("existing-branch", true)).toBe("existing-branch");
+  });
+
   it.each<WorktreeSourceMode>(["new-branch", "existing-branch"])(
     "requires a selected branch for %s mode",
     (mode) => {

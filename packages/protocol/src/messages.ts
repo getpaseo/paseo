@@ -3342,6 +3342,11 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(workspaceCreateExistingBranch): added in v0.5.0, remove gate after 2027-02-20.
+        // workspaceMultiplicity predates the worktree action/refName fields and does not promise
+        // that a daemon understands checkout intent. Clients use this separate flag before
+        // offering Existing branch, so they never infer that support from multiplicity alone.
+        workspaceCreateExistingBranch: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -5359,6 +5364,7 @@ export const BranchSuggestionsResponseSchema = z.object({
           committerDate: z.number(),
           hasLocal: z.boolean().optional(),
           hasRemote: z.boolean().optional(),
+          isCheckedOut: z.boolean().optional(),
           localAhead: z.number().int().nonnegative().optional(),
           localBehind: z.number().int().nonnegative().optional(),
         }),

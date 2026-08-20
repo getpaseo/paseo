@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
+  BranchSuggestionsResponseSchema,
   ServerInfoStatusPayloadSchema,
   WSHelloMessageSchema,
 } from "./messages.js";
@@ -40,6 +41,23 @@ const LegacyAgentCapabilityFlagsSchema = z.object({
 
 const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
+});
+
+const LegacyBranchSuggestionsResponseSchema = BranchSuggestionsResponseSchema.extend({
+  payload: BranchSuggestionsResponseSchema.shape.payload.extend({
+    branchDetails: z
+      .array(
+        z.object({
+          name: z.string(),
+          committerDate: z.number(),
+          hasLocal: z.boolean().optional(),
+          hasRemote: z.boolean().optional(),
+          localAhead: z.number().int().nonnegative().optional(),
+          localBehind: z.number().int().nonnegative().optional(),
+        }),
+      )
+      .optional(),
+  }),
 });
 
 describe("wire schema compatibility", () => {
@@ -92,6 +110,54 @@ describe("wire schema compatibility", () => {
       version: null,
       features: { agentTurnIdentity: true },
     });
+  });
+
+  test("existing-branch workspace creation support is optional in server info", () => {
+    const legacy = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "legacy-server",
+      features: { workspaceMultiplicity: true },
+    });
+    const capable = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "capable-server",
+      features: {
+        workspaceMultiplicity: true,
+        workspaceCreateExistingBranch: true,
+      },
+    });
+
+    expect(legacy.features?.workspaceCreateExistingBranch).toBeUndefined();
+    expect(capable.features?.workspaceCreateExistingBranch).toBe(true);
+  });
+
+  test("branch suggestions accept hosts with and without checkout ownership", () => {
+    const response = {
+      type: "branch_suggestions_response" as const,
+      payload: {
+        branches: ["main"],
+        branchDetails: [{ name: "main", committerDate: 1, hasLocal: true }],
+        error: null,
+        requestId: "request-1",
+      },
+    };
+
+    const currentResponse = {
+      ...response,
+      payload: {
+        ...response.payload,
+        branchDetails: [{ ...response.payload.branchDetails[0], isCheckedOut: true }],
+      },
+    };
+
+    expect(BranchSuggestionsResponseSchema.parse(response)).toEqual(response);
+    expect(
+      BranchSuggestionsResponseSchema.parse(currentResponse).payload.branchDetails?.[0]
+        ?.isCheckedOut,
+    ).toBe(true);
+    expect(
+      LegacyBranchSuggestionsResponseSchema.parse(currentResponse).payload.branchDetails,
+    ).toEqual([{ name: "main", committerDate: 1, hasLocal: true }]);
   });
 
   test("assistant timeline message ids are optional on the wire", () => {

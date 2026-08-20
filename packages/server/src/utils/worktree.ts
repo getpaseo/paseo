@@ -180,7 +180,7 @@ export interface WorktreeCheckoutRef {
 
 export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; branchName: string }
-  | { kind: "checkout-branch"; branchName: string }
+  | { kind: "checkout-branch"; branchName: string; exactBranch?: true }
   | {
       kind: "checkout-change-request";
       forge: string;
@@ -1341,7 +1341,9 @@ async function resolveWorktreeSourcePlan({
           throw new UnknownBranchError({ branchName: source.branchName, cwd });
         }
       }
-      if (await isBranchCheckedOut(cwd, source.branchName)) {
+      const branchCheckedOut = await isBranchCheckedOut(cwd, source.branchName);
+      assertExactBranchAvailable(source, branchCheckedOut);
+      if (branchCheckedOut) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
@@ -1679,4 +1681,13 @@ async function isBranchCheckedOut(cwd: string, branchName: string): Promise<bool
     envOverlay: READ_ONLY_GIT_ENV,
   });
   return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
+}
+
+function assertExactBranchAvailable(
+  source: Extract<WorktreeSource, { kind: "checkout-branch" }>,
+  branchCheckedOut: boolean,
+): void {
+  if (source.exactBranch && branchCheckedOut) {
+    throw new BranchAlreadyCheckedOutError(source.branchName);
+  }
 }

@@ -235,6 +235,7 @@ interface GitRef {
   name: string;
   committerDate: number;
   oid: string;
+  isCheckedOut: boolean;
 }
 
 export interface BranchSuggestion {
@@ -242,6 +243,7 @@ export interface BranchSuggestion {
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
+  isCheckedOut: boolean;
   localAhead?: number;
   localBehind?: number;
 }
@@ -251,7 +253,7 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
     [
       "for-each-ref",
       "--sort=-committerdate",
-      "--format=%(refname)%09%(committerdate:unix)%09%(objectname)",
+      "--format=%(refname)%09%(committerdate:unix)%09%(objectname)%09%(worktreepath)",
       refPrefix,
     ],
     { cwd, envOverlay: READ_ONLY_GIT_ENV },
@@ -261,9 +263,14 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return null;
-      const [name, dateStr, oid] = trimmed.split("\t");
+      const [name, dateStr, oid, worktreePath] = trimmed.split("\t");
       if (!name || !oid) return null;
-      return { name, committerDate: Number(dateStr) || 0, oid };
+      return {
+        name,
+        committerDate: Number(dateStr) || 0,
+        oid,
+        isCheckedOut: Boolean(worktreePath),
+      };
     })
     .filter((ref): ref is GitRef => ref !== null);
 }
@@ -272,6 +279,7 @@ interface BranchSuggestionMeta {
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
+  isCheckedOut: boolean;
   localOid?: string;
   remoteOid?: string;
 }
@@ -329,6 +337,7 @@ export async function listBranchSuggestions(
     branchMeta.set(normalized, {
       hasLocal: true,
       hasRemote: existing?.hasRemote ?? false,
+      isCheckedOut: ref.isCheckedOut,
       localOid: ref.oid,
       ...(existing?.remoteOid ? { remoteOid: existing.remoteOid } : {}),
       committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
@@ -343,6 +352,7 @@ export async function listBranchSuggestions(
       branchMeta.set(normalized, {
         hasLocal: false,
         hasRemote: true,
+        isCheckedOut: false,
         remoteOid: ref.oid,
         committerDate: ref.committerDate,
       });
@@ -372,6 +382,7 @@ export async function listBranchSuggestions(
         committerDate: meta?.committerDate ?? 0,
         hasLocal: meta?.hasLocal ?? false,
         hasRemote: meta?.hasRemote ?? false,
+        isCheckedOut: meta?.isCheckedOut ?? false,
       };
       if (!suggestion.hasLocal || !suggestion.hasRemote) {
         return suggestion;

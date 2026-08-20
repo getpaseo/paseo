@@ -8,6 +8,7 @@ export interface BranchPickerDetail {
   committerDate: number;
   hasLocal?: boolean;
   hasRemote?: boolean;
+  isCheckedOut?: boolean;
   localAhead?: number;
   localBehind?: number;
 }
@@ -123,6 +124,20 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
   }
 
   return items;
+}
+
+export function buildAvailableWorktreeBranchItems(
+  details: readonly BranchPickerDetail[],
+): Extract<PickerItem, { kind: "branch" }>[] {
+  return details
+    .filter((detail) => detail.hasLocal !== false && detail.isCheckedOut !== true)
+    .map((detail) => ({
+      kind: "branch" as const,
+      name: detail.name,
+      refName: detail.hasLocal === true ? `refs/heads/${detail.name}` : detail.name,
+      accessibilityLabel: `${detail.name}, local branch`,
+      committerDate: detail.committerDate,
+    }));
 }
 
 export interface BaseRefCheckoutStatus {

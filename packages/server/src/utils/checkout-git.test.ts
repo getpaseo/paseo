@@ -2257,6 +2257,7 @@ const x = 1;
     expect(branches.find((branch) => branch.name === "feature/local-only")).toMatchObject({
       hasLocal: true,
       hasRemote: false,
+      isCheckedOut: false,
     });
     expect(branches.find((branch) => branch.name === "feature/remote-only")).toMatchObject({
       hasLocal: false,
@@ -2265,8 +2266,12 @@ const x = 1;
     expect(branches.find((branch) => branch.name === "feature/shared")).toMatchObject({
       hasLocal: true,
       hasRemote: true,
+      isCheckedOut: false,
       localAhead: 0,
       localBehind: 0,
+    });
+    expect(branches.find((branch) => branch.name === "main")).toMatchObject({
+      isCheckedOut: true,
     });
     await expect(listBranchSuggestions(repoDir, { query: "origin/main" })).resolves.toEqual([
       expect.objectContaining({ name: "main", hasLocal: true, hasRemote: true }),
