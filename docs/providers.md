@@ -145,8 +145,6 @@ Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `
 
 Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
 
-Claude usage reads `~/.claude/.credentials.json` first, then the macOS Keychain. Name the account when you look the Keychain up: several items share the `Claude Code-credentials` service, one per account convention Claude Code has used over time, and a lookup without an account returns the oldest of them, whose token expired long ago. Claude Code derives that account from `$USER`, falling back to `claude-code-user` when the username carries a character a Keychain account may not — every email-shaped corporate login does.
-
 ---
 
 ## ACP Provider Checklist

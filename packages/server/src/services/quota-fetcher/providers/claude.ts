@@ -297,12 +297,9 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
-export type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
+type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
 
-// Claude Code derives the Keychain account from $USER and falls back when the username
-// carries a character a Keychain account may not, which every email-shaped corporate
-// login does. Reproduce the derivation rather than guessing: the account is the only
-// thing that tells its item apart from the ones older versions left behind.
+// Keep this in sync with Claude Code's Keychain account derivation.
 const CLAUDE_KEYCHAIN_ACCOUNT_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const CLAUDE_KEYCHAIN_FALLBACK_ACCOUNT = "claude-code-user";
 
@@ -323,21 +320,7 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
   }
 }
 
-/**
- * The Claude Code credentials, from the item Claude Code writes rather than whichever
- * item the Keychain happens to find first.
- *
- * Several items share this service name — one per account convention Claude Code has
- * used over time — and a lookup that names no account returns the first match, which is
- * the oldest and whose token expired long ago. Naming the account selects the live item;
- * the account-less lookup stays behind it for versions that predate the convention.
- *
- * A lookup counts as a hit only when its item carries an access token. Parsing is not
- * enough: a partially written or signed-out blob parses fine, and returning it would
- * strand a working item behind it — leaving a user whose usage works today without any,
- * which is worse than the bug this ordering exists to fix. Deciding usability is the
- * selector's job precisely because it is what tells it whether to keep looking.
- */
+/** Read Claude Code's account-specific Keychain item, then try the legacy lookup. */
 export async function readClaudeKeychainCredentials(
   run: ClaudeKeychainCommandRunner = runSecurityCommand,
   account: string = claudeKeychainAccount(),
