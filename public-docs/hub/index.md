@@ -26,9 +26,9 @@ What that gives you today:
 
 Your daemons keep running agents where they always did. Hub decides when to ask them to.
 
-## What you write
+## What lives in your repository
 
-One project resource file names environments and complete agent configurations. Each discovered workflow file keeps one trigger beside its ordered steps:
+`paseo hub init` creates a project resource file for environments and agents, plus a safe starter workflow:
 
 ```text
 .paseo/
@@ -39,7 +39,7 @@ One project resource file names environments and complete agent configurations. 
         └── answer.md
 ```
 
-Push the bundle, mention the bot, and an agent starts on your machine. [Quickstart](/docs/hub/quickstart) starts a local Hub and builds the first Slack workflow; [Workflows](/docs/hub/workflows) covers routing and provider-specific replies.
+Deploy the bundle, mention the bot, and an agent starts on your machine. [Quickstart](/docs/hub/quickstart) runs the guided setup; [Workflows](/docs/hub/workflows) covers routing and provider-specific replies.
 
 ## Reading order
 
