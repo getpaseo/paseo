@@ -564,7 +564,7 @@ export default function contribute(plugin: any) {
     const directory = await createPlugin(
       "ping-plugin",
       `import { z } from "zod";
-import { defineRpc } from "@getpaseo/plugin";
+import { defineRpc, type PluginContext } from "@getpaseo/plugin";
 
 const pingRpc = defineRpc({
   name: "ping",
@@ -572,8 +572,8 @@ const pingRpc = defineRpc({
   output: z.object({ ok: z.boolean() }),
 });
 
-export default function contribute(plugin: any) {
-  plugin.handle(pingRpc, async (input: { value: number }) => {
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(pingRpc, async (input) => {
     plugin.emit("pong", { echo: input.value, marker: "EMIT_PAYLOAD_MARKER" });
     return { ok: true };
   });
