@@ -787,6 +787,92 @@ describe("CheckoutSession", () => {
   });
 
   describe("commit", () => {
+    it("commits only the requested files with a custom message", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-commit-selected-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        execFileSync("git", ["init", "-q"], { cwd });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+        execFileSync("git", ["config", "user.name", "Test User"], { cwd });
+        writeFileSync(join(cwd, "selected.txt"), "old\n");
+        writeFileSync(join(cwd, "other.txt"), "old\n");
+        execFileSync("git", ["add", "-A"], { cwd });
+        execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "initial"], {
+          cwd,
+        });
+        writeFileSync(join(cwd, "selected.txt"), "selected\n");
+        writeFileSync(join(cwd, "other.txt"), "other\n");
+
+        const { checkout, emitted, generatorCalls } = makeCheckoutSession();
+        await checkout.handleCheckoutCommitRequest({
+          type: "checkout_commit_request",
+          cwd,
+          message: "Manual subject",
+          addAll: true,
+          files: ["selected.txt"],
+          requestId: "commit-selected",
+        });
+
+        expect(generatorCalls.generateCommitMessage).toEqual([]);
+        expect(
+          execFileSync("git", ["show", "-s", "--format=%s", "HEAD"], {
+            cwd,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("Manual subject");
+        expect(
+          execFileSync("git", ["show", "--format=", "--name-only", "HEAD"], {
+            cwd,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("selected.txt");
+        expect(emitted).toEqual([
+          {
+            type: "checkout_commit_response",
+            payload: { cwd, success: true, error: null, requestId: "commit-selected" },
+          },
+        ]);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses a generated message when the supplied message is blank", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-commit-generated-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        execFileSync("git", ["init", "-q"], { cwd });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+        execFileSync("git", ["config", "user.name", "Test User"], { cwd });
+        writeFileSync(join(cwd, "file.txt"), "old\n");
+        execFileSync("git", ["add", "file.txt"], { cwd });
+        execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "initial"], {
+          cwd,
+        });
+        writeFileSync(join(cwd, "file.txt"), "changed\n");
+
+        const { checkout } = makeCheckoutSession({
+          gitMetadataGenerator: { generateCommitMessage: async () => "Generated subject" },
+        });
+        await checkout.handleCheckoutCommitRequest({
+          type: "checkout_commit_request",
+          cwd,
+          message: "  ",
+          files: ["file.txt"],
+          requestId: "commit-generated",
+        });
+
+        expect(
+          execFileSync("git", ["show", "-s", "--format=%s", "HEAD"], {
+            cwd,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("Generated subject");
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("fails when no message is supplied and none can be generated", async () => {
       const { checkout, emitted, generatorCalls } = makeCheckoutSession();
 

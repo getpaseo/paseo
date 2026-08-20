@@ -3961,6 +3961,59 @@ test("requests GitHub check details via namespaced RPC", async () => {
   });
 });
 
+test("requests a selective checkout commit via RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.checkoutCommit(
+    "/tmp/project",
+    { message: "Selected files", files: ["src/new.ts", "src/old.ts"] },
+    "req-commit",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "checkout_commit_request",
+    cwd: "/tmp/project",
+    message: "Selected files",
+    files: ["src/new.ts", "src/old.ts"],
+    requestId: "req-commit",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout_commit_response",
+      payload: {
+        cwd: "/tmp/project",
+        requestId: "req-commit",
+        success: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    cwd: "/tmp/project",
+    requestId: "req-commit",
+    success: true,
+    error: null,
+  });
+});
+
 test("requests checkout pull via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

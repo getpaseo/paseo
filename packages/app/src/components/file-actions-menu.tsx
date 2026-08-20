@@ -10,7 +10,9 @@ import {
   FolderOpen,
   FolderPlus,
   MessageSquarePlus,
+  Minus,
   Pencil,
+  Plus,
   Trash2,
   Undo2,
   type LucideIcon,
@@ -50,6 +52,8 @@ interface FileActionsContextMenuContentProps {
   onCollapseFolder?: () => void;
   onRename?: () => void;
   onDuplicate?: () => void;
+  onStage?: () => void;
+  onUnstage?: () => void;
   onRevert?: () => void;
   onDelete?: () => void;
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
@@ -61,6 +65,7 @@ interface FileActionsContextMenuContentProps {
  * Shared context-menu content for per-file actions. The file explorer tree and git diff pane
  * own their row triggers while sharing action availability, ordering, and chrome here.
  */
+// eslint-disable-next-line complexity
 export function FileActionsContextMenuContent({
   fileKind,
   fileExists = true,
@@ -76,12 +81,15 @@ export function FileActionsContextMenuContent({
   onCollapseFolder,
   onRename,
   onDuplicate,
+  onStage,
+  onUnstage,
   onRevert,
   onDelete,
   header,
   testIDPrefix,
 }: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
+  // eslint-disable-next-line complexity
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
     const specs: Array<FileAction | null> = [
@@ -173,6 +181,22 @@ export function FileActionsContextMenuContent({
             onSelect: onAddToChat,
           }
         : null,
+      onStage
+        ? {
+            key: "stage",
+            label: t("workspace.git.sourceControl.stage"),
+            icon: Plus,
+            onSelect: onStage,
+          }
+        : null,
+      onUnstage
+        ? {
+            key: "unstage",
+            label: t("workspace.git.sourceControl.unstage"),
+            icon: Minus,
+            onSelect: onUnstage,
+          }
+        : null,
       onRevert
         ? {
             key: "revert",
@@ -217,6 +241,8 @@ export function FileActionsContextMenuContent({
     onRename,
     onReveal,
     onRevert,
+    onStage,
+    onUnstage,
     revealTargetName,
     t,
     testIDPrefix,

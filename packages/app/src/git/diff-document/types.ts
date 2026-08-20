@@ -28,6 +28,8 @@ export interface WorkingDiffMode {
   onDownload?: (path: string) => void;
   onDuplicate?: (path: string) => void;
   onRevert?: (path: string, oldPath?: string) => void;
+  onIndexUpdate?: (path: string, oldPath?: string) => void;
+  indexOperation?: "stage" | "unstage";
 }
 
 export type DiffDocumentProps = DiffDocumentBaseProps &

@@ -147,8 +147,8 @@ export class CheckoutDiffManager {
 
   private normalizeCompare(compare: CheckoutDiffCompareInput): CheckoutDiffCompareInput {
     const ignoreWhitespace = compare.ignoreWhitespace === true;
-    if (compare.mode === "uncommitted") {
-      return { mode: "uncommitted", ignoreWhitespace };
+    if (compare.mode !== "base") {
+      return { mode: compare.mode, ignoreWhitespace };
     }
     const trimmedBaseRef = compare.baseRef?.trim();
     return trimmedBaseRef

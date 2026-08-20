@@ -2355,6 +2355,8 @@ export class Session {
         return this.checkoutSession.handleRefreshRequest(msg);
       case "checkout.discard_changes.request":
         return this.checkoutSession.handleCheckoutDiscardChangesRequest(msg);
+      case "checkout.index.update.request":
+        return this.checkoutSession.handleCheckoutIndexUpdateRequest(msg);
       case "checkout_pr_create_request":
         return this.checkoutSession.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":

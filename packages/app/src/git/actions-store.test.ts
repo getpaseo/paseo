@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { queryClient as appQueryClient } from "@/data/query-client";
 import { useSessionStore } from "@/stores/session-store";
 import {
   __resetCheckoutGitActionsStoreForTests,
   useCheckoutGitActionsStore,
 } from "@/git/actions-store";
+import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -23,6 +25,13 @@ function createDeferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function registerMockClient(
+  targetServerId: string,
+  client: Partial<Record<keyof DaemonClient, unknown>>,
+) {
+  useSessionStore.getState().initializeSession(targetServerId, client as unknown as DaemonClient);
 }
 
 describe("checkout-git-actions-store", () => {
@@ -49,13 +58,7 @@ describe("checkout-git-actions-store", () => {
       checkoutCommit: vi.fn(() => deferred.promise),
     };
 
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     const store = useCheckoutGitActionsStore.getState();
 
@@ -85,13 +88,7 @@ describe("checkout-git-actions-store", () => {
         return {};
       }),
     };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd });
 
@@ -106,13 +103,7 @@ describe("checkout-git-actions-store", () => {
       checkoutPull: vi.fn(async () => ({ error: { message: "pull conflict" } })),
       checkoutPush: vi.fn(async () => ({})),
     };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
@@ -127,13 +118,7 @@ describe("checkout-git-actions-store", () => {
       checkoutPull: vi.fn(async () => ({})),
       checkoutPush: vi.fn(async () => ({ error: { message: "push rejected" } })),
     };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
@@ -147,13 +132,7 @@ describe("checkout-git-actions-store", () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ success: true, error: null })),
     };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await useCheckoutGitActionsStore.getState().refresh({ serverId, cwd });
 
@@ -167,13 +146,7 @@ describe("checkout-git-actions-store", () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),
     };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await expect(useCheckoutGitActionsStore.getState().refresh({ serverId, cwd })).rejects.toThrow(
       "not a git repository",
@@ -186,13 +159,7 @@ describe("checkout-git-actions-store", () => {
   it("discards selected paths through the shared checkout action workflow", async () => {
     const checkoutDiscardChanges = vi.fn(async () => ({ success: true, error: null }));
     const client = { checkoutDiscardChanges };
-    useSessionStore.setState((state) => ({
-      ...state,
-      sessions: {
-        ...state.sessions,
-        [serverId]: { client } as unknown as (typeof state.sessions)[string],
-      },
-    }));
+    registerMockClient(serverId, client);
 
     await useCheckoutGitActionsStore
       .getState()
@@ -206,6 +173,158 @@ describe("checkout-git-actions-store", () => {
         .getState()
         .getStatus({ serverId, cwd, actionId: "discard-changes" }),
     ).toBe("success");
+  });
+
+  it("optimistically moves files and queues rapid unstage operations without dropping paths", async () => {
+    const stagedKey = checkoutDiffQueryKey(serverId, cwd, "staged");
+    const unstagedKey = checkoutDiffQueryKey(serverId, cwd, "unstaged");
+    const file = (path: string) =>
+      ({
+        path,
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 0,
+        hunks: [],
+      }) as ParsedDiffFile;
+    appQueryClient.setQueryData(stagedKey, {
+      cwd,
+      files: [file("docs/guide.md"), file("README.md")],
+      error: null,
+    });
+    appQueryClient.setQueryData(unstagedKey, { cwd, files: [], error: null });
+
+    const first = createDeferred<unknown>();
+    const second = createDeferred<unknown>();
+    const checkoutIndexUpdate = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const client = { checkoutIndexUpdate };
+    registerMockClient(serverId, client);
+
+    const store = useCheckoutGitActionsStore.getState();
+    const firstUnstage = store.unstage({ serverId, cwd, paths: ["docs/guide.md"] });
+    const secondUnstage = store.unstage({ serverId, cwd, paths: ["README.md"] });
+
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({ files: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(checkoutIndexUpdate).toHaveBeenCalledTimes(1);
+
+    first.resolve({ success: true, error: null });
+    await firstUnstage;
+    await Promise.resolve();
+    expect(checkoutIndexUpdate).toHaveBeenCalledTimes(2);
+    expect(checkoutIndexUpdate).toHaveBeenLastCalledWith(cwd, {
+      operation: "unstage",
+      paths: ["README.md"],
+    });
+
+    second.resolve({ success: true, error: null });
+    await secondUnstage;
+    expect(appQueryClient.getQueryData(unstagedKey)).toMatchObject({
+      files: [
+        expect.objectContaining({ path: "docs/guide.md" }),
+        expect.objectContaining({ path: "README.md" }),
+      ],
+    });
+  });
+
+  it("rolls back an optimistic index move when Git rejects the operation", async () => {
+    const stagedKey = checkoutDiffQueryKey(serverId, cwd, "staged");
+    const unstagedKey = checkoutDiffQueryKey(serverId, cwd, "unstaged");
+    const markdownFile = {
+      path: "docs/guide.md",
+      isNew: false,
+      isDeleted: false,
+      additions: 1,
+      deletions: 0,
+      hunks: [],
+    } as ParsedDiffFile;
+    appQueryClient.setQueryData(stagedKey, { cwd, files: [markdownFile], error: null });
+    appQueryClient.setQueryData(unstagedKey, { cwd, files: [], error: null });
+    const client = {
+      checkoutIndexUpdate: vi.fn(async () => ({
+        success: false,
+        error: { message: "index locked" },
+      })),
+    };
+    registerMockClient(serverId, client);
+
+    const operation = useCheckoutGitActionsStore
+      .getState()
+      .unstage({ serverId, cwd, paths: [markdownFile.path] });
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({ files: [] });
+
+    await expect(operation).rejects.toThrow("index locked");
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({
+      files: [expect.objectContaining({ path: markdownFile.path })],
+    });
+    expect(appQueryClient.getQueryData(unstagedKey)).toMatchObject({ files: [] });
+  });
+
+  it("preserves subsequent optimistic updates when an earlier concurrent index move rolls back", async () => {
+    const stagedKey = checkoutDiffQueryKey(serverId, cwd, "staged");
+    const unstagedKey = checkoutDiffQueryKey(serverId, cwd, "unstaged");
+    const file = (path: string) =>
+      ({
+        path,
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 0,
+        hunks: [],
+      }) as ParsedDiffFile;
+
+    appQueryClient.setQueryData(stagedKey, { cwd, files: [], error: null });
+    appQueryClient.setQueryData(unstagedKey, {
+      cwd,
+      files: [file("docs/guide.md"), file("README.md")],
+      error: null,
+    });
+
+    const first = createDeferred<{ success: boolean; error: { message: string } | null }>();
+    const second = createDeferred<{ success: boolean; error: { message: string } | null }>();
+    const checkoutIndexUpdate = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    registerMockClient(serverId, { checkoutIndexUpdate });
+
+    const store = useCheckoutGitActionsStore.getState();
+    const firstStage = store.stage({ serverId, cwd, paths: ["docs/guide.md"] });
+    const secondStage = store.stage({ serverId, cwd, paths: ["README.md"] });
+
+    // Both files are optimistically in staged
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({
+      files: [
+        expect.objectContaining({ path: "docs/guide.md" }),
+        expect.objectContaining({ path: "README.md" }),
+      ],
+    });
+    expect(appQueryClient.getQueryData(unstagedKey)).toMatchObject({ files: [] });
+
+    // The first operation fails on the server and rolls back
+    first.resolve({ success: false, error: { message: "failed to stage guide.md" } });
+    await expect(firstStage).rejects.toThrow("failed to stage guide.md");
+
+    // guide.md rolled back to unstaged, but README.md remains optimistically staged
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({
+      files: [expect.objectContaining({ path: "README.md" })],
+    });
+    expect(appQueryClient.getQueryData(unstagedKey)).toMatchObject({
+      files: [expect.objectContaining({ path: "docs/guide.md" })],
+    });
+
+    // The second operation succeeds on the server
+    second.resolve({ success: true, error: null });
+    await secondStage;
+
+    expect(appQueryClient.getQueryData(stagedKey)).toMatchObject({
+      files: [expect.objectContaining({ path: "README.md" })],
+    });
   });
 
   for (const rpc of [
@@ -227,7 +346,7 @@ describe("checkout-git-actions-store", () => {
         error: null,
       }));
       const client = { [rpc.method]: setAutoMerge };
-      useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+      registerMockClient(serverId, client);
       useSessionStore.getState().updateSessionServerInfo(serverId, {
         serverId,
         hostname: null,
@@ -257,7 +376,7 @@ describe("checkout-git-actions-store", () => {
         error: null,
       }));
       const client = { [rpc.method]: setAutoMerge };
-      useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+      registerMockClient(serverId, client);
       useSessionStore.getState().updateSessionServerInfo(serverId, {
         serverId,
         hostname: null,
@@ -284,7 +403,7 @@ describe("checkout-git-actions-store", () => {
         error: null,
       })),
     };
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+    registerMockClient(serverId, client);
     useSessionStore.getState().updateSessionServerInfo(serverId, {
       serverId,
       hostname: null,

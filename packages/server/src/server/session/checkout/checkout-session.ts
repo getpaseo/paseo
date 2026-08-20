@@ -51,6 +51,7 @@ import {
   pushCurrentBranch,
   listCheckoutCommits,
   getCommitFileDiff,
+  updateCheckoutIndex,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
@@ -631,6 +632,31 @@ export class CheckoutSession {
     }
   }
 
+  async handleCheckoutIndexUpdateRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.index.update.request" }>,
+  ): Promise<void> {
+    const { cwd, operation, paths, all, requestId } = msg;
+    try {
+      await updateCheckoutIndex(cwd, operation, paths ?? [], all === true);
+      this.scheduleDiffRefresh(cwd);
+      this.host.emit({
+        type: "checkout.index.update.response",
+        payload: { cwd, operation, success: true, error: null, requestId },
+      });
+      // The index response is latency-sensitive. Refresh the broader workspace snapshot in the
+      // background; the subscription refresh above is the authoritative staged/unstaged update.
+      void this.gitMutation.notifyGitMutation(cwd, "index-update");
+    } catch (error) {
+      // A failed index mutation can follow an optimistic client update; publish the authoritative
+      // subscription snapshot so the client rolls back without requiring a manual refresh.
+      this.scheduleDiffRefresh(cwd);
+      this.host.emit({
+        type: "checkout.index.update.response",
+        payload: { cwd, operation, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
   async handleStashSaveRequest(
     msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
   ): Promise<void> {
@@ -718,6 +744,7 @@ export class CheckoutSession {
       await commitChanges(cwd, {
         message,
         addAll: msg.addAll ?? true,
+        files: msg.files,
       });
       await this.gitMutation.notifyGitMutation(cwd, "commit-changes");
       this.scheduleDiffRefresh(cwd);

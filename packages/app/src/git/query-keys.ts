@@ -24,7 +24,7 @@ export function checkoutStatusQueryKey(serverId: string, cwd: string) {
 export function checkoutDiffQueryKey(
   serverId: string,
   cwd: string,
-  mode: "uncommitted" | "base",
+  mode: "uncommitted" | "staged" | "unstaged" | "base",
   baseRef?: string,
   ignoreWhitespace?: boolean,
 ) {
@@ -48,6 +48,8 @@ export function checkoutCommitFileDiffQueryKey(
   return ["checkoutCommitFileDiff", serverId, cwd, sha, path] as const;
 }
 
+// checkoutDiff is subscription-fed (queryFn: skipToken). Git mutations are reconciled by the
+// daemon's checkout_diff_update push, so invalidating these queries only marks live cache data stale.
 export async function invalidateCheckoutGitQueriesForClient(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,
@@ -55,9 +57,6 @@ export async function invalidateCheckoutGitQueriesForClient(
   await Promise.all([
     queryClient.invalidateQueries({
       queryKey: checkoutStatusQueryKey(identity.serverId, identity.cwd),
-    }),
-    queryClient.invalidateQueries({
-      predicate: checkoutQueryPredicate("checkoutDiff", identity),
     }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate("checkoutPrStatus", identity),
@@ -74,9 +73,6 @@ export async function invalidateCheckoutGitQueriesForClient(
   ]);
 }
 
-// checkoutDiff is excluded: diff queries are subscription-fed (queryFn: skipToken) and
-// receive a fresh snapshot on every resubscribe, so invalidation cannot and need not
-// refetch them.
 export async function invalidateCheckoutGitQueriesForServer(
   queryClient: QueryClient,
   serverId: string,

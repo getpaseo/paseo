@@ -30,6 +30,7 @@ import {
   getCheckoutShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
+  updateCheckoutIndex,
   checkoutResolvedBranch,
   listBranchSuggestions,
   mergeToBase,
@@ -533,6 +534,89 @@ describe("checkout git utilities", () => {
       expect.objectContaining({ path: "renamed.txt", oldPath: "file.txt" }),
     );
   });
+
+  it("separates staged and unstaged changes and updates the index by path", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "staged change\n");
+    writeFileSync(join(repoDir, "other.txt"), "other change\n");
+
+    await updateCheckoutIndex(repoDir, "stage", ["file.txt"]);
+
+    const staged = await getCheckoutDiff(repoDir, {
+      mode: "staged",
+      includeStructured: true,
+    });
+    const unstaged = await getCheckoutDiff(repoDir, {
+      mode: "unstaged",
+      includeStructured: true,
+    });
+
+    expect(staged.structured).toEqual([
+      expect.objectContaining({ path: "file.txt", additions: 1, deletions: 1 }),
+    ]);
+    expect(unstaged.structured).toEqual([
+      expect.objectContaining({ path: "other.txt", additions: 1, deletions: 0 }),
+    ]);
+
+    await updateCheckoutIndex(repoDir, "unstage", ["file.txt"]);
+    const afterUnstage = await getCheckoutStatus(repoDir);
+    expect(afterUnstage.isDirty).toBe(true);
+    expect(
+      execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: repoDir }).toString().trim(),
+    ).toBe("");
+  });
+
+  it("unstages paths in an unborn repository with the cached-index fallback", async () => {
+    const unbornRepo = join(tempDir, "unborn-repo");
+    mkdirSync(unbornRepo, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: unbornRepo });
+    writeFileSync(join(unbornRepo, "new.txt"), "new\n");
+
+    await updateCheckoutIndex(unbornRepo, "stage", ["new.txt"]);
+    expect(
+      execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: unbornRepo })
+        .toString()
+        .trim(),
+    ).toBe("new.txt");
+
+    await updateCheckoutIndex(unbornRepo, "unstage", ["new.txt"]);
+    expect(
+      execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: unbornRepo })
+        .toString()
+        .trim(),
+    ).toBe("");
+    expect(
+      execFileSync("git", ["status", "--porcelain"], { cwd: unbornRepo }).toString().trim(),
+    ).toBe("?? new.txt");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "stages and unstages every file without round-tripping escaped display paths",
+    async () => {
+      const invalidFileName = Buffer.from([
+        0x01, 0x90, 0xf8, 0x40, 0x40, 0xd0, 0xc3, 0x39, 0x40, 0x38,
+      ]);
+      const invalidFilePath = Buffer.concat([Buffer.from(`${repoDir}/`), invalidFileName]);
+      writeFileSync(invalidFilePath, "binary path\n");
+
+      await updateCheckoutIndex(repoDir, "stage", [], true);
+
+      const cachedNames = execFileSync("git", ["diff", "--cached", "--name-only", "-z"], {
+        cwd: repoDir,
+      });
+      expect(cachedNames.includes(invalidFileName)).toBe(true);
+
+      await updateCheckoutIndex(repoDir, "unstage", [], true);
+
+      expect(
+        execFileSync("git", ["diff", "--cached", "--name-only", "-z"], { cwd: repoDir }),
+      ).toHaveLength(0);
+      expect(
+        execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir }).includes(
+          invalidFileName,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("reads the origin URL once when collecting facts for an origin-tracking branch", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);

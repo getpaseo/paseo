@@ -45,6 +45,8 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
       onDownload={working?.onDownload}
       onDuplicate={working?.onDuplicate}
       onRevert={working?.onRevert}
+      onIndexUpdate={working?.onIndexUpdate}
+      indexOperation={working?.indexOperation}
       testID={`diff-file-${file.fileIndex}`}
     />
   );
@@ -67,7 +69,9 @@ function documentFileHeaderPropsEqual(
     previous.mode.revealTargetName === next.mode.revealTargetName &&
     previous.mode.onDownload === next.mode.onDownload &&
     previous.mode.onDuplicate === next.mode.onDuplicate &&
-    previous.mode.onRevert === next.mode.onRevert
+    previous.mode.onRevert === next.mode.onRevert &&
+    previous.mode.onIndexUpdate === next.mode.onIndexUpdate &&
+    previous.mode.indexOperation === next.mode.indexOperation
   );
 }
 
