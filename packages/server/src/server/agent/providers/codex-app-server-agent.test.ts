@@ -1394,16 +1394,55 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
+    const threadRequests: string[] = [];
+    let resumeAttempts = 0;
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        resumeAttempts += 1;
+        if (resumeAttempts === 1) {
+          return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+        }
+        return { thread: { id: "archived-thread-id" } };
+      },
+      "thread/unarchive": () => {
+        threadRequests.push("thread/unarchive");
+        return { thread: { id: "archived-thread-id" } };
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const session = await provider.resumeSession(archivedThreadHandle());
+
+    expect(threadRequests).toEqual([
+      "thread/loaded/list",
+      "thread/resume",
+      "thread/unarchive",
+      "thread/resume",
+      "thread/read",
+    ]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("closes Codex app-server when an interactive resume fails", async () => {
     const appServer = createFakeCodexAppServer({
-      "thread/resume": () =>
-        Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
+      "thread/resume": () => Promise.reject(new Error("thread resume failed")),
     });
     const killSpy = vi.spyOn(appServer.child, "kill");
     const provider = createProviderWithFakeAppServer(appServer);
 
     await expect(provider.resumeSession(archivedThreadHandle())).rejects.toThrow(
-      archivedThreadErrorMessage("archived-thread-id"),
+      "thread resume failed",
     );
 
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
