@@ -291,7 +291,7 @@ const lightSemanticColors = {
 // Dark theme variant builder
 // ---------------------------------------------------------------------------
 
-interface DarkThemeConfig {
+export interface DarkThemeConfig {
   surface0: string;
   surface1: string;
   surface2: string;
@@ -309,6 +309,8 @@ interface DarkThemeConfig {
   destructive: string;
   terminalBlack: string;
   terminalBrightBlack: string;
+  foreground?: string;
+  ring?: string;
 }
 
 const darkTerminalAnsi = {
@@ -328,7 +330,9 @@ const darkTerminalAnsi = {
   brightWhite: "#f0f0f2",
 } as const;
 
-function buildDarkSemanticColors(tint: DarkThemeConfig) {
+export function buildDarkSemanticColors(tint: DarkThemeConfig) {
+  const foreground = tint.foreground ?? "#fafafa";
+  const ring = tint.ring ?? "#d4d4d8";
   return {
     surface0: tint.surface0,
     surface1: tint.surface1,
@@ -341,7 +345,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebarSelected: tint.surface2,
     surfaceWorkspace: tint.surface1,
 
-    foreground: "#fafafa",
+    foreground,
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
 
@@ -360,16 +364,16 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     // Legacy aliases (for gradual migration)
     background: tint.surface0,
     popover: tint.surface2,
-    popoverForeground: "#fafafa",
-    primary: "#fafafa",
+    popoverForeground: foreground,
+    primary: foreground,
     primaryForeground: tint.surface0,
     secondary: tint.surface2,
-    secondaryForeground: "#fafafa",
+    secondaryForeground: foreground,
     muted: tint.surface2,
     mutedForeground: tint.foregroundMuted,
     accentBorder: tint.borderAccent,
     input: tint.surface2,
-    ring: "#d4d4d8",
+    ring,
 
     ...darkDiffColors,
     ...darkStatusColors,
@@ -377,11 +381,11 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     terminal: {
       background: tint.surface0,
-      foreground: "#fafafa",
-      cursor: "#fafafa",
+      foreground,
+      cursor: foreground,
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(255, 255, 255, 0.2)",
-      selectionForeground: "#fafafa",
+      selectionForeground: foreground,
       black: tint.terminalBlack,
       ...darkTerminalAnsi,
       brightBlack: tint.terminalBrightBlack,
@@ -627,7 +631,7 @@ const darkShadow = {
   },
 } as const;
 
-function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
+export function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
   return {
     colorScheme: "dark" as const,
     colors: {
@@ -754,8 +758,15 @@ export const THEME_OPTIONS = [
   },
 ] as const;
 
-export type ThemePreference = (typeof THEME_OPTIONS)[number]["name"];
-export type ThemeName = Exclude<ThemePreference, "auto">;
+/**
+ * Unistyles needs every theme at `StyleSheet.configure` time, so one slot is reserved for the
+ * theme a plugin contributes. Only one theme is active at a time, so a single slot covers any
+ * number of contributed themes: selecting one rewrites the slot with `updateTheme`.
+ */
+export const PLUGIN_THEME_SLOT = "plugin";
+
+export type ThemePreference = (typeof THEME_OPTIONS)[number]["name"] | typeof PLUGIN_THEME_SLOT;
+export type ThemeName = Exclude<ThemePreference, "auto" | typeof PLUGIN_THEME_SLOT>;
 type ConcreteThemeOption = Exclude<(typeof THEME_OPTIONS)[number], { name: "auto" }>;
 export type Theme = ConcreteThemeOption["theme"];
 
@@ -773,7 +784,7 @@ type ThemeSwatches = {
 
 type RegisteredThemes = {
   [Option in ConcreteThemeOption as Option["unistylesName"]]: Option["theme"];
-};
+} & { plugin: typeof darkTheme };
 
 export const THEME_TO_UNISTYLES = Object.fromEntries(
   CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.unistylesName]),
@@ -783,9 +794,12 @@ export const THEME_SWATCHES = Object.fromEntries(
   CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.swatch]),
 ) as ThemeSwatches;
 
-export const REGISTERED_THEMES = Object.fromEntries(
-  CONCRETE_THEME_OPTIONS.map((option) => [option.unistylesName, option.theme]),
-) as RegisteredThemes;
+export const REGISTERED_THEMES = {
+  ...Object.fromEntries(
+    CONCRETE_THEME_OPTIONS.map((option) => [option.unistylesName, option.theme]),
+  ),
+  [PLUGIN_THEME_SLOT]: darkTheme,
+} as RegisteredThemes;
 
 export function getNextThemePreference(current: ThemePreference): ThemePreference {
   const currentIndex = THEME_OPTIONS.findIndex((option) => option.name === current);

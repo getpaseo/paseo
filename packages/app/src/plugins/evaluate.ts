@@ -12,6 +12,7 @@ import {
   type PluginCommandCenterItemContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
+  type PluginThemeContribution,
   type PluginWorkspacePanelContribution,
   usePaseo,
   useAgent,
@@ -22,6 +23,7 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
+import { pluginThemeSchema } from "./theme";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 
@@ -38,12 +40,14 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    themes: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
+  const themeIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
@@ -144,6 +148,13 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         search: { ...contribution.search, name: method },
       });
     },
+    addTheme(contribution: PluginThemeContribution) {
+      const normalizedId = requireId(contribution.id, "theme id");
+      if (themeIds.has(normalizedId)) throw new Error(`Duplicate theme: ${normalizedId}`);
+      const theme = pluginThemeSchema.parse({ ...contribution, id: normalizedId });
+      themeIds.add(normalizedId);
+      collector.themes.push(theme);
+    },
   });
   const runtimeRequire = (name: string): unknown => {
     if (name === "react") return React;
@@ -205,5 +216,6 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     workspacePanels: collector.workspacePanels,
     commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,
+    themes: collector.themes,
   };
 }

@@ -24,6 +24,8 @@ export type {
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
+  PluginThemeColors,
+  PluginThemeContribution,
   PluginWorkspaceCommandContext,
   PluginWorkspacePanelContribution,
   PluginWorkspacePanelProps,

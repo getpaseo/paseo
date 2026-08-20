@@ -154,6 +154,24 @@ declare module "@getpaseo/plugin" {
     surface: string;
   }
 
+  export interface PluginThemeColors {
+    background: string;
+    foreground: string;
+    raised: string;
+    control: string;
+    accent: string;
+    highlight?: string;
+    mutedForeground: string;
+    ring: string;
+  }
+
+  export interface PluginThemeContribution {
+    id: string;
+    name: string;
+    appearance: "dark";
+    colors: PluginThemeColors;
+  }
+
   export interface PluginSurfaceContribution {
     id: string;
     Component: ComponentType<PluginSurfaceProps>;
@@ -203,6 +221,7 @@ declare module "@getpaseo/plugin" {
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+    addTheme(contribution: PluginThemeContribution): void;
   }
 
   export type PluginCleanup = () => void | Promise<void>;

@@ -88,7 +88,7 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
-import { useAppSettings } from "@/hooks/use-settings";
+import { DEFAULT_THEME_PREFERENCE, useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
@@ -113,7 +113,7 @@ import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { getNextThemePreference, THEME_TO_UNISTYLES } from "@/styles/theme";
+import { getNextThemePreference, PLUGIN_THEME_SLOT, THEME_TO_UNISTYLES } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
@@ -131,6 +131,8 @@ import {
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { PluginCatalogSync } from "@/plugins";
+import { useInstalledPlugins } from "@/plugins/registry";
+import { buildPluginTheme, findPluginTheme } from "@/plugins/theme";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -648,21 +650,41 @@ function MobileGestureWrapper({
 function ProvidersWrapper({ children }: { children: ReactNode }) {
   const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
+  const plugins = useInstalledPlugins();
+  // Null while the catalog is still loading, and once the selected contribution is gone.
+  const pluginTheme = useMemo(
+    () =>
+      settings.theme === PLUGIN_THEME_SLOT
+        ? findPluginTheme(plugins, settings.pluginThemeId)
+        : null,
+    [plugins, settings.theme, settings.pluginThemeId],
+  );
 
   // Apply theme setting on mount and when it changes
   useEffect(() => {
     if (settingsLoading) return;
-    if (settings.theme === "auto") {
+    if (pluginTheme) {
+      UnistylesRuntime.updateTheme(PLUGIN_THEME_SLOT, () => buildPluginTheme(pluginTheme));
+      UnistylesRuntime.setAdaptiveThemes(false);
+      UnistylesRuntime.setTheme(PLUGIN_THEME_SLOT);
+      return;
+    }
+    // A selected plugin theme that no longer exists falls back to the default preference
+    // instead of painting the reserved slot's placeholder colors.
+    const preference =
+      settings.theme === PLUGIN_THEME_SLOT ? DEFAULT_THEME_PREFERENCE : settings.theme;
+    if (preference === "auto") {
       UnistylesRuntime.setAdaptiveThemes(true);
     } else {
       UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
+      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[preference]);
     }
-  }, [settingsLoading, settings.theme]);
+  }, [settingsLoading, settings.theme, pluginTheme]);
 
   // Apply font / size / syntax appearance settings on mount and when they change.
-  // Sibling to the theme effect above; order is irrelevant because both patch all
-  // registered theme keys, so the active key is always current.
+  // Runs after the theme effect: a contributed theme is rebuilt from its palette, so it needs
+  // these patches re-applied. The built-in keys are patched all at once, so their order with
+  // `setTheme`/`setAdaptiveThemes` stays irrelevant.
   useEffect(() => {
     if (settingsLoading) return;
     applyAppearance({
@@ -674,6 +696,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
     });
   }, [
     settingsLoading,
+    pluginTheme,
     settings.uiFontFamily,
     settings.monoFontFamily,
     settings.uiBaseFontSize,
