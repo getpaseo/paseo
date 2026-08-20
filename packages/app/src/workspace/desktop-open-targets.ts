@@ -69,7 +69,7 @@ export function useDesktopOpenTargets(input: { isLocalExecution: boolean }) {
   });
 
   return {
-    targets: query.data ?? [],
+    targets: canListTargets ? (query.data ?? []) : [],
     isAvailable: canListTargets,
   };
 }
