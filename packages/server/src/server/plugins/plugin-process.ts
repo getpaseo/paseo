@@ -1,8 +1,17 @@
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
-import { defineAttachmentSource, defineRpc, type PluginRpcContract } from "@paseo/plugin";
+import {
+  defineAttachmentSource,
+  defineRpc,
+  type PluginHandlerContext,
+  type PluginRpcContract,
+} from "@getpaseo/plugin/server";
+import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
+import { isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
-type RpcHandler = (input: unknown) => unknown | Promise<unknown>;
+type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
 interface RegisteredRpc {
   contract: PluginRpcContract;
@@ -10,11 +19,24 @@ interface RegisteredRpc {
 }
 
 const handlers = new Map<string, RegisteredRpc>();
-let cleanup: (() => void) | null = null;
+let cleanup: (() => void | Promise<void>) | null = null;
+let daemonClient: DaemonClient | null = null;
+let paseo: PaseoApi | null = null;
+let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
 
 function send(message: PluginProcessMessage): void {
   process.send?.(message);
+}
+
+function sendAndWait(message: PluginProcessMessage): Promise<void> {
+  return new Promise((resolve) => {
+    if (!process.send) {
+      resolve();
+      return;
+    }
+    process.send(message, () => resolve());
+  });
 }
 
 function describeError(error: unknown): string {
@@ -40,8 +62,10 @@ function register(contract: PluginRpcContract, handler: RpcHandler): void {
   handlers.set(method, { contract: { ...contract, name: method }, handler });
 }
 
+const pluginAuthorRuntime = { defineAttachmentSource, defineRpc };
+
 function runtimeRequire(name: string): unknown {
-  if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc };
+  if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }
 
@@ -62,29 +86,59 @@ function evaluateBundle(bundle: string): void {
   cleanup = contributedCleanup;
 }
 
+const transportFactory = createPluginDaemonTransportFactory({
+  send,
+  onMessage(handler) {
+    process.on("message", handler);
+    return () => process.off("message", handler);
+  },
+});
+
+async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
+  daemonClient = new DaemonClient({
+    url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
+    clientId: `plugin:${message.pluginId}`,
+    clientType: "cli",
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  paseo = createPaseoApi(daemonClient);
+  await daemonClient.connect();
+  evaluateBundle(message.bundle);
+  send({ type: "ready", methods: [...handlers.keys()].sort() });
+}
+
+async function shutdown(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  const currentCleanup = cleanup;
+  cleanup = null;
+  try {
+    await currentCleanup?.();
+  } catch (error) {
+    console.error("Plugin cleanup failed", error);
+  }
+  await daemonClient?.close().catch(() => undefined);
+  await sendAndWait({ type: "paseo_close" });
+  daemonClient = null;
+  paseo = null;
+  process.disconnect();
+}
+
 process.on("message", (message: PluginProcessRequest) => {
   if (message.type === "initialize") {
-    try {
-      evaluateBundle(message.bundle);
-      send({ type: "ready", methods: [...handlers.keys()].sort() });
-    } catch (error) {
+    void initialize(message).catch(async (error) => {
       send({ type: "fatal", error: describeError(error) });
-    }
+      await daemonClient?.close().catch(() => undefined);
+    });
     return;
   }
   if (message.type === "shutdown") {
-    const currentCleanup = cleanup;
-    cleanup = null;
-    if (currentCleanup) {
-      try {
-        currentCleanup();
-      } catch (error) {
-        console.error("Plugin cleanup failed", error);
-      }
-    }
-    process.disconnect();
+    void shutdown();
     return;
   }
+  if (message.type === "paseo_frame" || message.type === "paseo_close") return;
+  if (stopping) return;
   const registered = handlers.get(message.method);
   if (!registered) {
     send({
@@ -96,7 +150,10 @@ process.on("message", (message: PluginProcessRequest) => {
   }
   void registered.contract.input
     .parseAsync(message.input)
-    .then(registered.handler)
+    .then((input) => {
+      if (!paseo) throw new Error("Plugin Paseo API is unavailable");
+      return registered.handler(input, { paseo });
+    })
     .then((output) => registered.contract.output.parseAsync(output))
     .then(
       (output) => send({ type: "result", requestId: message.requestId, output }),

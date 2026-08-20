@@ -1,16 +1,24 @@
 import type { TFunction } from "i18next";
+import type { SendBehavior } from "@/hooks/use-settings/storage";
 
 export function resolveSubmitAccessibilityLabel(input: {
   submitButtonAccessibilityLabel: string | undefined;
   canPressLoadingButton: boolean;
   defaultActionQueues: boolean;
+  defaultSendBehavior: SendBehavior;
   isAgentRunning: boolean;
   t: TFunction;
 }): string {
   if (input.submitButtonAccessibilityLabel) return input.submitButtonAccessibilityLabel;
   if (input.canPressLoadingButton) return input.t("composer.input.interruptAgent");
   if (input.defaultActionQueues) return input.t("composer.input.queueMessage");
-  if (input.isAgentRunning) return input.t("composer.input.sendAndInterrupt");
+  if (input.isAgentRunning) {
+    return input.t(
+      input.defaultSendBehavior === "steer"
+        ? "composer.input.sendAndSteer"
+        : "composer.input.sendAndInterrupt",
+    );
+  }
   return input.t("composer.input.sendMessage");
 }
 

@@ -32,17 +32,30 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
   });
 
-  it("leaves path-query semantics to the daemon", () => {
+  it("matches recommended paths using the complete path text", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [
         "/Users/me/archive/projects/paseo-desktop",
         "/Users/me/projects/paseo-desktop",
       ],
       serverPaths: [],
-      query: "~/projects/pso",
+      query: "projects/pso",
     });
 
-    expect(results).toEqual([]);
+    expect(results).toEqual([
+      "/Users/me/archive/projects/paseo-desktop",
+      "/Users/me/projects/paseo-desktop",
+    ]);
+  });
+
+  it("fuzzy-matches recommended paths using their full path", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: ["/Users/me/projects/blankpage/editor"],
+      serverPaths: [],
+      query: "blank page editor",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/blankpage/editor"]);
   });
 
   it("treats '~' as an active query and includes daemon suggestions", () => {

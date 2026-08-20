@@ -1,6 +1,5 @@
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -9,7 +8,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIcons } from "@/projects/icons";
 import { settingsStyles } from "@/styles/settings";
-import { buildProjectSettingsRoute } from "@/utils/host-routes";
+import { openProjectSettings } from "@/navigation/settings-navigation";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
 
 interface ProjectsScreenProps {
@@ -112,7 +111,7 @@ function ProjectRow({ project, host, isFirst, iconDataUri }: ProjectRowProps) {
   const { viewKey } = project;
   const { projectName } = host;
   const handleNavigate = useCallback(() => {
-    router.navigate(buildProjectSettingsRoute(host.serverId, host.projectId));
+    openProjectSettings(host.serverId, host.projectId);
   }, [host.projectId, host.serverId]);
 
   const rowStyle = useCallback(
@@ -181,7 +180,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorsBanner: {
     borderWidth: 1,
@@ -193,7 +192,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorsBannerText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   row: {
     gap: theme.spacing[3],
@@ -218,7 +217,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   iconFallbackText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,

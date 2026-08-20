@@ -400,9 +400,11 @@ describe("createArchiveFinishedSubagents", () => {
   });
 
   it("dismisses finished provider rows locally without removing their descriptors", async () => {
+    const finished = provider("finished");
+    const running = provider("running", "running");
     const descriptors = new Map([
-      ["finished", provider("finished")],
-      ["running", provider("running", "running")],
+      ["finished", finished],
+      ["running", running],
     ]);
     const dismissed: string[][] = [];
     const archive = createArchiveFinishedSubagents([...descriptors.values()], {
@@ -420,7 +422,7 @@ describe("createArchiveFinishedSubagents", () => {
     });
 
     expect(dismissed).toEqual([["finished"]]);
-    expect(descriptors.get("finished")).toEqual(provider("finished"));
-    expect(descriptors.get("running")).toEqual(provider("running", "running"));
+    expect(descriptors.get("finished")).toBe(finished);
+    expect(descriptors.get("running")).toBe(running);
   });
 });

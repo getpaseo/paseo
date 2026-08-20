@@ -48,16 +48,6 @@ type WebSocketProbeResult =
   | { status: "connected" }
   | { status: "rejected"; statusCode: number | null };
 
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-    throw error;
-  }
-}
-
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -121,6 +111,14 @@ describe("paseo daemon bootstrap", () => {
     config.agentClients = createTestAgentClients();
     config.agentStoragePath = path.join(paseoHome, "agents");
     config.isDev = true;
+    config.speech = {
+      providers: {
+        dictationStt: { provider: "local", explicit: true, enabled: false },
+        voiceTurnDetection: { provider: "local", explicit: true, enabled: false },
+        voiceStt: { provider: "local", explicit: true, enabled: false },
+        voiceTts: { provider: "local", explicit: true, enabled: false },
+      },
+    };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
     let client: DaemonClient | null = null;
     let proxyUpstream: http.Server | null = null;
@@ -593,7 +591,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("rolls back already-open standalone listener when main daemon listen fails", async () => {
+  test("rolls back standalone listener without starting plugins when main listen fails", async () => {
     const mainPort = await findFreePort();
     const standalonePort = await findFreePort();
     const occupiedMain = http.createServer((_req, res) => {
@@ -648,10 +646,7 @@ export default function contribute(plugin: unknown) {
       await expect(daemon.start()).rejects.toThrow();
       await expect(fetch(`http://127.0.0.1:${standalonePort}/api/health`)).rejects.toThrow();
       if (!isPlatform("win32")) {
-        const pluginPid = Number(await readFile(pluginPidPath, "utf8"));
-        await vi.waitFor(() => {
-          expect(processExists(pluginPid)).toBe(false);
-        });
+        await expect(readFile(pluginPidPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
       }
     } finally {
       await daemon.stop().catch(() => undefined);

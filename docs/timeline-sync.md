@@ -42,6 +42,16 @@ Initialization timeouts guard lack of catch-up progress, not the full multi-page
 Opening or resuming an agent fetches one bounded latest tail page. Older history remains
 user-driven by scrolling upward.
 
+A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
+A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
+writer, say — into a request and a log line every second on an idle app. The delay resets on success,
+reconnect, delivery-mode change, and visibility change, so recovery is still immediate once the
+condition clears.
+
+Background retries are silent. The retry the user presses in the sync-error callout is a fallible
+user action and owns its pending state: `retrying` is a status the sync model publishes, not a React
+boolean, so the button reports in-flight and the callout returns to `error` when the attempt fails.
+
 Reaching the history-start threshold loads one older page and preserves the visible content anchor.
 Cursor progress does not trigger another page. The user must leave and return to the threshold unless
 the anchored page still leaves the viewport at history start, as with short or compacted content; in
@@ -172,6 +182,11 @@ both user-started foreground turns and autonomous provider turns;
 foreground control ownership remains a separate daemon concern. Cancellation request identity is stored
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
+
+Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
+the Paseo timeline, so one visible response can span several canonical turns without a user message
+between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
+fork positions retain the canonical `turnId` boundaries.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app

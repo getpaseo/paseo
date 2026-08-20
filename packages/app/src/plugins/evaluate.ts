@@ -1,5 +1,6 @@
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
+// eslint-disable-next-line no-restricted-imports -- plugin client runtime injects host ReactNative.
 import * as ReactNative from "react-native";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
@@ -8,11 +9,16 @@ import {
   defineAttachmentSource,
   defineRpc,
   type PluginAttachmentSourceContribution,
+  type PluginCommandCenterItemContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
+  type PluginWorkspacePanelContribution,
+  usePaseo,
+  useAgent,
+  useWorkspace,
   useRpc,
-} from "@paseo/plugin";
-import { createPluginContext, type PluginRegistrationCollector } from "@paseo/plugin/host";
+} from "@getpaseo/plugin";
+import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
@@ -29,10 +35,14 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const collector: PluginRegistrationCollector = {
     surfaces: [],
     sidebarItems: [],
+    workspacePanels: [],
+    commandCenterItems: [],
     attachmentSources: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
+  const workspacePanelIds = new Set<string>();
+  const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
@@ -56,6 +66,54 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         title: contribution.title.trim(),
         icon: contribution.icon.trim(),
         surface: requireId(contribution.surface, "sidebar surface id"),
+      });
+    },
+    addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
+      const normalizedId = requireId(contribution.id, "workspace panel id");
+      if (workspacePanelIds.has(normalizedId)) {
+        throw new Error(`Duplicate workspace panel: ${normalizedId}`);
+      }
+      const title = contribution.title.trim();
+      const icon = contribution.icon.trim();
+      if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
+      if (!icon) throw new Error(`Workspace panel ${normalizedId} has no icon`);
+      if (contribution.context !== "workspace" && contribution.context !== "agent") {
+        throw new Error(`Workspace panel ${normalizedId} has invalid context`);
+      }
+      if (typeof contribution.Component !== "function") {
+        throw new Error(`Workspace panel ${normalizedId} is not a component`);
+      }
+      resolvePluginIcon(icon);
+      workspacePanelIds.add(normalizedId);
+      collector.workspacePanels.push({ ...contribution, id: normalizedId, title, icon });
+    },
+    addCommandCenterItem(contribution: PluginCommandCenterItemContribution) {
+      const normalizedId = requireId(contribution.id, "Command Center item id");
+      if (commandCenterItemIds.has(normalizedId)) {
+        throw new Error(`Duplicate Command Center item: ${normalizedId}`);
+      }
+      const title = contribution.title.trim();
+      const icon = contribution.icon.trim();
+      if (!title) throw new Error(`Command Center item ${normalizedId} has no title`);
+      if (!icon) throw new Error(`Command Center item ${normalizedId} has no icon`);
+      if (
+        contribution.context !== "global" &&
+        contribution.context !== "workspace" &&
+        contribution.context !== "agent"
+      ) {
+        throw new Error(`Command Center item ${normalizedId} has invalid context`);
+      }
+      if (typeof contribution.onSelect !== "function") {
+        throw new Error(`Command Center item ${normalizedId} has no callback`);
+      }
+      resolvePluginIcon(icon);
+      commandCenterItemIds.add(normalizedId);
+      collector.commandCenterItems.push({
+        ...contribution,
+        id: normalizedId,
+        title,
+        icon,
+        keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
       });
     },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
@@ -91,7 +149,19 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc, useRpc };
+    if (name === "@getpaseo/plugin") {
+      return {
+        defineAttachmentSource,
+        defineRpc,
+        usePaseo,
+        useAgent,
+        useWorkspace,
+        useRpc,
+      };
+    }
+    if (name === "@getpaseo/plugin/server") {
+      return { defineAttachmentSource, defineRpc };
+    }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
@@ -119,7 +189,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     }
   } catch (error) {
     try {
-      cleanup();
+      void Promise.resolve(cleanup()).catch((cleanupError) => {
+        console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+      });
     } catch (cleanupError) {
       console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
     }
@@ -130,6 +202,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     cleanup,
     surfaces: collector.surfaces,
     sidebarItems: collector.sidebarItems,
+    workspacePanels: collector.workspacePanels,
+    commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,
   };
 }

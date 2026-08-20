@@ -132,6 +132,7 @@ export interface PaseoWorkspaceHandle {
   };
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
+  setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
   archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
@@ -353,11 +354,14 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
-export interface PaseoClient {
+export interface PaseoApi {
   readonly workspaces: PaseoWorkspaceActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
   readonly config: PaseoConfigActions;
+}
+
+export interface PaseoClient extends PaseoApi {
   connect(): Promise<void>;
   close(): Promise<void>;
   ensureConnected(): void;
@@ -370,6 +374,16 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
     clientId: config.clientId ?? createGeneratedClientId(),
     clientType: "cli",
   });
+  return {
+    ...createPaseoApi(daemonClient),
+    connect: () => daemonClient.connect(),
+    close: () => daemonClient.close(),
+    ensureConnected: () => daemonClient.ensureConnected(),
+    getConnectionState: () => daemonClient.getConnectionState(),
+  };
+}
+
+export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
   const createAgentHandle = createAgentHandleFactory(daemonClient);
   const createAgent = async (
     options: PaseoAgentCreateOptions,
@@ -447,10 +461,6 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
     },
-    connect: () => daemonClient.connect(),
-    close: () => daemonClient.close(),
-    ensureConnected: () => daemonClient.ensureConnected(),
-    getConnectionState: () => daemonClient.getConnectionState(),
   };
 }
 
@@ -517,6 +527,7 @@ function createWorkspaceHandleFactory(
       },
       current: () => current,
       refresh,
+      setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),
       archive: async (requestId) => {
         const result = await daemonClient.archiveWorkspace(id, requestId);
         if (current) {

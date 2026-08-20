@@ -2,6 +2,7 @@ import path from "node:path";
 import type pino from "pino";
 import {
   PluginIdSchema,
+  type PluginLogEntry,
   type PluginListItem,
   type PluginSource,
 } from "@getpaseo/protocol/messages";
@@ -12,10 +13,13 @@ import { PluginRuntime } from "./runtime.js";
 interface PluginRuntimePort {
   catalog(): Array<{ id: string; clientBundle: string }>;
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  getLogs(pluginId: string): PluginLogEntry[];
+  clearLogs(pluginId: string): void;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
+  bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
 }
 
 export class PluginService {
@@ -45,6 +49,10 @@ export class PluginService {
     return () => this.listeners.delete(listener);
   }
 
+  bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {
+    this.runtime.bindPaseoSessionHost(sessionHost);
+  }
+
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
@@ -54,6 +62,7 @@ export class PluginService {
       for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
         if (source.enabled === false) continue;
         await this.startConfigured(pluginId);
+        this.notify(pluginId);
       }
     }
     this.configStore.onFieldChange("pluginsEnabled", (value) => {
@@ -81,6 +90,11 @@ export class PluginService {
         return item;
       })
       .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  getLogs(pluginId: string): PluginLogEntry[] {
+    this.requireSource(pluginId);
+    return this.runtime.getLogs(pluginId);
   }
 
   catalog(): Array<{ id: string; clientBundle: string }> {
@@ -164,6 +178,7 @@ export class PluginService {
     this.configStore.patch({ plugins: sources });
     await this.enqueue(async () => {
       await stopping;
+      this.runtime.clearLogs(pluginId);
       this.errors.delete(pluginId);
       this.notify(pluginId);
     });
