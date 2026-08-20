@@ -6124,6 +6124,19 @@ export const PluginRpcInvokeResponseSchema = z.object({
   }),
 });
 
+// One-way push: a plugin's server-target contribute() called context.emit(eventName, data).
+// No matching request (this isn't RPC, hence "plugin.event" rather than "plugin.rpc.event")
+// — the daemon forwards it to every connected client the moment the plugin subprocess
+// reports it, the same way agent_update/workspace_update are pushed.
+export const PluginEventMessageSchema = z.object({
+  type: z.literal("plugin.event"),
+  payload: z.object({
+    pluginId: PluginIdSchema,
+    eventName: z.string().regex(/^[a-z][a-z0-9._-]*$/),
+    data: z.unknown(),
+  }),
+});
+
 function agentSkillsStatusResponse<const Type extends string>(type: Type) {
   return z.object({
     type: z.literal(type),
@@ -6170,6 +6183,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  PluginEventMessageSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
   AgentSkillsUninstallResponseSchema,

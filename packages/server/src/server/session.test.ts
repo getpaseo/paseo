@@ -502,6 +502,7 @@ test("routes plugin requests and releases its owned catalog subscription on clea
       listeners.add(listener);
       return () => releasePluginSubscription(listener);
     },
+    subscribeToEvents: () => () => {},
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
   };

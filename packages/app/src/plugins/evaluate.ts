@@ -18,6 +18,7 @@ import {
   useAgent,
   useWorkspace,
   useRpc,
+  useEvent,
 } from "@getpaseo/plugin";
 import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
@@ -168,6 +169,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         useAgent,
         useWorkspace,
         useRpc,
+        useEvent,
       };
     }
     if (name === "@getpaseo/plugin/server") {

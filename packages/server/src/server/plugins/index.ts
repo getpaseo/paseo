@@ -19,6 +19,9 @@ interface PluginRuntimePort {
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
+  subscribeToEvents(
+    listener: (pluginId: string, eventName: string, data: unknown) => void,
+  ): () => void;
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
 }
 
@@ -47,6 +50,13 @@ export class PluginService {
   subscribe(listener: (pluginId: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Passthrough — unlike subscribe() above, events carry no error/status bookkeeping. */
+  subscribeToEvents(
+    listener: (pluginId: string, eventName: string, data: unknown) => void,
+  ): () => void {
+    return this.runtime.subscribeToEvents(listener);
   }
 
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {

@@ -298,6 +298,7 @@ export type DaemonEvent =
       type: "providers_snapshot_update";
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
+  | { type: "plugin_event"; pluginId: string; eventName: string; data: unknown }
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
@@ -6128,6 +6129,13 @@ export class DaemonClient {
         return {
           type: "providers_snapshot_update",
           payload: msg.payload,
+        };
+      case "plugin.event":
+        return {
+          type: "plugin_event",
+          pluginId: msg.payload.pluginId,
+          eventName: msg.payload.eventName,
+          data: msg.payload.data,
         };
       default:
         return null;

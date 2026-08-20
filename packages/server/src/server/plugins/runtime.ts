@@ -203,6 +203,9 @@ export class PluginRuntime {
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
+  private readonly eventListeners = new Set<
+    (pluginId: string, eventName: string, data: unknown) => void
+  >();
 
   constructor(logger: pino.Logger, dependencies: PluginRuntimeDependencies = {}) {
     this.logger = logger.child({ module: "plugins" });
@@ -219,6 +222,14 @@ export class PluginRuntime {
   subscribe(listener: (pluginId: string, error?: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Fires for every context.emit(eventName, data) a running plugin's backend calls. */
+  subscribeToEvents(
+    listener: (pluginId: string, eventName: string, data: unknown) => void,
+  ): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   async startPlugin(
@@ -387,6 +398,11 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type === "plugin_event") {
+      for (const listener of this.eventListeners)
+        listener(loaded.id, message.eventName, message.data);
+      return;
+    }
     if (message.type !== "result" && message.type !== "error") return;
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;

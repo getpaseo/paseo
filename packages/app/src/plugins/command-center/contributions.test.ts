@@ -128,6 +128,7 @@ function createRuntime(pluginId: string) {
       expect(method).toBe("review.inspect");
       return { value: inspect.input.parse(input).value + 1 };
     },
+    on: () => () => {},
   };
 }
 
