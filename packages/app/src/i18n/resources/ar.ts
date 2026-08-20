@@ -989,8 +989,6 @@ export const ar: TranslationResources = {
     },
     filter: {
       clear: "مسح عامل التصفية",
-      noMatchesTitle: "لا توجد مساحات عمل مطابقة",
-      noMatchesDescription: "غيّر عامل تصفية التسميات أو امسحه لعرض مساحات العمل.",
     },
     manage: {
       open: "إدارة التسميات…",
@@ -1046,6 +1044,15 @@ export const ar: TranslationResources = {
         label: "المضيف",
         all: "كل المضيفين",
       },
+      projectFilter: {
+        label: "المشروع",
+        all: "كل المشاريع",
+      },
+    },
+    filterEmpty: {
+      title: "لا توجد مساحات عمل مطابقة",
+      description: "غيّر عوامل تصفية الشريط الجانبي أو امسحها لعرض مساحات العمل.",
+      clear: "مسح عوامل التصفية",
     },
     pinned: {
       title: "المثبتة",

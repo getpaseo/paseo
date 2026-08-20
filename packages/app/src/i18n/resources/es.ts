@@ -1023,8 +1023,6 @@ export const es: TranslationResources = {
     },
     filter: {
       clear: "Borrar filtro",
-      noMatchesTitle: "Ningún espacio de trabajo coincide",
-      noMatchesDescription: "Cambia o borra el filtro de etiquetas para ver espacios de trabajo.",
     },
     manage: {
       open: "Gestionar etiquetas…",
@@ -1080,6 +1078,15 @@ export const es: TranslationResources = {
         label: "Host",
         all: "Todos los hosts",
       },
+      projectFilter: {
+        label: "Proyecto",
+        all: "Todos los proyectos",
+      },
+    },
+    filterEmpty: {
+      title: "Ningún espacio de trabajo coincide",
+      description: "Cambia o borra los filtros de la barra lateral para ver espacios de trabajo.",
+      clear: "Borrar filtros",
     },
     pinned: {
       title: "Anclados",

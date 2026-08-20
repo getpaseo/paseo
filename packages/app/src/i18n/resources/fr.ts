@@ -1022,9 +1022,6 @@ export const fr: TranslationResources = {
     },
     filter: {
       clear: "Effacer le filtre",
-      noMatchesTitle: "Aucun espace de travail ne correspond",
-      noMatchesDescription:
-        "Modifiez ou effacez le filtre d’étiquettes pour afficher les espaces de travail.",
     },
     manage: {
       open: "Gérer les étiquettes…",
@@ -1080,6 +1077,16 @@ export const fr: TranslationResources = {
         label: "Hôte",
         all: "Tous les hôtes",
       },
+      projectFilter: {
+        label: "Projet",
+        all: "Tous les projets",
+      },
+    },
+    filterEmpty: {
+      title: "Aucun espace de travail ne correspond",
+      description:
+        "Modifiez ou effacez les filtres de la barre latérale pour afficher les espaces de travail.",
+      clear: "Effacer les filtres",
     },
     pinned: {
       title: "Épinglés",

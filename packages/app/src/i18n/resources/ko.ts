@@ -996,8 +996,6 @@ export const ko: TranslationResources = {
     },
     filter: {
       clear: "필터 지우기",
-      noMatchesTitle: "일치하는 워크스페이스가 없습니다",
-      noMatchesDescription: "워크스페이스를 보려면 레이블 필터를 변경하거나 지우세요.",
     },
     manage: {
       open: "레이블 관리…",
@@ -1053,6 +1051,15 @@ export const ko: TranslationResources = {
         label: "호스트",
         all: "모든 호스트",
       },
+      projectFilter: {
+        label: "프로젝트",
+        all: "모든 프로젝트",
+      },
+    },
+    filterEmpty: {
+      title: "일치하는 워크스페이스가 없습니다",
+      description: "워크스페이스를 보려면 사이드바 필터를 변경하거나 지우세요.",
+      clear: "필터 지우기",
     },
     pinned: {
       title: "고정됨",

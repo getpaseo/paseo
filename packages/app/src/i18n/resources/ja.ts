@@ -1000,9 +1000,6 @@ export const ja: TranslationResources = {
     },
     filter: {
       clear: "フィルターをクリア",
-      noMatchesTitle: "一致するワークスペースがありません",
-      noMatchesDescription:
-        "ワークスペースを表示するにはラベルフィルターを変更またはクリアしてください。",
     },
     manage: {
       open: "ラベルを管理…",
@@ -1058,6 +1055,16 @@ export const ja: TranslationResources = {
         label: "ホスト",
         all: "すべてのホスト",
       },
+      projectFilter: {
+        label: "プロジェクト",
+        all: "すべてのプロジェクト",
+      },
+    },
+    filterEmpty: {
+      title: "一致するワークスペースがありません",
+      description:
+        "ワークスペースを表示するにはサイドバーのフィルターを変更またはクリアしてください。",
+      clear: "フィルターをクリア",
     },
     pinned: {
       title: "固定済み",

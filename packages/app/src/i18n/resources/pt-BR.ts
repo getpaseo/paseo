@@ -1014,8 +1014,6 @@ export const ptBR: TranslationResources = {
     },
     filter: {
       clear: "Limpar filtro",
-      noMatchesTitle: "Nenhum espaço de trabalho corresponde",
-      noMatchesDescription: "Altere ou limpe o filtro de etiquetas para ver espaços de trabalho.",
     },
     manage: {
       open: "Gerenciar etiquetas…",
@@ -1071,6 +1069,15 @@ export const ptBR: TranslationResources = {
         label: "Host",
         all: "Todos os hosts",
       },
+      projectFilter: {
+        label: "Projeto",
+        all: "Todos os projetos",
+      },
+    },
+    filterEmpty: {
+      title: "Nenhum espaço de trabalho corresponde",
+      description: "Altere ou limpe os filtros da barra lateral para ver espaços de trabalho.",
+      clear: "Limpar filtros",
     },
     pinned: {
       title: "Fixados",
