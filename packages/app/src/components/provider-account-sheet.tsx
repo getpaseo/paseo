@@ -162,7 +162,6 @@ function OpenProviderAccountSheet({
           testID="provider-account-label-input"
           accessibilityLabel={t("settings.providers.account.fields.label")}
           initialValue={state.label}
-          value={state.label}
           onChangeText={model.setLabel}
           placeholder={t("settings.providers.account.placeholders.label", {
             provider: baseProviderLabel,
@@ -186,7 +185,6 @@ function OpenProviderAccountSheet({
           // input has to remount whenever the derived value changes.
           initialValue={state.providerId}
           resetKey={state.providerIdEdited ? "manual" : `derived:${state.providerId}`}
-          value={state.providerId}
           onChangeText={model.setProviderId}
           placeholder={t("settings.providers.account.placeholders.providerId")}
           autoCapitalize="none"
@@ -209,7 +207,6 @@ function OpenProviderAccountSheet({
           testID="provider-account-description-input"
           accessibilityLabel={t("settings.providers.account.fields.description")}
           initialValue={state.description}
-          value={state.description}
           onChangeText={model.setDescription}
           placeholder={t("settings.providers.account.placeholders.description")}
           autoCorrect={false}
@@ -320,7 +317,6 @@ function EnvVarRow({
             testID={`provider-account-env-key-${index}`}
             accessibilityLabel={t("settings.providers.account.fields.envKey")}
             initialValue={row.key}
-            value={row.key}
             onChangeText={handleKeyChange}
             placeholder={t("settings.providers.account.placeholders.envKey")}
             autoCapitalize="characters"
@@ -334,7 +330,6 @@ function EnvVarRow({
             testID={`provider-account-env-value-${index}`}
             accessibilityLabel={t("settings.providers.account.fields.envValue")}
             initialValue={row.value}
-            value={row.value}
             onChangeText={handleValueChange}
             placeholder={t("settings.providers.account.placeholders.envValue")}
             autoCapitalize="none"

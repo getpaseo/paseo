@@ -123,6 +123,9 @@ function createWebSocketServer(params: {
     undefined,
     undefined,
     undefined,
+    undefined,
+    undefined,
+    undefined,
     params.providerUsageService,
   );
 }
