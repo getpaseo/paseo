@@ -22,6 +22,22 @@ const visibleHistoryStart: HistoryStartPaginationInput = {
 };
 
 describe("history start pagination", () => {
+  it("treats locally revealed history as progress before remote pagination", () => {
+    const first = evaluateHistoryStartPagination(
+      createArmedHistoryStartPaginationState(),
+      visibleHistoryStart,
+    );
+    const localReveal = evaluateHistoryStartPagination(first.state, {
+      ...visibleHistoryStart,
+      progressKey: "epoch-1:20:local-60",
+    });
+
+    expect(first.shouldLoad).toBe(true);
+    expect(localReveal.state).toEqual({
+      status: "settling",
+      loadedProgressKey: "epoch-1:20:local-60",
+    });
+  });
   it("waits for user scroll intent before loading", () => {
     const dormant = createHistoryStartPaginationState();
     const evaluated = evaluateHistoryStartPagination(dormant, visibleHistoryStart);

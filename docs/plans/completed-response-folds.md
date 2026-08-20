@@ -34,7 +34,8 @@ foldable rows from the render model, attaches the disclosure before the terminal
 and leaves the canonical arrays untouched. A streamed Markdown message can span several timeline
 items with one `blockGroupId`; all of those items remain visible, and the first item ID is the stable
 expansion key and list anchor. Pagination, virtualization, and native inverted-list behavior keep
-using real item identities.
+using real item identities. The fold projection runs before the mounted-history window so its
+boundary indexes the same display rows passed into layout and virtualization.
 
 ## Validation
 
