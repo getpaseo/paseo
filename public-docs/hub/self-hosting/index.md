@@ -20,9 +20,9 @@ Follow the [quickstart](/docs/hub/quickstart) to connect Slack over Socket Mode 
 
 ## Local data
 
-Without `DATABASE_URL`, Hub stores an embedded PGlite database and its generated authentication secret under `.dev/paseo-hub` in the directory where you started it. Both survive restarts.
+Without `DATABASE_URL`, Hub stores an embedded PGlite database and its generated authentication secret under `$XDG_DATA_HOME/paseo-hub`. If `XDG_DATA_HOME` is not set to an absolute path, Hub uses `~/.local/share/paseo-hub`. Both survive restarts.
 
-Set a different location when you do not want Hub state beside the current project:
+Set a different location explicitly with:
 
 ```sh
 PASEO_HUB_DATA_DIR=/path/to/paseo-hub-data npx @getpaseo/hub

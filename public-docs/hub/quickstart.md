@@ -112,4 +112,4 @@ Mention the bot in the channel:
 
 Hub starts the agent on your daemon and posts its reply in the Slack thread. Open the project's **Activity** tab if nothing runs.
 
-Hub keeps its local state under `.dev/paseo-hub` in the directory where you started it. [Self-hosting](/docs/hub/self-hosting) covers another data directory, PostgreSQL, public URLs, Docker, and cloud deployment.
+Hub keeps its local state in your user data directory (normally `~/.local/share/paseo-hub`). [Self-hosting](/docs/hub/self-hosting) covers another data directory, PostgreSQL, public URLs, Docker, and cloud deployment.
