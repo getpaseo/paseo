@@ -1,9 +1,15 @@
-import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
+import type { CheckoutDiffSubmodule, ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { InlineReviewActions } from "@/review";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
+  submodules?: CheckoutDiffSubmodule[];
+  submoduleDiffMode?: "uncommitted" | "base";
+  submoduleCollapseState?: {
+    paths: readonly string[];
+    onChange: (paths: string[]) => void;
+  };
   displayPreferences: {
     layout: "unified" | "split";
     wrapLines: boolean;
@@ -141,8 +147,25 @@ export interface DiffFileSection {
   isCollapsed: boolean;
 }
 
+export interface DiffSubmoduleSection {
+  submodule: CheckoutDiffSubmodule;
+  path: string;
+  top: number;
+  headerHeight: number;
+  statusTop: number;
+  statusHeight: number;
+  bottom: number;
+  isCollapsed: boolean;
+}
+
+export type DiffDocumentSection =
+  | { kind: "file"; file: DiffFileSection }
+  | { kind: "submodule"; submodule: DiffSubmoduleSection };
+
 export interface DiffDocumentModel {
   files: DiffFileSection[];
+  submodules: DiffSubmoduleSection[];
+  sections: DiffDocumentSection[];
   rows: DiffRow[];
   height: number;
   lineHeight: number;
@@ -158,7 +181,9 @@ export interface TextMeasurer {
 
 export interface BuildDiffDocumentModelInput {
   files: readonly ParsedDiffFile[];
+  submodules?: readonly CheckoutDiffSubmodule[];
   collapsedFilePaths: ReadonlySet<string>;
+  collapsedSubmodulePaths?: ReadonlySet<string>;
   layout: "unified" | "split";
   wrapLines: boolean;
   viewportWidth: number;
@@ -206,7 +231,9 @@ export type DiffScrollAnchor =
 export type DiffSurfaceProps = DiffDocumentProps & {
   palette: DiffPalette;
   collapsedFilePaths: ReadonlySet<string>;
+  collapsedSubmodulePaths: ReadonlySet<string>;
   onToggleFile: (path: string) => void;
+  onToggleSubmodule: (path: string) => void;
   selectedPath: string | null;
   onSelectPath: (path: string) => void;
 };

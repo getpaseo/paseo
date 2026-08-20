@@ -69,6 +69,7 @@ export function useWorkingDiff({
 
   const {
     files,
+    submodules,
     payloadError: diffPayloadError,
     diffTooLarge,
     isLoading: isDiffLoading,
@@ -114,6 +115,7 @@ export function useWorkingDiff({
     selectUncommitted,
     selectBase,
     files,
+    submodules,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,

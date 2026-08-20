@@ -213,6 +213,15 @@ describe("server data push router", () => {
         subscriptionId,
         cwd,
         files: [],
+        submodules: [
+          {
+            path: "modules/api",
+            branch: "main",
+            currentSha: "1234567",
+            checkoutState: "checked_out",
+            changeState: "modified",
+          },
+        ],
         error: null,
         diffTooLarge: true,
         requestId: "diff-1",
@@ -222,6 +231,15 @@ describe("server data push router", () => {
     expect(queryClient.getQueryData(queryKey)).toEqual({
       cwd,
       files: [],
+      submodules: [
+        {
+          path: "modules/api",
+          branch: "main",
+          currentSha: "1234567",
+          checkoutState: "checked_out",
+          changeState: "modified",
+        },
+      ],
       error: null,
       diffTooLarge: true,
       requestId: "diff-1",
@@ -229,12 +247,36 @@ describe("server data push router", () => {
 
     fake.emit({
       type: "checkout_diff_update",
-      payload: { subscriptionId, cwd, files: [], error: null, diffTooLarge: true },
+      payload: {
+        subscriptionId,
+        cwd,
+        files: [],
+        submodules: [
+          {
+            path: "modules/api",
+            branch: null,
+            currentSha: "7654321",
+            checkoutState: "checked_out",
+            changeState: "head_differs",
+          },
+        ],
+        error: null,
+        diffTooLarge: true,
+      },
     });
 
     expect(queryClient.getQueryData(queryKey)).toEqual({
       cwd,
       files: [],
+      submodules: [
+        {
+          path: "modules/api",
+          branch: null,
+          currentSha: "7654321",
+          checkoutState: "checked_out",
+          changeState: "head_differs",
+        },
+      ],
       error: null,
       diffTooLarge: true,
       requestId: `subscription:${subscriptionId}`,

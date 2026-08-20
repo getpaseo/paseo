@@ -28,6 +28,8 @@ function modelWithBodies(
       rowEnd: 0,
       isCollapsed: body.bottom === body.bodyTop,
     })),
+    submodules: [],
+    sections: [],
     rows: [],
     height: bodies.at(-1)?.bottom ?? 0,
     lineHeight: 20,

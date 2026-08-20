@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
 import pLimit from "p-limit";
@@ -360,6 +360,7 @@ interface WorkspaceGitServiceDependencies {
   runGitCommand: typeof runGitCommand;
   getWorkspaceGitSelfHealPhaseMs: typeof getWorkspaceGitObservationReensurePhaseMs;
   createWatcherLivenessCanary: typeof createWatcherLivenessCanary;
+  discoverSubmoduleGitMetadataPrunedPaths: typeof discoverSubmoduleGitMetadataPrunedPaths;
   now: () => Date;
 }
 
@@ -429,6 +430,9 @@ interface RepoGitTarget {
     { change: WorkspaceGitRemoteRefChange; expiresAtMs: number }
   >;
   knownRemoteRefs: Set<string> | null;
+  metadataIgnoredPaths: Set<string>;
+  metadataIgnoreUpdatePromise: Promise<void> | null;
+  metadataIgnoreRefreshRequested: boolean;
   closed: boolean;
 }
 
@@ -463,6 +467,63 @@ interface WatchRecoveryState {
 
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+const PRUNED_SUBMODULE_GIT_DIR_NAMES = ["hooks", "logs", "objects"] as const;
+
+export async function discoverSubmoduleGitMetadataPrunedPaths(
+  repoGitRoot: string,
+): Promise<string[]> {
+  const prunedPaths = new Set<string>();
+
+  const visit = async (directory: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR")
+      ) {
+        return;
+      }
+      throw error;
+    }
+
+    const isGitDir = entries.some(
+      (entry) =>
+        !entry.isDirectory() &&
+        (entry.name === "config" || entry.name === "HEAD" || entry.name === "commondir"),
+    );
+    if (isGitDir) {
+      for (const name of PRUNED_SUBMODULE_GIT_DIR_NAMES) {
+        prunedPaths.add(join(directory, name));
+      }
+      await visit(join(directory, "modules"));
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await visit(join(directory, entry.name));
+      }
+    }
+  };
+
+  await visit(join(repoGitRoot, "modules"));
+  return [...prunedPaths].sort();
+}
+
+function hasSubmoduleMetadataTopologyChange(repoGitRoot: string, events: FileChange[]): boolean {
+  return events.some((event) => {
+    if (event.type === "update") return false;
+    const relativePath = getRealpathAwareRelativePath(repoGitRoot, event.path)?.replaceAll(
+      "\\",
+      "/",
+    );
+    return relativePath?.startsWith("modules/") === true;
+  });
 }
 
 type WorkingTreeWatchFallbackReason =
@@ -506,6 +567,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     runGitCommand,
     getWorkspaceGitSelfHealPhaseMs: getWorkspaceGitObservationReensurePhaseMs,
     createWatcherLivenessCanary,
+    discoverSubmoduleGitMetadataPrunedPaths,
     now: () => new Date(),
   };
 }
@@ -1791,6 +1853,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
       knownRemoteRefs: null,
+      metadataIgnoredPaths: new Set(),
+      metadataIgnoreUpdatePromise: null,
+      metadataIgnoreRefreshRequested: false,
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
@@ -1830,9 +1895,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: RepoGitTarget,
     options?: { replaceFallback?: boolean },
   ): Promise<boolean> {
-    const ignore = getPrunedGitMetadataPaths("common").map((path) =>
-      join(target.repoGitRoot, path),
-    );
     const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
     const canary = this.deps.createWatcherLivenessCanary(target.repoGitRoot);
     let openedSubscription: FileObserverSubscription | null = null;
@@ -1845,6 +1907,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
     };
     try {
+      const discoveredSubmoduleIgnores = await this.deps.discoverSubmoduleGitMetadataPrunedPaths(
+        target.repoGitRoot,
+      );
+      if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
+        return false;
+      }
+      const ignore = [
+        ...getPrunedGitMetadataPaths("common").map((path) => join(target.repoGitRoot, path)),
+        ...discoveredSubmoduleIgnores,
+      ];
+      target.metadataIgnoredPaths = new Set(ignore);
       const subscription = await this.subscribeWithDeadline(
         target.repoGitRoot,
         (error, events) => {
@@ -1874,7 +1947,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           const relevantEvents = liveEvents.filter(
             (event) =>
               !matchesRepoGitRoot(event.path) &&
-              ignore.every((ignoredPath) => !isRealpathInsideRoot(ignoredPath, event.path)),
+              [...target.metadataIgnoredPaths].every(
+                (ignoredPath) => !isRealpathInsideRoot(ignoredPath, event.path),
+              ),
           );
           if (relevantEvents.length > 0) {
             const immediateEvents = target.fetchInFlight
@@ -1897,6 +1972,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
               );
             }
           }
+          if (hasSubmoduleMetadataTopologyChange(target.repoGitRoot, events)) {
+            this.scheduleRepoMetadataIgnoreRefresh(target);
+          }
         },
         { ignore },
         markSubscribeSettled,
@@ -1916,6 +1994,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         return false;
       }
       target.subscription = subscription;
+      if (target.metadataIgnoreRefreshRequested) {
+        this.scheduleRepoMetadataIgnoreRefresh(target);
+      }
       if (options?.replaceFallback) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -1940,6 +2021,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       );
       if (!options?.replaceFallback) {
         this.startRepoMetadataFallback(target);
+        this.scheduleRepoMetadataWatchRecovery(target);
       }
       return false;
     }
@@ -1953,6 +2035,62 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.scheduleRepoMetadataRefresh(target, "git-metadata-watch-error", true);
     this.startRepoMetadataFallback(target);
+  }
+
+  private scheduleRepoMetadataIgnoreRefresh(target: RepoGitTarget): void {
+    target.metadataIgnoreRefreshRequested = true;
+    if (target.closed || !target.subscription || target.metadataIgnoreUpdatePromise) {
+      return;
+    }
+
+    const subscription = target.subscription;
+    const updatePromise = (async () => {
+      while (target.metadataIgnoreRefreshRequested && !target.closed) {
+        target.metadataIgnoreRefreshRequested = false;
+        const discoveredSubmoduleIgnores = await this.deps.discoverSubmoduleGitMetadataPrunedPaths(
+          target.repoGitRoot,
+        );
+        if (target.closed || target.subscription !== subscription) {
+          return;
+        }
+        const nextIgnoredPaths = new Set([
+          ...getPrunedGitMetadataPaths("common").map((path) => join(target.repoGitRoot, path)),
+          ...discoveredSubmoduleIgnores,
+        ]);
+        if (setsEqual(target.metadataIgnoredPaths, nextIgnoredPaths)) {
+          continue;
+        }
+        await subscription.updateIgnore([...nextIgnoredPaths]);
+        if (target.closed || target.subscription !== subscription) {
+          return;
+        }
+        target.metadataIgnoredPaths = nextIgnoredPaths;
+      }
+    })()
+      .catch((error) => {
+        if (target.closed || target.subscription !== subscription) {
+          return;
+        }
+        this.logger.warn(
+          { err: error, repoGitRoot: target.repoGitRoot },
+          "Failed to update repository metadata watcher ignore paths; using degraded polling",
+        );
+        this.degradeRepoMetadataWatch(target);
+        this.scheduleRepoMetadataWatchRecovery(target);
+      })
+      .finally(() => {
+        if (target.metadataIgnoreUpdatePromise === updatePromise) {
+          target.metadataIgnoreUpdatePromise = null;
+        }
+        // A topology event that arrived after the while-loop read
+        // `metadataIgnoreRefreshRequested === false` but before this `.finally`
+        // nulled the promise would set the flag and return early with no running
+        // loop. Re-drive so a pending request always runs.
+        if (target.metadataIgnoreRefreshRequested && !target.closed && target.subscription) {
+          this.scheduleRepoMetadataIgnoreRefresh(target);
+        }
+      });
+    target.metadataIgnoreUpdatePromise = updatePromise;
   }
 
   private scheduleRepoMetadataWatchRecovery(target: RepoGitTarget): void {

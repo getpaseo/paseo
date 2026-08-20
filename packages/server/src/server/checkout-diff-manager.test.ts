@@ -262,6 +262,42 @@ describe("CheckoutDiffManager", () => {
     );
   });
 
+  test("includes path-sorted submodule metadata in the snapshot", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: "",
+      structured: [],
+      submodules: [
+        {
+          path: "modules/zeta",
+          branch: "main",
+          currentSha: "2222222",
+          headPinnedSha: "2222222",
+          checkoutState: "initialized",
+          changeState: "dirty",
+        },
+        {
+          path: "modules/alpha",
+          branch: null,
+          currentSha: "1111111",
+          headPinnedSha: "0000000",
+          checkoutState: "initialized",
+          changeState: "head_changed",
+        },
+      ],
+    }));
+    const { manager } = createManager({ getCheckoutDiffImplementation: getCheckoutDiff });
+
+    const subscription = await manager.subscribe(
+      { cwd: "/tmp/repo", compare: { mode: "uncommitted" } },
+      vi.fn(),
+    );
+
+    expect(subscription.initial.submodules?.map((submodule) => submodule.path)).toEqual([
+      "modules/alpha",
+      "modules/zeta",
+    ]);
+  });
+
   test("diff refresh is triggered when the working tree watch callback fires", async () => {
     const getCheckoutDiff = vi
       .fn()
@@ -342,6 +378,22 @@ describe("CheckoutDiffManager", () => {
       force: true,
       reason: expect.stringContaining("working-tree"),
     });
+  });
+
+  test("uncommitted subscriptions refresh after ref-only metadata changes", async () => {
+    const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
+    const { manager, getOnWorkspaceSnapshot, workspaceGitService } = createManager({
+      getCheckoutDiffImplementation: getCheckoutDiff,
+    });
+
+    await manager.subscribe({ cwd: "/tmp/repo", compare: { mode: "uncommitted" } }, vi.fn());
+
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledTimes(1);
+    getOnWorkspaceSnapshot()?.(createWorkspaceSnapshot());
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+    expect(getCheckoutDiff.mock.calls[1]?.[2]).toBeUndefined();
   });
 
   test("an edit during an in-flight diff refresh produces one final follow-up", async () => {

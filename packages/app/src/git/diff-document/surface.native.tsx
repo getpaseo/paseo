@@ -20,6 +20,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { InlineReviewThread } from "@/review";
+import { DiffSubmoduleHeader, DiffSubmoduleStatus } from "@/git/diff-submodule-row";
 import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
@@ -42,7 +43,6 @@ import {
   nativeCanvasSlabsForViewport,
   nativeCanvasWindowBucket,
   nativeCanvasWindowTop,
-  nativeStickyHeaderIndices,
   type NativeCanvasSlab,
 } from "./native-slabs";
 import { createNativePaints, recordNativeSlabPictures, type NativePaints } from "./paint.native";
@@ -99,6 +99,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const model = useMemo(() => {
     const dependencies = [
       props.files,
+      props.submodules,
       props.displayPreferences.layout,
       props.displayPreferences.wrapLines,
       viewport.width,
@@ -114,7 +115,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
     const reuseFrom = canReuse ? previous?.models : undefined;
     const next = buildDiffDocumentModel({
       files: viewport.width > 0 ? props.files : [],
+      submodules: viewport.width > 0 ? props.submodules : [],
       collapsedFilePaths: props.collapsedFilePaths,
+      collapsedSubmodulePaths: props.collapsedSubmodulePaths,
       layout: props.displayPreferences.layout,
       wrapLines: props.displayPreferences.wrapLines,
       viewportWidth: viewport.width,
@@ -139,6 +142,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
     props.displayPreferences.layout,
     props.displayPreferences.wrapLines,
     props.files,
+    props.submodules,
+    props.collapsedSubmodulePaths,
     props.palette,
     reviewActions,
     t,
@@ -209,10 +214,19 @@ export function DiffSurface(props: DiffSurfaceProps) {
     () => ({ minHeight: viewport.height, backgroundColor: "transparent" }),
     [viewport.height],
   );
-  const stickyHeaderIndices = useMemo(
-    () => nativeStickyHeaderIndices(model.files.length),
-    [model.files.length],
-  );
+  const stickyHeaderIndices = useMemo(() => {
+    const indices: number[] = [];
+    let childIndex = 1;
+    for (const section of model.sections) {
+      if (section.kind === "file") {
+        indices.push(childIndex);
+        childIndex += 2;
+      } else {
+        childIndex += section.submodule.statusHeight > 0 ? 2 : 1;
+      }
+    }
+    return indices;
+  }, [model.sections]);
   return (
     <View style={[styles.root, { backgroundColor: props.palette.surface }]} onLayout={layout}>
       <AnimatedScrollView
@@ -233,23 +247,46 @@ export function DiffSurface(props: DiffSurfaceProps) {
           paints={paints}
           horizontalOffsets={horizontalOffsets}
         />
-        {model.files.flatMap((file) => [
-          <NativeStickyFileHeader
-            key={`${file.path}:header`}
-            file={file}
-            selectedPath={props.selectedPath}
-            mode={props.mode}
-            onToggleFile={props.onToggleFile}
-            onSelectPath={props.onSelectPath}
-          />,
-          <NativeFileBody
-            key={`${file.path}:body`}
-            file={file}
-            model={model}
-            mode={props.mode}
-            horizontalOffsets={horizontalOffsets}
-          />,
-        ])}
+        {model.sections.flatMap((section) =>
+          section.kind === "file"
+            ? [
+                <NativeStickyFileHeader
+                  key={`${section.file.path}:header`}
+                  file={section.file}
+                  selectedPath={props.selectedPath}
+                  mode={props.mode}
+                  onToggleFile={props.onToggleFile}
+                  onSelectPath={props.onSelectPath}
+                />,
+                <NativeFileBody
+                  key={`${section.file.path}:body`}
+                  file={section.file}
+                  model={model}
+                  mode={props.mode}
+                  horizontalOffsets={horizontalOffsets}
+                />,
+              ]
+            : [
+                <DiffSubmoduleHeader
+                  key={`${section.submodule.path}:header`}
+                  submodule={section.submodule.submodule}
+                  bodyVisible={!section.submodule.isCollapsed}
+                  onToggle={props.onToggleSubmodule}
+                  testID={`diff-submodule-${section.submodule.path}`}
+                />,
+                ...(section.submodule.statusHeight > 0
+                  ? [
+                      <DiffSubmoduleStatus
+                        key={`${section.submodule.path}:status`}
+                        submodule={section.submodule.submodule}
+                        depth={1}
+                        diffMode={props.submoduleDiffMode ?? "uncommitted"}
+                        testID={`diff-submodule-${section.submodule.path}-status`}
+                      />,
+                    ]
+                  : []),
+              ],
+        )}
         <NativeReviewOverlays model={model} mode={props.mode} />
         <Animated.View pointerEvents="none" style={keyboardSpacerStyle} />
       </AnimatedScrollView>

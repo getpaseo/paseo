@@ -150,6 +150,10 @@ export function classifyGitMetadataPath(
   inputPath: string,
 ): GitMetadataEffect {
   const path = inputPath.replaceAll("\\", "/");
+  const submoduleEffect = classifySubmoduleMetadataPath(scope, path);
+  if (submoduleEffect) {
+    return submoduleEffect;
+  }
   const rule = GIT_METADATA_EVENT_RULES.find(
     (candidate) =>
       (candidate.scope === "both" || candidate.scope === scope) &&
@@ -164,6 +168,27 @@ export function classifyGitMetadataPath(
     namespace: rule.route === "local-ref" ? "local" : "remote",
     ref: path.slice(rule.path.length),
   };
+}
+
+function classifySubmoduleMetadataPath(
+  scope: GitMetadataScope,
+  path: string,
+): GitMetadataEffect | null {
+  if (scope !== "common" || !path.startsWith("modules/")) {
+    return null;
+  }
+  if (path.endsWith(".lock") || path.includes("/logs/") || path.includes("/objects/")) {
+    return { kind: "ignore" };
+  }
+  if (path.endsWith("/index")) {
+    return { kind: "all", refreshBase: false };
+  }
+  const refDependentMetadata =
+    path.endsWith("/HEAD") ||
+    path.endsWith("/packed-refs") ||
+    path.includes("/refs/heads/") ||
+    path.includes("/reftable/");
+  return refDependentMetadata ? { kind: "all", refreshBase: true } : { kind: "ignore" };
 }
 
 function matchesGitMetadataPath(

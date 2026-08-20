@@ -886,6 +886,65 @@ test("canvas diff stays sharp while its workspace pane is resized", async ({ pag
     .toBe(true);
 });
 
+test("changes pane shows submodule files and committed pointer state", async ({
+  page,
+}, testInfo) => {
+  const workspace = await createWorkspaceWithSubmoduleDiff();
+  await useUnwrappedDiffLines(page);
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await page.getByRole("button", { name: "Open explorer" }).click();
+
+  const submoduleHeader = page.getByTestId("diff-submodule-modules/demo");
+  await expect(submoduleHeader).toBeVisible({ timeout: 30_000 });
+  await expect(submoduleHeader).toContainText("modules/demo");
+  await expect(submoduleHeader).toContainText("main");
+  await expect(submoduleHeader).toHaveAttribute("role", "heading");
+
+  const childFile = page.getByText("widget.ts", { exact: true });
+  await expect(childFile).toBeVisible();
+  const childRow = page
+    .getByTestId(/^diff-file-\d+$/)
+    .filter({ hasText: "widget.ts" })
+    .first();
+  await expect(childRow).toContainText("modules/demo/src");
+  await expect(page.getByTestId("diff-submodule-modules/demo-status")).toHaveCount(0);
+
+  const uncommittedHeaderBounds = await submoduleHeader.boundingBox();
+  const uncommittedChildBounds = await childRow.boundingBox();
+  expect(uncommittedHeaderBounds).not.toBeNull();
+  expect(uncommittedChildBounds).not.toBeNull();
+  expect(uncommittedChildBounds!.y).toBeGreaterThan(uncommittedHeaderBounds!.y);
+
+  const submoduleToggle = submoduleHeader.getByRole("button");
+  await expect(submoduleToggle).toHaveAttribute("aria-expanded", "true");
+  await submoduleToggle.click();
+  await expect(submoduleToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(childRow).toHaveCount(0);
+  await expect(page.getByTestId("diff-submodule-modules/demo-status")).toHaveCount(0);
+
+  await submoduleToggle.click();
+  await expect(submoduleToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("widget.ts", { exact: true })).toBeVisible();
+
+  await page.getByTestId("changes-diff-status-trigger").click();
+  await page.getByTestId("changes-diff-mode-committed").click();
+  await expect(page.getByTestId("changes-diff-status-trigger")).toContainText("Committed");
+  await expect(page.getByTestId("diff-submodule-modules/demo-status")).toContainText(
+    "Submodule was added",
+  );
+  await expect(page.getByText("widget.ts", { exact: true })).toBeVisible();
+
+  const screenshotPath = testInfo.outputPath("changes-submodule-committed.png");
+  await page.screenshot({ path: screenshotPath });
+  await testInfo.attach("Changes submodule committed state", {
+    path: screenshotPath,
+    contentType: "image/png",
+  });
+});
+
 test("changes diff applies code size changes to gutter and code typography", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useCodeFont(page, 12);
@@ -1380,6 +1439,51 @@ async function createWorkspaceWithExactSelectionDiff(content: string): Promise<D
   const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
   if (!created.workspace) throw new Error(created.error ?? "Failed to create selection workspace");
   return { id: created.workspace.id, repoPath: repo.path };
+}
+
+async function createWorkspaceWithSubmoduleDiff(): Promise<DirtyWorkspace> {
+  const submodule = await createTempGitRepo("changes-submodule-source-", {
+    files: [{ path: "src/widget.ts", content: "export const widget = 1;\n" }],
+  });
+  const repository = await createTempGitRepo("changes-submodule-parent-");
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close().catch(() => undefined);
+      await repository.cleanup().catch(() => undefined);
+      await submodule.cleanup().catch(() => undefined);
+    },
+  });
+
+  execFileSync("git", ["checkout", "-b", "feature/submodule"], { cwd: repository.path });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      "-b",
+      "main",
+      submodule.path,
+      "modules/demo",
+    ],
+    { cwd: repository.path },
+  );
+  execFileSync("git", ["add", ".gitmodules", "modules/demo"], { cwd: repository.path });
+  execFileSync("git", ["commit", "-m", "Add demo submodule"], { cwd: repository.path });
+  await writeFile(
+    path.join(repository.path, "modules/demo/src/widget.ts"),
+    "export const widget = 2;\n",
+  );
+
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repository.path },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repository.path}`);
+  }
+  return { id: createdWorkspace.workspace.id, repoPath: repository.path };
 }
 
 async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {

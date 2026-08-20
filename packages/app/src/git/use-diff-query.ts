@@ -3,8 +3,13 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import type {
+  CheckoutDiffSubmodule,
+  ParsedDiffFile,
+  SubscribeCheckoutDiffResponse,
+} from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
+import { useHostFeature } from "@/runtime/host-features";
 
 interface UseCheckoutDiffQueryOptions {
   serverId: string;
@@ -19,7 +24,7 @@ interface UseCheckoutDiffQueryOptions {
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
 
 // Re-export the canonical protocol type so all consumers share one definition.
-export type { ParsedDiffFile };
+export type { CheckoutDiffSubmodule, ParsedDiffFile };
 export type DiffHunk = ParsedDiffFile["hunks"][number];
 export type DiffLine = DiffHunk["lines"][number];
 export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
@@ -71,6 +76,7 @@ export function useCheckoutDiffQuery({
   }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
   const routeEnabled = Boolean(queryEnabled && isConnected && cwd);
+  const supportsDiffSubmodules = useHostFeature(serverId, "diffSubmodules");
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -94,6 +100,8 @@ export function useCheckoutDiffQuery({
 
   return {
     files: payload?.files ?? [],
+    // COMPAT(diffSubmodules): added in v0.5.0, remove after 2027-08-19 once daemon floor >= v0.5.0.
+    submodules: supportsDiffSubmodules ? (payload?.submodules ?? []) : [],
     payloadError,
     diffTooLarge: payload?.diffTooLarge === true,
     isLoading: payload === null && queryEnabled && isConnected,
