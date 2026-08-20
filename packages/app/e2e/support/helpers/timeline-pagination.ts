@@ -545,13 +545,22 @@ async function returnTimelineToSettledHistoryStart(
   page: Page,
   moveUp: () => Promise<unknown>,
 ): Promise<void> {
-  await expect(async () => {
+  let previous = await readTimelineViewport(page);
+  while (true) {
     await moveUp();
     await waitForTimelineGeometryToSettle(page);
-    expect((await readTimelineViewport(page)).scrollTop).toBeLessThanOrEqual(
-      HISTORY_START_THRESHOLD_PX,
-    );
-  }).toPass({ timeout: 30_000 });
+    let viewport = await readTimelineViewport(page);
+    if (viewport.scrollTop <= HISTORY_START_THRESHOLD_PX) {
+      return;
+    }
+    await expect(page.getByTestId("load-older-history-spinner")).toBeHidden();
+    await waitForTimelineGeometryToSettle(page);
+    viewport = await readTimelineViewport(page);
+    expect(
+      viewport.scrollTop < previous.scrollTop || viewport.scrollHeight > previous.scrollHeight,
+    ).toBe(true);
+    previous = viewport;
+  }
 }
 
 export async function scrollTimelineToNewestLoadedEdge(page: Page): Promise<void> {
