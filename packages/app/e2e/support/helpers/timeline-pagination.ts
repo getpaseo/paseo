@@ -532,30 +532,26 @@ export async function scrollTimelineToOldestLoadedEdge(page: Page): Promise<void
 export async function userScrollsTimelineToHistoryStart(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.hover();
-  for (let step = 0; step < 60; step += 1) {
-    if ((await readTimelineViewport(page)).scrollTop <= HISTORY_START_THRESHOLD_PX) {
-      break;
-    }
-    await page.mouse.wheel(0, -1_000);
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
-        }),
-    );
-  }
-  await expect
-    .poll(async () => (await readTimelineViewport(page)).scrollTop)
-    .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
+  await returnTimelineToSettledHistoryStart(page, () => page.mouse.wheel(0, -1_000));
 }
 
 export async function userNavigatesTimelineToHistoryStartWithKeyboard(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.focus();
-  await page.keyboard.press("Home");
-  await expect
-    .poll(async () => (await readTimelineViewport(page)).scrollTop)
-    .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
+  await returnTimelineToSettledHistoryStart(page, () => page.keyboard.press("Home"));
+}
+
+async function returnTimelineToSettledHistoryStart(
+  page: Page,
+  moveUp: () => Promise<unknown>,
+): Promise<void> {
+  await expect(async () => {
+    await moveUp();
+    await waitForTimelineGeometryToSettle(page);
+    expect((await readTimelineViewport(page)).scrollTop).toBeLessThanOrEqual(
+      HISTORY_START_THRESHOLD_PX,
+    );
+  }).toPass({ timeout: 30_000 });
 }
 
 export async function scrollTimelineToNewestLoadedEdge(page: Page): Promise<void> {
