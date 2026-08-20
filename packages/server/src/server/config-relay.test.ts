@@ -295,4 +295,40 @@ describe("daemon worktree root config", () => {
       path.join(os.tmpdir(), "paseo-custom-worktrees"),
     );
   });
+
+  test("keeps a repo-relative worktrees.root unresolved for per-project expansion", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: "{repoRoot}/.worktrees" },
+    });
+
+    expect(loadConfig(home, { env: {} }).worktreesRoot).toBe("{repoRoot}/.worktrees");
+  });
+
+  test("rejects {repoRoot} outside the first path segment", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: path.join(os.tmpdir(), "shared", "{repoRoot}") },
+    });
+
+    expect(() => loadConfig(home, { env: {} })).toThrow(/first path segment/);
+  });
+
+  test("rejects a repo-relative root that is not separated from the placeholder", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: "{repoRoot}worktrees" },
+    });
+
+    expect(() => loadConfig(home, { env: {} })).toThrow(/path separator/);
+  });
+
+  test("rejects a repo-relative root that climbs out of the repo", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      worktrees: { root: "{repoRoot}/../shared-worktrees" },
+    });
+
+    expect(() => loadConfig(home, { env: {} })).toThrow(/cannot leave the repo/);
+  });
 });

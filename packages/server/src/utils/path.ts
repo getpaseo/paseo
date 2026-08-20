@@ -17,6 +17,42 @@ export function expandTilde(path: string): string {
 }
 
 /**
+ * Placeholder in `worktrees.root` that stands for the repo root a worktree is cut from,
+ * so one global setting can keep every project's worktrees inside that project.
+ */
+export const REPO_ROOT_PLACEHOLDER = "{repoRoot}";
+
+/** True when `worktrees.root` is resolved per project instead of once at startup. */
+export function isRepoRelativeWorktreesRoot(
+  worktreesRoot: string | undefined,
+): worktreesRoot is string {
+  return worktreesRoot?.startsWith(REPO_ROOT_PLACEHOLDER) ?? false;
+}
+
+/** The literal part of a repo-relative `worktrees.root`, as path segments. */
+export function repoRelativeWorktreesRootSegments(worktreesRoot: string): string[] {
+  return worktreesRoot
+    .slice(REPO_ROOT_PLACEHOLDER.length)
+    .split(/[/\\]/)
+    .filter((segment) => segment.length > 0);
+}
+
+/** Why a `worktrees.root` containing the placeholder is unusable, if it is. */
+export function repoRelativeWorktreesRootError(worktreesRoot: string): string | undefined {
+  if (!isRepoRelativeWorktreesRoot(worktreesRoot)) {
+    return `${REPO_ROOT_PLACEHOLDER} is only supported as the first path segment`;
+  }
+  const remainder = worktreesRoot.slice(REPO_ROOT_PLACEHOLDER.length);
+  if (remainder.length > 0 && !/^[/\\]/.test(remainder)) {
+    return `${REPO_ROOT_PLACEHOLDER} must be followed by a path separator`;
+  }
+  if (repoRelativeWorktreesRootSegments(worktreesRoot).includes("..")) {
+    return `${REPO_ROOT_PLACEHOLDER} paths cannot leave the repo with ".."`;
+  }
+  return undefined;
+}
+
+/**
  * Compare two path strings as filesystem-equivalent for cwd filtering.
  *
  * This is a string-only comparison: it normalizes separators and dot segments,

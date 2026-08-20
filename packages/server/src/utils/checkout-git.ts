@@ -1021,6 +1021,8 @@ async function getMainRepoRootFromCommonDir(
       !isPaseoWorktreePath(wt.path, {
         paseoHome: context?.paseoHome,
         worktreesRoot: context?.worktreesRoot,
+        // Bare repo: the common dir is the repo root a repo-relative root expands against.
+        repoRoot: normalized,
       }),
   );
   const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
@@ -1037,10 +1039,11 @@ export interface GitWorktreeEntry {
 /** Check whether a path is under Paseo's worktree root. */
 export function isPaseoWorktreePath(
   p: string,
-  options?: { paseoHome?: string; worktreesRoot?: string },
+  options?: { paseoHome?: string; worktreesRoot?: string; repoRoot?: string },
 ): boolean {
   if (options?.worktreesRoot || options?.paseoHome) {
-    return isDescendantPath(p, resolvePaseoWorktreesBaseRoot(options));
+    const baseRoot = resolvePaseoWorktreesBaseRoot(options);
+    return baseRoot !== undefined && isDescendantPath(p, baseRoot);
   }
   return /[/\\]\.paseo[/\\]worktrees[/\\]/.test(p);
 }
