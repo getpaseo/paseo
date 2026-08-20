@@ -16,7 +16,6 @@ export interface MobilePanelSelection {
 
 export interface DesktopSidebarState {
   agentListOpen: boolean;
-  fileExplorerOpen: boolean;
   focusModeEnabled: boolean;
 }
 
@@ -26,26 +25,12 @@ export const DEFAULT_SIDEBAR_WIDTH = 320;
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 600;
 
-export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
-export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
-// Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
-export const MAX_EXPLORER_SIDEBAR_WIDTH = 2000;
-
 export const DEFAULT_TREE_RAIL_WIDTH = 320;
 export const MIN_TREE_RAIL_WIDTH = 200;
 export const MAX_TREE_RAIL_WIDTH = 600;
 
-export interface PanelVisibilityState {
-  isAgentListOpen: boolean;
-  isFileExplorerOpen: boolean;
-}
-
 export interface PanelLayoutInput {
   isCompact: boolean;
-}
-
-export interface ExplorerPanelIntent extends PanelLayoutInput {
-  checkout: ExplorerCheckoutContext;
 }
 
 export interface PanelCoreState {
@@ -66,36 +51,20 @@ export function clampSidebarWidth(width: number): number {
   return clampNumber(width, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
 }
 
-export function clampExplorerWidth(width: number): number {
-  return clampNumber(width, MIN_EXPLORER_SIDEBAR_WIDTH, MAX_EXPLORER_SIDEBAR_WIDTH);
-}
-
 export function clampTreeRailWidth(width: number): number {
   return clampNumber(width, MIN_TREE_RAIL_WIDTH, MAX_TREE_RAIL_WIDTH);
 }
 
-export function selectPanelVisibility(
-  state: PanelCoreState,
-  input: PanelLayoutInput,
-): PanelVisibilityState {
-  if (input.isCompact) {
-    return {
-      isAgentListOpen: state.mobilePanel.target === "agent-list",
-      isFileExplorerOpen: state.mobilePanel.target === "file-explorer",
-    };
-  }
-  return {
-    isAgentListOpen: state.desktop.agentListOpen,
-    isFileExplorerOpen: state.desktop.fileExplorerOpen,
-  };
-}
-
 export function selectIsAgentListOpen(state: PanelCoreState, input: PanelLayoutInput): boolean {
-  return selectPanelVisibility(state, input).isAgentListOpen;
+  return input.isCompact ? state.mobilePanel.target === "agent-list" : state.desktop.agentListOpen;
 }
 
-export function selectIsFileExplorerOpen(state: PanelCoreState, input: PanelLayoutInput): boolean {
-  return selectPanelVisibility(state, input).isFileExplorerOpen;
+/**
+ * The overlay explorer exists only on compact layouts. Wider layouts render the
+ * explorer as workspace tabs — see `@/workspace-tabs/explorer-surface`.
+ */
+export function selectIsCompactFileExplorerOpen(state: PanelCoreState): boolean {
+  return state.mobilePanel.target === "file-explorer";
 }
 
 export function setMobilePanelTarget(
@@ -121,54 +90,42 @@ function resolveExplorerTabFromCheckout(
 }
 
 export interface OpenFileExplorerPatch {
-  mobilePanel?: MobilePanelSelection;
-  desktop?: DesktopSidebarState;
+  mobilePanel: MobilePanelSelection;
   explorerTab: ExplorerTab;
 }
 
 export function buildOpenFileExplorerPatch(
   state: PanelCoreState,
-  input: ExplorerPanelIntent,
+  checkout: ExplorerCheckoutContext,
 ): OpenFileExplorerPatch {
-  const resolvedTab = resolveExplorerTabFromCheckout(state, input.checkout);
-  if (input.isCompact) {
-    return {
-      mobilePanel: setMobilePanelTarget(state.mobilePanel, "file-explorer"),
-      explorerTab: resolvedTab,
-    };
-  }
   return {
-    desktop: { ...state.desktop, fileExplorerOpen: true },
-    explorerTab: resolvedTab,
+    mobilePanel: setMobilePanelTarget(state.mobilePanel, "file-explorer"),
+    explorerTab: resolveExplorerTabFromCheckout(state, checkout),
   };
 }
 
-export type ToggleFileExplorerPatch =
-  | OpenFileExplorerPatch
-  | { mobilePanel: MobilePanelSelection }
-  | { desktop: DesktopSidebarState };
+export type ToggleFileExplorerPatch = OpenFileExplorerPatch | { mobilePanel: MobilePanelSelection };
 
 export function buildToggleFileExplorerPatch(
   state: PanelCoreState,
-  input: ExplorerPanelIntent,
+  checkout: ExplorerCheckoutContext,
 ): ToggleFileExplorerPatch {
-  const isOpen = selectIsFileExplorerOpen(state, input);
-  if (!isOpen) {
-    return buildOpenFileExplorerPatch(state, input);
+  if (!selectIsCompactFileExplorerOpen(state)) {
+    return buildOpenFileExplorerPatch(state, checkout);
   }
-  if (input.isCompact) {
-    return { mobilePanel: setMobilePanelTarget(state.mobilePanel, "agent") };
-  }
-  return { desktop: { ...state.desktop, fileExplorerOpen: false } };
+  return { mobilePanel: setMobilePanelTarget(state.mobilePanel, "agent") };
 }
 
 const ExplorerTabSchema = z.enum(["changes", "files", "pr"]);
 const DesktopSidebarStorageSchema = z.strictObject({
   agentListOpen: z.boolean().optional(),
-  fileExplorerOpen: z.boolean().optional(),
   focusModeEnabled: z.boolean().optional(),
   zoomed: z.boolean().optional(),
   focused: z.boolean().optional(),
+  // Accepted only so migration can discard the former docked explorer sidebar.
+  // The schema is strict and a parse failure drops the whole entry, so removing
+  // this key outright would wipe every upgrading user's panel state.
+  fileExplorerOpen: z.boolean().optional(),
 });
 
 export const PanelPersistedStateSchema = z.strictObject({
@@ -188,6 +145,7 @@ export const PanelPersistedStateSchema = z.strictObject({
   diffCollapsedFoldersByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   collapsedFilePathsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   sidebarWidth: z.number().optional(),
+  // Accepted only so migration can discard the former docked explorer sidebar width.
   explorerWidth: z.number().optional(),
   explorerSortOption: z.enum(["name", "modified", "size"]).optional(),
   explorerShowHiddenFiles: z.boolean().optional(),
@@ -196,22 +154,6 @@ export const PanelPersistedStateSchema = z.strictObject({
 });
 
 type MigratablePanelState = z.infer<typeof PanelPersistedStateSchema>;
-
-function migratePanelV2Explorer(state: MigratablePanelState, isWeb: boolean): void {
-  if (isWeb && typeof state.explorerWidth === "number" && state.explorerWidth === 400) {
-    state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
-  }
-}
-
-function migratePanelV3Explorer(state: MigratablePanelState, isWeb: boolean): void {
-  if (
-    isWeb &&
-    typeof state.explorerWidth === "number" &&
-    (state.explorerWidth === 400 || state.explorerWidth === 520)
-  ) {
-    state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
-  }
-}
 
 function migratePanelExplorerTabByCheckout(state: MigratablePanelState, version: number): void {
   if (
@@ -260,20 +202,16 @@ function migrateTreeRailWidth(state: MigratablePanelState, version: number): voi
   state.treeRailWidth = clampTreeRailWidth(state.treeRailWidth);
 }
 
-export function migratePanelState(
-  persistedState: unknown,
-  version: number,
-  options: { isWeb: boolean },
-): MigratablePanelState {
+export function migratePanelState(persistedState: unknown, version: number): MigratablePanelState {
   const result = PanelPersistedStateSchema.safeParse(persistedState);
   const state: MigratablePanelState = result.success ? result.data : {};
-  const { isWeb } = options;
 
-  if (version < 2) {
-    migratePanelV2Explorer(state, isWeb);
-  }
-  if (version < 3) {
-    migratePanelV3Explorer(state, isWeb);
+  // The docked explorer sidebar is gone; wider layouts render the explorer as
+  // workspace tabs. Left behind, `fileExplorerOpen` kept drawing a sidebar that
+  // nothing could close.
+  delete state.explorerWidth;
+  if (state.desktop) {
+    delete state.desktop.fileExplorerOpen;
   }
   if (!isExplorerTab(state.explorerTab)) {
     state.explorerTab = "changes";

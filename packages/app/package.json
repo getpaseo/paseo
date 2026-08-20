@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.4.0",
+  "version": "0.5.0-beta.3",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -49,12 +49,12 @@
     "@getpaseo/client": "*",
     "@getpaseo/expo-two-way-audio": "*",
     "@getpaseo/highlight": "*",
+    "@getpaseo/plugin": "*",
     "@getpaseo/protocol": "*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@gorhom/portal": "^1.0.14",
     "@marijn/find-cluster-break": "^1.0.2",
     "@mattermost/react-native-paste-input": "2.0.1",
-    "@paseo/plugin": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "^0.3.2",
     "@react-native/normalize-colors": "^0.81.5",

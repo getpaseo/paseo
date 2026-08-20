@@ -1183,7 +1183,6 @@ function ResolvedWorkspaceDesktopTabsRow({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
   });
-  const focusPane = useWorkspaceLayoutStore((state) => state.focusPane);
   const openTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1426,12 +1425,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       if (!workspaceKey) {
         return;
       }
-      if (paneId) {
-        focusPane(workspaceKey, paneId);
-      }
-      openTabFocused(workspaceKey, target);
+      openTabFocused(workspaceKey, target, { paneId });
     },
-    [focusPane, openTabFocused, paneId, workspaceKey],
+    [openTabFocused, paneId, workspaceKey],
   );
   const handleOpenChanges = useCallback(() => openPanelTarget(CHANGES_TARGET), [openPanelTarget]);
   const handleOpenFiles = useCallback(() => openPanelTarget(FILES_TARGET), [openPanelTarget]);

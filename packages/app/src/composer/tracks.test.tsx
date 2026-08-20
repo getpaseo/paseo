@@ -103,7 +103,7 @@ describe("ComposerTrackBar", () => {
       right: 0,
       bottom: 0,
       paddingHorizontal: 16,
-      paddingBottom: { xs: 16, md: 10 },
+      paddingBottom: { xs: 8, md: 10 },
     });
     expect(style).not.toHaveProperty("backgroundColor");
     expect(container.firstElementChild?.getAttribute("data-has-layout-handler")).toBe("false");
@@ -122,10 +122,10 @@ describe("ComposerTrackBar", () => {
       borderRadius: 16,
     });
     expect(composerPillStyles.label).toMatchObject({ fontSize: 12 });
-    expect(resolveComposerPillClearance(true)).toBe(16);
+    expect(resolveComposerPillClearance(true)).toBe(8);
     expect(resolveComposerPillClearance(false)).toBe(10);
-    expect(resolveComposerTrackTailClearance(true)).toBe(64);
+    expect(resolveComposerTrackTailClearance(true)).toBe(48);
     expect(resolveComposerTrackTailClearance(false)).toBe(52);
-    expect(COMPOSER_PILL_CLEARANCE).toEqual({ compact: 16, wide: 10 });
+    expect(COMPOSER_PILL_CLEARANCE).toEqual({ compact: 8, wide: 10 });
   });
 });

@@ -1,8 +1,10 @@
 import { memo, useCallback, type ReactElement } from "react";
 import { AgentTaskList } from "@/composer/task-list";
 import { ComposerTrackBar } from "@/composer/tracks";
+import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   type ArchiveFinishedStatus,
   useArchiveSubagent,
@@ -12,6 +14,7 @@ import {
 import { SubagentsTrack } from "@/subagents/track";
 import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 /**
  * The pane's trackers — its subagents and its task list — as a row of pills above the composer.
@@ -33,7 +36,10 @@ export const AgentTracks = memo(function AgentTracks({
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
 }): ReactElement | null {
-  const { openTab } = usePaneContext();
+  const { workspaceId, tabId, openTab } = usePaneContext();
+  const isCompact = useIsCompactFormFactor();
+  const canSplit = supportsDesktopPaneSplits() && !isCompact;
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
@@ -41,15 +47,35 @@ export const AgentTracks = memo(function AgentTracks({
   const detachSubagent = useDetachSubagent({ serverId });
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
+      const session = useSessionStore.getState().sessions[serverId];
+      const agent = session?.agents.get(subagentId) ?? session?.agentDetails.get(subagentId);
+      if (agent?.workspaceId && agent.workspaceId !== workspaceId) {
+        navigateToAgent({ serverId, agentId: subagentId });
+        return;
+      }
+      if (canSplit && workspaceKey) {
+        useWorkspaceLayoutStore.getState().openTabInExplorerPaneFocused(workspaceKey, {
+          target: { kind: "agent", agentId: subagentId },
+          parentTabId: tabId,
+        });
+        return;
+      }
       navigateToAgent({ serverId, agentId: subagentId });
     },
-    [serverId],
+    [canSplit, serverId, tabId, workspaceId, workspaceKey],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {
+      if (canSplit && workspaceKey) {
+        useWorkspaceLayoutStore.getState().openTabInExplorerPaneFocused(workspaceKey, {
+          target: { kind: "provider_subagent", parentAgentId, subagentId },
+          parentTabId: tabId,
+        });
+        return;
+      }
       openTab({ kind: "provider_subagent", parentAgentId, subagentId });
     },
-    [openTab],
+    [canSplit, openTab, tabId, workspaceKey],
   );
 
   if (!hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {

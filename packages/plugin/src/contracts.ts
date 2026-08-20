@@ -3,8 +3,19 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
+export interface PluginTheme {
+  readonly colors: {
+    readonly surface0: string;
+    readonly foreground: string;
+    readonly foregroundMuted: string;
+    readonly accent: string;
+    readonly accentForeground: string;
+    readonly statusDanger: string;
+  };
+}
+
 export interface PluginHostProps {
-  theme: Record<string, unknown>;
+  theme: PluginTheme;
   host: {
     id: string;
     label: string;

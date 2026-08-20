@@ -162,6 +162,45 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
+  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
+        const search = defineRpc({ name: "issues.search", input: {}, output: {} });
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addAttachmentSource(defineAttachmentSource({
+            id: "issues",
+            title: "Issue",
+            icon: "CircleDot",
+            pickerTitle: "Attach issue",
+            searchPlaceholder: "Search",
+            search,
+          }));
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
+  });
+
+  it("rejects modules that are not part of the client runtime", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+          require("fs");
+          const module = { exports: {} };
+          module.exports.default = function() { return function() {}; };
+          return module.exports;
+        })`,
+      ),
+    ).toThrow('Module "fs" is not available in plugin client code');
+  });
+
   it("does not publish partial contributions when setup fails", () => {
     expect(() =>
       evaluatePluginClientBundle(

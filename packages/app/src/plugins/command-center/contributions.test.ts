@@ -6,7 +6,7 @@ import {
   type PluginAgentSnapshot,
   type PluginCommandCenterItemContribution,
   type PluginWorkspaceSnapshot,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
