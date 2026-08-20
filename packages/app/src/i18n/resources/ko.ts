@@ -200,6 +200,10 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    completedResponse: {
+      showWork: "작업 내용 보기",
+      hideWork: "작업 내용 숨기기",
+    },
     permission: {
       plan: "계획",
       required: "권한 필요",

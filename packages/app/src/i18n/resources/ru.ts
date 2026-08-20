@@ -200,6 +200,10 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    completedResponse: {
+      showWork: "Показать ход работы",
+      hideWork: "Скрыть ход работы",
+    },
     permission: {
       plan: "План",
       required: "Требуется разрешение",

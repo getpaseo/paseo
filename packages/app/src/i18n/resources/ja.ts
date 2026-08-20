@@ -200,6 +200,10 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    completedResponse: {
+      showWork: "作業内容を表示",
+      hideWork: "作業内容を非表示",
+    },
     permission: {
       plan: "プラン",
       required: "権限が必要です",

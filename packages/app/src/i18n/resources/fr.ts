@@ -202,6 +202,10 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    completedResponse: {
+      showWork: "Afficher le travail",
+      hideWork: "Masquer le travail",
+    },
     permission: {
       plan: "Plan",
       required: "Autorisation requise",

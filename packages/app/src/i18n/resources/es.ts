@@ -200,6 +200,10 @@ export const es: TranslationResources = {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
+    completedResponse: {
+      showWork: "Mostrar trabajo",
+      hideWork: "Ocultar trabajo",
+    },
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
