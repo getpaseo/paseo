@@ -99,8 +99,24 @@ describe("FilePreviewLifecycleModel", () => {
     first.resolve(preview);
     await expectSnapshot(model, { status: "ready", preview });
 
+    model.setSource(source("/workspace:file.ts", pending()));
+    expect(model.getSnapshot()).toEqual({ status: "read_pending", preview });
+
+    model.setSource(
+      source("/workspace:file.ts", {
+        observation: {
+          status: "error",
+          cwd: "/workspace",
+          path: "file.ts",
+          error: "Requested path is not a file",
+        },
+        read: { status: "pending", requested: true },
+      }),
+    );
+    expect(model.getSnapshot()).toEqual({ status: "read_pending", preview });
+
     model.setSource(source("/workspace:file.ts", completed(file("two"))));
-    expect(model.getSnapshot()).toEqual({ status: "preparing" });
+    expect(model.getSnapshot()).toEqual({ status: "preparing", preview });
     second.resolve(null);
     await expectSnapshot(model, { status: "unsupported" });
 

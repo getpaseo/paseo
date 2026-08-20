@@ -31,6 +31,7 @@ import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { useFilePreview } from "./preview-lifecycle/hook";
+import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
@@ -422,10 +423,8 @@ export function FilePane({
 
   useEffect(() => setPreviewMode("preview"), [targetKey]);
 
-  const preview = previewLifecycle.status === "ready" ? previewLifecycle.preview.file : null;
-  const imagePreviewUri = useAttachmentPreviewUrl(
-    previewLifecycle.status === "ready" ? previewLifecycle.preview.imageAttachment : null,
-  );
+  const { file: preview, imageAttachment } = resolveFilePreviewLifecycle(previewLifecycle);
+  const imagePreviewUri = useAttachmentPreviewUrl(imageAttachment);
   const isRenderable = isRenderablePreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
