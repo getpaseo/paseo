@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
+import { useTranslation } from "react-i18next";
 import {
   BottomSheetScrollView,
   BottomSheetBackdrop,
@@ -12,6 +13,7 @@ import { X } from "lucide-react-native";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   IsolatedBottomSheetModal,
+  type ContextBridge,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
@@ -45,9 +47,19 @@ export function useToolCallSheet(): ToolCallSheetContextValue {
   return context;
 }
 
+export function useToolCallSheetContextBridge(): ContextBridge {
+  const context = useToolCallSheet();
+  return useCallback(
+    (children) => (
+      <ToolCallSheetContext.Provider value={context}>{children}</ToolCallSheetContext.Provider>
+    ),
+    [context],
+  );
+}
+
 // ----- Custom Background Component -----
 
-function CustomSheetBackground({ style }: BottomSheetBackgroundProps) {
+export function ToolCallSheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
   const containerStyle = useMemo(
     () => [style, { backgroundColor: theme.colors.surface2, borderRadius: 16 }],
@@ -122,7 +134,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
         onDismiss={handleToolCallSheetDismiss}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        backgroundComponent={CustomSheetBackground}
+        backgroundComponent={ToolCallSheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
       >
         {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
@@ -140,6 +152,7 @@ interface ToolCallSheetContentProps {
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const { displayName, detail, errorText, icon: IconComponent, showLoadingSkeleton } = data;
 
   return (
@@ -152,7 +165,13 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
             {displayName}
           </Text>
         </View>
-        <Pressable onPress={onClose} style={styles.closeButton}>
+        <Pressable
+          onPress={onClose}
+          style={styles.closeButton}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.actions.close")}
+          testID="tool-call-sheet-close"
+        >
           <X size={20} color={theme.colors.foregroundMuted} />
         </Pressable>
       </View>
