@@ -18,6 +18,7 @@ type OptionalAgentSessionMethodName = {
 }[keyof AgentSession];
 
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
+  "flushPreSubscriptionEvents",
   "listCommands",
   "setModel",
   "setThinkingOption",
@@ -74,6 +75,10 @@ class FakeSession implements AgentSession {
   subscribe(_callback: (event: AgentStreamEvent) => void) {
     this.recordedCalls.push("subscribe");
     return () => {};
+  }
+
+  flushPreSubscriptionEvents() {
+    this.recordedCalls.push("flushPreSubscriptionEvents");
   }
 
   async *streamHistory() {
@@ -172,6 +177,7 @@ describe("wrapSessionProvider", () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
 
+    wrapped.flushPreSubscriptionEvents?.();
     await wrapped.listCommands?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
@@ -183,6 +189,7 @@ describe("wrapSessionProvider", () => {
     await handler?.run({ emit: () => {} });
 
     expect(session.recordedCalls).toEqual([
+      "flushPreSubscriptionEvents",
       "listCommands",
       "setModel",
       "setThinkingOption",

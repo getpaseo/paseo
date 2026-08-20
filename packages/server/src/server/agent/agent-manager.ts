@@ -3186,11 +3186,12 @@ export class AgentManager {
       await this.refreshSessionState(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       managed.lifecycle = "idle";
+      await this.subscribeToSession(managed);
+      this.assertAgentRegistrationActive(managed);
       this.touchUpdatedAt(managed);
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
-      this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
       if (!registered) {
@@ -3394,7 +3395,7 @@ export class AgentManager {
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
     this.emitState(agent, options);
   }
-  private subscribeToSession(agent: ActiveManagedAgent): void {
+  private async subscribeToSession(agent: ActiveManagedAgent): Promise<void> {
     if (agent.unsubscribeSession) {
       return;
     }
@@ -3403,6 +3404,8 @@ export class AgentManager {
       this.enqueueSessionEvent(agentId, event);
     });
     agent.unsubscribeSession = unsubscribe;
+    agent.session.flushPreSubscriptionEvents?.();
+    await this.drainSessionEvents(agentId);
   }
 
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
