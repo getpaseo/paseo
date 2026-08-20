@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createProjectIconTarget } from "./icon-target";
 import { ProjectIconCache, type ProjectIconCacheStorage } from "./icon-cache";
 
 class MemoryStorage implements ProjectIconCacheStorage {
@@ -12,12 +13,16 @@ class MemoryStorage implements ProjectIconCacheStorage {
   }
 }
 
-const target = {
-  serverId: "host-a",
-  projectId: "project-a",
-  iconWorkingDir: "/project-a",
-  iconRevision: "revision-a",
-};
+const target = createProjectIconTarget({
+  projectViewKey: "project-view",
+  placement: {
+    serverId: "host-a",
+    projectId: "project-a",
+    iconWorkingDir: "/project-a",
+    iconRevision: "revision-a",
+  },
+});
+if (!target) throw new Error("Expected project icon target");
 const icon = { data: "aWNvbg==", mimeType: "image/png" };
 
 function clientWith(iconResult: typeof icon | null) {
@@ -27,6 +32,17 @@ function clientWith(iconResult: typeof icon | null) {
 }
 
 describe("ProjectIconCache", () => {
+  it("uses the shared target revision in its query key", () => {
+    const cache = new ProjectIconCache(new MemoryStorage());
+
+    expect(cache.query(target, true, () => null, false).queryKey).toEqual([
+      "projectIcon",
+      "host-a",
+      "project-a",
+      "revision-a",
+    ]);
+  });
+
   it("resolves, persists, and hydrates an icon before a host connects", async () => {
     const storage = new MemoryStorage();
     const writer = new ProjectIconCache(storage);

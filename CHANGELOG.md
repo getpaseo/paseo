@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0-beta.3 - 2026-08-20
+
+### Fixed
+
+- Fixed the composer retaining sent text on iOS and Android ([#3564](https://github.com/getpaseo/paseo/pull/3564))
+- Fixed pull request checkout in fork workflows where the target repository is configured as `upstream` ([#2997](https://github.com/getpaseo/paseo/pull/2997) by [@mcowger](https://github.com/mcowger))
+
 ## 0.5.0-beta.2 - 2026-08-19
 
 ### Added
