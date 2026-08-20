@@ -1,18 +1,16 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import {
+  BottomSheetBackdrop,
+  BottomSheetScrollView,
+  type BottomSheetScrollViewMethods,
+} from "@gorhom/bottom-sheet";
 import { Wrench, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import {
-  IsolatedBottomSheetModal,
-  useIsolatedBottomSheetVisibility,
-} from "@/components/ui/isolated-bottom-sheet-modal";
-import {
-  ToolCallSheetBackground,
-  useToolCallSheetContextBridge,
-} from "@/components/tool-call-sheet";
-import { baseColors, type Theme } from "@/styles/theme";
+import { useIsolatedBottomSheetVisibility } from "@/components/ui/isolated-bottom-sheet-modal";
+import { ToolCallSheetModal, useToolCallSheetContextBridge } from "@/components/tool-call-sheet";
+import type { Theme } from "@/styles/theme";
 
 interface OverviewToolCallGroupSheetProps {
   visible: boolean;
@@ -22,8 +20,6 @@ interface OverviewToolCallGroupSheetProps {
 }
 
 const SNAP_POINTS = ["60%", "95%"];
-const HANDLE_INDICATOR_STYLE = { backgroundColor: baseColors.zinc[600] };
-const CONTENT_CONTAINER_STYLE = { paddingHorizontal: 13, paddingVertical: 8 };
 const ThemedWrench = withUnistyles(Wrench);
 const ThemedX = withUnistyles(X);
 const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -36,6 +32,7 @@ export function OverviewToolCallGroupSheet({
   onClose,
 }: OverviewToolCallGroupSheetProps) {
   const { t } = useTranslation();
+  const scrollRef = useRef<BottomSheetScrollViewMethods>(null);
   const contextBridge = useToolCallSheetContextBridge();
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
@@ -47,9 +44,19 @@ export function OverviewToolCallGroupSheet({
     ),
     [],
   );
+  const scrollToLatest = useCallback(() => {
+    scrollRef.current?.scrollToEnd({ animated: false });
+  }, []);
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const frame = requestAnimationFrame(scrollToLatest);
+    return () => cancelAnimationFrame(frame);
+  }, [children, scrollToLatest, visible]);
 
   return (
-    <IsolatedBottomSheetModal
+    <ToolCallSheetModal
       ref={sheetRef}
       contextBridge={contextBridge}
       snapPoints={SNAP_POINTS}
@@ -59,14 +66,16 @@ export function OverviewToolCallGroupSheet({
       onDismiss={handleSheetDismiss}
       backdropComponent={renderBackdrop}
       enablePanDownToClose
-      backgroundComponent={ToolCallSheetBackground}
-      handleIndicatorStyle={HANDLE_INDICATOR_STYLE}
     >
       <View style={styles.container} testID="tool-call-group-sheet">
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <ThemedWrench size={20} uniProps={foregroundMapping} />
-            <Text style={styles.headerTitle} numberOfLines={2}>
+            <Text
+              style={styles.headerTitle}
+              numberOfLines={2}
+              testID="tool-call-group-sheet-summary"
+            >
               {summary}
             </Text>
           </View>
@@ -80,14 +89,11 @@ export function OverviewToolCallGroupSheet({
             <ThemedX size={20} uniProps={foregroundMutedMapping} />
           </Pressable>
         </View>
-        <BottomSheetScrollView
-          style={styles.content}
-          contentContainerStyle={CONTENT_CONTAINER_STYLE}
-        >
-          {children}
+        <BottomSheetScrollView ref={scrollRef} style={styles.content}>
+          <View style={styles.contentContainer}>{children}</View>
         </BottomSheetScrollView>
       </View>
-    </IsolatedBottomSheetModal>
+    </ToolCallSheetModal>
   );
 }
 
@@ -124,5 +130,9 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface2,
+  },
+  contentContainer: {
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
 }));
