@@ -1082,6 +1082,12 @@ class McpCapableTestAgentSession extends TestAgentSession {
 
 class CloseRecordingTestAgentSession extends TestAgentSession {
   closed = false;
+  startTurnCalls = 0;
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    this.startTurnCalls += 1;
+    return super.startTurn();
+  }
 
   override async close(): Promise<void> {
     this.closed = true;
@@ -3030,13 +3036,11 @@ test("reloadAgentSession closes the previous session before resuming the replace
   }
 
   class OrderTrackingClient extends TestAgentClient {
-    readonly firstSession = new OrderTrackingSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-
     override async createSession(): Promise<AgentSession> {
-      return this.firstSession;
+      return new OrderTrackingSession({
+        provider: "codex",
+        cwd: workdir,
+      });
     }
 
     override async resumeSession(
@@ -3044,7 +3048,7 @@ test("reloadAgentSession closes the previous session before resuming the replace
       config?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
       order.push("resume");
-      return new TestAgentSession({
+      return new OrderTrackingSession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
       });
@@ -3075,6 +3079,11 @@ test("reloadAgentSession closes the previous session before resuming the replace
 
     expect(reloaded.id).toBe(snapshot.id);
     expect(order).toEqual(["close", "resume"]);
+
+    const reloadedAgain = await manager.reloadAgentSession(snapshot.id);
+    expect(reloadedAgain.id).toBe(snapshot.id);
+    expect(reloadedAgain.lifecycle).toBe("idle");
+    expect(order).toEqual(["close", "resume", "close", "resume"]);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -3606,10 +3615,11 @@ test("resumeAgentFromPersistence closes and rejects a session that cannot honor 
   }
 });
 
-test("reloadAgentSession closes the previous session even when replacement MCP support fails", async () => {
+test("reloadAgentSession keeps the agent in error when replacement MCP support fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const original = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
   const replacement = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
 
   class UnsupportedReloadClient extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
@@ -3623,7 +3633,7 @@ test("reloadAgentSession closes the previous session even when replacement MCP s
 
   const manager = new AgentManager({
     clients: { codex: new UnsupportedReloadClient() },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
+    registry: storage,
     logger,
   });
 
@@ -3644,8 +3654,142 @@ test("reloadAgentSession closes the previous session even when replacement MCP s
 
     expect(replacement.closed).toBe(true);
     expect(original.closed).toBe(true);
-    expect(manager.getAgent(created.id)?.session).toBe(original);
-    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(created.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: "Reload failed: Provider 'codex' does not support MCP servers",
+      providerSessionClosed: true,
+    });
+    expect(await storage.get(created.id)).toMatchObject({
+      lastStatus: "error",
+      lastError: "Reload failed: Provider 'codex' does not support MCP servers",
+    });
+    await expect(manager.runAgent(created.id, "continue")).rejects.toThrow(
+      "Reload failed: Provider 'codex' does not support MCP servers",
+    );
+    expect(original.startTurnCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reloadAgentSession keeps the agent in error when replacement resume fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-resume-failure-"));
+  const original = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class FailingResumeClient extends TestAgentClient {
+    resumeCalls = 0;
+
+    override async createSession(): Promise<AgentSession> {
+      return original;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeCalls += 1;
+      if (this.resumeCalls === 1) {
+        throw new Error("resume exploded");
+      }
+      return new TestAgentSession({
+        provider: "codex",
+        cwd: workdir,
+      });
+    }
+  }
+
+  const client = new FailingResumeClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir },
+      "00000000-0000-4000-8000-00000000010a",
+      { workspaceId: undefined },
+    );
+
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("resume exploded");
+
+    expect(original.closed).toBe(true);
+    expect(manager.getAgent(created.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: "Reload failed: resume exploded",
+      providerSessionClosed: true,
+    });
+    expect(await storage.get(created.id)).toMatchObject({ lastStatus: "error" });
+    await expect(manager.runAgent(created.id, "continue")).rejects.toThrow(
+      "Reload failed: resume exploded",
+    );
+    expect(original.startTurnCalls).toBe(0);
+
+    const reloaded = await manager.reloadAgentSession(created.id);
+    expect(reloaded.id).toBe(created.id);
+    expect(reloaded.lifecycle).not.toBe("error");
+    expect(reloaded.providerSessionClosed).toBeUndefined();
+    await manager.runAgent(created.id, "continue");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reload keeps the live error agent when error snapshot persist fails after replacement failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-fallback-remove-"));
+  const original = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
+  const storagePath = join(workdir, "agents");
+
+  class PersistFailingStorage extends AgentStorage {
+    failNextApply = false;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (this.failNextApply) {
+        throw new Error("snapshot write failed");
+      }
+      return super.applySnapshot(agent, options);
+    }
+  }
+
+  class FailingResumeClient extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return original;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      throw new Error("resume exploded");
+    }
+  }
+
+  const storage = new PersistFailingStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new FailingResumeClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir },
+      "00000000-0000-4000-8000-00000000010b",
+      { workspaceId: undefined },
+    );
+    storage.failNextApply = true;
+
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("resume exploded");
+
+    expect(original.closed).toBe(true);
+    expect(manager.getAgent(created.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: "Reload failed: resume exploded",
+      providerSessionClosed: true,
+    });
+    await expect(manager.runAgent(created.id, "continue")).rejects.toThrow(
+      "Reload failed: resume exploded",
+    );
+    expect(original.startTurnCalls).toBe(0);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
