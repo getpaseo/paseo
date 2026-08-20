@@ -876,10 +876,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return content;
         }
         return (
-          <>
-            <CompletedResponseFoldRow fold={fold} onToggle={toggleCompletedResponse} />
-            {fold.expanded ? content : null}
-          </>
+          <CompletedResponseFoldRow fold={fold} onToggle={toggleCompletedResponse}>
+            {content}
+          </CompletedResponseFoldRow>
         );
       },
       [

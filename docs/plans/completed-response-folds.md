@@ -30,15 +30,18 @@ system-injected.
 ## Architecture
 
 An app-only projection partitions the tail and head by visible response boundaries. It removes
-foldable rows from the render model, attaches the disclosure to the terminal assistant row, and
-leaves the canonical arrays untouched. The terminal assistant item ID is both the stable expansion
-key and list anchor, so pagination, virtualization, and native inverted-list behavior keep using real
-item identities.
+foldable rows from the render model, attaches the disclosure before the terminal assistant message,
+and leaves the canonical arrays untouched. A streamed Markdown message can span several timeline
+items with one `blockGroupId`; all of those items remain visible, and the first item ID is the stable
+expansion key and list anchor. Pagination, virtualization, and native inverted-list behavior keep
+using real item identities.
 
 ## Validation
 
 - Focused projection tests cover collapse, expansion, active responses, cross-turn responses,
-  tail/head boundaries, protected rows, incomplete answers, and live-head reference stability.
+  tail/head boundaries, protected rows, split Markdown blocks, incomplete answers, and live-head
+  reference stability.
+- A focused component test verifies that collapsing work never hides the final answer.
 - Run app type checking, repository linting, formatting checks, and the i18n resource test.
 - Inspect the final diff and test the disclosure manually on desktop and mobile-sized layouts.
 

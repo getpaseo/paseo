@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, Text, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
@@ -22,9 +22,11 @@ const foldButtonStyle = ({
 export const CompletedResponseFoldRow = memo(function CompletedResponseFoldRow({
   fold,
   onToggle,
+  children,
 }: {
   fold: CompletedResponseFold;
   onToggle: (responseId: string) => void;
+  children: ReactNode;
 }) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => onToggle(fold.responseId), [fold.responseId, onToggle]);
@@ -33,21 +35,24 @@ export const CompletedResponseFoldRow = memo(function CompletedResponseFoldRow({
     : t("agentStream.completedResponse.showWork");
   const accessibilityState = useMemo(() => ({ expanded: fold.expanded }), [fold.expanded]);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={accessibilityState}
-      onPress={handlePress}
-      style={foldButtonStyle}
-      testID={`completed-response-fold-${fold.responseId}`}
-    >
-      {fold.expanded ? (
-        <ThemedChevronDown size={14} strokeWidth={2} uniProps={iconColorMapping} />
-      ) : (
-        <ThemedChevronRight size={14} strokeWidth={2} uniProps={iconColorMapping} />
-      )}
-      <Text style={stylesheet.label}>{label}</Text>
-    </Pressable>
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={accessibilityState}
+        onPress={handlePress}
+        style={foldButtonStyle}
+        testID={`completed-response-fold-${fold.responseId}`}
+      >
+        {fold.expanded ? (
+          <ThemedChevronDown size={14} strokeWidth={2} uniProps={iconColorMapping} />
+        ) : (
+          <ThemedChevronRight size={14} strokeWidth={2} uniProps={iconColorMapping} />
+        )}
+        <Text style={stylesheet.label}>{label}</Text>
+      </Pressable>
+      {children}
+    </>
   );
 });
 

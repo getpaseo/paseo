@@ -16,13 +16,14 @@ function user(id: string, second: number, turnId = id): StreamItem {
   };
 }
 
-function assistant(id: string, second: number, turnId = id): StreamItem {
+function assistant(id: string, second: number, turnId = id, blockGroupId?: string): StreamItem {
   return {
     kind: "assistant_message",
     id,
     turnId,
     text: id,
     timestamp: at(second),
+    ...(blockGroupId ? { blockGroupId } : {}),
   };
 }
 
@@ -93,6 +94,25 @@ describe("projectCompletedResponseFolds", () => {
       responseId: "final",
       expanded: false,
     });
+  });
+
+  it("keeps every block of the final assistant message visible below the fold", () => {
+    const result = project({
+      tail: [
+        user("user", 1, "turn-1"),
+        thought("thought", 2, "turn-1"),
+        tool("tool", 3, "completed", "turn-1"),
+        assistant("final-0", 4, "turn-1", "final"),
+        assistant("final-1", 5, "turn-1", "final"),
+      ],
+    });
+
+    expect(result.tail.map((item) => item.id)).toEqual(["user", "final-0", "final-1"]);
+    expect(result.foldsByAnchorItemId.get("final-0")).toEqual({
+      responseId: "final-0",
+      expanded: false,
+    });
+    expect(result.foldsByAnchorItemId.has("final-1")).toBe(false);
   });
 
   it("restores every original item when the response is expanded", () => {

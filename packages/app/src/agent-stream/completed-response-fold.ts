@@ -37,7 +37,12 @@ function isProtectedPresentationItem(item: StreamItem): boolean {
   return item.kind === "tool_call" && isToolCallRunning(item);
 }
 
-function findTerminalAssistantIndex(response: StreamItem[]): number | null {
+interface TerminalAssistantGroup {
+  anchorItemId: string;
+  itemIds: ReadonlySet<string>;
+}
+
+function findTerminalAssistantGroup(response: StreamItem[]): TerminalAssistantGroup | null {
   let assistantIndex: number | null = null;
   let lastWorkIndex = -1;
 
@@ -54,7 +59,34 @@ function findTerminalAssistantIndex(response: StreamItem[]): number | null {
   if (assistantIndex === null || assistantIndex < lastWorkIndex) {
     return null;
   }
-  return assistantIndex;
+
+  const terminalAssistant = response[assistantIndex];
+  if (!terminalAssistant || terminalAssistant.kind !== "assistant_message") {
+    return null;
+  }
+
+  const terminalBlockGroupId = terminalAssistant.blockGroupId;
+  if (!terminalBlockGroupId) {
+    return {
+      anchorItemId: terminalAssistant.id,
+      itemIds: new Set([terminalAssistant.id]),
+    };
+  }
+
+  const terminalBlockGroup = response.filter(
+    (item, index) =>
+      index > lastWorkIndex &&
+      item.kind === "assistant_message" &&
+      item.blockGroupId === terminalBlockGroupId,
+  );
+  const anchor = terminalBlockGroup[0];
+  if (!anchor) {
+    return null;
+  }
+  return {
+    anchorItemId: anchor.id,
+    itemIds: new Set(terminalBlockGroup.map((item) => item.id)),
+  };
 }
 
 function partitionVisibleResponses(items: StreamItem[]): StreamItem[][] {
@@ -97,20 +129,17 @@ function projectResponseRows(input: {
     const isActiveResponse = input.isTurnActive && responseIndex === responses.length - 1;
     if (isActiveResponse) continue;
 
-    const terminalAssistantIndex = findTerminalAssistantIndex(response);
-    if (terminalAssistantIndex === null) continue;
-
-    const terminalAssistant = response[terminalAssistantIndex];
-    if (!terminalAssistant || terminalAssistant.kind !== "assistant_message") continue;
+    const terminalAssistantGroup = findTerminalAssistantGroup(response);
+    if (!terminalAssistantGroup) continue;
 
     const foldableItems = response.filter(
-      (item, index) => index !== terminalAssistantIndex && !isProtectedPresentationItem(item),
+      (item) => !terminalAssistantGroup.itemIds.has(item.id) && !isProtectedPresentationItem(item),
     );
     if (foldableItems.length === 0) continue;
 
-    const expanded = input.expandedResponseIds.has(terminalAssistant.id);
-    foldsByAnchorItemId.set(terminalAssistant.id, {
-      responseId: terminalAssistant.id,
+    const expanded = input.expandedResponseIds.has(terminalAssistantGroup.anchorItemId);
+    foldsByAnchorItemId.set(terminalAssistantGroup.anchorItemId, {
+      responseId: terminalAssistantGroup.anchorItemId,
       expanded,
     });
 
