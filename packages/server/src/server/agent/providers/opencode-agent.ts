@@ -1388,10 +1388,15 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
+      // Creating the first session for a directory is part of OpenCode coming up, so it
+      // shares the server startup budget instead of a shorter one that fails agent
+      // creation on contended cold starts.
       const response = await withTimeout(
         client.session.create({ directory: openCodeConfig.cwd }),
-        10_000,
-        "OpenCode session.create timed out after 10s",
+        OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
+        `OpenCode session.create timed out after ${Math.round(
+          OPENCODE_SERVER_STARTUP_TIMEOUT_MS / 1000,
+        )}s`,
       );
 
       if (response.error) {

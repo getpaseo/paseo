@@ -8,6 +8,7 @@ import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
+  waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
@@ -519,4 +520,91 @@ it("does not notify archived callers", async () => {
 
   expect(streamAgentSpy).not.toHaveBeenCalled();
   expect(replaceAgentRunSpy).not.toHaveBeenCalled();
+});
+
+// Deliberately independent literals rather than the production constants these tests
+// guard: deriving the boundaries from AGENT_RUN_START_TIMEOUT_MS would keep the tests
+// green if that constant were shortened back under a provider's startup budget.
+const EXPECTED_RUN_START_BUDGET_MS = 60_000;
+// The slowest provider startup budget the run-start wait has to sit outside of today
+// (OpenCode's OPENCODE_SERVER_STARTUP_TIMEOUT_MS).
+const SLOWEST_PROVIDER_STARTUP_BUDGET_MS = 30_000;
+
+function createRunStartManager(startDelayMs: number | null): {
+  agentManager: AgentManager;
+  abortReasons: unknown[];
+} {
+  const abortReasons: unknown[] = [];
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(
+    agentManager,
+    "waitForAgentRunStart",
+    (_agentId: string, options?: { signal?: AbortSignal }) =>
+      new Promise<void>((resolve, reject) => {
+        const timer = startDelayMs === null ? null : setTimeout(resolve, startDelayMs);
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            if (timer !== null) {
+              clearTimeout(timer);
+            }
+            abortReasons.push(options.signal?.reason);
+            reject(new Error(String(options.signal?.reason)));
+          },
+          { once: true },
+        );
+      }),
+  );
+  return { agentManager, abortReasons };
+}
+
+test("waiting for a run start outlasts the slowest provider startup budget", async () => {
+  vi.useFakeTimers();
+  // A provider is still allowed to be starting here, so the outer wait must not abort it.
+  const { agentManager, abortReasons } = createRunStartManager(
+    SLOWEST_PROVIDER_STARTUP_BUDGET_MS + 5_000,
+  );
+
+  try {
+    const wait = waitForAgentRunStartWithTimeout(agentManager, "agent-1");
+    let settled = false;
+    const markSettled = () => {
+      settled = true;
+    };
+    void wait.then(markSettled, markSettled);
+
+    await vi.advanceTimersByTimeAsync(SLOWEST_PROVIDER_STARTUP_BUDGET_MS);
+    expect(settled).toBe(false);
+    expect(abortReasons).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(wait).resolves.toBeUndefined();
+    expect(abortReasons).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("waiting for a run start still gives up at the run start budget", async () => {
+  vi.useFakeTimers();
+  const { agentManager, abortReasons } = createRunStartManager(null);
+
+  try {
+    const wait = waitForAgentRunStartWithTimeout(agentManager, "agent-1");
+    const rejection = expect(wait).rejects.toThrow("timeout");
+    let settled = false;
+    const markSettled = () => {
+      settled = true;
+    };
+    void wait.then(markSettled, markSettled);
+
+    await vi.advanceTimersByTimeAsync(EXPECTED_RUN_START_BUDGET_MS - 1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await rejection;
+    expect(abortReasons).toEqual(["timeout"]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
