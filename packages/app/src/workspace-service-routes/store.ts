@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
+import { z } from "zod";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import type { WorkspaceScriptLinkKind } from "@/utils/workspace-script-links";
 
 interface WorkspaceServiceRoutePreferencesState {
@@ -8,25 +10,19 @@ interface WorkspaceServiceRoutePreferencesState {
   setPreferredRoute: (serverId: string, kind: WorkspaceScriptLinkKind) => void;
 }
 
-function isWorkspaceScriptLinkKind(value: unknown): value is WorkspaceScriptLinkKind {
-  return value === "public" || value === "paseo" || value === "direct";
-}
-
-function sanitizePreferences(value: unknown): Record<string, WorkspaceScriptLinkKind> {
-  if (!value || typeof value !== "object") return {};
-  const byServerId = (value as { byServerId?: unknown }).byServerId;
-  if (!byServerId || typeof byServerId !== "object") return {};
-
-  const result: Record<string, WorkspaceScriptLinkKind> = {};
-  for (const [serverId, kind] of Object.entries(byServerId)) {
-    if (isWorkspaceScriptLinkKind(kind)) result[serverId] = kind;
-  }
-  return result;
-}
+const WorkspaceScriptLinkKindSchema = z.enum(["public", "paseo", "direct"]);
+const WorkspaceServiceRoutePreferencesSchema = z.strictObject({
+  byServerId: z.record(z.string(), WorkspaceScriptLinkKindSchema),
+});
 
 export function createWorkspaceServiceRoutePreferencesStore(storage: StateStorage) {
   return create<WorkspaceServiceRoutePreferencesState>()(
-    persist(
+    persist<
+      WorkspaceServiceRoutePreferencesState,
+      [],
+      [],
+      z.infer<typeof WorkspaceServiceRoutePreferencesSchema>
+    >(
       (set) => ({
         byServerId: {},
         setPreferredRoute: (serverId, kind) =>
@@ -35,12 +31,15 @@ export function createWorkspaceServiceRoutePreferencesStore(storage: StateStorag
       {
         name: "workspace-service-route-preferences",
         version: 1,
-        storage: createJSONStorage(() => storage),
+        storage: createValidatedPersistStorage(storage, WorkspaceServiceRoutePreferencesSchema),
         partialize: (state) => ({ byServerId: state.byServerId }),
-        merge: (persistedState, currentState) => ({
-          ...currentState,
-          byServerId: sanitizePreferences(persistedState),
-        }),
+        merge: (persistedState, currentState) => {
+          const result = WorkspaceServiceRoutePreferencesSchema.safeParse(persistedState);
+          return {
+            ...currentState,
+            byServerId: result.success ? result.data.byServerId : {},
+          };
+        },
       },
     ),
   );

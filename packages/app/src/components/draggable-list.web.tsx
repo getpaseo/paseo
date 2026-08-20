@@ -34,6 +34,61 @@ const DRAG_ACTIVATION_CONFIG = {
   touchHoldTolerance: 8,
 };
 
+function areRecordsEqual(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => Object.is(left[key], right[key]));
+}
+
+function useShallowStableRecord(
+  value: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const stableRef = useRef(value);
+  if (!areRecordsEqual(stableRef.current, value)) {
+    stableRef.current = value;
+  }
+  return stableRef.current;
+}
+
+function useStableListenerRecord(
+  listeners: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const latestListenersRef = useRef(listeners);
+  latestListenersRef.current = listeners;
+  const listenerKeys = Object.keys(listeners ?? {}).sort();
+  const listenerKeySignature = listenerKeys.join("\u0000");
+  const stableListenersRef = useRef<{
+    keySignature: string;
+    listeners: Record<string, unknown> | undefined;
+  }>(undefined);
+  if (stableListenersRef.current?.keySignature !== listenerKeySignature) {
+    stableListenersRef.current = {
+      keySignature: listenerKeySignature,
+      listeners:
+        listenerKeys.length === 0
+          ? undefined
+          : Object.fromEntries(
+              listenerKeys.map((key) => [
+                key,
+                (...args: unknown[]) => {
+                  const listener = latestListenersRef.current?.[key];
+                  if (typeof listener === "function") {
+                    return Reflect.apply(listener, undefined, args);
+                  }
+                },
+              ]),
+            ),
+    };
+  }
+  return stableListenersRef.current.listeners;
+}
+
 interface SortableItemProps<T> {
   id: string;
   item: T;
@@ -92,19 +147,28 @@ function SortableItemInner<T>({
     }),
     [combinedTransform, transition, isDragging],
   );
+  const stableAttributes = useShallowStableRecord(attributes as unknown as Record<string, unknown>);
+  const stableListeners = useStableListenerRecord(
+    listeners as unknown as Record<string, unknown> | undefined,
+  );
+  const dragHandleProps = useMemo(
+    () =>
+      useDragHandle
+        ? {
+            attributes: stableAttributes,
+            listeners: stableListeners,
+            setActivatorNodeRef: setActivatorNodeRef as unknown as (node: unknown) => void,
+          }
+        : undefined,
+    [setActivatorNodeRef, stableAttributes, stableListeners, useDragHandle],
+  );
 
   const info: DraggableRenderItemInfo<T> = {
     item,
     index,
     drag,
     isActive: activeId === id,
-    dragHandleProps: useDragHandle
-      ? {
-          attributes: attributes as unknown as Record<string, unknown>,
-          listeners: listeners as unknown as Record<string, unknown>,
-          setActivatorNodeRef: setActivatorNodeRef as unknown as (node: unknown) => void,
-        }
-      : undefined,
+    dragHandleProps,
   };
 
   const wrapperProps = useDragHandle

@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "Paseo CLI reference: manage agents, workspaces, scripts, schedules, daemons, and permissions from your terminal."
+description: "Paseo CLI reference: manage projects, workspaces, agents, plugins, scripts, schedules, daemons, and permissions from your terminal."
 nav: CLI
 order: 3
 category: Getting started
@@ -23,6 +23,18 @@ paseo logs <id>                      # View agent timeline
 paseo stop <id>                      # Stop an agent
 ```
 
+## Provider diagnostics
+
+Ask the daemon to inspect the provider environment it actually uses:
+
+```bash
+paseo provider diagnostic claude
+paseo provider diagnostic codex --json
+paseo provider diagnostic opencode --host devbox:6767
+```
+
+The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use `--host` for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic**.
+
 ## Running agents
 
 Use `paseo run` to start a new agent with a task:
@@ -31,7 +43,7 @@ Use `paseo run` to start a new agent with a task:
 paseo run "implement user authentication"
 paseo run --provider codex "refactor the API layer"
 paseo run --background "run the focused test suite"
-paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base main "implement feature X"
+paseo run --new-workspace worktree --worktree-mode branch-off --new-branch feature/x --base origin/main "implement feature X"
 paseo run --workspace <workspace-id> "review the current diff"
 paseo run --output-schema schema.json "extract release notes"
 paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}' "summarize release notes"
@@ -47,6 +59,34 @@ Use `--output-schema` to return only matching JSON output. You can pass a schema
 
 By default, `paseo run` waits for completion. Use `--background` to return immediately while the agent keeps running.
 
+## Projects
+
+Register the current directory as a project, then list the projects known to the daemon:
+
+```bash
+cd ~/dev/my-app
+paseo project create
+paseo project ls
+```
+
+Use the project ID from `paseo project ls` to rename, reset, or delete a project:
+
+```bash
+paseo project rename <project-id> "My app"
+paseo project rename <project-id> --reset
+paseo project delete <project-id>
+```
+
+`--reset` restores the name derived from the project directory. Deleting a project archives its active workspaces and removes the project from Paseo. It does not delete the project directory.
+
+For a local daemon, `paseo project create [path]` defaults to the current directory and resolves relative paths on the CLI machine. When you use `--host` or `PASEO_HOST`, provide a path that the target daemon can access:
+
+```bash
+paseo project create /srv/repos/api --host devbox:6767
+```
+
+The remote daemon interprets that path on its own machine. See [Workspaces](/docs/workspaces) for how projects group working directories and sessions.
+
 ## Workspaces
 
 Create a workspace independently when you want to prepare its files before starting an agent:
@@ -60,7 +100,7 @@ paseo workspace create \
   --mode branch-off \
   --new-branch feature/auth \
   --worktree-slug feature-auth \
-  --base main
+  --base origin/main
 
 paseo workspace create \
   --isolation worktree \
@@ -76,11 +116,13 @@ paseo workspace create \
   --pr-number 2186
 ```
 
-Then list, use, or archive it:
+Then list, use, rename, or archive it:
 
 ```bash
 paseo workspace ls
 paseo run --workspace <workspace-id> "implement authentication"
+paseo workspace rename <workspace-id> "Auth rework"
+paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
 paseo workspace archive <workspace-id>
 ```
 
@@ -99,6 +141,26 @@ paseo script stop web
 By default, Paseo selects the workspace whose directory is the current directory. Pass `--cwd <path>` to select a different directory, or `--workspace <workspace-id>` when a directory has multiple workspaces. These commands also accept `--host` and the standard output options such as `--json`.
 
 The output includes each script's lifecycle and supervised terminal ID. Services also include their assigned port, proxy URL, and health. See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
+
+## Plugins
+
+Create and manage trusted local plugins on a daemon:
+
+```bash
+paseo plugin init /absolute/path/to/plugin
+paseo plugin install /absolute/path/to/plugin
+paseo plugin ls
+paseo plugin reload my-plugin
+paseo plugin logs my-plugin
+paseo plugin disable my-plugin
+paseo plugin enable my-plugin
+paseo plugin remove my-plugin
+```
+
+`paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
+structured entries or `--host <target>` for another daemon. See the
+[Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
+behavior.
 
 ## Listing agents
 
@@ -188,20 +250,39 @@ Detaching is an explicit lifecycle action, not a creation flag. The agent keeps 
 paseo daemon start             # Start the daemon
 paseo daemon start --web-ui    # Start and serve the bundled web UI
 paseo daemon status            # Check status
+paseo reload                    # Reload config.json (top-level alias)
+paseo daemon reload             # Reload config.json
 paseo daemon stop              # Stop the daemon
 ```
+
+Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result, and `--host` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 
 ## Hub
 
 ```bash
-paseo hub connect <url>        # Enroll this daemon with a Paseo Hub
+paseo hub login [url]          # Approve and store organization-scoped CLI access
+paseo hub connect [url]        # Enroll this daemon using CLI access
+paseo hub projects             # List projects in the authenticated organization
 paseo hub status               # Show the current Hub relationship
 paseo hub disconnect           # End it
+paseo hub deploy -p <project>  # Discover, validate, and activate a Hub bundle
+paseo hub deploy -p <project> --dry-run # Validate without activating
+paseo hub logout               # Remove the active stored CLI login
 ```
 
-See [Daemons in Hub](/docs/hub/daemons).
+Run deploy from the project root. It reads `.paseo/hub.yml`, every direct `.paseo/workflows/*.yml` file, and referenced `.paseo/workflows/partials/*` files in deterministic path order. It does not search parents, accept an alternate resource path, or flatten the bundle into monolithic YAML.
+
+Pass `-p, --project <slug>` to select the target project. `--dry-run` performs the same discovery and server validation without recording or activating a revision. Both outputs include the resolved Hub, project, and discovered workflow count.
+
+`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. The stored login is separate from the daemon relationship created by `connect`. Interactive logout checks the same-origin daemon relationship and asks whether to disconnect before deleting the login. Declining removes only the login. JSON and noninteractive logout never prompt or disconnect implicitly; `--disconnect-daemon` is the explicit automation path, and `--force` applies to that daemon disconnection. If a requested disconnection fails, the login is preserved.
+
+Every command resolves and normalizes its destination before Hub or daemon work. Origin precedence is an explicit command origin or `--hub`, then `PASEO_HUB_URL`, then the active stored login origin, then the hosted default `https://hub.paseo.sh`. The hosted default never overrides an active login. Credential precedence is `--api-key <secret>`, then `PASEO_HUB_API_KEY`, then a stored login for the exact resolved origin. A stored credential is never sent to a different origin. API keys passed through flags or the environment are not stored.
+
+Human output reports the resolved destination before each action. JSON output keeps stdout machine-readable and includes the normalized Hub origin. Bundle diagnostics identify paths without printing configuration contents or credentials.
+
+See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configuration), and the [Hub public API](/docs/hub/api).
 
 ## Connecting to a remote daemon
 

@@ -7,6 +7,7 @@ import type {
   AgentSession,
   AgentSessionConfig,
   FetchCatalogOptions,
+  ProviderRefreshContext,
   ProviderCatalog,
 } from "../agent-sdk-types.js";
 
@@ -24,10 +25,6 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
-function neverResolves<T>(): Promise<T> {
-  return new Promise<T>(() => {});
-}
-
 export class MockSlowProviderClient implements AgentClient {
   readonly provider: AgentProvider = MOCK_SLOW_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
@@ -36,8 +33,19 @@ export class MockSlowProviderClient implements AgentClient {
     return process.env.PASEO_ENABLE_MOCK_SLOW === "true";
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    return neverResolves<ProviderCatalog>();
+  async fetchCatalog(
+    _options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
+    return await (context?.runActivity(
+      "mock.catalog",
+      () =>
+        new Promise<ProviderCatalog>((_resolve, reject) => {
+          context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+            once: true,
+          });
+        }),
+    ) ?? new Promise<ProviderCatalog>(() => {}));
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

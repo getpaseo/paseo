@@ -90,11 +90,7 @@ async function openTabSwitcher(page: Page) {
 async function openModelSelector(page: Page) {
   await page.getByRole("button", { name: /Select model/ }).click();
   await expectBottomSheetOpen(page);
-  await expect(
-    page.getByLabel("Bottom Sheet", { exact: true }).getByText("Ten second stream", {
-      exact: true,
-    }),
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible({ timeout: 10_000 });
 }
 
 async function openAndCloseTabSwitcherTwice(page: Page) {
@@ -124,15 +120,23 @@ test.describe("mobile bottom sheet reopen", () => {
     });
   });
 
-  test("model selector closes after model selection", async ({ page }) => {
+  test("search selection returns to configuration options", async ({ page }) => {
     await withMobileMockAgent(page, async () => {
       await openModelSelector(page);
-      const sheet = page.getByLabel("Bottom Sheet", { exact: true });
+      const sheet = page.getByTestId("agent-controls-model-sheet");
 
-      await sheet.getByText("Ten second stream", { exact: true }).click();
+      await page.getByTestId("model-search-all-input").click();
+      const model = page.getByRole("button", { name: /^Ten second stream/ });
+      await expect(model).toBeVisible({
+        timeout: 10_000,
+      });
 
-      await expect(sheet).not.toBeVisible({ timeout: 10_000 });
-      await expect(page.getByRole("button", { name: /Ten second stream/ })).toBeVisible();
+      await model.click();
+
+      await expect(sheet).toBeVisible();
+      await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
+      await expect(page.getByTestId("agent-controls-model")).toContainText("Ten second stream");
+      await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeVisible();
     });
   });
 });

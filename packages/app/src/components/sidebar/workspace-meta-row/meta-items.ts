@@ -1,3 +1,4 @@
+import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
 import type { PrHint } from "@/git/pr-hint";
 import type { SidebarChecksDisplay } from "@/components/sidebar/display-preferences/checks-display";
 import type { SidebarRowItems } from "@/components/sidebar/display-preferences/row-items";
@@ -6,14 +7,22 @@ import type { WorkspaceServiceSummary } from "./service-summary";
 
 /**
  * What ends up on the line under a workspace title, in the order it is read: where the
- * workspace lives, what change it belongs to, whether that change is passing, and what it is
- * running. Identity first, then the work, then the work's state.
+ * workspace lives, what change it belongs to, whether that change is passing, what it is
+ * running, and what someone filed it under. Identity first, then the work, then the work's
+ * state, then the labels a person put on it.
+ *
+ * Labels are one item rather than one per label: they are drawn as a run of chips with a single
+ * separator in front of them, so the line reads as four peers however many labels a workspace
+ * carries.
  */
 export type MetaRowItem =
+  | { kind: "branch"; name: string }
+  | { kind: "project"; name: string }
   | { kind: "host" }
   | { kind: "changeRequest"; hint: PrHint }
   | { kind: "checks"; summary: CheckSummary; label: boolean }
-  | { kind: "services"; summary: WorkspaceServiceSummary };
+  | { kind: "services"; summary: WorkspaceServiceSummary }
+  | { kind: "labels"; labels: readonly WorkspaceLabelDefinition[] };
 
 /**
  * Which peers a row should draw, given what it knows and what the user left switched on.
@@ -26,15 +35,33 @@ export type MetaRowItem =
  * has no badge to hand down, so by the time a row sees one it is meant to be drawn.
  */
 export function selectMetaRowItems(input: {
+  currentBranch: string | null;
+  projectName: string | null;
   hasHostBadge: boolean;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
+  labels: readonly WorkspaceLabelDefinition[];
   visible: SidebarRowItems;
   checksDisplay: SidebarChecksDisplay;
 }): MetaRowItem[] {
-  const { hasHostBadge, prHint, serviceSummary, visible, checksDisplay } = input;
+  const {
+    currentBranch,
+    projectName,
+    hasHostBadge,
+    prHint,
+    serviceSummary,
+    labels,
+    visible,
+    checksDisplay,
+  } = input;
   const items: MetaRowItem[] = [];
 
+  if (currentBranch && visible.branch) {
+    items.push({ kind: "branch", name: currentBranch });
+  }
+  if (projectName && visible.project) {
+    items.push({ kind: "project", name: projectName });
+  }
   if (hasHostBadge) {
     items.push({ kind: "host" });
   }
@@ -55,6 +82,10 @@ export function selectMetaRowItems(input: {
 
   if (serviceSummary && visible.services) {
     items.push({ kind: "services", summary: serviceSummary });
+  }
+
+  if (labels.length > 0 && visible.labels) {
+    items.push({ kind: "labels", labels });
   }
 
   return items;

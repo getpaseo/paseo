@@ -1,6 +1,6 @@
 ---
 title: Hub quickstart
-description: Sign in, connect GitHub, register a daemon, and get an agent starting from a mention.
+description: Connect Hub, create a project, and run a workflow from a GitHub comment.
 nav: Quickstart
 order: 61
 category: Hub
@@ -8,77 +8,107 @@ category: Hub
 
 # Hub quickstart
 
-From an empty Hub to an agent that starts when someone mentions it. Each step links to the page that covers it properly.
+## 1. Create a project
 
-## 1. Sign in
+Open **Connections** in Hub and connect the GitHub account or organization whose repositories you use. Then open **Projects → New project** and create a project.
 
-Open your Hub and sign in with the owner account created during deployment. Replace its temporary password when prompted. Your connections, daemons, and projects all live inside its organization.
-
-## 2. Connect GitHub
-
-Open **Connections** and connect GitHub. Choose the account or organization whose repositories you want to use.
-
-The connection appears with a generated slug like `yourname-github`.
-
-## 3. Register a daemon
+## 2. Log in and connect a daemon
 
 On the machine that will run agents:
 
 ```sh
-paseo hub connect https://your-hub.example.com
+paseo hub login https://your-hub.example.com
+paseo hub projects
+paseo hub connect
 ```
 
-The CLI prints a verification code. In Hub, open **Daemons → Register a daemon**, enter the code, and choose a friendly slug. Hub normalizes `Build Studio` to `build-studio`. See [Daemons](/docs/hub/daemons).
+Approve the browser login. `projects` shows the slug needed by `deploy`. See [Daemons](/docs/hub/daemons) for the separation between your CLI login and the daemon relationship.
 
-## 4. Create a project
+## 3. Add the bundle
 
-Open **Projects → New project**. On its **Configuration** tab, pick a repository and choose **Use for configuration**. Hub now reads `.paseo/hub.yml` from that repository's default branch.
+Create these files:
 
-## 5. Commit the configuration
+```text
+.paseo/
+├── hub.yml
+└── workflows/
+    └── github-help.yml
+```
 
-Add `.paseo/hub.yml` to that repository:
+`.paseo/hub.yml` names project-wide resources:
 
 ```yaml
 environments:
-  - name: dev
+  dev:
     kind: daemon
     daemon: my-daemon
     cwd: /Users/you/code/your-repo
-
-triggers:
-  - name: mention
-    on: github.issue_comment
-    max_runtime: 2h
-    filters:
-      repo: yourname/your-repo
-      contains: "@paseo"
-      from_users: [your-github-login]
-    steps:
-      - id: work
-        environment: dev
-        max_runtime: 90m
-        idle_timeout: 10m
-        agent:
-          provider: codex
-          mode: full-access
-        prompt:
-          - text: |
-              Someone asked for help.
-              ${{ paseo.prompt }}
+agents:
+  codex:
+    provider: codex
+    mode: full-access
 ```
 
-`daemon` is the normalized slug from step 3. `cwd` is a directory on that machine.
+`.paseo/workflows/github-help.yml` contains one trigger and its ordered steps:
 
-## 6. Push
+```yaml
+name: github-help
+on: github.issue_comment
+max_runtime: 2h
+filters:
+  repo: yourname/your-repo
+  contains: "@paseo"
+  from_users: [your-github-login]
+steps:
+  - id: work
+    environment: dev
+    max_runtime: 90m
+    idle_timeout: 10m
+    agent: codex
+    prompt:
+      - text: |
+          Complete this request and call hub.finish_execution when done.
 
-Push to the default branch. Hub fetches the file at that commit, validates it, and activates it. The **Configuration** tab shows the active revision and the last sync.
+          <user-prompt>
+          ${{ paseo.prompt }}
+          </user-prompt>
+```
 
-If the file is invalid, Hub records the failure and keeps the previous revision active.
+`daemon` is the daemon slug shown by Hub. `cwd` is a directory on that machine. `${{ paseo.prompt }}` is the normalized request text after the provider marker and declared input headers are removed.
 
-## 7. Trigger it
+Workflow files are discovered as direct `.yml` children of `.paseo/workflows/`. You do not list them in `hub.yml`.
 
-Comment `@paseo have a look at this` on an issue in that repository, from the account you listed in `from_users`.
+## 4. Validate and deploy
 
-Open the project's **Activity** tab. You should see the event received and routed, and an execution in **Executions**. The agent itself appears in the Paseo app on that machine.
+From the project root:
 
-Nothing happened? [Activity](/docs/hub/activity) has the checklist.
+```sh
+paseo hub deploy -p your-project --dry-run
+paseo hub deploy -p your-project
+```
+
+Dry-run performs the same discovery and server-side validation without recording or activating a revision. See [Configuration](/docs/hub/configuration) for credentials, diagnostics, and GitHub sync.
+
+## 5. Trigger it
+
+Comment from the account in `from_users`:
+
+```text
+@paseo have a look at this
+```
+
+Open the project's **Activity** tab to see routing and execution. If nothing runs, use the [Activity checklist](/docs/hub/activity).
+
+Before widening the allowlist or granting write authority, read [Hub security](/docs/hub/security).
+
+When you no longer need the local CLI login:
+
+```sh
+paseo hub logout
+```
+
+Logging out does not disconnect the daemon. When the daemon is connected to the same Hub as the active CLI login, use `paseo hub logout --disconnect-daemon` to remove both relationships.
+
+## Next
+
+[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle covering all three providers, with a classifier, a worker, and shared prompt partials.

@@ -22,13 +22,13 @@ export function buildDraftAgentControls(input: {
   formState: UseAgentFormStateResult;
   features?: DraftAgentControlsProps["features"];
   onSetFeature?: DraftAgentControlsProps["onSetFeature"];
+  onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
 }): DraftAgentControlsProps {
-  const { formState, features, onSetFeature, onDropdownClose } = input;
+  const { formState, features, onSetFeature, onApplyAgentProfile, onDropdownClose } = input;
   return {
     providerDefinitions: formState.providerDefinitions,
     selectedProvider: formState.selectedProvider,
-    onSelectProvider: formState.setProviderFromUser,
     modeOptions: formState.modeOptions,
     selectedMode: formState.selectedMode,
     onSelectMode: formState.setModeFromUser,
@@ -42,6 +42,7 @@ export function buildDraftAgentControls(input: {
     thinkingOptions: formState.availableThinkingOptions,
     selectedThinkingOptionId: formState.selectedThinkingOptionId,
     onSelectThinkingOption: formState.setThinkingOptionFromUser,
+    onApplyAgentProfile,
     features,
     onSetFeature,
     onDropdownClose,
@@ -56,7 +57,7 @@ export function hasDraftContent(input: {
   text: string;
   attachments: UserComposerAttachment[];
 }): boolean {
-  return input.text.trim().length > 0 || input.attachments.length > 0;
+  return input.text.length > 0 || input.attachments.length > 0;
 }
 
 export function areAttachmentsEqual(input: {

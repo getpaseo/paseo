@@ -28,7 +28,7 @@ describe("loadChangesPreferencesFromStorage", () => {
 
     expect(result).toEqual({
       layout: "unified",
-      viewMode: "flat",
+      desktopTreeVisible: false,
       wrapLines: true,
       hideWhitespace: false,
       commitsCollapsed: true,
@@ -51,7 +51,7 @@ describe("loadChangesPreferencesFromStorage", () => {
 
     expect(result).toEqual({
       layout: "split",
-      viewMode: "tree",
+      desktopTreeVisible: true,
       hideWhitespace: true,
       wrapLines: false,
       commitsCollapsed: true,
@@ -95,14 +95,14 @@ describe("saveChangesPreferences", () => {
 
     await saveChangesPreferences({
       queryClient,
-      updates: { layout: "split", viewMode: "tree", hideWhitespace: true },
+      updates: { layout: "split", desktopTreeVisible: true, hideWhitespace: true },
       storage,
     });
 
     const expected = {
       ...DEFAULT_CHANGES_PREFERENCES,
       layout: "split",
-      viewMode: "tree",
+      desktopTreeVisible: true,
       hideWhitespace: true,
     };
     expect(queryClient.getQueryData(CHANGES_PREFERENCES_QUERY_KEY)).toEqual(expected);

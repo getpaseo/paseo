@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, TextInput, View } from "react-native";
-import { router } from "expo-router";
+import { Pressable, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
@@ -26,6 +26,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { ProjectEditSheet } from "@/components/project-edit-sheet";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
@@ -46,7 +47,6 @@ import {
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
-import { buildProjectsSettingsRoute } from "@/utils/host-routes";
 import {
   getProjectHostEntry,
   getProjectSummaryForHostProject,
@@ -93,9 +93,16 @@ type ReadProjectConfigData = Awaited<ReturnType<DaemonClient["readProjectConfig"
 export interface ProjectSettingsScreenProps {
   serverId: string;
   projectId: string;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
-export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSettingsScreenProps) {
+export default function ProjectSettingsScreen({
+  serverId,
+  projectId,
+  onBackToProjects,
+  showBackToProjects,
+}: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
     () => getProjectSummaryForHostProject(projects, serverId, projectId),
@@ -115,7 +122,12 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
     selectedHost.repoRoot.trim().length > 0;
 
   if (!project || !selectedHost || !client || !canEdit) {
-    return <NoEditableTarget serverId={serverId} />;
+    return (
+      <NoEditableTarget
+        onBackToProjects={onBackToProjects}
+        showBackToProjects={showBackToProjects}
+      />
+    );
   }
 
   return (
@@ -124,41 +136,45 @@ export default function ProjectSettingsScreen({ serverId, projectId }: ProjectSe
       selectedHost={selectedHost}
       client={client}
       isHostGone={isHostGone}
+      onBackToProjects={onBackToProjects}
+      showBackToProjects={showBackToProjects}
     />
   );
 }
 
-function navigateBackToProjects(serverId: string) {
-  router.navigate(buildProjectsSettingsRoute(serverId));
-}
-
-function NoEditableTarget({ serverId }: { serverId: string }) {
+function NoEditableTarget({
+  onBackToProjects,
+  showBackToProjects,
+}: {
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
+}) {
   const { t } = useTranslation();
-  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <View style={styles.noTargetContainer}>
-      <BackToProjectsButton serverId={serverId} />
+      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
       <Text style={styles.noTargetText}>{t("settings.project.noEditableTarget")}</Text>
-      <Button
-        testID="project-settings-back-button"
-        onPress={handleBack}
-        variant="secondary"
-        size="md"
-      >
-        {t("settings.project.backToProjects")}
-      </Button>
+      {showBackToProjects ? (
+        <Button
+          testID="project-settings-back-button"
+          onPress={onBackToProjects}
+          variant="secondary"
+          size="md"
+        >
+          {t("settings.project.backToProjects")}
+        </Button>
+      ) : null}
     </View>
   );
 }
 
-function BackToProjectsButton({ serverId }: { serverId: string }) {
+function BackToProjectsButton({ onPress }: { onPress: () => void }) {
   const { t } = useTranslation();
-  const handleBack = useCallback(() => navigateBackToProjects(serverId), [serverId]);
   return (
     <Button
       testID="project-settings-back-link"
       accessibilityLabel={t("settings.project.backToProjects")}
-      onPress={handleBack}
+      onPress={onPress}
       variant="ghost"
       size="sm"
       leftIcon={ArrowLeft}
@@ -174,6 +190,8 @@ interface ProjectSettingsBodyProps {
   selectedHost: ProjectHostEntry;
   client: DaemonClient;
   isHostGone: boolean;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
 function ProjectSettingsBody({
@@ -181,6 +199,8 @@ function ProjectSettingsBody({
   selectedHost,
   client,
   isHostGone,
+  onBackToProjects,
+  showBackToProjects,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -200,6 +220,12 @@ function ProjectSettingsBody({
     queryFn: () => client.readProjectConfig(selectedHost.repoRoot),
     retry: false,
   });
+  const refetchProjectConfig = readQuery.refetch;
+  useFocusEffect(
+    useCallback(() => {
+      void refetchProjectConfig();
+    }, [refetchProjectConfig]),
+  );
 
   const data = readQuery.data;
   const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
@@ -240,6 +266,8 @@ function ProjectSettingsBody({
   );
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
+  const hasUncommittedWorktreeSetupChanges =
+    data?.ok === true && data.hasUncommittedWorktreeSetupChanges === true;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
 
   const handleReload = useCallback(() => {
@@ -248,7 +276,7 @@ function ProjectSettingsBody({
 
   return (
     <View role="main" style={styles.body}>
-      <BackToProjectsButton serverId={selectedHost.serverId} />
+      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
 
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
@@ -290,12 +318,15 @@ function ProjectSettingsBody({
         readQuery,
         loadedConfig,
         loadedRevision,
+        hasUncommittedWorktreeSetupChanges,
         readError,
         selectedHost,
         queryKey,
         client,
         onReload: handleReload,
         isHostGone,
+        onBackToProjects,
+        showBackToProjects,
       })}
     </View>
   );
@@ -305,24 +336,30 @@ interface RenderContentInput {
   readQuery: ReturnType<typeof useQuery<ReadProjectConfigData>>;
   loadedConfig: PaseoConfigRaw | null;
   loadedRevision: PaseoConfigRevision | null;
+  hasUncommittedWorktreeSetupChanges: boolean;
   readError: ProjectConfigRpcError | null;
   selectedHost: ProjectHostEntry;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
   isHostGone: boolean;
+  onBackToProjects: () => void;
+  showBackToProjects: boolean;
 }
 
 function renderContent({
   readQuery,
   loadedConfig,
   loadedRevision,
+  hasUncommittedWorktreeSetupChanges,
   readError,
   selectedHost,
   queryKey,
   client,
   onReload,
   isHostGone,
+  onBackToProjects,
+  showBackToProjects,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -341,7 +378,12 @@ function renderContent({
   }
 
   if (isHostGone) {
-    return <NoEditableTarget serverId={selectedHost.serverId} />;
+    return (
+      <NoEditableTarget
+        onBackToProjects={onBackToProjects}
+        showBackToProjects={showBackToProjects}
+      />
+    );
   }
 
   if (!loadedConfig) {
@@ -358,6 +400,7 @@ function renderContent({
       key={formKey}
       baseConfig={loadedConfig}
       revision={loadedRevision}
+      hasUncommittedWorktreeSetupChanges={hasUncommittedWorktreeSetupChanges}
       repoRoot={selectedHost.repoRoot}
       queryKey={queryKey}
       client={client}
@@ -438,6 +481,7 @@ function errorToDetail(error: unknown): string | null {
 interface ProjectConfigFormProps {
   baseConfig: PaseoConfigRaw;
   revision: PaseoConfigRevision | null;
+  hasUncommittedWorktreeSetupChanges: boolean;
   repoRoot: string;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
@@ -447,6 +491,7 @@ interface ProjectConfigFormProps {
 function ProjectConfigForm({
   baseConfig,
   revision,
+  hasUncommittedWorktreeSetupChanges,
   repoRoot,
   queryKey,
   client,
@@ -479,6 +524,11 @@ function ProjectConfigForm({
           revision: result.revision,
           requestId: "local-cache",
           repoRoot,
+          ...(result.hasUncommittedWorktreeSetupChanges === undefined
+            ? {}
+            : {
+                hasUncommittedWorktreeSetupChanges: result.hasUncommittedWorktreeSetupChanges,
+              }),
         });
         setWriteError(null);
         queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -660,6 +710,13 @@ function ProjectConfigForm({
           testID="worktree-setup-section"
           trailing={setupDocsLink}
         >
+          {hasUncommittedWorktreeSetupChanges ? (
+            <Alert
+              variant="warning"
+              title={t("settings.project.worktree.uncommittedTitle")}
+              description={t("settings.project.worktree.uncommittedDescription")}
+            />
+          ) : null}
           <SettingsTextAreaCard
             testID="worktree-setup-input"
             accessibilityLabel={t("settings.project.worktree.setupAccessibility")}
@@ -1007,7 +1064,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
         <TextInput
           testID="script-edit-name"
           accessibilityLabel={t("settings.project.scripts.nameAccessibility")}
-          value={script.name}
+          initialValue={script.name}
           onChangeText={handleNameChange}
           onBlur={handleNameBlur}
           placeholder="dev"
@@ -1026,7 +1083,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
           testID="script-edit-command"
           accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
           multiline
-          value={script.commandText}
+          initialValue={script.commandText}
           onChangeText={handleCommandChange}
           onBlur={handleCommandBlur}
           placeholder="npm run dev"
@@ -1075,7 +1132,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   noTargetText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   body: {
     padding: theme.spacing[4],
@@ -1097,7 +1154,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
@@ -1105,7 +1162,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[1],
   },
   titleIconFallbackText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   iconColor: {
@@ -1122,7 +1179,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyScripts: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   scriptRow: {
     flexDirection: "row",
@@ -1161,11 +1218,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   modalLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   modalInput: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
@@ -1175,7 +1232,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   modalMultilineInput: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
@@ -1193,7 +1250,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   fieldError: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   serviceToggleRow: {
     flexDirection: "row",
@@ -1207,12 +1264,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   serviceToggleLabel: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   modalHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   placeholderColor: {
     color: theme.colors.foregroundMuted,

@@ -43,8 +43,8 @@ import {
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
-import { mergeClaudeHooks } from "./hooks.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { ClaudeTaskState } from "./task-state.js";
 import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
@@ -69,6 +69,11 @@ import {
   formatProviderDiagnosticError,
 } from "../diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
+import {
+  applyClaudeToolPolicy,
+  ClaudeProviderOptionsSchema,
+  type ClaudeProviderOptions,
+} from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
@@ -105,6 +110,8 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
@@ -116,9 +123,11 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -371,7 +380,10 @@ function classifyClaudeSlashCommand(commandName: string): AgentSlashCommand["kin
   return CLAUDE_ROOT_ONLY_COMMANDS.has(commandName) ? "command" : "skill";
 }
 
-type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
+type ClaudeAgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
+  provider: "claude";
+  providerOptions: ClaudeProviderOptions;
+};
 
 export interface ClaudeContentChunk {
   type: string;
@@ -384,7 +396,7 @@ interface ClaudeAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
-  resolveVersion?: () => Promise<string>;
+  resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   configDir?: string;
 }
 
@@ -946,29 +958,9 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   if (typeof metadata.title === "string" || metadata.title === null) {
     result.title = metadata.title;
   }
-  if (typeof metadata.approvalPolicy === "string") {
-    result.approvalPolicy = metadata.approvalPolicy;
-  }
-  if (typeof metadata.sandboxMode === "string") {
-    result.sandboxMode = metadata.sandboxMode;
-  }
-  if (typeof metadata.networkAccess === "boolean") {
-    result.networkAccess = metadata.networkAccess;
-  }
-  if (typeof metadata.webSearch === "boolean") {
-    result.webSearch = metadata.webSearch;
-  }
-  if (isMetadata(metadata.extra)) {
-    const extra: AgentSessionConfig["extra"] = {};
-    if (isMetadata(metadata.extra.codex)) {
-      extra.codex = metadata.extra.codex;
-    }
-    if (isClaudeExtra(metadata.extra.claude)) {
-      extra.claude = metadata.extra.claude;
-    }
-    if (extra.codex || extra.claude) {
-      result.extra = extra;
-    }
+  const providerOptions = ClaudeProviderOptionsSchema.safeParse(metadata.providerOptions);
+  if (providerOptions.success) {
+    result.providerOptions = providerOptions.data;
   }
   if (typeof metadata.systemPrompt === "string") {
     result.systemPrompt = metadata.systemPrompt;
@@ -1012,10 +1004,6 @@ function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
   return isMetadata(value) && typeof value.type === "string";
 }
 
-function isClaudeExtra(value: unknown): value is Partial<ClaudeOptions> {
-  return isMetadata(value);
-}
-
 function isPermissionUpdate(value: AgentPermissionUpdate): value is PermissionUpdate {
   if (!isMetadata(value)) {
     return false;
@@ -1039,6 +1027,37 @@ function resolvePermissionKind(
     return "question";
   }
   return "tool";
+}
+
+// Notification previews fall back to serializing the raw request input when a
+// permission request carries no title. For AskUserQuestion that fallback is the
+// whole question object, so the notification reads as JSON. Summarize the first
+// question the same way the OMP and Pi providers do for their ask_user
+// permissions.
+function buildClaudeQuestionPermissionSummary(
+  toolName: string,
+  input: AgentMetadata,
+): { title?: string; description?: string } {
+  if (toolName !== "AskUserQuestion" || !Array.isArray(input.questions)) {
+    return {};
+  }
+
+  const question = input.questions.find(isMetadata);
+  const title = typeof question?.question === "string" ? question.question.trim() : "";
+  if (!title) {
+    return {};
+  }
+
+  const labels = Array.isArray(question?.options)
+    ? question.options
+        .map((option) => {
+          if (typeof option === "string") return option.trim();
+          return isMetadata(option) && typeof option.label === "string" ? option.label.trim() : "";
+        })
+        .filter((label) => label.length > 0)
+    : [];
+
+  return labels.length > 0 ? { title, description: labels.join(" / ") } : { title };
 }
 
 function getClaudeModeLabel(modeId: PermissionMode): string {
@@ -1461,7 +1480,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
-  private readonly resolveVersion: () => Promise<string>;
+  private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly configDir?: string;
 
   constructor(options: ClaudeAgentClientOptions) {
@@ -1471,7 +1490,8 @@ export class ClaudeAgentClient implements AgentClient {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.resolveVersion =
-      options.resolveVersion ?? (() => resolveClaudeCodeVersion(this.runtimeSettings));
+      options.resolveVersion ??
+      ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
     this.configDir = options.configDir;
   }
 
@@ -1525,18 +1545,21 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(
+    _options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
     let claudeCodeVersion: string | undefined;
     try {
-      claudeCodeVersion = await this.resolveVersion();
+      claudeCodeVersion = await runProviderRefreshActivity(context, "version", () =>
+        this.resolveVersion(context?.signal),
+      );
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to resolve Claude Code version for model catalog");
     }
-    const models = await getClaudeModelsWithSettings(
-      this.logger,
-      this.configDir,
-      claudeCodeVersion,
+    const models = await runProviderRefreshActivity(context, "settings", () =>
+      getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
     );
     const modes = detectIneligibleAutoModeTransport(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
@@ -1550,14 +1573,11 @@ export class ClaudeAgentClient implements AgentClient {
     };
   }
 
-  async resolveDefaultModeId({
-    config,
-    env: launchEnv,
-  }: ResolveAgentDefaultModeInput): Promise<string> {
+  async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
     const env = createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
-      overlays: [config.extra?.claude?.env, launchEnv],
+      overlays: [launchEnv],
     });
     return detectIneligibleAutoModeTransport(env) ? "default" : "auto";
   }
@@ -1642,11 +1662,13 @@ export class ClaudeAgentClient implements AgentClient {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
     const model = config.model?.trim();
+    const providerOptions = ClaudeProviderOptionsSchema.parse(config.providerOptions ?? {});
     return {
       ...config,
       provider: "claude",
       model: model || undefined,
-    } as ClaudeAgentConfig;
+      providerOptions,
+    };
   }
 }
 
@@ -1666,6 +1688,7 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 export async function resolveClaudeCodeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
+  signal?: AbortSignal,
 ): Promise<string> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
@@ -1679,6 +1702,7 @@ export async function resolveClaudeCodeVersion(
   const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
     ...createProviderEnvSpec({ runtimeSettings }),
     timeout: 5_000,
+    signal,
   });
   const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
   if (!version) {
@@ -1999,6 +2023,15 @@ class ClaudeAgentSession implements AgentSession {
   private query: Query | null = null;
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
+  /** The exact SDK query/input pair that owns the current foreground turn. */
+  private activeForegroundQuery: Query | null = null;
+  private activeForegroundInput: AsyncMessageInput<SDKUserMessage> | null = null;
+  /**
+   * Steers pushed into the live SDK input that Claude may not have read yet. Interrupting the turn
+   * has to discard them, or the SDK dequeues one and resumes the turn we just stopped. SDK user
+   * UUIDs are provider-private; never let them escape the adapter boundary.
+   */
+  private readonly queuedSteerUuids = new Set<string>();
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
@@ -2012,6 +2045,7 @@ class ClaudeAgentSession implements AgentSession {
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
+  private readonly taskState = new ClaudeTaskState();
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     readWorkflowResult: readClaudeWorkflowResultFile,
@@ -2213,6 +2247,8 @@ class ClaudeAgentSession implements AgentSession {
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
       }
+      this.activeForegroundQuery = this.query;
+      this.activeForegroundInput = this.input;
       this.startQueryPump();
       this.input.push(sdkMessage);
       setTimeout(() => {
@@ -2227,6 +2263,43 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.resolveSlashCommandInvocation(prompt)) {
+      return { status: "unavailable" };
+    }
+    const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    if (this.compacting || activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+
+    // Capture both ends of the live SDK stream before creating or delivering the message. There
+    // is deliberately no await below: a finished A cannot make this input point at a later B.
+    const query = this.activeForegroundQuery;
+    const input = this.activeForegroundInput;
+    if (!query || !input || this.query !== query || this.input !== input) {
+      return { status: "unavailable" };
+    }
+    const message = this.toSdkUserMessage(prompt);
+    message.priority = "next";
+    if (
+      (this.activeForegroundTurnId ?? this.autonomousTurn?.id) !== options.expectedTurnId ||
+      this.activeForegroundQuery !== query ||
+      this.activeForegroundInput !== input ||
+      this.query !== query ||
+      this.input !== input
+    ) {
+      return { status: "unavailable" };
+    }
+    if (message.uuid) {
+      this.queuedSteerUuids.add(message.uuid);
+    }
+    input.push(message);
+    return { status: "accepted" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2291,7 +2364,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv(this.config.extra?.claude));
+    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv());
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -2504,6 +2577,8 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.autonomousTurn = null;
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
@@ -2617,7 +2692,10 @@ class ClaudeAgentSession implements AgentSession {
     if (!parsed) {
       return null;
     }
-    return parsed.commandName === REWIND_COMMAND_NAME ? parsed : null;
+    return parsed.commandName === REWIND_COMMAND_NAME ||
+      CLAUDE_ROOT_ONLY_COMMANDS.has(parsed.commandName)
+      ? parsed
+      : null;
   }
 
   private parseSlashCommandInput(text: string): SlashCommandInvocation | null {
@@ -2781,6 +2859,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.taskState.reset();
     this.loadPersistedHistory(sessionId);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
@@ -2811,6 +2890,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.taskState.reset();
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -3054,28 +3134,23 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private buildSdkEnv(extraClaudeOptions: Partial<ClaudeOptions> | undefined): NodeJS.ProcessEnv {
+  private buildSdkEnv(): NodeJS.ProcessEnv {
     return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
-      overlays: [
-        extraClaudeOptions?.env,
-        {
-          // Increase MCP timeouts for long-running tool calls (10 minutes)
-          MCP_TIMEOUT: "600000",
-          MCP_TOOL_TIMEOUT: "600000",
-        },
-        this.launchEnv,
-      ],
+      overlays: [this.launchEnv],
     });
   }
 
   private async buildOptions(): Promise<ClaudeOptions> {
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
-    const extraClaudeOptions = this.config.extra?.claude;
-    const settingsOptions = this.buildSettingsOptions(extraClaudeOptions, { ultracode });
-    const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
+    const providerOptions = applyClaudeToolPolicy(
+      this.config.providerOptions,
+      this.config.toolPolicy,
+    );
+    const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
+    const sdkEnv = this.buildSdkEnv();
     assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
@@ -3126,14 +3201,11 @@ class ClaudeAgentSession implements AgentSession {
       ...sessionBinding,
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
-      ...extraClaudeOptions,
+      ...providerOptions,
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
-      // Merged rather than assigned above: extraClaudeOptions is spread after the base, so any
-      // user-configured hooks would otherwise replace these wholesale and silently stop effort
-      // from being observed.
-      hooks: mergeClaudeHooks(this.buildSubagentEffortHooks(), extraClaudeOptions?.hooks),
+      hooks: this.buildSubagentEffortHooks(),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -3159,7 +3231,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildSettingsOptions(
-    extraClaudeOptions: Partial<ClaudeOptions> | undefined,
+    providerOptions: ClaudeProviderOptions,
     input: { ultracode: boolean },
   ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
     const fastMode = this.resolveFastModeSetting();
@@ -3167,7 +3239,7 @@ class ClaudeAgentSession implements AgentSession {
       return {};
     }
     return {
-      settings: mergeClaudeSettings(extraClaudeOptions?.settings, {
+      settings: mergeClaudeSettings(providerOptions.settings, {
         ...(fastMode === null ? {} : { fastMode }),
         ...(input.ultracode ? { ultracode: true } : {}),
       }),
@@ -3393,6 +3465,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("foreground turn terminal");
@@ -3408,11 +3482,15 @@ class ClaudeAgentSession implements AgentSession {
     if (terminalSeen) {
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
+        this.activeForegroundQuery = null;
+        this.activeForegroundInput = null;
         this.cancelCurrentTurn = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("foreground turn terminal");
       } else if (this.autonomousTurn) {
         this.autonomousTurn = null;
+        this.activeForegroundQuery = null;
+        this.activeForegroundInput = null;
         this.activeTurnHasAssistantText = false;
         this.syncTurnState("autonomous turn terminal");
       }
@@ -3426,6 +3504,8 @@ class ClaudeAgentSession implements AgentSession {
     this.autonomousTurn = {
       id: this.createTurnId("autonomous"),
     };
+    this.activeForegroundQuery = this.query;
+    this.activeForegroundInput = this.input;
     this.activeTurnHasAssistantText = false;
     this.contextUsage.beginTurn();
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
@@ -3438,6 +3518,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
     this.autonomousTurn = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
     this.syncTurnState("autonomous turn completed");
   }
@@ -3641,13 +3723,26 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
+  /**
+   * Claude keeps talking about the request it was told to kill — the notification for the tool it
+   * just stopped, trailing assistant output. That is not new work, so it must not open a turn: the
+   * only message that would close that turn is the result shouldSuppressStaleResult drops, leaving
+   * the agent stuck reporting "running" forever.
+   */
+  private shouldStartAutonomousTurn(message: SDKMessage): boolean {
+    if (this.activeForegroundTurnId || this.pendingInterruptAbort) {
+      return false;
+    }
+    return this.isAssistantishMessage(message);
+  }
+
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
 
     const isForeground = Boolean(this.activeForegroundTurnId);
-    if (!isForeground && this.isAssistantishMessage(message)) {
+    if (this.shouldStartAutonomousTurn(message)) {
       this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
@@ -3783,6 +3878,8 @@ class ClaudeAgentSession implements AgentSession {
     this.queryRestartNeeded = false;
     this.autonomousTurn = null;
     this.activeForegroundTurnId = null;
+    this.activeForegroundQuery = null;
+    this.activeForegroundInput = null;
     this.syncTurnState("missing resumed conversation");
     return true;
   }
@@ -3802,6 +3899,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.pendingInterruptAbort = true;
+    await this.discardQueuedSteers(queryToInterrupt);
     try {
       await this.awaitWithTimeout(
         queryToInterrupt.interrupt(),
@@ -3809,6 +3907,31 @@ class ClaudeAgentSession implements AgentSession {
       );
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
+    }
+  }
+
+  /**
+   * Interrupt means interrupt: a steer Claude never read dies with the turn instead of resuming it.
+   * A steer already dequeued cannot be recalled, and does not need to be — the interrupt kills it.
+   */
+  private async discardQueuedSteers(query: Query): Promise<void> {
+    const uuids = [...this.queuedSteerUuids];
+    this.queuedSteerUuids.clear();
+    if (uuids.length === 0) return;
+    // The SDK runtime supports this, but its public Query type has not caught up. Keep the
+    // compatibility escape hatch inside the Claude adapter.
+    const cancelAsyncMessage = (
+      query as Query & {
+        cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
+      }
+    ).cancelAsyncMessage;
+    if (!cancelAsyncMessage) return;
+    for (const uuid of uuids) {
+      try {
+        await cancelAsyncMessage.call(query, uuid);
+      } catch (error) {
+        this.logger.warn({ err: error }, "Failed to discard a queued Claude steer");
+      }
     }
   }
 
@@ -3825,6 +3948,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const events: AgentStreamEvent[] = [];
+    this.appendTaskStateEvent(message, events);
 
     // Subagent identity and lifecycle are announced by Claude Code's task protocol, so they are
     // read rather than inferred from sidechain frames. `task_started` precedes the child's first
@@ -3856,6 +3980,8 @@ class ClaudeAgentSession implements AgentSession {
         });
       }
     }
+
+    this.forgetReadSteer(message);
 
     switch (message.type) {
       case "system":
@@ -3889,6 +4015,18 @@ class ClaudeAgentSession implements AgentSession {
     return events;
   }
 
+  /** Once Claude has read a steer there is nothing left to discard on interrupt. */
+  private forgetReadSteer(message: unknown): void {
+    const lifecycle = readClaudeCommandLifecycle(message);
+    if (!lifecycle || lifecycle.state === "queued") return;
+    this.queuedSteerUuids.delete(lifecycle.commandUuid);
+  }
+
+  private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
+    const item = this.taskState.observe(message);
+    if (item) events.push({ type: "timeline", provider: "claude", item });
+  }
+
   /**
    * A frame from inside a subagent, routed to that child rather than the parent's transcript.
    */
@@ -3896,24 +4034,26 @@ class ClaudeAgentSession implements AgentSession {
     message: SDKMessage,
     parentToolUseId: string,
   ): AgentStreamEvent[] {
+    const canonicalSubagentId = this.taskProtocolSource.resolveSubagentId(parentToolUseId);
     // Once a CLI announces its tasks it announces all of them, so a frame for one that was never
     // declared is work the filter already rejected — a workflow child, ambient housekeeping, a
     // grandchild announced in someone else's session. Attributing it anyway materializes exactly
     // what the filter prevents: a nameless descriptor stuck running, plus a timeline no surface
     // can open, both held for the session's lifetime.
-    if (
-      this.taskProtocolSource.announcesTasks &&
-      !this.taskProtocolSource.isDeclared(parentToolUseId)
-    ) {
+    if (this.taskProtocolSource.announcesTasks && !canonicalSubagentId) {
       return [];
     }
     // The child's own frames are the only place its model appears; the task protocol does not
     // announce it. Read per frame rather than snapshotting, since a provider can swap models
     // mid-flight on overload or refusal fallback.
     const runtimeEvents = foldSubagentObservations(
-      this.taskProtocolSource.observeSidechainFrame(message, parentToolUseId),
+      this.taskProtocolSource.observeSidechainFrame(
+        message,
+        canonicalSubagentId ?? parentToolUseId,
+      ),
     ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
-    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, parentToolUseId)];
+    const routedId = canonicalSubagentId ?? parentToolUseId;
+    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, routedId)];
   }
 
   /**
@@ -4370,6 +4510,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({
@@ -4546,6 +4687,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private loadPersistedHistory(sessionId: string): void {
     try {
+      this.taskState.reset();
       const historyPath = this.resolveHistoryPath(sessionId);
       if (!historyPath || !fs.existsSync(historyPath)) {
         return;
@@ -4670,7 +4812,8 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const historyTimestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const items = this.convertHistoryEntry(entry);
+    const taskSnapshot = this.taskState.observe(entry);
+    const items = [...(taskSnapshot ? [taskSnapshot] : []), ...this.convertHistoryEntry(entry)];
     const isVisibleUserEntry =
       entry.type === "user" &&
       typeof entry.uuid === "string" &&
@@ -6017,4 +6160,25 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
     }
   }
   return null;
+}
+
+interface ClaudeCommandLifecycle {
+  commandUuid: string;
+  state: "queued" | "started" | "completed";
+}
+
+/** Runtime-only Claude frames are validated here because the SDK's public union omits them. */
+function readClaudeCommandLifecycle(message: unknown): ClaudeCommandLifecycle | null {
+  const record = toObjectRecord(message);
+  if (record?.type !== "command_lifecycle") return null;
+  if (
+    typeof record.command_uuid !== "string" ||
+    !["queued", "started", "completed"].includes(String(record.state))
+  ) {
+    return null;
+  }
+  return {
+    commandUuid: record.command_uuid,
+    state: record.state as ClaudeCommandLifecycle["state"],
+  };
 }

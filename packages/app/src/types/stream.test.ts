@@ -22,6 +22,77 @@ import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display"
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 describe("user message identity", () => {
+  it("replaces provisional optimistic turn membership with canonical membership", () => {
+    const optimistic = createUserMessage({
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date("2026-08-15T10:00:00Z"),
+      turnId: "turn-a",
+    });
+
+    const result = applyStreamEvent({
+      tail: [optimistic],
+      head: [],
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-b",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "hello-client",
+          messageId: "provider-hello",
+        },
+      },
+      timestamp: new Date("2026-08-15T10:00:01Z"),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toEqual(
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId: "hello-client",
+        messageId: "provider-hello",
+        turnId: "turn-b",
+      }),
+    );
+  });
+
+  it("clears provisional optimistic turn membership for a legacy canonical row", () => {
+    const optimistic = createUserMessage({
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date("2026-08-15T10:00:00Z"),
+      turnId: "turn-a",
+    });
+
+    const result = applyStreamEvent({
+      tail: [optimistic],
+      head: [],
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "hello-client",
+          messageId: "provider-hello",
+        },
+      },
+      timestamp: new Date("2026-08-15T10:00:01Z"),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toEqual(
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId: "hello-client",
+        messageId: "provider-hello",
+      }),
+    );
+    expect(result.tail[0]).not.toHaveProperty("turnId");
+  });
+
   it("adds provider identity without replacing local presentation", () => {
     const timestamp = new Date("2026-07-26T10:00:00.000Z");
     const local = createUserMessage({
@@ -192,10 +263,19 @@ function canonicalToolTimeline(params: {
   };
 }
 
-function todoTimeline(items: { text: string; completed: boolean }[]): AgentStreamEventPayload {
+function todoTimeline(
+  items: Array<{
+    id?: string;
+    text: string;
+    completed: boolean;
+    status?: "pending" | "in_progress" | "completed";
+    activeForm?: string;
+  }>,
+  provider: AgentProvider = "codex",
+): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "codex",
+    provider,
     item: {
       type: "todo",
       items,
@@ -970,9 +1050,83 @@ describe("stream reducer canonical tool calls", () => {
     assert.ok(todos);
     assert.strictEqual(todos.items.length, 2);
     assert.strictEqual(todos.items[1]?.completed, true);
+    assert.deepStrictEqual(todos.activity, { type: "created", count: 2 });
   });
 
-  it("preserves compaction trigger when completed update replaces loading marker", () => {
+  it("turns task snapshots into semantic timeline activity", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline([
+          { id: "a", text: "Inspect provider", completed: false, status: "pending" },
+          { id: "b", text: "Ship fix", completed: false, status: "pending" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: todoTimeline([
+          { id: "a", text: "Inspect provider", completed: false, status: "in_progress" },
+          { id: "b", text: "Ship fix", completed: false, status: "pending" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+      {
+        event: todoTimeline([
+          { id: "a", text: "Inspect provider", completed: true, status: "completed" },
+          { id: "b", text: "Ship fix", completed: false, status: "in_progress" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:02Z"),
+      },
+      {
+        event: todoTimeline([
+          { id: "a", text: "Inspect provider", completed: true, status: "completed" },
+          { id: "b", text: "Ship fix", completed: true, status: "completed" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:03Z"),
+      },
+    ]);
+
+    expect(state.flatMap((item) => (item.kind === "todo_list" ? [item.activity] : []))).toEqual([
+      { type: "created", count: 2 },
+      { type: "started", task: "Inspect provider" },
+      { type: "completed", task: "Inspect provider" },
+      { type: "started", task: "Ship fix" },
+      { type: "completed", task: "Ship fix" },
+    ]);
+  });
+
+  it("groups consecutive initial Claude TaskCreate snapshots", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline(
+          [{ id: "a", text: "Inspect provider", completed: false, status: "pending" }],
+          "claude",
+        ),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: todoTimeline(
+          [
+            { id: "a", text: "Inspect provider", completed: false, status: "pending" },
+            { id: "b", text: "Ship fix", completed: false, status: "pending" },
+          ],
+          "claude",
+        ),
+        timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+    ]);
+
+    expect(state.filter((item) => item.kind === "todo_list")).toEqual([
+      expect.objectContaining({
+        activity: { type: "created", count: 2 },
+        items: expect.arrayContaining([
+          expect.objectContaining({ text: "Inspect provider" }),
+          expect.objectContaining({ text: "Ship fix" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("terminalizes the loading compaction before a completed turn", () => {
     const state = hydrateStreamState([
       {
         event: compactionTimeline("loading", "auto"),
@@ -981,6 +1135,10 @@ describe("stream reducer canonical tool calls", () => {
       {
         event: compactionTimeline("completed"),
         timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+      {
+        event: { type: "turn_completed", provider: "codex" },
+        timestamp: new Date("2025-01-01T10:50:02Z"),
       },
     ]);
 
@@ -991,6 +1149,10 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(compactions.length, 1);
     assert.strictEqual(compactions[0].status, "completed");
     assert.strictEqual(compactions[0].trigger, "auto");
+    assert.strictEqual(
+      state.some((item) => item.kind === "compaction" && item.status === "loading"),
+      false,
+    );
   });
 
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {
@@ -1021,6 +1183,26 @@ describe("stream reducer canonical tool calls", () => {
     assert.ok(todos);
     assert.strictEqual(todos.items[0]?.text, "Task 1");
   });
+
+  it.each(["TaskCreate", "TaskUpdate", "TaskList"])(
+    "suppresses Claude %s bookkeeping tool calls",
+    (name) => {
+      const state = hydrateStreamState([
+        {
+          event: canonicalToolTimeline({
+            provider: "claude",
+            callId: name,
+            name,
+            status: "completed",
+            input: { taskId: "1", status: "completed" },
+          }),
+          timestamp: new Date("2025-01-01T11:00:00Z"),
+        },
+      ]);
+
+      expect(state.filter(isAgentToolCallItem)).toEqual([]);
+    },
+  );
 
   it("preserves submitted user message images when authoritative user message arrives", () => {
     const messageId = "msg-user-images";

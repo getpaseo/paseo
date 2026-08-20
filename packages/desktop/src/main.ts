@@ -47,6 +47,7 @@ import {
 } from "./features/notifications.js";
 import { registerOpenerHandlers } from "./features/opener.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
+import { resolveAppIconPath } from "./features/stamped-icon.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
@@ -83,10 +84,10 @@ import {
 } from "./daemon/daemon-manager.js";
 import {
   createQuitLifecycle,
+  registerExternalQuitSignals,
   stopDesktopManagedDaemonOnQuitIfNeeded,
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
-import { autoUpdateInstalledSkills } from "./integrations/skills/index.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
@@ -463,6 +464,18 @@ ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: u
   }
 });
 
+ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
+  if (typeof browserId !== "string" || browserId.trim().length === 0) {
+    return false;
+  }
+  const contents = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+  if (!contents) {
+    return false;
+  }
+  contents.focus();
+  return true;
+});
+
 ipcMain.handle("paseo:browser:open-devtools", (event, browserId: unknown) => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     const result = {
@@ -634,11 +647,15 @@ function getWindowIconCandidates(): string[] {
   }
   if (process.platform === "win32") {
     return [
+      path.resolve(__dirname, "../assets/icon-dev.png"),
       path.resolve(__dirname, "../assets/icon.ico"),
       path.resolve(__dirname, "../assets/icon.png"),
     ];
   }
-  return [path.resolve(__dirname, "../assets/icon.png")];
+  return [
+    path.resolve(__dirname, "../assets/icon-dev.png"),
+    path.resolve(__dirname, "../assets/icon.png"),
+  ];
 }
 
 function getWindowIconPath(): string | null {
@@ -646,12 +663,40 @@ function getWindowIconPath(): string | null {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function applyAppIcon(): void {
+function getDevBuildLabel(): string | null {
+  if (app.isPackaged) {
+    return null;
+  }
+  return process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() || null;
+}
+
+let cachedEffectiveIconPath: string | null = null;
+
+async function getEffectiveAppIconPath(): Promise<string | null> {
+  if (cachedEffectiveIconPath !== null) {
+    return cachedEffectiveIconPath;
+  }
+  const baseIconPath = getWindowIconPath();
+  if (app.isPackaged || !baseIconPath) {
+    cachedEffectiveIconPath = baseIconPath;
+    return baseIconPath;
+  }
+  const devLabel = getDevBuildLabel();
+  cachedEffectiveIconPath = await resolveAppIconPath({
+    isPackaged: false,
+    baseIconPath,
+    devLabel,
+    cacheDir: app.getPath("userData"),
+  });
+  return cachedEffectiveIconPath;
+}
+
+async function applyAppIcon(): Promise<void> {
   if (process.platform !== "darwin") {
     return;
   }
 
-  const iconPath = getWindowIconPath();
+  const iconPath = await getEffectiveAppIconPath();
   if (!iconPath) {
     return;
   }
@@ -679,7 +724,7 @@ async function createWindow(
     restoreWindowState?: boolean;
   } = {},
 ): Promise<BrowserWindow> {
-  const iconPath = getWindowIconPath();
+  const iconPath = await getEffectiveAppIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
   // Only the first window of a session restores and persists saved geometry.
@@ -960,7 +1005,7 @@ async function bootstrap(): Promise<void> {
     return net.fetch(pathToFileURL(filePath).toString());
   });
 
-  applyAppIcon();
+  await applyAppIcon();
   setupApplicationMenu({
     onNewWindow: () => {
       void createWindow().catch((error) => {
@@ -1022,11 +1067,6 @@ void runDesktopStartup({
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,
-  autoUpdateInstalledSkills: () => {
-    void autoUpdateInstalledSkills().catch((error) => {
-      log.error("[skills] auto-update failed", error);
-    });
-  },
 }).catch((error) => {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   process.stderr.write(`${message}\n`);
@@ -1069,6 +1109,7 @@ const quitLifecycle = createQuitLifecycle({
 // electron-updater forwards this event through Electron's built-in autoUpdater.
 electronAutoUpdater.on("before-quit-for-update", quitLifecycle.handleBeforeQuitForUpdate);
 app.on("before-quit", quitLifecycle.handleBeforeQuit);
+registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

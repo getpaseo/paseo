@@ -1,21 +1,33 @@
-import React, { createContext, useContext, useMemo, type ReactNode } from "react";
+import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacesListResult,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
-import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import {
+  hasActiveSidebarLabelFilter,
+  useSidebarViewStore,
+  type SidebarGroupMode,
+} from "@/stores/sidebar-view-store";
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
+import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
+import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import {
+  hasAuthoritativeWorkspaceLabelCatalog,
+  useWorkspaceLabelProjection,
+} from "@/workspace-labels";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  hasProjectsBeforeLabelFilter: boolean;
   groupMode: SidebarGroupMode;
-  statusGroups: StatusGroup[];
+  workspaceGroups: SidebarWorkspaceGroup[];
+  projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
@@ -23,7 +35,6 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
-const EMPTY_WORKSPACE_ENTRIES = new Map<string, SidebarWorkspaceEntry>();
 
 export function SidebarModelProvider({
   active,
@@ -34,54 +45,90 @@ export function SidebarModelProvider({
 }) {
   const list = useSidebarWorkspacesList();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const labelFilter = useSidebarViewStore((state) => state.labelFilter);
+  const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
+  const { hosts: labelHosts } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
-  const collapsedStatusGroupKeys = useSidebarCollapsedSectionsStore(
-    (state) => state.collapsedStatusGroupKeys,
+  const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedWorkspaceGroupKeys,
   );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
+  const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
-  const isStatusMode = groupMode === "status";
+  const availableLabelNames = useMemo(
+    () => labelHosts.flatMap((host) => host.labels.map((label) => label.name)),
+    [labelHosts],
+  );
+  const hasAuthoritativeLabelCatalog = hasAuthoritativeWorkspaceLabelCatalog(labelHosts);
+  useEffect(() => {
+    if (!hasAuthoritativeLabelCatalog) return;
+    reconcileLabelFilter(availableLabelNames);
+  }, [availableLabelNames, hasAuthoritativeLabelCatalog, reconcileLabelFilter]);
+  const hasActiveLabelFilter = hasActiveSidebarLabelFilter(labelFilter);
+  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
-    active !== false || isStatusMode,
+    active !== false || needsWorkspaceEntries,
   );
-  const projectionWorkspaceEntriesByKey = isStatusMode
-    ? workspaceEntriesByKey
-    : EMPTY_WORKSPACE_ENTRIES;
-  const pinnedKeys = usePinnedSidebarKeys(list.projects);
-  const projection = useMemo(
-    () =>
-      buildSidebarProjection({
-        projects: list.projects,
-        pinnedKeys,
-        workspaceEntriesByKey: projectionWorkspaceEntriesByKey,
-        projectNamesByViewKey: list.projectNamesByViewKey,
-        groupMode,
-        pinnedCollapsed,
-        collapsedProjectKeys,
-        collapsedStatusGroupKeys,
-      }),
+  const filteredWorkspaceEntriesByKey = useMemo(() => {
+    const filtered = filterWorkspacesByLabels({
+      workspaces: [...workspaceEntriesByKey.values()],
+      ...labelFilter,
+    });
+    return new Map(filtered.map((workspace) => [workspace.workspaceKey, workspace]));
+  }, [labelFilter, workspaceEntriesByKey]);
+  const visibleWorkspaceKeys = useMemo(
+    () => new Set(filteredWorkspaceEntriesByKey.keys()),
+    [filteredWorkspaceEntriesByKey],
+  );
+  const filteredProjects = useMemo(() => {
+    if (!hasActiveLabelFilter) return list.projects;
+    return list.projects.flatMap((project) => {
+      const workspaces = project.workspaces.filter((workspace) =>
+        visibleWorkspaceKeys.has(workspace.workspaceKey),
+      );
+      return workspaces.length > 0 ? [{ ...project, workspaces }] : [];
+    });
+  }, [hasActiveLabelFilter, list.projects, visibleWorkspaceKeys]);
+  const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
+  const projectionInput = useMemo(
+    () => ({
+      projects: filteredProjects,
+      pinnedKeys,
+      pinnedWorkspaceOrder,
+      workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
+      projectNamesByViewKey: list.projectNamesByViewKey,
+      groupMode,
+      pinnedCollapsed,
+      collapsedProjectKeys,
+      collapsedWorkspaceGroupKeys,
+    }),
     [
       collapsedProjectKeys,
-      collapsedStatusGroupKeys,
+      collapsedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,
-      list.projects,
+      filteredProjects,
       pinnedCollapsed,
       pinnedKeys,
-      projectionWorkspaceEntriesByKey,
+      pinnedWorkspaceOrder,
+      filteredWorkspaceEntriesByKey,
     ],
   );
+  const projection = useMemo(() => buildSidebarProjection(projectionInput), [projectionInput]);
   const value = useMemo(
     () => ({
       ...list,
-      workspaceEntriesByKey,
+      projects: filteredProjects,
+      hasProjectsBeforeLabelFilter: list.projects.length > 0,
+      workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       groupMode,
-      statusGroups: projection.statusGroups,
+      workspaceGroups: projection.workspaceGroups,
+      projectIconTargets: projection.projectIconTargets,
       pinnedGroups: projection.pinnedGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
@@ -91,9 +138,10 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       groupMode,
       list,
+      filteredProjects,
       projection,
       toggleProjectCollapsed,
-      workspaceEntriesByKey,
+      filteredWorkspaceEntriesByKey,
     ],
   );
 

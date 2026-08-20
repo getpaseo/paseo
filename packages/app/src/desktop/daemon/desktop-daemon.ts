@@ -1,12 +1,6 @@
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
-import {
-  parseSkillsSaveResult,
-  parseSkillsSnapshot,
-  type SkillSelection,
-  type SkillsSaveResult,
-  type SkillsSnapshot,
-} from "@/desktop/daemon/skills-snapshot";
+import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 export type DesktopDaemonStopReason =
@@ -45,16 +39,6 @@ export interface LocalTransportTarget {
   transportType: "socket" | "pipe";
   transportPath: string;
 }
-
-export interface WebSocketTransportTarget {
-  [key: string]: unknown;
-  transportType: "websocket";
-  url: string;
-  headers?: Record<string, string>;
-  protocols?: string[];
-}
-
-export type DesktopDaemonTransportTarget = LocalTransportTarget | WebSocketTransportTarget;
 
 interface LocalTransportEventPayload {
   sessionId: string;
@@ -203,16 +187,6 @@ export async function openLocalTransportSession(target: LocalTransportTarget): P
   return raw;
 }
 
-export async function openWebSocketTransportSession(
-  target: WebSocketTransportTarget,
-): Promise<string> {
-  const raw = await invokeDesktopCommand<unknown>("open_websocket_daemon_transport", target);
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    throw new Error("Unexpected WebSocket transport session response.");
-  }
-  return raw;
-}
-
 export async function sendLocalTransportMessage(input: {
   sessionId: string;
   text?: string;
@@ -252,38 +226,12 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
-export type {
-  SkillOp,
-  SkillSelection,
-  SkillsSaveResult,
-  SkillsSnapshot,
-  SkillsState,
-} from "@/desktop/daemon/skills-snapshot";
-
-export async function getSkillsSnapshot(): Promise<SkillsSnapshot> {
-  return parseSkillsSnapshot(await invokeDesktopCommand("get_skills_status"));
+// COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
+export function readLegacySkillSelection(): Promise<AgentSkillSelection | null> {
+  return invokeDesktopCommand("read_legacy_skill_selection") as Promise<AgentSkillSelection | null>;
 }
 
-export async function installSkills(): Promise<SkillsSnapshot> {
-  return parseSkillsSnapshot(await invokeDesktopCommand("install_skills"));
-}
-
-export async function updateSkills(): Promise<SkillsSnapshot> {
-  return parseSkillsSnapshot(await invokeDesktopCommand("update_skills"));
-}
-
-export async function uninstallSkills(): Promise<SkillsSnapshot> {
-  return parseSkillsSnapshot(await invokeDesktopCommand("uninstall_skills"));
-}
-
-export async function saveSkillsSelection(
-  selection: SkillSelection,
-  confirmedRemovals: readonly string[] = [],
-): Promise<SkillsSaveResult> {
-  return parseSkillsSaveResult(
-    await invokeDesktopCommand("save_skills_selection", {
-      ...selection,
-      confirmedRemovals: [...confirmedRemovals],
-    }),
-  );
+// COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
+export async function deleteLegacySkillSelection(): Promise<void> {
+  await invokeDesktopCommand("delete_legacy_skill_selection");
 }

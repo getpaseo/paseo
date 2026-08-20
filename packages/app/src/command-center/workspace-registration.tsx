@@ -6,8 +6,11 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { useGitActionRunner, useGitActions } from "@/git/use-actions";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  resolveShortcutKeysForAction,
+  type ShortcutOverrides,
+} from "@/keyboard/keyboard-shortcuts";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -36,9 +39,7 @@ function staticIcon(element: ReactElement | undefined): CommandCenterIcon | unde
   return StaticIcon;
 }
 
-function resolveWorkspaceShortcuts(
-  overrides: Readonly<Record<string, string>>,
-): WorkspaceCommandCenterShortcuts {
+function resolveWorkspaceShortcuts(overrides: ShortcutOverrides): WorkspaceCommandCenterShortcuts {
   const platform = { isMac: getShortcutOs() === "mac", isDesktop: getIsElectron() };
   return {
     newAgent: resolveShortcutKeysForAction("workspace-tab-new", overrides, platform) ?? undefined,
@@ -54,6 +55,7 @@ function resolveWorkspaceShortcuts(
 }
 
 export function useWorkspaceCommandCenterActions(): void {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const selection = useActiveWorkspaceSelection();
   const serverId = selection?.serverId ?? null;
@@ -95,7 +97,7 @@ export function useWorkspaceCommandCenterActions(): void {
         },
         runGitAction,
       }),
-    [gitActions, isCompact, overrides, runGitAction, t],
+    [gitActions, isCompact, keyboardActionDispatcher, overrides, runGitAction, t],
   );
 
   useCommandCenterActions({

@@ -27,6 +27,7 @@ vi.hoisted(() => {
 });
 
 vi.mock("react-native-unistyles", () => ({
+  StyleSheet: { create: () => ({}) },
   withUnistyles: (Component: React.ComponentType) => Component,
 }));
 
@@ -152,6 +153,51 @@ describe("createWebStreamStrategy", () => {
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
   });
 
+  it("keeps the timeline width stable with an overlay scrollbar", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: {
+            historyVirtualized: [],
+            historyMounted: [userMessage(1)],
+            liveHead: [],
+          },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: true,
+            hasLiveHead: false,
+          },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef: React.createRef<StreamViewportHandle>(),
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          olderHistoryProgressKey: null,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollContainer = container.querySelector<HTMLElement>(
+      '[data-testid="agent-chat-scroll"]',
+    );
+    expect(scrollContainer?.style.scrollbarWidth).toBe("none");
+    expect(scrollContainer?.dataset.overlayScrollbar).toBe("true");
+  });
+
   it("rerenders a stable live-head row when its revision changes", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
     const viewportRef = React.createRef<StreamViewportHandle>();
@@ -204,6 +250,78 @@ describe("createWebStreamStrategy", () => {
 
     expect(container.textContent).toContain("expanded");
     expect(renderLiveHeadRow).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a row mounted when it moves from the live head into mounted history", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const item = userMessage(1);
+    const mounted = vi.fn();
+    const unmounted = vi.fn();
+    function StatefulRow() {
+      React.useEffect(() => {
+        mounted();
+        return unmounted;
+      }, []);
+      return <div>{item.id}</div>;
+    }
+    const renderers: StreamSegmentRenderers = {
+      ...createRenderers(vi.fn()),
+      renderHistoryMountedRow: () => <StatefulRow />,
+      renderLiveHeadRow: () => <StatefulRow />,
+    };
+    const renderInput: Omit<StreamRenderInput, "segments" | "boundary"> = {
+      agentId: "agent",
+      renderers,
+      listEmptyComponent: null,
+      viewportRef,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: { historyVirtualized: [], historyMounted: [], liveHead: [item] },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: false,
+            hasLiveHead: true,
+          },
+        }),
+      );
+    });
+    expect(mounted).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          ...renderInput,
+          segments: { historyVirtualized: [], historyMounted: [item], liveHead: [] },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: true,
+            hasLiveHead: false,
+          },
+        }),
+      );
+    });
+
+    expect(mounted).toHaveBeenCalledTimes(1);
+    expect(unmounted).not.toHaveBeenCalled();
   });
 
   it("reports the live-head row as the reading position", () => {
@@ -1148,18 +1266,45 @@ describe("createWebStreamStrategy", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
-  it("keeps the retained viewport mounted while inactive and reconciles it once on return", () => {
-    const observed = new Map<Element, ReturnType<typeof vi.fn>>();
+  it("keeps the retained viewport mounted while inactive and reconciles it once on return", async () => {
+    interface ResizeObservation {
+      callback: ResizeObserverCallback;
+      disconnect: ReturnType<typeof vi.fn>;
+      observer: ResizeObserver;
+    }
+    const observed = new Map<Element, ResizeObservation>();
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
-      value: class ResizeObserver {
+      value: class TestResizeObserver {
         readonly disconnect = vi.fn();
 
+        constructor(private readonly callback: ResizeObserverCallback) {}
+
         observe(target: Element) {
-          observed.set(target, this.disconnect);
+          observed.set(target, {
+            callback: this.callback,
+            disconnect: this.disconnect,
+            observer: this as unknown as ResizeObserver,
+          });
         }
       },
     });
+    const notifyResize = (...targets: Element[]) => {
+      const observation = targets[0] ? observed.get(targets[0]) : undefined;
+      if (!observation) {
+        throw new Error("Expected observed resize target");
+      }
+      observation.callback(
+        targets.map(
+          (target) =>
+            ({
+              target,
+              contentRect: target.getBoundingClientRect(),
+            }) as ResizeObserverEntry,
+        ),
+        observation.observer,
+      );
+    };
     const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
       const top = typeof options === "object" ? (options.top ?? 0) : 0;
       Object.defineProperty(this, "scrollTop", { configurable: true, value: top });
@@ -1167,6 +1312,7 @@ describe("createWebStreamStrategy", () => {
     HTMLElement.prototype.scrollTo = scrollTo;
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     const viewportRef = React.createRef<StreamViewportHandle>();
+    const onReadingPositionChange = vi.fn();
     const renderInput: StreamRenderInput = {
       agentId: "agent",
       segments: {
@@ -1185,6 +1331,7 @@ describe("createWebStreamStrategy", () => {
       routeBottomAnchorRequest: null,
       isAuthoritativeHistoryReady: true,
       onNearBottomChange: vi.fn(),
+      onReadingPositionChange,
       onNearHistoryStart: vi.fn().mockReturnValue(true),
       isLoadingOlderHistory: false,
       hasOlderHistory: false,
@@ -1206,16 +1353,50 @@ describe("createWebStreamStrategy", () => {
     if (!(scrollContainer instanceof HTMLElement)) {
       throw new Error("Expected agent chat scroll container");
     }
+    const contentNode = scrollContainer.firstElementChild;
+    if (!(contentNode instanceof HTMLElement)) {
+      throw new Error("Expected agent chat content node");
+    }
+    const firstRow = contentNode.querySelector('[data-history-row-id="message-1"]');
+    const secondRow = contentNode.querySelector('[data-history-row-id="message-2"]');
+    if (!(firstRow instanceof HTMLElement) || !(secondRow instanceof HTMLElement)) {
+      throw new Error("Expected retained history rows");
+    }
+    let rowsShifted = false;
+    scrollContainer.getBoundingClientRect = vi.fn(() => ({ top: 0 }) as DOMRect);
+    firstRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 4 : 120 }) as DOMRect);
+    secondRow.getBoundingClientRect = vi.fn(() => ({ bottom: rowsShifted ? 120 : 160 }) as DOMRect);
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 500 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1500 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
     act(() => scrollContainer.dispatchEvent(new Event("scroll")));
-    const viewportObserverDisconnect = observed.get(scrollContainer);
-    expect(viewportObserverDisconnect).toBeDefined();
+    const viewportObservation = observed.get(scrollContainer);
+    expect(viewportObservation).toBeDefined();
+    act(() => notifyResize(scrollContainer, contentNode));
+    expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-1");
 
     act(() => root?.render(renderWithActivity(false)));
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
-    expect(viewportObserverDisconnect).toHaveBeenCalledOnce();
+    expect(viewportObservation?.disconnect).toHaveBeenCalledOnce();
+    scrollTo.mockClear();
+    rowsShifted = true;
+    act(() => root?.render(renderWithActivity(true)));
+    act(() => notifyResize(scrollContainer, contentNode));
+    expect(onReadingPositionChange).toHaveBeenLastCalledWith("message-2");
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    act(() => root?.render(renderWithActivity(false)));
+    scrollTo.mockClear();
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2200 });
+    act(() => root?.render(renderWithActivity(true)));
+    expect(scrollTo).not.toHaveBeenCalled();
+    act(() => notifyResize(scrollContainer, contentNode));
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 2200, behavior: "auto" });
+
+    act(() => root?.render(renderWithActivity(false)));
     scrollTo.mockClear();
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 2200 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 0 });

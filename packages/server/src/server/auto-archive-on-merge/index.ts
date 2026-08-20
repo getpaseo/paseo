@@ -1,25 +1,81 @@
+import { resolve } from "node:path";
 import type { Logger } from "pino";
 
 import { archiveIfSafe, type AutoArchiveArchiveOptions } from "./archive-if-safe.js";
-import type { WorkspaceGitSubscription } from "../workspace-git-service.js";
+import type {
+  WorkspaceGitRuntimeSnapshot,
+  WorkspaceGitSubscription,
+} from "../workspace-git-service.js";
 
 export interface AutoArchiveOnMergeOptions extends AutoArchiveArchiveOptions {
   logger: Logger;
 }
 
+export interface AutoArchiveOnMergeDependencies {
+  archiveIfSafe: typeof archiveIfSafe;
+  resolvePath: typeof resolve;
+}
+
+const defaultDependencies: AutoArchiveOnMergeDependencies = {
+  archiveIfSafe,
+  resolvePath: resolve,
+};
+
 export function setupAutoArchiveOnMerge(
   options: AutoArchiveOnMergeOptions,
+  deps: AutoArchiveOnMergeDependencies = defaultDependencies,
 ): WorkspaceGitSubscription {
   const log = options.logger.child({ module: "auto-archive-on-merge" });
-  const inFlight = new Set<string>();
+  const inFlightCwds = new Set<string>();
 
   return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
-    void archiveIfSafe({
-      cwd: snapshot.cwd,
-      pullRequest: snapshot.forge.pullRequest,
-      inFlight,
-      options,
-      log,
-    });
+    if (!snapshot.forge.pullRequest?.isMerged) {
+      return;
+    }
+    if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
+      return;
+    }
+
+    const snapshotCwd = deps.resolvePath(snapshot.cwd);
+    if (inFlightCwds.has(snapshotCwd)) {
+      return;
+    }
+    inFlightCwds.add(snapshotCwd);
+
+    void (async () => {
+      let freshSnapshot: WorkspaceGitRuntimeSnapshot | null;
+      try {
+        freshSnapshot = await options.workspaceGitService.getSnapshot(snapshot.cwd, {
+          reason: "auto-archive-on-merge",
+        });
+      } catch (error) {
+        log.warn(
+          { err: error, cwd: snapshot.cwd },
+          "Failed to read snapshot for auto-archive; skipping",
+        );
+        return;
+      }
+      if (!freshSnapshot?.forge.pullRequest?.isMerged) {
+        return;
+      }
+
+      const attachedWorkspaces = (await options.listActiveWorkspaces()).filter(
+        (workspace) => deps.resolvePath(workspace.cwd) === snapshotCwd,
+      );
+      for (const workspace of attachedWorkspaces) {
+        await deps.archiveIfSafe({
+          workspaceId: workspace.workspaceId,
+          snapshot: freshSnapshot,
+          options,
+          log,
+        });
+      }
+    })()
+      .catch((error) => {
+        log.warn({ err: error, cwd: snapshot.cwd }, "Failed to auto-archive attached workspaces");
+      })
+      .finally(() => {
+        inFlightCwds.delete(snapshotCwd);
+      });
   });
 }

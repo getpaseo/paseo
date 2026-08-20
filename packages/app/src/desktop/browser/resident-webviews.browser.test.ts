@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  applyBrowserWebviewViewport,
   applyInactiveBrowserWebviewViewport,
   type BrowserWebviewProfileHost,
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
-  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -141,7 +139,9 @@ describe("resident browser webviews", () => {
     }
     const permanentParent = webview.parentElement;
 
-    presentBrowserWebview("browser-stable-parent", webview, anchor, clip);
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip, {
+      mode: "responsive",
+    });
     expect(webview.parentElement).toBe(permanentParent);
     expect(permanentParent.style.left).toBe("40px");
     expect(permanentParent.style.top).toBe("60px");
@@ -149,12 +149,17 @@ describe("resident browser webviews", () => {
     expect(permanentParent.style.height).toBe("480px");
     expect(permanentParent.style.pointerEvents).toBe("auto");
     expect(permanentParent.getAttribute("aria-hidden")).toBe("false");
+    expect(webview.style.flex).toBe("0 0 auto");
+    expect(webview.style.width).toBe("640px");
+    expect(webview.style.height).toBe("480px");
 
     releaseResidentBrowserWebview("browser-stable-parent", webview);
     expect(webview.parentElement).toBe(permanentParent);
     expectParkedSurface(permanentParent);
 
-    presentBrowserWebview("browser-stable-parent", webview, anchor, clip);
+    presentBrowserWebview("browser-stable-parent", webview, anchor, clip, {
+      mode: "responsive",
+    });
     expect(webview.parentElement).toBe(permanentParent);
   });
 
@@ -167,7 +172,6 @@ describe("resident browser webviews", () => {
     if (!webview?.parentElement) {
       throw new Error("Expected resident browser surface");
     }
-    applyBrowserWebviewViewport(webview, { mode: "fixed", width: 2560, height: 1440 });
     const anchor = document.createElement("div");
     const clip = document.createElement("div");
     Object.defineProperty(anchor, "getBoundingClientRect", {
@@ -177,7 +181,11 @@ describe("resident browser webviews", () => {
       value: () => ({ left: 100, top: 150, width: 800, height: 600 }),
     });
 
-    presentBrowserWebview("browser-oversized", webview, anchor, clip);
+    presentBrowserWebview("browser-oversized", webview, anchor, clip, {
+      mode: "fixed",
+      width: 2560,
+      height: 1440,
+    });
 
     expect(webview.parentElement.style.left).toBe("100px");
     expect(webview.parentElement.style.top).toBe("150px");
@@ -194,28 +202,6 @@ describe("resident browser webviews", () => {
     expect(webview.style.top).toBe("-450px");
     expect(webview.parentElement.style.width).toBe("800px");
     expect(webview.parentElement.style.height).toBe("600px");
-  });
-
-  it("retains document readiness with the resident webview", () => {
-    const webview = ensureTestBrowser({
-      browserId: "browser-ready",
-      workspaceId: "workspace-ready",
-      url: "https://example.com",
-    });
-    if (!webview) {
-      throw new Error("Expected resident browser webview");
-    }
-
-    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
-    webview.dispatchEvent(new Event("dom-ready"));
-    releaseResidentBrowserWebview("browser-ready", webview);
-
-    const reusedWebview = takeResidentBrowserWebview("browser-ready");
-    expect(reusedWebview).toBe(webview);
-    expect(isResidentBrowserWebviewReady(reusedWebview as HTMLElement)).toBe(true);
-
-    webview.dispatchEvent(new Event("did-start-loading"));
-    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {
@@ -359,8 +345,20 @@ describe("resident browser webviews", () => {
 
   it("applies an exact fixed viewport without a flex width override", () => {
     const webview = document.createElement("webview");
+    const anchor = document.createElement("div");
+    const clip = document.createElement("div");
+    Object.defineProperty(anchor, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0, width: 640, height: 480 }),
+    });
+    Object.defineProperty(clip, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0, width: 640, height: 480 }),
+    });
 
-    applyBrowserWebviewViewport(webview, { mode: "fixed", width: 640, height: 480 });
+    presentBrowserWebview("browser-fixed", webview, anchor, clip, {
+      mode: "fixed",
+      width: 640,
+      height: 480,
+    });
 
     expect(webview.style.flex).toBe("0 0 auto");
     expect(webview.style.width).toBe("640px");

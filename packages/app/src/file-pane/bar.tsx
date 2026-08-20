@@ -139,9 +139,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  secondary: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs },
-  whisper: { color: theme.colors.foregroundExtraMuted, fontSize: theme.fontSize.xs },
-  error: { color: theme.colors.palette.red[300], fontSize: theme.fontSize.xs },
+  secondary: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  whisper: { color: theme.colors.foregroundExtraMuted, fontSize: theme.fontSize.sm },
+  error: { color: theme.colors.palette.red[300], fontSize: theme.fontSize.sm },
   dirtyDot: {
     width: 6,
     height: 6,
@@ -157,6 +157,6 @@ const styles = StyleSheet.create((theme) => ({
   vim: {
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

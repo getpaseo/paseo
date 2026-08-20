@@ -22,6 +22,8 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -33,8 +35,11 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderRefreshContext,
+  type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
@@ -70,6 +75,7 @@ import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mappe
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
   CodexAppServerClient,
+  CodexAppServerRpcError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
   type CodexThreadForkParams,
@@ -98,6 +104,11 @@ import {
   THINKING_APPLIES_NEXT_TURN_NOTICE,
 } from "../provider-notices.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import {
+  applyCodexToolPolicy,
+  CodexProviderOptionsSchema,
+  type CodexProviderOptions,
+} from "./codex/options.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -253,12 +264,14 @@ interface CodexAppServerAgentDeps {
     logger: Logger,
     getTraceContext: () => CodexAppServerTraceContext,
   ) => CodexAppServerClientLike;
+  resolveSlashCommandInvocation?: (
+    prompt: AgentPromptInput,
+  ) => Promise<{ commandName: string; args?: string } | null>;
 }
 
 interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
-  networkAccess?: boolean;
   approvalsReviewer?: "auto_review";
 }
 
@@ -279,7 +292,6 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
   "full-access": {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
-    networkAccess: true,
   },
 };
 
@@ -827,6 +839,24 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+function isDefinitiveCodexSteerRejection(error: unknown): boolean {
+  if (!(error instanceof CodexAppServerRpcError)) return false;
+  if (error.code === -32601) return true;
+  if (error.code !== -32600) return false;
+
+  const data = toObjectRecord(error.data);
+  if (data && isRecord(toObjectRecord(data.codexErrorInfo)?.activeTurnNotSteerable)) return true;
+
+  // These app-server invalid-request messages describe requests that reached
+  // Codex but could not have submitted input. Keep this exact: a generic
+  // invalid-request, timeout, disconnect, or unknown error is ambiguous.
+  return (
+    error.message === "no active turn to steer" ||
+    /^expected active turn id `[^`]+` but found `[^`]+`$/.test(error.message) ||
+    error.message === "active turn uses a different output schema"
+  );
+}
+
 // Codex app-server API response types
 interface CodexReasoningEffortEntry {
   reasoningEffort?: string;
@@ -934,6 +964,26 @@ export function planStepsToMarkdown(steps: Array<{ step: string; status: string 
       return `- ${step}`;
     });
   return normalizePlanMarkdown(lines.join("\n"));
+}
+
+export function mapCodexPlanUpdateToTodo(
+  steps: Array<{ step?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: steps.flatMap((entry, index) => {
+      const text = entry.step?.trim();
+      if (!text) return [];
+      const status = normalizeCodexTaskStatus(entry.status);
+      return [{ id: String(index), text, status, completed: status === "completed" }];
+    }),
+  };
+}
+
+function normalizeCodexTaskStatus(status: string | null | undefined) {
+  if (status === "completed") return "completed" as const;
+  if (status === "inProgress" || status === "in_progress") return "in_progress" as const;
+  return "pending" as const;
 }
 
 export function mapCodexPlanToToolCall(params: {
@@ -1577,10 +1627,14 @@ function mapCodexThreadUserMessageItem(
   }
   const text = extractUserText(normalizedItem.content) ?? "";
   const messageId = nonEmptyString(normalizedItem.id);
+  const clientMessageId = nonEmptyString(
+    normalizedItem.clientId ?? normalizedItem.client_id ?? normalizedItem.clientUserMessageId,
+  );
   return {
     type: "user_message",
     text,
     ...(messageId ? { messageId } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
   };
 }
 
@@ -1635,6 +1689,12 @@ interface CodexSubAgentActivity {
   id: string | null;
   agentThreadId: string;
   kind: "started" | "interacted" | "interrupted";
+}
+
+function isTerminalSubAgentStatus(
+  status: ToolCallTimelineItem["status"],
+): status is "completed" | "failed" | "canceled" {
+  return status === "completed" || status === "failed" || status === "canceled";
 }
 
 function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null {
@@ -1957,16 +2017,59 @@ export async function rollbackCodexThread(
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
-function toSandboxPolicy(type: string, networkAccess?: boolean): Record<string, unknown> {
+function toSandboxPolicy(
+  type: string,
+  workspaceWrite?: CodexProviderOptions["sandbox_workspace_write"],
+): Record<string, unknown> {
   switch (type) {
     case "read-only":
       return { type: "readOnly" };
     case "workspace-write":
-      return { type: "workspaceWrite", networkAccess: networkAccess ?? false };
+      return {
+        type: "workspaceWrite",
+        networkAccess: workspaceWrite?.network_access ?? false,
+        writableRoots: workspaceWrite?.writable_roots ?? [],
+        excludeSlashTmp: workspaceWrite?.exclude_slash_tmp ?? false,
+        excludeTmpdirEnvVar: workspaceWrite?.exclude_tmpdir_env_var ?? false,
+      };
     case "danger-full-access":
       return { type: "dangerFullAccess" };
     default:
-      return { type: "workspaceWrite", networkAccess: networkAccess ?? false };
+      return { type: "workspaceWrite", networkAccess: false, writableRoots: [] };
+  }
+}
+
+function readSandboxWorkspaceWrite(
+  value: unknown,
+): NonNullable<CodexProviderOptions["sandbox_workspace_write"]> | null {
+  const record = toObjectRecord(value);
+  if (!record) return null;
+  const workspaceWrite: NonNullable<CodexProviderOptions["sandbox_workspace_write"]> = {};
+  const writableRoots = record.writable_roots ?? record.writableRoots;
+  if (Array.isArray(writableRoots)) {
+    workspaceWrite.writable_roots = writableRoots.filter(
+      (root): root is string => typeof root === "string",
+    );
+  }
+  const networkAccess = record.network_access ?? record.networkAccess;
+  if (typeof networkAccess === "boolean") workspaceWrite.network_access = networkAccess;
+  const excludeSlashTmp = record.exclude_slash_tmp ?? record.excludeSlashTmp;
+  if (typeof excludeSlashTmp === "boolean") workspaceWrite.exclude_slash_tmp = excludeSlashTmp;
+  const excludeTmpdirEnvVar = record.exclude_tmpdir_env_var ?? record.excludeTmpdirEnvVar;
+  if (typeof excludeTmpdirEnvVar === "boolean") {
+    workspaceWrite.exclude_tmpdir_env_var = excludeTmpdirEnvVar;
+  }
+  return workspaceWrite;
+}
+
+function toCodexSandboxPolicyType(type: string): string {
+  switch (type) {
+    case "workspace-write":
+      return "workspaceWrite";
+    case "read-only":
+      return "readOnly";
+    default:
+      return "dangerFullAccess";
   }
 }
 
@@ -3100,6 +3203,10 @@ interface CodexPendingPermissionHandler {
   planText?: string;
 }
 
+interface ConsumedRootCompaction {
+  itemId?: string;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3107,6 +3214,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
   private currentMode: string;
+  private hasWorkflowModeOverride: boolean;
+  private readonly providerOptions: CodexProviderOptions;
+  private resolvedWorkspaceWrite: NonNullable<
+    CodexProviderOptions["sandbox_workspace_write"]
+  > | null = null;
+  private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
   private pendingForegroundTurnIdentification: {
@@ -3159,6 +3272,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly userMessageTurnIds: string[] = [];
   private pendingManualCompactionStarts = 0;
   private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
+  private pendingRootCompactionItemIds = new Set<string>();
+  private pendingAnonymousRootCompactions = 0;
   // Codex can report one completed compaction through both channels:
   // `thread/compacted` and a completed `contextCompaction` item.
   private unpairedCompactionNotificationCompletions = 0;
@@ -3178,7 +3293,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     settings: Record<string, unknown>;
     name: string;
   } | null = null;
-  private cachedSkills: Array<{ name: string; description: string; path: string }> = [];
+  private cachedSkills: Array<{ name: string; description: string; path: string }> | null = null;
 
   constructor(
     config: AgentSessionConfig,
@@ -3197,11 +3312,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: CODEX_PROVIDER,
       agentId: this.agentId,
     });
-    if (config.modeId === undefined) {
-      throw new Error("Codex agent requires modeId to be specified");
+    if (config.modeId !== undefined) {
+      validateCodexMode(config.modeId);
     }
-    validateCodexMode(config.modeId);
-    this.currentMode = config.modeId;
+    this.hasWorkflowModeOverride = config.modeId !== undefined;
+    this.currentMode = config.modeId ?? DEFAULT_CODEX_MODE_ID;
+    this.providerOptions = CodexProviderOptionsSchema.parse(config.providerOptions ?? {});
     this.config = config;
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {
@@ -3275,6 +3391,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
 
+      await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
 
@@ -3304,6 +3421,26 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       throw error;
     }
+  }
+
+  private async loadResolvedWorkspaceWrite(): Promise<void> {
+    if (!this.client) return;
+    try {
+      const response = toObjectRecord(
+        await this.client.request("config/read", { cwd: this.config.cwd ?? null }),
+      );
+      const config = toObjectRecord(response?.config);
+      this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
+    } catch (error) {
+      this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
+    }
+  }
+
+  private rememberResolvedSandboxPolicy(response: unknown): void {
+    const sandbox = toObjectRecord(toObjectRecord(response)?.sandbox);
+    this.resolvedSandboxPolicy = sandbox ?? null;
+    if (sandbox?.type !== "workspaceWrite") return;
+    this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(sandbox);
   }
 
   private createClosedError(): Error {
@@ -3388,6 +3525,10 @@ export class CodexAppServerAgentSession implements AgentSession {
           const skillRecord = toObjectRecord(skill);
           if (typeof skillRecord?.name !== "string" || typeof skillRecord?.path !== "string")
             continue;
+          // Codex skills/list returns disabled skills with enabled:false; omit them from
+          // slash-command surfaces so Paseo matches Codex CLI/TUI behavior.
+          // Missing enabled (older binaries) is treated as enabled.
+          if (skillRecord.enabled === false) continue;
           if (!skillsByName.has(skillRecord.name)) {
             skillsByName.set(skillRecord.name, {
               name: skillRecord.name,
@@ -3409,7 +3550,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         },
         "provider.codex.metadata.skills_failed",
       );
-      this.cachedSkills = [];
+      this.cachedSkills = null;
     }
   }
 
@@ -3655,7 +3796,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (codexConfig) {
         params.config = codexConfig;
       }
-      await this.client.request("thread/resume", params);
+      const response = await this.client.request("thread/resume", params);
+      this.rememberResolvedSandboxPolicy(response);
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -3694,6 +3836,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async resolveSlashCommandInvocation(
     prompt: AgentPromptInput,
   ): Promise<{ commandName: string; args?: string } | null> {
+    if (this.deps.resolveSlashCommandInvocation) {
+      return this.deps.resolveSlashCommandInvocation(prompt);
+    }
     if (typeof prompt !== "string") {
       return null;
     }
@@ -3731,7 +3876,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else {
       await this.loadSkills();
     }
-    const skill = this.cachedSkills.find((entry) => entry.name === commandName);
+    const skill = this.cachedSkills?.find((entry) => entry.name === commandName);
     if (skill) {
       const trimmedArgs = args?.trim() ?? "";
       const text = trimmedArgs ? `$${skill.name} ${trimmedArgs}` : `$${skill.name}`;
@@ -3751,29 +3896,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<{
     params: Record<string, unknown>;
     thinkingOptionId?: string;
-    approvalPolicy: string;
-    sandboxPolicyType: string;
+    approvalPolicy?: string;
+    sandboxPolicyType?: string;
     hasOutputSchema: boolean;
     hasDeveloperInstructions: boolean;
     hasCodexConfig: boolean;
   }> {
     const input = await this.buildUserInput(prompt);
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
-    const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
-    const sandboxPolicyType = this.config.sandboxMode ?? preset.sandbox;
-
     const params: Record<string, unknown> = {
       threadId: this.currentThreadId,
       input,
-      approvalPolicy,
-      sandboxPolicy: toSandboxPolicy(
-        sandboxPolicyType,
-        typeof this.config.networkAccess === "boolean"
-          ? this.config.networkAccess
-          : preset.networkAccess,
-      ),
     };
-    applyApprovalsReviewerParam(params, preset);
+    const { approvalPolicy, sandboxPolicyType } = this.applyTurnWorkflowPolicy(params, preset);
 
     if (this.config.model) {
       params.model = this.config.model;
@@ -3820,6 +3955,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
+  private applyTurnWorkflowPolicy(
+    params: Record<string, unknown>,
+    preset: CodexModePreset,
+  ): { approvalPolicy?: string; sandboxPolicyType?: string } {
+    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
+    const sandboxPolicyType =
+      this.providerOptions.sandbox_mode ??
+      (this.hasWorkflowModeOverride ? preset.sandbox : undefined);
+    if (approvalPolicy && this.providerOptions.approval_policy === undefined) {
+      params.approvalPolicy = approvalPolicy;
+    }
+    if (sandboxPolicyType) {
+      const nativeType = toCodexSandboxPolicyType(sandboxPolicyType);
+      const workspaceWrite = {
+        ...this.resolvedWorkspaceWrite,
+        ...this.providerOptions.sandbox_workspace_write,
+      };
+      params.sandboxPolicy =
+        this.resolvedSandboxPolicy?.type === nativeType
+          ? this.resolvedSandboxPolicy
+          : toSandboxPolicy(sandboxPolicyType, workspaceWrite);
+    }
+    if (this.hasWorkflowModeOverride) {
+      applyApprovalsReviewerParam(params, preset);
+    }
+    return { approvalPolicy, sandboxPolicyType };
+  }
+
   private logTurnStartSummary({
     turnId,
     thinkingOptionId,
@@ -3831,8 +3994,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }: {
     turnId: string;
     thinkingOptionId?: string;
-    approvalPolicy: string;
-    sandboxPolicyType: string;
+    approvalPolicy?: string;
+    sandboxPolicyType?: string;
     hasOutputSchema: boolean;
     hasDeveloperInstructions: boolean;
     hasCodexConfig: boolean;
@@ -3846,8 +4009,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         effort: thinkingOptionId ?? null,
         serviceTier: this.serviceTier,
         cwd: this.config.cwd ?? null,
-        approvalPolicy,
-        sandboxPolicyType,
+        approvalPolicy: approvalPolicy ?? null,
+        sandboxPolicyType: sandboxPolicyType ?? null,
         hasCollaborationMode: Boolean(this.resolvedCollaborationMode),
         hasOutputSchema,
         hasDeveloperInstructions,
@@ -3964,6 +4127,63 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    const nativeTurnId = this.currentTurnId;
+    const foregroundTurnId = this.activeForegroundTurnId;
+    if (!client || !threadId || !nativeTurnId || foregroundTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    if (await this.resolveSlashCommandInvocation(prompt)) return { status: "unavailable" };
+    if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
+      return { status: "unavailable" };
+    }
+    const input = await this.buildUserInput(prompt);
+    if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
+      return { status: "unavailable" };
+    }
+    try {
+      const response = await client.request(
+        "turn/steer",
+        {
+          threadId,
+          expectedTurnId: nativeTurnId,
+          input,
+          ...(options.clientMessageId ? { clientUserMessageId: options.clientMessageId } : {}),
+        },
+        TURN_START_TIMEOUT_MS,
+      );
+      const record = toObjectRecord(response);
+      const turn = record ? toObjectRecord(record.turn) : null;
+      const acknowledgedTurnId = nonEmptyString(record?.turnId) ?? nonEmptyString(turn?.id);
+      if (acknowledgedTurnId !== nativeTurnId) {
+        throw new Error("Codex returned an invalid steer acknowledgement");
+      }
+      return { status: "accepted" };
+    } catch (error) {
+      if (isDefinitiveCodexSteerRejection(error)) return { status: "unavailable" };
+      throw error;
+    }
+  }
+
+  private matchesSteerAdmission(admission: {
+    client: CodexAppServerClientLike;
+    threadId: string;
+    nativeTurnId: string;
+    foregroundTurnId: string;
+  }): boolean {
+    return (
+      this.client === admission.client &&
+      this.currentThreadId === admission.threadId &&
+      this.currentTurnId === admission.nativeTurnId &&
+      this.activeForegroundTurnId === admission.foregroundTurnId
+    );
+  }
+
   private rememberCodexUserMessageTurn(messageId: string | null | undefined): boolean {
     if (typeof messageId !== "string" || messageId.length === 0) {
       return false;
@@ -4067,6 +4287,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
     this.currentMode = modeId;
+    this.hasWorkflowModeOverride = true;
+    this.config.modeId = modeId;
     this.cachedRuntimeInfo = null;
     if (this.activeForegroundTurnId) {
       return MODE_APPLIES_NEXT_TURN_NOTICE;
@@ -4304,10 +4526,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         cwd: this.config.cwd,
         title: this.config.title ?? null,
         threadId: this.currentThreadId,
-        modeId: this.currentMode,
+        modeId: this.config.modeId,
         model: this.config.model ?? null,
         thinkingOptionId,
-        extra: this.config.extra,
+        providerOptions: this.config.providerOptions,
+        toolPolicy: this.config.toolPolicy,
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
       },
@@ -4415,14 +4638,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else {
       await this.loadSkills();
     }
-    const appServerSkills = this.cachedSkills.map((skill) => ({
+    const appServerSkills = (this.cachedSkills ?? []).map((skill) => ({
       name: skill.name,
       description: skill.description,
       argumentHint: "",
       kind: "skill" as const,
     }));
     const fallbackSkills =
-      appServerSkills.length === 0
+      this.cachedSkills === null
         ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
         : [];
     const builtin: AgentSlashCommand[] = [
@@ -4624,25 +4847,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.config.model = model;
     this.config.thinkingOptionId = thinkingOptionId;
 
-    const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
-    const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
-    const sandbox = this.config.sandboxMode ?? preset.sandbox;
-    const innerConfig = this.buildCodexInnerConfig();
-    const developerInstructions = composeSystemPromptParts(
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    const params: Record<string, unknown> = {
-      model,
-      cwd: this.config.cwd ?? null,
-      approvalPolicy,
-      sandbox,
-      ...(developerInstructions ? { developerInstructions } : {}),
-      ...(innerConfig ? { config: innerConfig } : {}),
-      ...(this.ephemeral ? { ephemeral: true } : {}),
-    };
-    applyApprovalsReviewerParam(params, preset);
+    const { params, approvalPolicy, sandbox } = this.buildThreadStartRequest(model);
     const rawResponse = await this.client.request("thread/start", params);
+    this.rememberResolvedSandboxPolicy(rawResponse);
     const response = toObjectRecord(rawResponse);
     const threadRecord = toObjectRecord(response?.thread);
     const threadId = typeof threadRecord?.id === "string" ? threadRecord.id : undefined;
@@ -4654,8 +4861,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (
       shouldPromoteThreadResponseToAutoReview({
         approvalsReviewer: responseApprovalsReviewer,
-        approvalPolicy,
-        sandbox,
+        approvalPolicy: approvalPolicy ?? String(this.providerOptions.approval_policy ?? ""),
+        sandbox: sandbox ?? this.providerOptions.sandbox_mode ?? "",
       })
     ) {
       this.currentMode = "auto-review";
@@ -4664,8 +4871,42 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentThreadId = threadId;
   }
 
+  private buildThreadStartRequest(model: string): {
+    params: Record<string, unknown>;
+    approvalPolicy?: string;
+    sandbox?: string;
+  } {
+    const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
+    const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
+    const innerConfig = this.buildCodexInnerConfig();
+    const developerInstructions = composeSystemPromptParts(
+      this.config.systemPrompt,
+      this.config.daemonAppendSystemPrompt,
+    );
+    const params: Record<string, unknown> = {
+      model,
+      cwd: this.config.cwd ?? null,
+      ...(approvalPolicy && this.providerOptions.approval_policy === undefined
+        ? { approvalPolicy }
+        : {}),
+      ...(sandbox && this.providerOptions.sandbox_mode === undefined ? { sandbox } : {}),
+      ...(developerInstructions ? { developerInstructions } : {}),
+      ...(innerConfig ? { config: innerConfig } : {}),
+      ...(this.ephemeral ? { ephemeral: true } : {}),
+    };
+    if (this.hasWorkflowModeOverride) {
+      applyApprovalsReviewerParam(params, preset);
+    }
+    return { params, approvalPolicy, sandbox };
+  }
+
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
+    Object.assign(innerConfig, this.providerOptions);
+    if (this.deps.customCodexConfig) {
+      Object.assign(innerConfig, this.deps.customCodexConfig);
+    }
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
       for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
@@ -4673,13 +4914,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       innerConfig.mcp_servers = mcpServers;
     }
-    if (this.config.extra?.codex) {
-      Object.assign(innerConfig, this.config.extra.codex);
-    }
-    if (this.deps.customCodexConfig) {
-      Object.assign(innerConfig, this.deps.customCodexConfig);
-    }
-    return Object.keys(innerConfig).length > 0 ? innerConfig : null;
+    const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    return Object.keys(configured).length > 0 ? configured : null;
   }
 
   private async buildUserInput(prompt: CodexPromptInput): Promise<CodexAppServerUserInput[]> {
@@ -4762,7 +4998,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private dispatchSubAgentNotification(parsed: ParsedCodexNotification, callId: string): void {
     switch (parsed.kind) {
       case "thread_started":
-        this.emitSubAgentActivityUpdate(callId, "running");
+        this.emitSubAgentActivityUpdate(callId, "running", { reopen: true });
         return;
       case "turn_started":
       case "turn_completed":
@@ -5035,10 +5271,13 @@ export class CodexAppServerAgentSession implements AgentSession {
         },
       };
     }
-    this.emitSubAgentActivityUpdate(
-      callId,
-      activity.kind === "interrupted" ? "canceled" : "running",
-    );
+    let nextStatus: ToolCallTimelineItem["status"] | undefined = "running";
+    if (activity.kind === "interrupted") {
+      nextStatus = "canceled";
+    } else if (isTerminalSubAgentStatus(state.toolCall.status)) {
+      nextStatus = undefined;
+    }
+    this.emitSubAgentActivityUpdate(callId, nextStatus);
     return true;
   }
 
@@ -5049,6 +5288,16 @@ export class CodexAppServerAgentSession implements AgentSession {
   }): boolean {
     if (!this.isContextCompactionItem(item)) {
       return false;
+    }
+    const consumedPendingCompaction = this.consumePendingRootCompaction(item.id);
+    const hasDifferentPendingCompaction =
+      this.pendingRootCompactionItemIds.size > 0 || this.pendingAnonymousRootCompactions > 0;
+    const isLateCompletionForOlderItem =
+      item.id !== undefined &&
+      consumedPendingCompaction === undefined &&
+      hasDifferentPendingCompaction;
+    if (isLateCompletionForOlderItem) {
+      return true;
     }
     if (this.unpairedCompactionNotificationCompletions > 0) {
       this.unpairedCompactionNotificationCompletions -= 1;
@@ -5122,6 +5371,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emitSubAgentActivityUpdate(
     callId: string,
     status?: ToolCallTimelineItem["status"],
+    options?: { reopen?: boolean },
   ): void {
     const state = this.subAgentCallsByCallId.get(callId);
     if (!state || state.toolCall.detail.type !== "sub_agent") {
@@ -5132,7 +5382,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       childTimeline.length > 0
         ? curateAgentActivity(childTimeline, { labelAssistantMessages: true })
         : "";
-    const resolvedStatus = status ?? state.toolCall.status;
+    let resolvedStatus = status ?? state.toolCall.status;
+    if (
+      status === "running" &&
+      !options?.reopen &&
+      isTerminalSubAgentStatus(state.toolCall.status)
+    ) {
+      resolvedStatus = state.toolCall.status;
+    }
     for (const childThreadId of state.childThreadIds) {
       this.emitProviderSubagentUpsert(childThreadId, state, resolvedStatus);
     }
@@ -5271,7 +5528,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
     }
-    this.emitSubAgentActivityUpdate(callId, "running");
+    this.emitSubAgentActivityUpdate(callId);
   }
 
   private handleSubAgentContextCompactionItem(
@@ -5407,7 +5664,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (subAgentCallId) {
-      this.emitSubAgentActivityUpdate(subAgentCallId, "running");
+      this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
     this.currentTurnId = parsed.turnId;
@@ -5437,6 +5694,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
     }
+    this.completePendingRootCompactions();
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -5477,6 +5735,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingFileChangeOutputDeltas.clear();
     this.pendingAssistantMessageBoundary = false;
     this.warnedIncompleteEditToolCallIds.clear();
+    this.pendingRootCompactionItemIds.clear();
+    this.pendingAnonymousRootCompactions = 0;
     this.unpairedCompactionNotificationCompletions = 0;
     this.unpairedCompactionItemCompletions = 0;
   }
@@ -5484,6 +5744,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handlePlanUpdatedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "plan_updated" }>,
   ): void {
+    if (!this.planModeEnabled) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: mapCodexPlanUpdateToTodo(parsed.plan),
+      });
+      return;
+    }
     const timelineItem = mapCodexPlanToToolCall({
       callId: `plan:${this.currentTurnId ?? this.currentThreadId ?? "current"}`,
       text: planStepsToMarkdown(
@@ -5495,13 +5763,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
     if (timelineItem) {
       this.rememberPlanResult(timelineItem);
-      // In plan mode, the same plan is rendered through the synthetic approval
-      // permission. Keep the remembered text for that card, but do not also
-      // emit a static timeline plan panel.
-      if (this.planModeEnabled) {
-        return;
-      }
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      // Older Codex app-server builds reported Plan-mode proposals through
+      // turn/plan/updated. Retain that compatibility path only while Plan mode is active.
+      return;
     }
   }
 
@@ -5530,6 +5794,61 @@ export class CodexAppServerAgentSession implements AgentSession {
       return "manual";
     }
     return undefined;
+  }
+
+  private trackPendingRootCompaction(itemId?: string): void {
+    if (itemId) {
+      this.pendingRootCompactionItemIds.add(itemId);
+      return;
+    }
+    this.pendingAnonymousRootCompactions += 1;
+  }
+
+  private consumePendingRootCompaction(itemId?: string): ConsumedRootCompaction | undefined {
+    if (itemId) {
+      if (this.pendingRootCompactionItemIds.delete(itemId)) {
+        return { itemId };
+      }
+      if (
+        this.pendingRootCompactionItemIds.size === 0 &&
+        this.pendingAnonymousRootCompactions > 0
+      ) {
+        this.pendingAnonymousRootCompactions -= 1;
+        return {};
+      }
+      return undefined;
+    }
+    const pendingItemId = this.pendingRootCompactionItemIds.values().next().value;
+    if (typeof pendingItemId === "string") {
+      this.pendingRootCompactionItemIds.delete(pendingItemId);
+      return { itemId: pendingItemId };
+    }
+    if (this.pendingAnonymousRootCompactions > 0) {
+      this.pendingAnonymousRootCompactions -= 1;
+      return {};
+    }
+    return undefined;
+  }
+
+  private completePendingRootCompactions(): void {
+    // Some Codex builds end a turn without completing the contextCompaction
+    // item. Close every loading timeline row before emitting the terminal turn.
+    for (const itemId of this.pendingRootCompactionItemIds) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed", itemId),
+      });
+    }
+    for (let index = 0; index < this.pendingAnonymousRootCompactions; index += 1) {
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: this.createContextCompactionTimelineItem("completed"),
+      });
+    }
+    this.pendingRootCompactionItemIds.clear();
+    this.pendingAnonymousRootCompactions = 0;
   }
 
   private createContextCompactionTimelineItem(
@@ -5581,11 +5900,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.unpairedCompactionItemCompletions -= 1;
       return;
     }
+    const pendingItemId = this.consumePendingRootCompaction()?.itemId;
     this.unpairedCompactionNotificationCompletions += 1;
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
-      item: this.createContextCompactionTimelineItem("completed"),
+      item: this.createContextCompactionTimelineItem("completed", pendingItemId),
       ...(parsed.turnId ? { turnId: parsed.turnId } : {}),
     });
   }
@@ -5910,6 +6230,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     if (this.isContextCompactionItem(parsed.item)) {
+      this.trackPendingRootCompaction(parsed.item.id);
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
@@ -5998,9 +6319,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.rememberCodexUserMessageTurn(timelineItem.messageId)) {
       return;
     }
-    const item = this.activeClientMessageId
-      ? { ...timelineItem, clientMessageId: this.activeClientMessageId }
-      : timelineItem;
+    const clientMessageId = timelineItem.clientMessageId ?? this.activeClientMessageId;
+    const item = clientMessageId ? { ...timelineItem, clientMessageId } : timelineItem;
     this.activeClientMessageId = null;
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
   }
@@ -6381,29 +6701,31 @@ export class CodexAppServerAgentClient implements AgentClient {
     return this.goalsEnabledPromise;
   }
 
-  private resolveAutoReviewEnabled(): Promise<boolean> {
+  private resolveAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    if (signal) return this.probeAutoReviewEnabled(signal);
     if (!this.autoReviewEnabledPromise) {
-      this.autoReviewEnabledPromise = (async () => {
-        try {
-          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
-          const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
-          this.logger.trace(
-            {
-              provider: CODEX_PROVIDER,
-              versionOutput,
-              enabled,
-            },
-            "provider.codex.config.auto_review_resolved",
-          );
-          return enabled;
-        } catch (error) {
-          this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
-          return false;
-        }
-      })();
+      this.autoReviewEnabledPromise = this.probeAutoReviewEnabled();
     }
     return this.autoReviewEnabledPromise;
+  }
+
+  private async probeAutoReviewEnabled(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+      signal?.throwIfAborted();
+      const versionOutput = await resolveBinaryVersion(launchPrefix.command, signal);
+      signal?.throwIfAborted();
+      const enabled = codexVersionAtLeast(versionOutput, CODEX_AUTO_REVIEW_MIN_VERSION);
+      this.logger.trace(
+        { provider: CODEX_PROVIDER, versionOutput, enabled },
+        "provider.codex.config.auto_review_resolved",
+      );
+      return enabled;
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason;
+      this.logger.warn({ err: error }, "Failed to probe codex version for auto-review gate");
+      return false;
+    }
   }
 
   private async spawnAppServer(
@@ -6557,10 +6879,15 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(
+    _options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
     const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
-      this.resolveAutoReviewEnabled(),
+      this.fetchModelsFromAppServer(context),
+      runProviderRefreshActivity(context, "version", () =>
+        this.resolveAutoReviewEnabled(context?.signal),
+      ),
     ]);
     return {
       models,
@@ -6571,23 +6898,46 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
-  async resolveDefaultModeId(): Promise<string> {
-    return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
+  async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {
+    return (await this.resolveAutoReviewEnabled(input.signal))
+      ? "auto-review"
+      : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(
+    context?: ProviderRefreshContext,
+  ): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    let client: CodexAppServerClient | undefined;
+    let disposePromise: Promise<void> | undefined;
+    const dispose = () => {
+      if (!client) return Promise.resolve();
+      disposePromise ??= client.dispose();
+      return disposePromise;
+    };
+    const handleAbort = () => void dispose().catch(() => undefined);
+    context?.signal.addEventListener("abort", handleAbort, { once: true });
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
+      await runProviderRefreshActivity(context, "app-server.start", async () => {
+        const child = await this.spawnAppServer();
+        client = new CodexAppServerClient(child, this.logger);
+        if (context?.signal.aborted) await dispose();
+      });
+      if (!client) throw new Error("Codex app-server did not start");
+      await runProviderRefreshActivity(context, "initialize", () =>
+        client!.request("initialize", buildCodexAppServerInitializeParams()),
+      );
       client.notify("initialized", {});
 
-      const rawResponse = await client.request("model/list", {});
+      const rawResponse = await runProviderRefreshActivity(context, "model/list", () =>
+        client!.request("model/list", {}),
+      );
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
       const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
-      const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
+      const configuredDefaults = await runProviderRefreshActivity(context, "config/read", () =>
+        readCodexConfiguredDefaults(client!, this.logger),
+      );
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
       const hasConfiguredDefaultModel =
@@ -6602,7 +6952,8 @@ export class CodexAppServerAgentClient implements AgentClient {
         }),
       );
     } finally {
-      await client.dispose();
+      context?.signal.removeEventListener("abort", handleAbort);
+      await dispose();
     }
   }
 

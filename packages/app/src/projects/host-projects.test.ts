@@ -6,7 +6,10 @@ import {
   getHostProjectSourceDirectory,
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
+  hostProjectFromWorkspace,
+  resolveEquivalentHostProjectCandidate,
 } from "./host-project-model";
+import { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 
 function project(): HostProjectListItem {
   return {
@@ -34,6 +37,31 @@ function project(): HostProjectListItem {
 }
 
 describe("host project lookups", () => {
+  test("resolves equivalent projects without Array.prototype.toSorted", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+    Reflect.deleteProperty(Array.prototype, "toSorted");
+    const first = project();
+    first.viewKey = "view:first";
+    first.projectName = "First";
+    const second = project();
+    second.viewKey = "view:second";
+    second.projectName = "Second";
+    const projects = [second, first];
+
+    try {
+      expect(
+        resolveEquivalentHostProjectCandidate({
+          candidate: first,
+          projects,
+          serverId: "host-a",
+        }),
+      ).toBe(first);
+      expect(projects).toEqual([second, first]);
+    } finally {
+      if (descriptor) Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
+    }
+  });
+
   test("returns host-local ids and roots without falling back to the grouping key", () => {
     expect(getHostProjectId(project(), "host-b")).toBe("prj_b");
     expect(getHostProjectSourceDirectory(project(), "host-b")).toBe("/repo/b");
@@ -93,6 +121,44 @@ describe("host project lookups", () => {
     ).toMatchObject({
       projectKey: null,
       hosts: [{ serverId: "host-a", projectId: "prj_a" }],
+    });
+  });
+
+  test("keeps canonical equivalence identity separate from host placement identity", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "workspace-a",
+      projectId: "project-a",
+      projectDisplayName: "App",
+      projectRootPath: "/repo/app",
+      workspaceDirectory: "/repo/app",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+      project: {
+        projectKey: "remote:github.com/acme/app",
+        projectName: "App",
+        checkout: {
+          cwd: "/repo/app",
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: "https://github.com/acme/app.git",
+          worktreeRoot: "/repo/app",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+
+    expect(hostProjectFromWorkspace({ serverId: "host-a", workspace })).toMatchObject({
+      viewKey: JSON.stringify(["host-a", "project-a"]),
+      projectKey: "remote:github.com/acme/app",
+      hosts: [{ serverId: "host-a", projectId: "project-a" }],
     });
   });
 });

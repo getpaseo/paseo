@@ -52,6 +52,36 @@ describe("focusWithRetries", () => {
     expect(frameQueue).toHaveLength(0);
   });
 
+  it("can defer the first focus attempt until the next animation frame", () => {
+    const focus = vi.fn();
+
+    focusWithRetries({
+      focus,
+      isFocused: () => true,
+      deferInitialAttempt: true,
+    });
+
+    expect(focus).not.toHaveBeenCalled();
+
+    flushAnimationFrames(1);
+
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a deferred focus before its first attempt", () => {
+    const focus = vi.fn();
+    const cancel = focusWithRetries({
+      focus,
+      isFocused: () => false,
+      deferInitialAttempt: true,
+    });
+
+    cancel();
+    flushAnimationFrames(1);
+
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it("keeps retrying on later animation frames until focus succeeds", () => {
     let focused = false;
     let attempts = 0;

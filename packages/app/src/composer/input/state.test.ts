@@ -173,7 +173,7 @@ describe("dictation transcript behavior", () => {
       defaultSendBehavior: "interrupt",
       isAgentRunning: false,
       onQueue: undefined,
-      onChangeText: (text) => actions.push(`change:${text}`),
+      replaceText: (text) => actions.push(`replace:${text}`),
       onSubmit: (payload) => actions.push(`submit:${payload.text}`),
       attachments: [],
       cwd: "/repo",
@@ -181,7 +181,7 @@ describe("dictation transcript behavior", () => {
     });
 
     expect(actions).toEqual([
-      "change:typed context spoken prompt",
+      "replace:typed context spoken prompt",
       "submit:typed context spoken prompt",
     ]);
   });
@@ -211,6 +211,29 @@ describe("composer send behavior", () => {
     const alternateAction = actions();
     runAlternateSendAction({
       defaultSendBehavior: "interrupt",
+      isAgentRunning: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send"]);
+    expect(alternateAction.calls).toEqual(["queue"]);
+  });
+
+  it("uses Enter to steer and Mod+Enter to queue when steer is selected", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "steer",
       isAgentRunning: true,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,

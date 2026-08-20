@@ -1,6 +1,6 @@
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
-import type { AssistantMessageItem, StreamItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
@@ -126,6 +126,7 @@ interface TimelineResponseEntry {
   sourceSeqRanges?: TimelineSeqRange[];
   collapsed?: string[];
   provider: string;
+  turnId?: string;
   item: Record<string, unknown>;
   timestamp: string;
 }
@@ -1269,6 +1270,7 @@ export function processTimelineResponse(
       type: "timeline",
       provider: entry.provider,
       item: entry.item,
+      ...(entry.turnId ? { turnId: entry.turnId } : {}),
     } as AgentStreamEventPayload,
     timestamp: new Date(entry.timestamp),
   }));
@@ -1436,6 +1438,7 @@ export interface ProcessAgentStreamEventOutput {
   cursor: TimelineCursor | null;
   cursorChanged: boolean;
   acknowledgedClientMessageIds: string[];
+  taskSnapshot?: TodoEntry[];
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
@@ -1642,6 +1645,9 @@ export function processAgentStreamEvent(
     cursor: sequencing.nextTimelineCursor,
     cursorChanged: sequencing.cursorChanged,
     acknowledgedClientMessageIds: streamResult.acknowledgedClientMessageIds ?? [],
+    ...(sequencing.shouldApplyStreamEvent && event.type === "timeline" && event.item.type === "todo"
+      ? { taskSnapshot: event.item.items }
+      : {}),
     sideEffects: sequencing.sideEffects,
   };
 }
@@ -1667,6 +1673,7 @@ export function processAgentStreamEvents(
   let changedTail = false;
   let changedHead = false;
   let cursorChanged = false;
+  let taskSnapshot: TodoEntry[] | undefined;
   const acknowledgedClientMessageIds = new Set<string>();
   const sideEffects: AgentStreamReducerSideEffect[] = [];
 
@@ -1690,6 +1697,9 @@ export function processAgentStreamEvents(
     for (const clientMessageId of result.acknowledgedClientMessageIds) {
       acknowledgedClientMessageIds.add(clientMessageId);
     }
+    if (result.taskSnapshot !== undefined) {
+      taskSnapshot = result.taskSnapshot;
+    }
 
     if (result.cursorChanged) {
       cursor = result.cursor ?? undefined;
@@ -1705,6 +1715,7 @@ export function processAgentStreamEvents(
     cursor: cursor ?? null,
     cursorChanged,
     acknowledgedClientMessageIds: [...acknowledgedClientMessageIds],
+    ...(taskSnapshot !== undefined ? { taskSnapshot } : {}),
     sideEffects,
   };
 }
@@ -1788,6 +1799,7 @@ interface StreamStatePatch {
   tail?: StreamItem[];
   head?: StreamItem[];
   acknowledgedClientMessageIds?: readonly string[];
+  taskSnapshot?: TodoEntry[];
 }
 
 export function deriveAgentStreamTurnLiveness(
@@ -1850,7 +1862,8 @@ export function createSessionAgentStreamReducerQueue(
       if (
         result.changedTail ||
         result.changedHead ||
-        result.acknowledgedClientMessageIds.length > 0
+        result.acknowledgedClientMessageIds.length > 0 ||
+        result.taskSnapshot !== undefined
       ) {
         setAgentStreamState(serverId, agentId, {
           ...(result.changedTail ? { tail: result.tail } : {}),
@@ -1858,6 +1871,7 @@ export function createSessionAgentStreamReducerQueue(
           ...(result.acknowledgedClientMessageIds.length > 0
             ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
             : {}),
+          ...(result.taskSnapshot !== undefined ? { taskSnapshot: result.taskSnapshot } : {}),
         });
       }
       if (result.cursorChanged && result.cursor) {

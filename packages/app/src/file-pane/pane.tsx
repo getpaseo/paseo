@@ -12,7 +12,6 @@ import type { DaemonClient, FileReadResult } from "@getpaseo/client/internal/dae
 import { Image as RNImage, ScrollView as RNScrollView, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
@@ -36,6 +35,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
+import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
@@ -305,10 +305,9 @@ function FilePreviewBody({
           <RNScrollView
             ref={previewScrollRef}
             style={styles.previewContent}
-            contentContainerStyle={styles.previewMarkdownScrollContent}
             showsVerticalScrollIndicator
           >
-            <MarkdownRenderer text={preview.content ?? ""} />
+            <FileMarkdownPreview source={preview.content ?? ""} />
           </RNScrollView>
         </View>
       );
@@ -853,22 +852,22 @@ const styles = StyleSheet.create((theme) => ({
   loadingText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   binaryMetaText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   previewScrollContainer: {
     flex: 1,
@@ -879,9 +878,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   previewCodeScrollContent: {
-    padding: theme.spacing[4],
-  },
-  previewMarkdownScrollContent: {
     padding: theme.spacing[4],
   },
   previewImageScrollContent: {

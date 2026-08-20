@@ -1,4 +1,6 @@
 import type { Logger } from "pino";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import { z } from "zod";
 
 import type {
   AgentClient,
@@ -11,16 +13,19 @@ import type {
   AgentSession,
   AgentStreamEvent,
   FetchCatalogOptions,
+  ProviderRefreshContext,
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
   ResolveAgentDefaultModeInput,
+  AgentSessionConfig,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
 } from "./create-agent-mode.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
+import { runProviderRefreshActivity } from "./provider-refresh-deadline.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type {
@@ -34,6 +39,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
+import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
@@ -42,6 +48,10 @@ import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
+import { ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
+import { CodexProviderOptionsSchema } from "./providers/codex/options.js";
+import { OpenCodeProviderOptionsSchema } from "./providers/opencode/options.js";
+import { ToolPolicyUnsupportedError, validateProviderOptions } from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -66,6 +76,17 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    * generic ACP providers (which only extend the literal "acp" sentinel).
    */
   derivedFromProviderId: string | null;
+  optionsSchema: z.ZodType<ProviderOptions>;
+  supportsExactMcpPreapproval: boolean;
+  validateOptions: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
+  applyOptions: (
+    config: AgentSessionConfig,
+    options: ProviderOptions | undefined,
+  ) => AgentSessionConfig;
+  applyToolPolicy: (
+    config: AgentSessionConfig,
+    toolPolicy: ToolPolicy | undefined,
+  ) => AgentSessionConfig;
   createClient: (logger: Logger) => AgentClient;
   resolveCreateConfig: (input: ResolveAgentCreateConfigInput) => ResolveAgentCreateConfigResult;
   isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
@@ -73,7 +94,11 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    * Single catalog discovery call used by ProviderSnapshotManager. Should spawn
    * at most one provider runtime process and return both models and modes.
    */
-  fetchCatalog: (options: FetchCatalogOptions, client?: AgentClient) => Promise<ProviderCatalog>;
+  fetchCatalog: (
+    options: FetchCatalogOptions,
+    client?: AgentClient,
+    context?: ProviderRefreshContext,
+  ) => Promise<ProviderCatalog>;
 }
 
 export interface BuildProviderRegistryOptions {
@@ -113,7 +138,54 @@ interface ResolvedProvider {
   derivedFromProviderId: string | null;
   providerParams?: unknown;
   createBaseClient: (logger: Logger) => AgentClient;
+  contract: ProviderContract;
 }
+
+interface ProviderContract {
+  optionsSchema: z.ZodType<ProviderOptions>;
+  supportsExactMcpPreapproval: boolean;
+  applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
+}
+
+const EmptyProviderOptionsSchema: z.ZodType<ProviderOptions> = z.object({}).strict();
+
+const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
+  claude: { optionsSchema: ClaudeProviderOptionsSchema, supportsExactMcpPreapproval: true },
+  codex: { optionsSchema: CodexProviderOptionsSchema, supportsExactMcpPreapproval: true },
+  opencode: { optionsSchema: OpenCodeProviderOptionsSchema, supportsExactMcpPreapproval: true },
+};
+
+const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
+  optionsSchema: EmptyProviderOptionsSchema,
+  supportsExactMcpPreapproval: false,
+};
+
+const HUB_E2E_PROVIDER_ID = "hub-e2e";
+const HUB_E2E_MCP_SERVER = "hub";
+const HUB_E2E_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
+// The cross-repository Hub harness owns this synthetic provider ID. It exercises the production
+// registry path without extending exact-preapproval support to user-defined ACP providers.
+const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
+  optionsSchema: EmptyProviderOptionsSchema,
+  supportsExactMcpPreapproval: true,
+  applyToolPolicy: (provider, toolPolicy) => {
+    for (const grant of toolPolicy.preapproved) {
+      if (
+        grant.kind !== "mcp" ||
+        grant.server !== HUB_E2E_MCP_SERVER ||
+        !HUB_E2E_TOOL_NAME.test(grant.tool)
+      ) {
+        throw new ToolPolicyUnsupportedError(
+          provider,
+          `Provider '${provider}' accepts only exact MCP tool grants for the injected '${HUB_E2E_MCP_SERVER}' server`,
+        );
+      }
+    }
+    return {
+      preapproved: toolPolicy.preapproved.map((grant) => ({ ...grant })),
+    };
+  },
+};
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   claude: (logger, runtimeSettings) =>
@@ -441,8 +513,8 @@ function wrapClientProvider(
           options,
         ),
       ),
-    fetchCatalog: async (options) => {
-      const catalog = await inner.fetchCatalog(options);
+    fetchCatalog: async (options, context) => {
+      const catalog = await inner.fetchCatalog(options, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -452,10 +524,11 @@ function wrapClientProvider(
       };
     },
     resolveDefaultModeId: inner.resolveDefaultModeId
-      ? async ({ config, env }: ResolveAgentDefaultModeInput) =>
+      ? async ({ config, env, signal }: ResolveAgentDefaultModeInput) =>
           await inner.resolveDefaultModeId?.({
             config: { ...config, provider: inner.provider },
             env,
+            signal,
           })
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
@@ -495,7 +568,7 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: () => inner.isAvailable(),
+    isAvailable: (signal) => inner.isAvailable(signal),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }
@@ -534,12 +607,32 @@ function createRegistryEntry(
     ...resolved.definition,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
+    optionsSchema: resolved.contract.optionsSchema,
+    supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
+    validateOptions: (options) =>
+      validateProviderOptions(provider, resolved.contract.optionsSchema, options),
+    applyOptions: (config, options) => ({ ...config, providerOptions: options }),
+    applyToolPolicy: (config, toolPolicy) => {
+      if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
+        throw new ToolPolicyUnsupportedError(provider);
+      }
+      return {
+        ...config,
+        toolPolicy: toolPolicy
+          ? (resolved.contract.applyToolPolicy?.(provider, toolPolicy) ?? toolPolicy)
+          : undefined,
+      };
+    },
     createClient: (providerLogger: Logger) =>
       createResolvedProviderClient(providerLogger, provider, resolved),
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
     isCreateConfigUnattended:
       modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
-    fetchCatalog: async (options: FetchCatalogOptions, client?: AgentClient) => {
+    fetchCatalog: async (
+      options: FetchCatalogOptions,
+      client?: AgentClient,
+      context?: ProviderRefreshContext,
+    ) => {
       const catalogClient = client ?? modelClient;
       if (hasReplacementModels) {
         // Replacement models skip runtime model discovery, but additionalModels
@@ -547,23 +640,29 @@ function createRegistryEntry(
         // the single catalog API; otherwise use static/empty modes with no runtime.
         const models = mergeModelAdditions(provider, replacementModels, additionalModels);
         if (hasStaticModes) {
-          const defaultModeId = await catalogClient.resolveDefaultModeId?.({
-            config: {
-              provider,
-              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
-            },
-          });
+          const defaultModeId = await runProviderRefreshActivity(
+            context,
+            "default-mode",
+            async () =>
+              await catalogClient.resolveDefaultModeId?.({
+                config: {
+                  provider,
+                  cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+                },
+                signal: context?.signal,
+              }),
+          );
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
             defaultModeId,
           };
         }
-        const catalog = await catalogClient.fetchCatalog(options);
+        const catalog = await catalogClient.fetchCatalog(options, context);
         return { ...catalog, models, modes: decorateModes(catalog.modes) };
       }
 
-      const catalog = await catalogClient.fetchCatalog(options);
+      const catalog = await catalogClient.fetchCatalog(options, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -635,6 +734,7 @@ function buildResolvedBuiltinProviders(
           ompRuntime: options.ompRuntime,
           providerParams: override?.params,
         }),
+      contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
     });
   }
 
@@ -693,6 +793,9 @@ function addDerivedProviders(
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);
           }
+          if (providerId === "kimi") {
+            return new KimiACPAgentClient(acpOptions);
+          }
           if (providerId === "kiro") {
             return new KiroACPAgentClient(acpOptions);
           }
@@ -701,6 +804,10 @@ function addDerivedProviders(
           }
           return new GenericACPAgentClient(acpOptions);
         },
+        contract:
+          providerId === HUB_E2E_PROVIDER_ID
+            ? HUB_E2E_PROVIDER_CONTRACT
+            : UNSUPPORTED_PROVIDER_CONTRACT,
       });
       continue;
     }
@@ -740,6 +847,7 @@ function addDerivedProviders(
             extends: baseProviderId,
           },
         }),
+      contract: baseProvider.contract,
     });
   }
 }

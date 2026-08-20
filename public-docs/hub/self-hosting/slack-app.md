@@ -2,13 +2,13 @@
 title: Slack for Hub
 description: Create the Slack app your Hub uses, connect a workspace, and write Slack triggers.
 nav: Slack app
-order: 75
+order: 76
 category: Hub
 ---
 
 # Slack for Hub
 
-Hub receives Slack mentions over the Events API. Socket Mode is not used, so your Hub must be reachable from Slack.
+Hub receives Slack mentions over the Events API. Socket Mode is not used, so your Hub needs a publicly reachable HTTPS origin with a valid certificate. See [Provider URLs](/docs/hub/self-hosting#provider-urls).
 
 ## Create the app
 

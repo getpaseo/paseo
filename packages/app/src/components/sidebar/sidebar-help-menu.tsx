@@ -68,9 +68,10 @@ function HostVersionHint({ host }: { host: HostProfile }) {
   return (
     <DropdownMenuHint
       style={styles.versionHint}
+      trailing={version}
       testID={`sidebar-help-host-version-${host.serverId}`}
     >
-      {host.label} {version}
+      {host.label}
     </DropdownMenuHint>
   );
 }
@@ -167,8 +168,12 @@ export function SidebarHelpMenu() {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <View style={styles.versionList}>
-          <DropdownMenuHint style={styles.versionHint} testID="sidebar-help-version">
-            {t("sidebar.help.version", { version })}
+          <DropdownMenuHint
+            style={styles.versionHint}
+            trailing={version}
+            testID="sidebar-help-version"
+          >
+            {t("sidebar.help.appName")}
           </DropdownMenuHint>
           {hosts.map((host) => (
             <HostVersionHint key={host.serverId} host={host} />
@@ -189,7 +194,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
   },
   versionList: {

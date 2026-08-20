@@ -10,7 +10,6 @@ import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { highlightDiffLines } from "@/utils/diff-highlight";
@@ -741,15 +740,7 @@ function LoadingSkeleton({ containerStyle }: { containerStyle: StyleProp<ViewSty
   );
 }
 
-export function ToolCallDetailsContent({ ...props }: ToolCallDetailsContentProps) {
-  return (
-    <AppearanceStyleBoundary>
-      <ToolCallDetailsContentInner {...props} />
-    </AppearanceStyleBoundary>
-  );
-}
-
-function ToolCallDetailsContentInner({
+export function ToolCallDetailsContent({
   detail,
   errorText,
   maxHeight,
@@ -802,7 +793,7 @@ const styles = StyleSheet.create((theme) => {
     },
     groupHeaderText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.normal,
     },
     section: {
@@ -821,14 +812,14 @@ const styles = StyleSheet.create((theme) => {
     },
     sectionTitle: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.sm,
       fontWeight: theme.fontWeight.semibold,
       textTransform: "uppercase",
       letterSpacing: 0.5,
     },
     rangeText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.sm,
     },
     diffContainer: {
       borderWidth: theme.borderWidth[1],
@@ -925,7 +916,7 @@ const styles = StyleSheet.create((theme) => {
     },
     emptyStateText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base,
       fontStyle: "italic",
     },
     loadingContainer: {
