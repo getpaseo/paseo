@@ -11,6 +11,7 @@ const ThemedSpinner = withUnistyles(LoadingSpinner);
 const spinnerMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 export function FilePanelBar({
+  filePath,
   size,
   lineCount,
   mode,
@@ -20,6 +21,7 @@ export function FilePanelBar({
   vimMode,
   conflict,
 }: {
+  filePath: string;
   size: number;
   lineCount?: number;
   mode?: "preview" | "source";
@@ -41,6 +43,15 @@ export function FilePanelBar({
   return (
     <View style={styles.chrome} testID="file-panel-bar">
       <View style={styles.row}>
+        <Text
+          selectable
+          numberOfLines={1}
+          ellipsizeMode="middle"
+          style={styles.filePath}
+          testID="file-panel-path"
+        >
+          {filePath}
+        </Text>
         <View style={styles.metadata}>
           <Text
             style={styles.whisper}
@@ -132,9 +143,14 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  metadata: {
+  filePath: {
     flex: 1,
     minWidth: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  metadata: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
