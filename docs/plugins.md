@@ -1,7 +1,7 @@
 # Local plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 this first slice does not sandbox it.
 
@@ -194,5 +194,20 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
-See `plugin-examples/local-plugin` for a native surface and `plugin-examples/linear` for a complete
-attachment-source example.
+## Contribute a theme
+
+`addTheme` takes an eight-color dark palette and a display name. Unistyles needs every theme at
+`StyleSheet.configure` time, so `packages/app/src/styles/theme.ts` reserves one `plugin` slot in
+`REGISTERED_THEMES`; selecting a contributed theme expands its palette through the same
+`buildDarkSemanticColors`/`buildDarkTheme` pair the built-in dark variants use and rewrites that
+slot with `UnistylesRuntime.updateTheme`. One slot covers any number of contributed themes because
+only one theme is active at a time. See [unistyles.md](unistyles.md) for the runtime-patching rules
+the appearance settings share.
+
+The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
+so equal themes on several hosts coalesce the way sidebar contributions do. The app resolves that id
+against the installed catalog on every change; an id nothing contributes falls back to the default
+preference instead of painting the reserved slot's placeholder colors.
+
+See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
+attachment-source example, and `plugin-examples/catppuccin` for a theme.
