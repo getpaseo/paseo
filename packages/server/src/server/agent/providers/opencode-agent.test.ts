@@ -2023,7 +2023,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("uses OpenCode V2 native steer admission and reconciles the user echo", async () => {
+  test("uses OpenCode native steer admission and reconciles the user echo", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer");
     openCode.sessionPromptAsyncEvents = [];
     const events: AgentStreamEvent[] = [];
@@ -2036,45 +2036,40 @@ describe("OpenCode adapter startTurn error handling", () => {
     });
 
     expect(result).toEqual({ status: "accepted" });
-    expect(openCode.calls.sessionV2Prompt).toHaveLength(1);
-    const request = openCode.calls.sessionV2Prompt[0] as {
+    expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    const request = openCode.calls.sessionPromptAsync[1] as {
       sessionID: string;
-      id: string;
-      prompt: { text: string };
-      delivery: string;
-      resume: boolean;
+      messageID: string;
+      parts: Array<{ type: string; text?: string }>;
     };
     expect(request).toMatchObject({
       sessionID: "ses_native_steer",
-      prompt: { text: "steer this turn" },
-      delivery: "steer",
-      resume: true,
     });
-    expect(request.id).toMatch(/^msg_/);
+    expect(request.messageID).toMatch(/^msg_/);
+    expect(request.parts).toEqual([{ type: "text", text: "steer this turn" }]);
 
     openCode.emitEvent({
-      type: "session.next.prompted",
+      type: "message.updated",
       properties: {
-        timestamp: Date.now(),
-        sessionID: "ses_native_steer",
-        messageID: request.id,
-        prompt: { text: "steer this turn" },
-        delivery: "steer",
+        info: { id: request.messageID, sessionID: "ses_native_steer", role: "user" },
       },
     });
-    await vi.waitFor(() =>
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "timeline",
-          item: expect.objectContaining({
-            type: "user_message",
-            text: "steer this turn",
-            messageId: request.id,
-            clientMessageId: "client-steer-1",
-          }),
-        }),
-      ),
-    );
+    await vi.waitFor(() => {
+      let found;
+      for (const e of events) {
+        if (
+          e.type === "timeline" &&
+          e.item.type === "user_message" &&
+          e.item.text === "steer this turn" &&
+          e.item.messageId === request.messageID &&
+          e.item.clientMessageId === "client-steer-1"
+        ) {
+          found = e;
+          break;
+        }
+      }
+      expect(found).toBeDefined();
+    });
 
     await session.close();
   });
@@ -2095,20 +2090,23 @@ describe("OpenCode adapter startTurn error handling", () => {
       clientMessageId: "client-steer-2",
     });
 
-    const requests = openCode.calls.sessionV2Prompt as Array<{ id: string }>;
+    const requests = openCode.calls.sessionPromptAsync.slice(1) as Array<{ messageID: string }>;
     expect(requests).toHaveLength(2);
     for (const request of requests) {
       openCode.emitEvent({
         type: "message.updated",
         properties: {
-          info: { id: request.id, sessionID: "ses_native_steer_fifo", role: "user" },
+          info: { id: request.messageID, sessionID: "ses_native_steer_fifo", role: "user" },
         },
       });
     }
-    const userMessageTexts = () =>
-      events
-        .filter((event) => event.type === "timeline" && event.item.type === "user_message")
-        .map((event) => (event.type === "timeline" ? event.item.text : ""));
+    const userMessageTexts = () => {
+      const texts: string[] = [];
+      for (const e of events) {
+        if (e.type === "timeline" && e.item.type === "user_message") texts.push(e.item.text);
+      }
+      return texts;
+    };
     await vi.waitFor(() => expect(userMessageTexts()).toEqual(["steer one", "steer two"]));
 
     await session.close();
@@ -2117,9 +2115,13 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("falls back only for a definitive native steer rejection", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer_404");
     openCode.sessionPromptAsyncEvents = [];
-    openCode.sessionV2PromptResponse = {
-      error: { _tag: "SessionNotFoundError", message: "session not found" },
-      response: { status: 404 },
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
+      return {
+        error: { _tag: "SessionNotFoundError", message: "session not found" },
+      } as unknown as { data: unknown; error: unknown };
     };
     const { turnId } = await session.startTurn("first");
 
@@ -2136,7 +2138,10 @@ describe("OpenCode adapter startTurn error handling", () => {
   test("surfaces an ambiguous native steer failure", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer_error");
     openCode.sessionPromptAsyncEvents = [];
-    openCode.sessionV2PromptImplementation = async () => {
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
       throw new Error("connection lost");
     };
     const { turnId } = await session.startTurn("first");

@@ -1061,6 +1061,8 @@ function buildOpenCodeV2PromptInput(prompt: AgentPromptInput): OpenCodeV2PromptI
   };
 }
 
+void buildOpenCodeV2PromptInput;
+
 function isOpenCodeDefinitiveSteerRejection(error: unknown, status?: number): boolean {
   if (status === 404) return true;
   const message = toDiagnosticErrorMessage(error).toLowerCase();
@@ -3501,16 +3503,38 @@ class OpenCodeAgentSession implements AgentSession {
     };
     this.pendingSteerSubmissions.push(pending);
 
+    const parts = buildOpenCodePromptParts(prompt);
+    const systemPrompt = composeSystemPromptParts(
+      this.config.systemPrompt,
+      this.config.daemonAppendSystemPrompt,
+    );
+    const permission = buildOpenCodePermissionRules(
+      this.config.providerOptions,
+      this.config.toolPolicy,
+    );
+    const model = this.parseModel(this.config.model);
+    const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
+    const effectiveVariant = this.config.thinkingOptionId ?? undefined;
+
     try {
-      const response = await this.client.v2.session.prompt({
+      const response = await this.client.session.promptAsync({
         sessionID: this.sessionId,
-        id: promptId,
-        prompt: buildOpenCodeV2PromptInput(prompt),
-        delivery: "steer",
-        resume: true,
+        directory: this.config.cwd,
+        messageID: promptId,
+        parts,
+        ...(systemPrompt ? { system: systemPrompt } : {}),
+        ...(permission ? { permission } : {}),
+        ...(model ? { model } : {}),
+        ...(effectiveMode ? { agent: effectiveMode } : {}),
+        ...(effectiveVariant ? { variant: effectiveVariant } : {}),
       });
       if (response.error) {
-        if (isOpenCodeDefinitiveSteerRejection(response.error, response.response.status)) {
+        if (
+          isOpenCodeDefinitiveSteerRejection(
+            response.error,
+            (response as unknown as { response?: { status?: number } }).response?.status,
+          )
+        ) {
           this.removePendingSteerSubmission(promptId);
           return { status: "unavailable" };
         }
