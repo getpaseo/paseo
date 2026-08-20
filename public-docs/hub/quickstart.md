@@ -1,6 +1,6 @@
 ---
 title: Hub quickstart
-description: Connect Hub, create a project, and run a workflow from a GitHub comment.
+description: Run Hub locally and answer a Slack mention with an agent on your machine.
 nav: Quickstart
 order: 61
 category: Hub
@@ -8,107 +8,108 @@ category: Hub
 
 # Hub quickstart
 
-## 1. Create a project
+Run Hub locally, connect it to Slack without a public server, and answer a mention with an agent on your machine.
 
-Open **Connections** in Hub and connect the GitHub account or organization whose repositories you use. Then open **Projects → New project** and create a project.
+You need [Paseo installed and running](/docs), Node.js, and a Slack workspace where you can create an app.
 
-## 2. Log in and connect a daemon
-
-On the machine that will run agents:
+## 1. Start Hub
 
 ```sh
-paseo hub login https://your-hub.example.com
-paseo hub projects
+npx @getpaseo/hub
+```
+
+Open <http://localhost:3000>. Hub uses an embedded database by default, so this first run needs no database, environment variables, or Docker.
+
+Create the operator account when Hub welcomes you.
+
+## 2. Connect Slack
+
+The next screen explains how to create the Slack app and gives you a manifest to paste into Slack. Keep **Socket Mode** selected. It connects out from Hub and does not need a public address or HTTPS.
+
+Paste the App-level token and Bot token back into Hub, then choose **Connect Slack**. Invite the bot to the channel where you will use it:
+
+```text
+/invite @Paseo
+```
+
+You can skip GitHub and Discord for now. Their setup remains available under **Apps**.
+
+## 3. Connect your daemon
+
+On the machine that will run the agent:
+
+```sh
+paseo hub login http://localhost:3000
 paseo hub connect
 ```
 
-Approve the browser login. `projects` shows the slug needed by `deploy`. See [Daemons](/docs/hub/daemons) for the separation between your CLI login and the daemon relationship.
+Approve the browser login. Hub shows the connected daemon and its slug under **Daemons**.
 
-## 3. Add the bundle
+## 4. Create a project
 
-Create these files:
+Open **Projects → New project** in Hub. From the project directory, create:
 
 ```text
 .paseo/
 ├── hub.yml
 └── workflows/
-    └── github-help.yml
+    └── slack-help.yml
 ```
 
-`.paseo/hub.yml` names project-wide resources:
+`.paseo/hub.yml` names the machine and agent configuration. Replace the daemon and directory with values from your machine:
 
 ```yaml
 environments:
   dev:
     kind: daemon
-    daemon: my-daemon
+    daemon: my-macbook
     cwd: /Users/you/code/your-repo
 agents:
   codex:
     provider: codex
-    mode: full-access
 ```
 
-`.paseo/workflows/github-help.yml` contains one trigger and its ordered steps:
+`.paseo/workflows/slack-help.yml` answers one mention in its thread:
 
 ```yaml
-name: github-help
-on: github.issue_comment
-max_runtime: 2h
-filters:
-  repo: yourname/your-repo
-  contains: "@paseo"
-  from_users: [your-github-login]
+name: slack-help
+on: slack.mention
+max_runtime: 1h
 steps:
-  - id: work
+  - id: answer
     environment: dev
-    max_runtime: 90m
-    idle_timeout: 10m
+    max_runtime: 30m
+    idle_timeout: 5m
     agent: codex
     prompt:
       - text: |
-          Complete this request and call hub.finish_execution when done.
+          Answer with hub.reply, then call hub.finish_execution.
 
           <user-prompt>
           ${{ paseo.prompt }}
           </user-prompt>
+    allow_outputs:
+      - { type: slack.reply, max: 1, required: true }
 ```
 
-`daemon` is the daemon slug shown by Hub. `cwd` is a directory on that machine. `${{ paseo.prompt }}` is the normalized request text after the provider marker and declared input headers are removed.
+This first workflow accepts mentions from anyone in the connected workspace. Add user and channel allowlists before inviting the bot to a wider audience. See [Slack triggers](/docs/hub/triggers/slack) and [Hub security](/docs/hub/security).
 
-Workflow files are discovered as direct `.yml` children of `.paseo/workflows/`. You do not list them in `hub.yml`.
+## 5. Deploy and mention the bot
 
-## 4. Validate and deploy
-
-From the project root:
+Find the project slug and deploy the bundle:
 
 ```sh
+paseo hub projects
 paseo hub deploy -p your-project --dry-run
 paseo hub deploy -p your-project
 ```
 
-Dry-run performs the same discovery and server-side validation without recording or activating a revision. See [Configuration](/docs/hub/configuration) for credentials, diagnostics, and GitHub sync.
-
-## 5. Trigger it
-
-Comment from the account in `from_users`:
+Mention the bot in the channel:
 
 ```text
-@paseo have a look at this
+@Paseo explain what this project does
 ```
 
-Open the project's **Activity** tab to see routing and execution. If nothing runs, use the [Activity checklist](/docs/hub/activity).
+Hub starts the agent on your daemon and posts its reply in the Slack thread. Open the project's **Activity** tab if nothing runs.
 
-Before widening the allowlist or granting write authority, read [Hub security](/docs/hub/security).
-
-When you no longer need the local CLI login:
-
-```sh
-paseo hub logout
-```
-
-Logging out does not disconnect the daemon. When the daemon is connected to the same Hub as the active CLI login, use `paseo hub logout --disconnect-daemon` to remove both relationships.
-
-## Next
-
-[single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle covering all three providers, with a classifier, a worker, and shared prompt partials.
+Hub keeps its local state under `.dev/paseo-hub` in the directory where you started it. [Self-hosting](/docs/hub/self-hosting) covers another data directory, PostgreSQL, public URLs, Docker, and cloud deployment.
