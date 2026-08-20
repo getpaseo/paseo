@@ -54,6 +54,71 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("collects contextual workspace panels and Command Center items", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPanel() { return null; }
+        plugin.addWorkspacePanel({
+          id: "review",
+          title: "Review",
+          icon: "Scan",
+          context: "agent",
+          Component: ReviewPanel,
+        });
+        plugin.addCommandCenterItem({
+          id: "open-review",
+          title: "Open review",
+          icon: "Scan",
+          context: "agent",
+          onSelect() {},
+        });
+      `),
+    );
+
+    expect(
+      plugin.workspacePanels.map(({ id, title, icon, context }) => ({
+        id,
+        title,
+        icon,
+        context,
+      })),
+    ).toEqual([{ id: "review", title: "Review", icon: "Scan", context: "agent" }]);
+    expect(
+      plugin.commandCenterItems.map(({ id, title, icon, context }) => ({
+        id,
+        title,
+        icon,
+        context,
+      })),
+    ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
+  });
+
+  it("rejects duplicate workspace panel and Command Center ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function Panel() { return null; }
+          const panel = { id: "review", title: "Review", icon: "Scan", context: "workspace", Component: Panel };
+          plugin.addWorkspacePanel(panel);
+          plugin.addWorkspacePanel(panel);
+        `),
+      ),
+    ).toThrow("Duplicate workspace panel: review");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          const item = { id: "review", title: "Review", icon: "Scan", context: "global", onSelect() {} };
+          plugin.addCommandCenterItem(item);
+          plugin.addCommandCenterItem(item);
+        `),
+      ),
+    ).toThrow("Duplicate Command Center item: review");
+  });
+
   it("rejects duplicate attachment source ids", () => {
     expect(() =>
       evaluatePluginClientBundle(
@@ -95,6 +160,45 @@ describe("evaluatePluginClientBundle", () => {
     expect(() =>
       evaluatePluginClientBundle("example", `(function() { return { default: function() {} }; })`),
     ).toThrow("must return a cleanup function");
+  });
+
+  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
+        const search = defineRpc({ name: "issues.search", input: {}, output: {} });
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addAttachmentSource(defineAttachmentSource({
+            id: "issues",
+            title: "Issue",
+            icon: "CircleDot",
+            pickerTitle: "Attach issue",
+            searchPlaceholder: "Search",
+            search,
+          }));
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
+  });
+
+  it("rejects modules that are not part of the client runtime", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+          require("fs");
+          const module = { exports: {} };
+          module.exports.default = function() { return function() {}; };
+          return module.exports;
+        })`,
+      ),
+    ).toThrow('Module "fs" is not available in plugin client code');
   });
 
   it("does not publish partial contributions when setup fails", () => {

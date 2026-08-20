@@ -1,6 +1,6 @@
 ---
 title: Plugin quickstart
-description: Build, install, and reload a trusted local Paseo plugin with a native sidebar surface.
+description: Build, install, and reload a trusted local Paseo plugin with a workspace panel.
 nav: Quickstart
 order: 45
 category: Plugins
@@ -8,7 +8,14 @@ category: Plugins
 
 # Plugin quickstart
 
-Paseo plugins add native surfaces, sidebar items, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
+> **Experimental:** Plugins are intended for personal, local use and are not designed for
+> distribution yet. The plugin API is still evolving, so expect breaking changes and updates to
+> your plugins as Paseo evolves.
+
+See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
+surfaces and their current status.
+
+Paseo plugins add native workspace panels, Command Center items, global surfaces, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
 Plugins are trusted local code. Install only code you trust: backend code runs unsandboxed with access to the daemon machine, and client contributions run inside the Paseo app.
 
@@ -27,61 +34,90 @@ Enabling starts configured plugins; disabling tears them down. Automation must i
 Use an absolute path on the daemon machine:
 
 ```bash
-paseo plugin init /absolute/path/to/counter-plugin
-cd /absolute/path/to/counter-plugin
+paseo plugin init /absolute/path/to/workspace-plugin
+cd /absolute/path/to/workspace-plugin
 npm install
 ```
 
-`init` creates a strict TSX project. It does not run the package manager.
+`init` creates a strict TypeScript project. It does not run the package manager. `index.ts` registers contributions; client UI lives in `*.client.tsx` files.
 
-Replace `index.tsx` with:
+Plugins run on desktop, browser, iOS, and Android. Paseo ships several themes. Color every `Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`. Hardcoded black text fails in dark themes.
+
+Replace `main.client.tsx` with:
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
-import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
+import { useMemo } from "react";
+import { Text, View } from "react-native";
 
-function Counter() {
-  const [count, setCount] = useState(0);
+export function WorkspaceOverview({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
+  const workspace = useWorkspace(workspaceId, ({ name, directory }) => ({
+    name,
+    directory,
+  }));
+  const styles = useMemo(
+    () => ({
+      screen: {
+        flex: 1,
+        padding: layout.compact ? 16 : 24,
+        gap: layout.compact ? 8 : 12,
+        backgroundColor: theme.colors.surface0,
+      },
+      title: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24 },
+      label: { color: theme.colors.foregroundMuted },
+      detail: { color: theme.colors.foreground },
+    }),
+    [theme, layout.compact],
+  );
 
   return (
-    <View style={{ flex: 1, padding: 24, gap: 16 }}>
-      <Text style={{ fontSize: 48 }}>{count}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Increment counter, currently ${count}`}
-        onPress={() => setCount((value) => value + 1)}
-        style={{ padding: 16, borderRadius: 12, backgroundColor: "#238253" }}
-      >
-        <Text style={{ color: "white", textAlign: "center" }}>Count me in</Text>
-      </Pressable>
+    <View style={styles.screen}>
+      <Text style={styles.title}>{workspace?.name}</Text>
+      <Text style={styles.label}>Directory</Text>
+      <Text style={styles.detail}>{workspace?.directory}</Text>
     </View>
   );
 }
+```
+
+Replace `index.ts` with:
+
+```ts
+import type { PluginContext } from "@getpaseo/plugin";
+import { WorkspaceOverview } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {
-  plugin.addSurface("main", Counter);
-  plugin.addSidebarItem({
-    id: "main",
-    title: "Counter",
-    icon: "ListPlus",
-    surface: "main",
+  plugin.addWorkspacePanel({
+    id: "overview",
+    title: "Workspace overview",
+    icon: "PanelsTopLeft",
+    context: "workspace",
+    Component: WorkspaceOverview,
   });
-  return () => undefined;
+  plugin.addCommandCenterItem({
+    id: "open-overview",
+    title: "Open workspace overview",
+    icon: "PanelsTopLeft",
+    context: "workspace",
+    onSelect({ openPanel }) {
+      openPanel("overview");
+    },
+  });
+  return () => {};
 }
 ```
 
-The icon is a [Lucide](https://lucide.dev/icons/) icon name. The surface uses React Native primitives, so the same contribution works in the desktop, browser, iOS, and Android clients.
+The icon is a [Lucide](https://lucide.dev/icons/) icon name. `*.client.tsx` files can use React Native runtime APIs; Paseo excludes them from the daemon bundle. Panel props contain stable IDs; `useWorkspace` selects the cached fields the component needs without fetching through RPC or re-rendering for unrelated workspace changes. See [Theme and layout](/docs/plugins/reference#theme-and-layout) for the required tokens.
 
 ## Check and install it
 
 ```bash
 npm run typecheck
-paseo plugin install /absolute/path/to/counter-plugin
+paseo plugin install /absolute/path/to/workspace-plugin
 paseo plugin ls
 ```
 
-Open **Counter** in the Paseo sidebar. If the item does not appear, confirm that **Enable plugins** is on, the plugin status is `running` in `paseo plugin ls`, and the client is viewing the host where you installed it.
+Open a workspace, press **⌘K** on macOS or **Ctrl+K** on Windows and Linux, and choose **Open workspace overview**. It opens as a normal workspace tab. If the item does not appear, confirm that **Enable plugins** is on, the plugin status is `running` in `paseo plugin ls`, and the client is viewing the host where you installed it.
 
 ## Edit and reload
 
@@ -89,7 +125,7 @@ Source changes are explicit:
 
 ```bash
 npm run typecheck
-paseo plugin reload counter-plugin
+paseo plugin reload workspace-plugin
 ```
 
 A reload stops the old plugin, runs its cleanup, compiles the current source, and starts it again. A failed reload stays failed and reports its load error; fix the source and reload again.
@@ -106,11 +142,12 @@ console.error("Issue refresh failed", error);
 Read recent stdout and stderr from **Settings → Plugins → Logs** or the CLI:
 
 ```bash
-paseo plugin logs counter-plugin
-paseo plugin logs counter-plugin --json
+paseo plugin logs workspace-plugin
+paseo plugin logs workspace-plugin --json
 ```
 
-The log tail survives reloads and crashes, so inspect it when a plugin fails to start or an RPC
+The log tail includes `[paseo]` loading, ready, stopping, and stopped entries, plus compilation and
+load failures. It survives reloads and crashes. Inspect it when a plugin fails to start or an RPC
 rejects. See [Debug backend output](/docs/plugins/reference#debug-backend-output) for retention and
 security behavior.
 

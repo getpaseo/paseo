@@ -22,6 +22,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
+import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import type { AgentSearchMatch } from "@getpaseo/protocol/messages";
 import type { MatchRange } from "@getpaseo/protocol/search/text-match";
 
@@ -115,28 +116,10 @@ function SessionBadge({
   icon?: ReactElement;
   tone?: "neutral" | "warning" | "danger";
 }) {
-  const badgeStyle = useMemo(
-    () => [
-      styles.badge,
-      tone === "warning" && styles.badgeWarning,
-      tone === "danger" && styles.badgeDanger,
-    ],
-    [tone],
-  );
-  const badgeTextStyle = useMemo(
-    () => [
-      styles.badgeText,
-      tone === "warning" && styles.badgeTextWarning,
-      tone === "danger" && styles.badgeTextDanger,
-    ],
-    [tone],
-  );
-  return (
-    <View style={badgeStyle}>
-      {icon}
-      <Text style={badgeTextStyle}>{label}</Text>
-    </View>
-  );
+  let variant: StatusBadgeVariant = "muted";
+  if (tone === "warning") variant = "warning";
+  else if (tone === "danger") variant = "error";
+  return <StatusBadge label={label} variant={variant} leading={icon} />;
 }
 
 function WorkspaceTitlePrefix({
@@ -276,8 +259,8 @@ function SessionRow({
   );
 
   const archivedIcon = useMemo(
-    () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
-    [theme.fontSize.xs, theme.colors.foregroundMuted],
+    () => <Archive size={theme.fontSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.fontSize.sm, theme.colors.foregroundMuted],
   );
   const showDesktopAttention =
     !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
@@ -634,7 +617,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   sectionTitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
   },
@@ -672,7 +655,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceTitleText: {
     flexShrink: 0,
     maxWidth: 220,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   rowMetaRow: {
@@ -697,7 +680,7 @@ const styles = StyleSheet.create((theme) => ({
   sessionTitle: {
     flexShrink: 1,
     minWidth: 0,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "400",
     color: theme.colors.foreground,
     opacity: 0.86,
@@ -707,11 +690,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   sessionMetaText: {
     maxWidth: "100%",
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   sessionMetaSeparator: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     opacity: 0.7,
   },
@@ -722,52 +705,25 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   columnMeta: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 132,
   },
   columnMetaFixed: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 72,
     textAlign: "right" as const,
   },
   columnMetaHost: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 120,
     marginLeft: theme.spacing[4],
     textAlign: "right" as const,
-  },
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-  },
-  badgeWarning: {
-    backgroundColor: "rgba(245, 158, 11, 0.12)",
-  },
-  badgeDanger: {
-    backgroundColor: "rgba(239, 68, 68, 0.14)",
-  },
-  badgeText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foregroundMuted,
-  },
-  badgeTextWarning: {
-    color: theme.colors.palette.amber[500],
-  },
-  badgeTextDanger: {
-    color: theme.colors.palette.red[300],
   },
   sheetOverlay: {
     flex: 1,
@@ -798,7 +754,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.3,
   },
   sheetTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     textAlign: "center",

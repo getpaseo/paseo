@@ -1,6 +1,8 @@
 import invariant from "tiny-invariant";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { MIN_SPLIT_SIZE } from "@/stores/workspace-layout-constants";
+import { getPanelRegistration } from "@/panels/panel-registry";
 import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
 import type { WorkspaceLayoutNodeIdPrefix } from "@/stores/workspace-layout-ids";
 import {
@@ -13,6 +15,7 @@ export interface SplitPane {
   id: string;
   tabIds: string[];
   focusedTabId: string | null;
+  hidden?: boolean;
 }
 
 export interface SplitGroup {
@@ -98,10 +101,40 @@ interface InsertSplitInternalResult {
   newPaneId: string;
 }
 
+/**
+ * Where an open wants its tab, and how hard it wants it there.
+ *
+ * The distinction only shows up when the tab already exists somewhere. A user who
+ * picks Changes from a specific pane's `+` menu is placing it there and expects it
+ * to arrive. A file link in an agent's output is a supporting open with an opinion
+ * about new tabs only — it must never yank a tab out from under the pane the user
+ * deliberately moved it to.
+ */
+export type WorkspaceTabPlacement =
+  /** Pane-local affordance: new tabs open here, existing tabs move here. */
+  | { mode: "pane"; paneId: string }
+  /** Implicit open: new tabs open here, existing tabs stay where the user left them. */
+  | { mode: "prefer"; paneId: string }
+  /** The user is working in the focused pane, whichever one that is. */
+  | { mode: "focused" }
+  /** Nobody placed this tab — reconciliation and other opens with no user behind them. */
+  | { mode: "ambient" };
+
+export const FOCUSED_PANE_PLACEMENT: WorkspaceTabPlacement = { mode: "focused" };
+export const AMBIENT_PLACEMENT: WorkspaceTabPlacement = { mode: "ambient" };
+
 interface OpenTabInLayoutInput {
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
   now: number;
+  placement: WorkspaceTabPlacement;
+  /** Required so a new caller cannot silently opt out of the side-panel placement rule. */
+  sidePanelPaneId: string | null;
+}
+
+interface CreateTabInLayoutInput extends OpenTabInLayoutInput {
+  createTabId: () => string;
+  state?: JsonValue;
 }
 
 interface OpenTabInLayoutResult {
@@ -113,6 +146,11 @@ interface RetargetTabInLayoutInput {
   layout: WorkspaceLayout;
   tabId: string;
   target: WorkspaceTabTarget;
+}
+
+interface ReplaceTabTargetInLayoutInput extends RetargetTabInLayoutInput {
+  createTabId: () => string;
+  state?: JsonValue;
 }
 
 interface RetargetTabInLayoutResult {
@@ -139,6 +177,12 @@ interface ReorderFocusedPaneTabsInLayoutInput {
 interface CloseTabInLayoutInput {
   layout: WorkspaceLayout;
   tabId: string;
+  preserveEmptyPaneId?: string | null;
+}
+
+interface ClosePaneInLayoutInput {
+  layout: WorkspaceLayout;
+  paneId: string;
 }
 
 interface SplitPaneInLayoutInput {
@@ -196,6 +240,7 @@ export interface WorkspaceTabReconcileState {
   pinnedAgentIds?: ReadonlySet<string> | null;
   pendingAgentIds?: ReadonlySet<string> | null;
   hiddenAgentIds?: ReadonlySet<string> | null;
+  sidePanelPaneId: string | null;
 }
 
 export interface WorkspaceTabSnapshot {
@@ -206,10 +251,14 @@ export interface WorkspaceTabSnapshot {
   knownAgentIds: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
+  hasActivePendingTerminalCreate?: boolean;
   hasActivePendingDraftCreate?: boolean;
 }
 
 const DEFAULT_PANE_ID = "main";
+/** The pane id is persisted, so it keeps its pre-rename spelling. */
+export const SIDE_PANEL_PANE_ID = "explorer";
+const DEFAULT_LAYOUT_GROUP_ID = "workspace-root";
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -240,6 +289,7 @@ function createPaneNode(input: {
   id: string;
   tabs?: WorkspaceTab[];
   focusedTabId?: string | null;
+  hidden?: boolean;
 }): SplitNodeInternal {
   const normalizedTabs = normalizeWorkspaceTabs(input.tabs ?? []);
   const tabIds = normalizedTabs.map((tab) => tab.tabId);
@@ -254,6 +304,7 @@ function createPaneNode(input: {
       tabs: normalizedTabs,
       tabIds,
       focusedTabId,
+      ...(input.hidden === true ? { hidden: true } : {}),
     },
   };
 }
@@ -288,18 +339,15 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
   if (!target) {
     return null;
   }
-  const tabId =
-    target.kind === "working_diff"
-      ? buildDeterministicWorkspaceTabId(target)
-      : (trimNonEmpty(tab.tabId) ?? buildDeterministicWorkspaceTabId(target));
+  const tabId = trimNonEmpty(tab.tabId) ?? buildDeterministicWorkspaceTabId(target);
   if (!tabId) {
     return null;
   }
-
   return {
     tabId,
     target,
     createdAt: typeof tab.createdAt === "number" ? tab.createdAt : Date.now(),
+    ...(tab.state !== undefined ? { state: tab.state } : {}),
   };
 }
 
@@ -462,6 +510,21 @@ function findGroupPathById(
   return null;
 }
 
+/**
+ * The group holding the node at `targetPath`, or null when that node is the whole tree.
+ *
+ * Ask `targetPath`, never the parent path: `targetPath.slice(0, -1)` is empty both for "this node
+ * is the root" and for "this node is a direct child of the root group". Treating the second case as
+ * parentless wraps root-level panes in a redundant group on every split, which reparents the
+ * existing pane and remounts its whole subtree.
+ */
+function findParentGroup(root: SplitNodeInternal, targetPath: number[]): SplitNodeInternal | null {
+  if (targetPath.length === 0) {
+    return null;
+  }
+  return getNodeAtPath(root, targetPath.slice(0, -1));
+}
+
 function getNodeAtPath(node: SplitNodeInternal, path: number[]): SplitNodeInternal {
   let current = node;
   for (const index of path) {
@@ -511,7 +574,7 @@ function insertChildIntoGroup(
 
 function listPaneIds(node: SplitNodeInternal): string[] {
   if (node.kind === "pane") {
-    return [node.pane.id];
+    return node.pane.hidden === true ? [] : [node.pane.id];
   }
   const next: string[] = [];
   for (const child of node.group.children) {
@@ -562,6 +625,7 @@ function normalizePaneAfterTabChange(pane: SplitPaneInternal): SplitPaneInternal
     tabs,
     tabIds,
     focusedTabId,
+    ...(pane.hidden === true ? { hidden: true } : {}),
   };
 }
 
@@ -584,6 +648,7 @@ function normalizePaneNode(rawPane: SplitPaneInternal | undefined): SplitNodeInt
     id: paneId,
     tabs: mergedTabs,
     focusedTabId: trimNonEmpty(rawPane?.focusedTabId) ?? null,
+    hidden: rawPane?.hidden === true,
   });
 }
 
@@ -756,6 +821,7 @@ function focusTabInPane(root: SplitNodeInternal, paneId: string, tabId: string):
       pane: normalizePaneAfterTabChange({
         ...node.pane,
         focusedTabId: tabId,
+        hidden: undefined,
       }),
     };
   });
@@ -767,6 +833,7 @@ function replaceTabInTree(
     tabId: string;
     nextTabId: string;
     target: WorkspaceTabTarget;
+    state?: JsonValue;
   },
 ): SplitNodeInternal {
   const panePath = findPanePathContainingTab(root, input.tabId);
@@ -777,15 +844,15 @@ function replaceTabInTree(
       kind: "pane",
       pane: normalizePaneAfterTabChange({
         ...node.pane,
-        tabs: node.pane.tabs.map((tab) =>
-          tab.tabId === input.tabId
-            ? {
-                ...tab,
-                tabId: input.nextTabId,
-                target: input.target,
-              }
-            : tab,
-        ),
+        tabs: node.pane.tabs.map((tab) => {
+          if (tab.tabId !== input.tabId) return tab;
+          return {
+            tabId: input.nextTabId,
+            target: input.target,
+            createdAt: tab.createdAt,
+            ...(input.state !== undefined ? { state: input.state } : {}),
+          };
+        }),
         focusedTabId:
           node.pane.focusedTabId === input.tabId ? input.nextTabId : node.pane.focusedTabId,
       }),
@@ -860,7 +927,7 @@ function insertSplitInternal(input: InsertSplitInternalInput): InsertSplitIntern
 
   const parentPath = targetPath.slice(0, -1);
   const targetIndex = targetPath[targetPath.length - 1] ?? 0;
-  const parentNode = parentPath.length > 0 ? getNodeAtPath(detached.root, parentPath) : null;
+  const parentNode = findParentGroup(detached.root, targetPath);
 
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {
     const targetSize = parentNode.group.sizes[targetIndex] ?? 0;
@@ -972,7 +1039,7 @@ export function collectAllTabs(root: SplitNode): WorkspaceTab[] {
 export function collectAllPanes(root: SplitNode): SplitPane[] {
   const internalRoot = asInternalNode(root);
   if (internalRoot.kind === "pane") {
-    return [internalRoot.pane];
+    return internalRoot.pane.hidden === true ? [] : [internalRoot.pane];
   }
   return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
 }
@@ -995,6 +1062,7 @@ function stripEphemeralTabsFromNode(node: SplitNodeInternal): SplitNodeInternal 
       id: node.pane.id,
       tabs: nextTabs,
       focusedTabId: node.pane.focusedTabId,
+      hidden: node.pane.hidden,
     });
   }
   return createGroupNode({
@@ -1028,7 +1096,7 @@ export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined):
     return null;
   }
   const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
-  if (!focusedPane?.focusedTabId) {
+  if (!focusedPane?.focusedTabId || focusedPane.hidden === true) {
     return null;
   }
   const focusedTab = collectAllTabs(layout.root).find(
@@ -1040,6 +1108,22 @@ export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined):
 export function createDefaultLayout(): WorkspaceLayout {
   return {
     root: createPaneNode({ id: DEFAULT_PANE_ID }),
+    focusedPaneId: DEFAULT_PANE_ID,
+  };
+}
+
+/** The desktop companion pane exists before it is first shown. */
+export function createWorkspaceLayoutWithSidePanel(): WorkspaceLayout {
+  return {
+    root: createGroupNode({
+      id: DEFAULT_LAYOUT_GROUP_ID,
+      direction: "horizontal",
+      children: [
+        createPaneNode({ id: DEFAULT_PANE_ID }),
+        createPaneNode({ id: SIDE_PANEL_PANE_ID, hidden: true }),
+      ],
+      sizes: [0.5, 0.5],
+    }),
     focusedPaneId: DEFAULT_PANE_ID,
   };
 }
@@ -1072,50 +1156,109 @@ export function removePaneFromTree(root: SplitNode, paneId: string): SplitNode {
 }
 
 export function removeTabFromTree(root: SplitNode, tabId: string): SplitNode {
-  return detachTabFromTree(asInternalNode(root), { tabId }).root;
+  return detachTabFromTree(asInternalNode(root), {
+    tabId,
+    preserveEmptyPaneId: DEFAULT_PANE_ID,
+  }).root;
 }
 
-function insertNewTabIntoFocusedPane(input: {
-  layout: WorkspaceLayout;
+// Tab kinds the user works *in* rather than consults. Reconciliation opens these
+// with nobody behind the click, and the side panel can hold focus from an earlier
+// reveal, so an ambient open must not drop an agent there just because focus stayed.
+const SIDE_PANEL_EXCLUDED_TAB_KINDS: ReadonlySet<WorkspaceTabTarget["kind"]> = new Set([
+  "agent",
+  "provider_subagent",
+  "terminal",
+  "draft",
+  "browser",
+]);
+
+function resolvePlacementPane(input: {
+  layout: { root: SplitNode; focusedPaneId: string | null };
   target: WorkspaceTabTarget;
-  now: number;
-  focus: boolean;
-}): OpenTabInLayoutResult {
-  const layout = asInternalLayout(input.layout);
+  placement: WorkspaceTabPlacement;
+  sidePanelPaneId: string | null;
+}): SplitPane {
+  const requestedPane =
+    input.placement.mode === "pane" || input.placement.mode === "prefer"
+      ? findPaneById(input.layout.root, input.placement.paneId)
+      : null;
+  if (requestedPane) {
+    return requestedPane;
+  }
+
+  // `collectAllPanes` skips hidden panes, so a focused-but-hidden pane — the side
+  // panel between a reveal and a hide — falls through to a pane the user can see.
+  const focusedCandidate = findPaneById(input.layout.root, input.layout.focusedPaneId);
   const focusedPane =
-    findPaneById(layout.root, layout.focusedPaneId) ??
-    collectAllPanes(layout.root)[0] ??
+    (focusedCandidate?.hidden === true ? null : focusedCandidate) ??
+    collectAllPanes(input.layout.root)[0] ??
     findPaneById(createDefaultLayout().root, DEFAULT_PANE_ID);
   invariant(focusedPane, "Workspace layout must always have a pane");
+  if (
+    input.placement.mode !== "ambient" ||
+    focusedPane.id !== input.sidePanelPaneId ||
+    !SIDE_PANEL_EXCLUDED_TAB_KINDS.has(input.target.kind)
+  ) {
+    return focusedPane;
+  }
 
-  const tabId = buildDeterministicWorkspaceTabId(input.target);
+  // `collectAllPanes` skips hidden panes, so the chain falls back to the side panel
+  // pane itself only when it is the sole visible pane. The side panel is the only
+  // pane anything ever hides, so today that means "the side panel is the only pane".
+  const panes = collectAllPanes(input.layout.root);
+  return (
+    panes.find((pane) => pane.id === DEFAULT_PANE_ID && pane.id !== focusedPane.id) ??
+    panes.find((pane) => pane.id !== focusedPane.id) ??
+    focusedPane
+  );
+}
+
+function insertNewTabIntoPane(
+  input: CreateTabInLayoutInput & { focus: boolean },
+): OpenTabInLayoutResult {
+  const layout = asInternalLayout(input.layout);
+  const targetPane = resolvePlacementPane({
+    layout,
+    target: input.target,
+    placement: input.placement,
+    sidePanelPaneId: input.sidePanelPaneId,
+  });
+
+  const tabId = input.createTabId();
   const nextTab: WorkspaceTab = {
     tabId,
     target: input.target,
     createdAt: input.now,
+    ...(input.state !== undefined ? { state: input.state } : {}),
   };
 
-  const preservedFocusTabId = focusedPane.focusedTabId ?? tabId;
+  const preservedFocusTabId = targetPane.focusedTabId ?? tabId;
 
   return {
     tabId,
     layout: withNormalizedParentTabMap({
       root: insertTabIntoPane(layout.root, {
-        paneId: focusedPane.id,
+        paneId: targetPane.id,
         tab: nextTab,
         focusTabId: input.focus ? tabId : preservedFocusTabId,
       }),
-      focusedPaneId: input.focus ? focusedPane.id : layout.focusedPaneId,
+      focusedPaneId: input.focus ? targetPane.id : layout.focusedPaneId,
       parentTabIdByTabId: input.layout.parentTabIdByTabId,
     }),
   };
 }
 
 function findExistingTabForTarget(root: SplitNodeInternal, target: WorkspaceTabTarget) {
-  const targetTabId = buildDeterministicWorkspaceTabId(target);
+  const registration = getPanelRegistration(target.kind);
+  const targetResourceKey = registration?.resourceKey(target as never);
+  const targetIdentity = targetResourceKey ?? buildDeterministicWorkspaceTabId(target);
   return (
     collectAllTabs(root).find(
-      (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, target),
+      (tab) =>
+        tab.target.kind === target.kind &&
+        (registration?.resourceKey(tab.target as never) ??
+          buildDeterministicWorkspaceTabId(tab.target)) === targetIdentity,
     ) ?? null
   );
 }
@@ -1134,6 +1277,7 @@ function updateExistingTabTarget(
       tabId: tab.tabId,
       nextTabId: tab.tabId,
       target,
+      state: tab.state,
     }),
   });
 }
@@ -1145,15 +1289,68 @@ export function openTabInLayoutFocused(input: OpenTabInLayoutInput): OpenTabInLa
     const nextLayout = updateExistingTabTarget(input.layout, existingTab, input.target);
     return {
       tabId: existingTab.tabId,
-      layout:
-        focusTabInLayout({
-          layout: nextLayout,
-          tabId: existingTab.tabId,
-        }) ?? nextLayout,
+      layout: revealExistingTab({
+        layout: nextLayout,
+        tabId: existingTab.tabId,
+        placement: input.placement,
+      }),
     };
   }
 
-  return insertNewTabIntoFocusedPane({ ...input, focus: true });
+  return insertNewTabIntoPane({
+    ...input,
+    createTabId: () => buildDeterministicWorkspaceTabId(input.target),
+    focus: true,
+  });
+}
+
+/** Always allocates an independent tab instance. */
+export function createTabInLayout(input: CreateTabInLayoutInput): OpenTabInLayoutResult {
+  return insertNewTabIntoPane({ ...input, focus: true });
+}
+
+/** Reveals an equivalent target, or creates it when absent. */
+export function revealTargetInLayout(input: CreateTabInLayoutInput): OpenTabInLayoutResult {
+  const existingTab = findExistingTabForTarget(asInternalLayout(input.layout).root, input.target);
+  if (existingTab) {
+    return {
+      tabId: existingTab.tabId,
+      layout: revealExistingTab({
+        layout: updateExistingTabTarget(input.layout, existingTab, input.target),
+        tabId: existingTab.tabId,
+        placement: input.placement,
+      }),
+    };
+  }
+  return createTabInLayout({
+    ...input,
+    createTabId: () => buildDeterministicWorkspaceTabId(input.target),
+  });
+}
+
+/**
+ * Brings an already-open tab to the user. Only an explicit pane-local placement
+ * relocates it; every other open finds it where the user last put it.
+ */
+function revealExistingTab(input: {
+  layout: WorkspaceLayout;
+  tabId: string;
+  placement: WorkspaceTabPlacement;
+}): WorkspaceLayout {
+  if (input.placement.mode === "pane") {
+    const currentPane = findPaneContainingTab(asInternalNode(input.layout.root), input.tabId);
+    if (currentPane?.id !== input.placement.paneId) {
+      const moved = moveTabToPaneInLayout({
+        layout: input.layout,
+        tabId: input.tabId,
+        toPaneId: input.placement.paneId,
+      });
+      if (moved) {
+        return moved;
+      }
+    }
+  }
+  return focusTabInLayout({ layout: input.layout, tabId: input.tabId }) ?? input.layout;
 }
 
 export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabInLayoutResult {
@@ -1166,7 +1363,11 @@ export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabI
     };
   }
 
-  return insertNewTabIntoFocusedPane({ ...input, focus: false });
+  return insertNewTabIntoPane({
+    ...input,
+    createTabId: () => buildDeterministicWorkspaceTabId(input.target),
+    focus: false,
+  });
 }
 
 export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout | null {
@@ -1175,6 +1376,9 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (!pane) {
     return null;
   }
+  const preserveEmptyPaneId =
+    input.preserveEmptyPaneId ??
+    (pane.id === DEFAULT_PANE_ID || pane.id === SIDE_PANEL_PANE_ID ? pane.id : null);
 
   const closeSuccessorTabId = getCloseSuccessorTabId({
     pane,
@@ -1183,7 +1387,10 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
   });
   const fallbackPaneId = findNearestSiblingPaneId(internalLayout.root, pane.id);
-  const nextRoot = removeTabFromTree(internalLayout.root, input.tabId) as SplitNodeInternal;
+  const nextRoot = detachTabFromTree(internalLayout.root, {
+    tabId: input.tabId,
+    preserveEmptyPaneId,
+  }).root;
   const parentTabIdByTabId = normalizeParentTabMap({
     raw: input.layout.parentTabIdByTabId,
     openTabIds: new Set(collectAllTabs(nextRoot).map((tab) => tab.tabId)),
@@ -1214,6 +1421,57 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   return nextLayoutWithParentMap;
 }
 
+/**
+ * Whether dismissing this pane would do anything — removing it, or hiding it if it
+ * is the side panel. A workspace always has somewhere to look, so the last pane the
+ * user can see stays.
+ *
+ * Ask this *before* tearing down the pane's tabs. `closePaneInLayout` and
+ * `setPaneHiddenInLayout` both refuse the same case, but they refuse at the end,
+ * once the tabs are already gone. This is the same rule stated early enough to act
+ * on, and it is the one both the affordance and the action read so they cannot drift.
+ */
+export function canDismissPaneInLayout(layout: WorkspaceLayout, paneId: string): boolean {
+  const pane = findPaneById(layout.root, paneId);
+  if (!pane || pane.hidden === true) {
+    return false;
+  }
+  return collectAllPanes(layout.root).length > 1;
+}
+
+/**
+ * Removes a pane outright, tabs and all. Callers own tab teardown (archiving
+ * agents, killing terminals) before calling this; the layout only forgets them.
+ *
+ * The split tree cannot represent a workspace with nothing in it, so the last
+ * visible pane never goes. `main` and the explorer pane are ordinary panes here
+ * — `closeTabInLayout` keeps them alive when they empty, this is how they leave.
+ */
+export function closePaneInLayout(input: ClosePaneInLayoutInput): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const panePath = findPanePathById(layout.root, input.paneId);
+  if (!panePath) {
+    return null;
+  }
+  const visiblePaneIds = listPaneIds(layout.root);
+  if (visiblePaneIds.length <= 1 && visiblePaneIds.includes(input.paneId)) {
+    return null;
+  }
+
+  const fallbackPaneId = findNearestSiblingPaneId(layout.root, input.paneId);
+  const nextRoot = removePaneByPath(layout.root, panePath);
+
+  return withNormalizedParentTabMap({
+    root: nextRoot,
+    focusedPaneId: getFocusedPaneIdAfterTabClose({
+      root: nextRoot,
+      focusedPaneId: layout.focusedPaneId,
+      fallbackPaneId,
+    }),
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
 export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const pane = findPaneContainingTab(layout.root, input.tabId);
@@ -1221,7 +1479,11 @@ export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout 
     return null;
   }
 
-  if (pane.focusedTabId === input.tabId && layout.focusedPaneId === pane.id) {
+  if (
+    pane.focusedTabId === input.tabId &&
+    layout.focusedPaneId === pane.id &&
+    pane.hidden !== true
+  ) {
     return null;
   }
 
@@ -1290,6 +1552,107 @@ export function retargetTabInLayout(
       parentTabIdByTabId: input.layout.parentTabIdByTabId,
     }),
   };
+}
+
+/** Replaces one pane-local slot and never claims an equivalent tab elsewhere. */
+export function replaceTabTargetInLayout(
+  input: ReplaceTabTargetInLayoutInput,
+): RetargetTabInLayoutResult | null {
+  const layout = asInternalLayout(input.layout);
+  if (!findPaneContainingTab(layout.root, input.tabId)) return null;
+  const currentTab = collectAllTabs(layout.root).find((tab) => tab.tabId === input.tabId) ?? null;
+  if (currentTab && workspaceTabTargetsEqual(currentTab.target, input.target)) {
+    if (input.state === undefined) {
+      return { layout: input.layout, tabId: input.tabId };
+    }
+    return {
+      tabId: input.tabId,
+      layout: withNormalizedParentTabMap({
+        root: replaceTabInTree(layout.root, {
+          tabId: input.tabId,
+          nextTabId: input.tabId,
+          target: input.target,
+          state: input.state,
+        }),
+        focusedPaneId: layout.focusedPaneId,
+        parentTabIdByTabId: input.layout.parentTabIdByTabId,
+      }),
+    };
+  }
+  let tabId = input.createTabId();
+  if (currentTab?.target.kind === "draft") {
+    tabId = input.tabId;
+  } else if (input.target.kind === "draft") {
+    tabId = buildDeterministicWorkspaceTabId(input.target);
+  }
+  const parentTabIdByTabId = transferReplacedTabParent({
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    replacedTabId: input.tabId,
+    replacementTabId: tabId,
+  });
+  let state: JsonValue | undefined;
+  if (input.state !== undefined) {
+    state = input.state;
+  } else if (currentTab?.target.kind === input.target.kind) {
+    state = currentTab.state;
+  }
+  return {
+    tabId,
+    layout: withNormalizedParentTabMap({
+      root: replaceTabInTree(layout.root, {
+        tabId: input.tabId,
+        nextTabId: tabId,
+        target: input.target,
+        state,
+      }),
+      focusedPaneId: layout.focusedPaneId,
+      parentTabIdByTabId,
+    }),
+  };
+}
+
+function transferReplacedTabParent(input: {
+  parentTabIdByTabId?: Record<string, string>;
+  replacedTabId: string;
+  replacementTabId: string;
+}): Record<string, string> | undefined {
+  if (!input.parentTabIdByTabId) {
+    return undefined;
+  }
+  const parentTabId = input.parentTabIdByTabId[input.replacedTabId];
+  const renamed: Record<string, string> = {};
+  for (const [childTabId, currentParentTabId] of Object.entries(input.parentTabIdByTabId)) {
+    if (childTabId === input.replacedTabId) {
+      continue;
+    }
+    renamed[childTabId] =
+      currentParentTabId === input.replacedTabId ? input.replacementTabId : currentParentTabId;
+  }
+  if (parentTabId) {
+    renamed[input.replacementTabId] =
+      parentTabId === input.replacedTabId ? input.replacementTabId : parentTabId;
+  }
+  return Object.keys(renamed).length > 0 ? renamed : undefined;
+}
+
+export function setTabStateInLayout(input: {
+  layout: WorkspaceLayout;
+  tabId: string;
+  state: JsonValue | undefined;
+}): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const tab = collectAllTabs(layout.root).find((candidate) => candidate.tabId === input.tabId);
+  if (!tab) return null;
+  return withNormalizedParentTabMap({
+    root: replaceTabInTree(layout.root, {
+      tabId: tab.tabId,
+      nextTabId: tab.tabId,
+      target: tab.target,
+      state: input.state,
+    }),
+    focusedPaneId: layout.focusedPaneId,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
 }
 
 export function convertDraftToAgentInLayout(
@@ -1409,7 +1772,7 @@ export function splitPaneEmptyInLayout(
 
   const parentPath = targetPath.slice(0, -1);
   const targetIndex = targetPath[targetPath.length - 1] ?? 0;
-  const parentNode = parentPath.length > 0 ? getNodeAtPath(layout.root, parentPath) : null;
+  const parentNode = findParentGroup(layout.root, targetPath);
 
   let nextRoot: SplitNodeInternal;
   if (parentNode?.kind === "group" && parentNode.group.direction === direction) {
@@ -1448,13 +1811,19 @@ export function splitPaneEmptyInLayout(
 export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const sourcePane = findPaneContainingTab(layout.root, input.tabId);
-  if (!sourcePane || !findPaneById(layout.root, input.toPaneId)) {
+  const targetPane = findPaneById(layout.root, input.toPaneId);
+  if (!sourcePane || !targetPane || targetPane.hidden === true) {
     return null;
   }
 
   const detached = detachTabFromTree(layout.root, {
     tabId: input.tabId,
-    preserveEmptyPaneId: sourcePane.id === input.toPaneId ? input.toPaneId : null,
+    // Dragging a pane's last tab elsewhere collapses that pane — except the side
+    // panel, which the user summons and expects to find again, geometry and all.
+    preserveEmptyPaneId:
+      sourcePane.id === input.toPaneId || sourcePane.id === SIDE_PANEL_PANE_ID
+        ? sourcePane.id
+        : null,
   });
   if (!detached.tab) {
     return null;
@@ -1472,15 +1841,59 @@ export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): Worksp
 }
 
 export function focusPaneInLayout(input: FocusPaneInLayoutInput): WorkspaceLayout | null {
-  if (!findPaneById(input.layout.root, input.paneId)) {
+  const pane = findPaneById(input.layout.root, input.paneId);
+  if (!pane) {
     return null;
   }
-  if (input.layout.focusedPaneId === input.paneId) {
+  if (input.layout.focusedPaneId === input.paneId && pane.hidden !== true) {
     return null;
   }
   return withNormalizedParentTabMap({
-    root: input.layout.root,
+    root:
+      pane.hidden === true
+        ? updatePaneInTree(asInternalNode(input.layout.root), {
+            paneId: input.paneId,
+            updater: (currentPane) => ({ ...currentPane, hidden: undefined }),
+          })
+        : input.layout.root,
     focusedPaneId: input.paneId,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
+export function setPaneHiddenInLayout(input: {
+  layout: WorkspaceLayout;
+  paneId: string;
+  hidden: boolean;
+}): WorkspaceLayout | null {
+  const pane = findPaneById(input.layout.root, input.paneId);
+  const isHidden = pane?.hidden === true;
+  if (!pane || isHidden === input.hidden) {
+    return null;
+  }
+  // A workspace always has somewhere to look. This is the single gate on hiding the
+  // last visible pane — `hideSidePanel` and `closePane` both land here, so neither
+  // needs its own check, and `collectAllPanes` skipping hidden panes is what makes
+  // "the only one left" mean visibly left.
+  if (input.hidden && collectAllPanes(input.layout.root).length === 1) {
+    return null;
+  }
+
+  const root = updatePaneInTree(asInternalNode(input.layout.root), {
+    paneId: input.paneId,
+    updater: (currentPane) => ({
+      ...currentPane,
+      hidden: input.hidden ? true : undefined,
+    }),
+  });
+  const focusedPaneId =
+    input.hidden && input.layout.focusedPaneId === input.paneId
+      ? (collectAllPanes(root)[0]?.id ?? null)
+      : input.layout.focusedPaneId;
+
+  return withNormalizedParentTabMap({
+    root,
+    focusedPaneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
   });
 }
@@ -1624,31 +2037,20 @@ function isTerminalTab(
   return tab.target.kind === "terminal";
 }
 
-function openEntityTabWithoutFocusing(
-  layout: WorkspaceLayout,
-  target: WorkspaceTabTarget,
-): WorkspaceLayout {
-  const internalLayout = asInternalLayout(layout);
-  const focusedPane =
-    findPaneById(internalLayout.root, internalLayout.focusedPaneId) ??
-    collectAllPanes(internalLayout.root)[0] ??
-    findPaneById(createDefaultLayout().root, DEFAULT_PANE_ID);
-  invariant(focusedPane, "Workspace layout must always have a pane");
-
-  const tabId = buildDeterministicWorkspaceTabId(target);
-  return withNormalizedParentTabMap({
-    root: insertTabIntoPane(internalLayout.root, {
-      paneId: focusedPane.id,
-      tab: {
-        tabId,
-        target,
-        createdAt: Date.now(),
-      },
-      focusTabId: focusedPane.focusedTabId ?? tabId,
-    }),
-    focusedPaneId: internalLayout.focusedPaneId,
-    parentTabIdByTabId: layout.parentTabIdByTabId,
-  });
+function openEntityTabWithoutFocusing(input: {
+  layout: WorkspaceLayout;
+  target: WorkspaceTabTarget;
+  sidePanelPaneId: string | null;
+}): WorkspaceLayout {
+  return insertNewTabIntoPane({
+    layout: input.layout,
+    target: input.target,
+    now: Date.now(),
+    placement: AMBIENT_PLACEMENT,
+    sidePanelPaneId: input.sidePanelPaneId,
+    createTabId: () => buildDeterministicWorkspaceTabId(input.target),
+    focus: false,
+  }).layout;
 }
 
 interface EntityTabGroup {
@@ -1736,13 +2138,17 @@ function addMissingEntityTabs(input: {
   autoOpenAgentIds: Set<string>;
   representedAgentIds: Set<string>;
   standaloneTerminalIds: Set<string>;
+  hasActivePendingTerminalCreate: boolean;
   hasActivePendingDraftCreate: boolean;
+  sidePanelPaneId: string | null;
 }): WorkspaceLayout {
   const {
     autoOpenAgentIds,
     representedAgentIds,
     standaloneTerminalIds,
+    hasActivePendingTerminalCreate,
     hasActivePendingDraftCreate,
+    sidePanelPaneId,
   } = input;
   let nextLayout = input.layout;
   const currentEntityTabs = collectAllTabs(nextLayout.root);
@@ -1761,23 +2167,27 @@ function addMissingEntityTabs(input: {
     if (hasActivePendingDraftCreate && !representedAgentIds.has(agentId)) {
       continue;
     }
-    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
-      kind: "agent",
-      agentId,
+    nextLayout = openEntityTabWithoutFocusing({
+      layout: nextLayout,
+      target: { kind: "agent", agentId },
+      sidePanelPaneId,
     });
     currentAgentIds.add(agentId);
   }
 
   const sortedTerminalIds = [...standaloneTerminalIds].sort();
-  for (const terminalId of sortedTerminalIds) {
-    if (currentTerminalIds.has(terminalId)) {
-      continue;
+  if (!hasActivePendingTerminalCreate) {
+    for (const terminalId of sortedTerminalIds) {
+      if (currentTerminalIds.has(terminalId)) {
+        continue;
+      }
+      nextLayout = openEntityTabWithoutFocusing({
+        layout: nextLayout,
+        target: { kind: "terminal", terminalId },
+        sidePanelPaneId,
+      });
+      currentTerminalIds.add(terminalId);
     }
-    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
-      kind: "terminal",
-      terminalId,
-    });
-    currentTerminalIds.add(terminalId);
   }
   return nextLayout;
 }
@@ -1865,7 +2275,9 @@ export function reconcileWorkspaceTabs(
     autoOpenAgentIds: autoOpenSet,
     representedAgentIds,
     standaloneTerminalIds,
+    hasActivePendingTerminalCreate: snapshot.hasActivePendingTerminalCreate ?? false,
     hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,
+    sidePanelPaneId: state.sidePanelPaneId,
   });
 
   if (reconciledFocusedTabId) {

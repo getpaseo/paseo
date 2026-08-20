@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import { resolveModelSheetOpening } from "./model-sheet-flow";
+import { resolveModelBrowserScrolling, resolveModelSheetOpening } from "./model-sheet-flow";
 
 function provider(id: string, label: string): ProviderSelectorProvider {
   return { id, label, modelSelection: { kind: "models", rows: [] } };
@@ -38,5 +38,15 @@ describe("model sheet opening", () => {
         selectedProvider: "",
       }),
     ).toEqual({ kind: "provider", providerId: "codex", providerLabel: "Codex" });
+  });
+});
+
+describe("model sheet gesture ownership", () => {
+  it("uses the sheet-aware model browser inside compact bottom sheets", () => {
+    expect(resolveModelBrowserScrolling(true)).toBe("sheet");
+  });
+
+  it("keeps independent scrolling in the desktop split viewport", () => {
+    expect(resolveModelBrowserScrolling(false)).toBe("independent");
   });
 });

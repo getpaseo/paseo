@@ -242,6 +242,19 @@ focused invalidation capture; React Native's generated stacks make that mode hig
 Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
 the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
+For the desktop Side panel toggle, run the app against the root checkout's daemon and use:
+
+```bash
+npm run profile:explorer-toggle --workspace=@getpaseo/app
+```
+
+The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Side panel pane,
+records an idle control, then measures settled and 50 ms burst Cmd+E toggles. It reports
+input-to-DOM and input-to-paint latency, React commits, mounts, unmounts, and DOM mutations. Set
+`PASEO_PROFILE_TRACE_PATH=/tmp/explorer-toggle.trace.json` or
+`PASEO_PROFILE_CPU_PATH=/tmp/explorer-toggle.cpuprofile` for separate Chromium captures. Override
+the app URL, daemon port, workspace, or server with the corresponding `PASEO_PROFILE_*` variables.
+
 For sustained composer typing, run the paired composer-versus-textarea benchmark against a seeded
 daemon:
 
@@ -259,6 +272,11 @@ Playwright dispatch lateness. Set `PASEO_PROFILE_TYPING_KEYS`, `PASEO_PROFILE_TY
 `PASEO_PROFILE_TYPING_REPEATS`, or `PASEO_PROFILE_WORKSPACE_DIGIT` to change the scenario. Optional
 `PASEO_PROFILE_CPU_PATH` and `PASEO_PROFILE_TRACE_PATH` captures run separately after the latency
 measurements so profiling overhead does not contaminate them.
+
+Set `PASEO_PROFILE_TYPING_SCENARIO=height-growth` to alternate `Shift+Enter` and printable input.
+That report includes input and composer height changes plus React work grouped into composer,
+stream, and ancestor/root scopes. Ancestor/root timings include descendant work because the Profiler
+boundaries are nested. A printable key after an empty newline should not change either height.
 
 ### Desktop macOS compositor watchdog
 
@@ -505,7 +523,7 @@ install.
 
 Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `paseo` binary on macOS is a symlink into the installed Paseo desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
 
-Canonical automation uses `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
+Canonical automation uses `paseo project create/ls/rename/delete`, `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally

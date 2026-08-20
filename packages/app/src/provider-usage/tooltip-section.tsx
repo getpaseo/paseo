@@ -64,12 +64,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   detail: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.4,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
   error: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.4,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
 }));

@@ -76,6 +76,19 @@ describe("canonical turn membership", () => {
     );
   });
 
+  it("renders adjacent turns without visible prompts as one response", () => {
+    const items = [
+      user("prompt", 1, "turn-1"),
+      assistant("first reply", 2, "turn-1"),
+      runningTool("heartbeat-1-tool", 3, "turn-2"),
+      assistant("heartbeat-1-reply", 4, "turn-2"),
+      runningTool("heartbeat-2-tool", 5, "turn-3"),
+      assistant("heartbeat-2-reply", 6, "turn-3"),
+    ];
+
+    expect(completedFooterIds(layoutFor(items, false).layout)).toEqual(["heartbeat-2-reply"]);
+  });
+
   it.each([
     [
       "Claude",

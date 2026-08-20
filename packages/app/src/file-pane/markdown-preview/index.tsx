@@ -84,12 +84,12 @@ const styles = StyleSheet.create((theme) => ({
   frontMatterKey: {
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
   frontMatterValue: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
 }));

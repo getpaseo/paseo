@@ -30,6 +30,7 @@ import {
   type DirectorySourceToken,
   type DirectoryTransaction,
 } from "./transaction";
+import { workspaceLabels } from "@/workspace-labels";
 
 const PAGE_LIMIT = 200;
 const AGENT_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
@@ -141,6 +142,7 @@ export class DirectorySync {
     this.flushAbortedTransactions();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    workspaceLabels.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
@@ -197,6 +199,7 @@ export class DirectorySync {
     this.abortPendingSessionWaits();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    workspaceLabels.disconnect(this.serverId);
   }
 
   async fetchTimeline(
@@ -369,6 +372,17 @@ export class DirectorySync {
 
   async refreshAll(): Promise<void> {
     await Promise.all([this.refreshAgents(), this.refreshWorkspaces({ subscribe: true })]);
+    await this.connectWorkspaceLabels();
+  }
+
+  async connectWorkspaceLabels(): Promise<void> {
+    const { client } = this.requireOnline();
+    const serverInfo = client.getLastServerInfoMessage();
+    await workspaceLabels.connect({
+      serverId: this.serverId,
+      client,
+      supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
+    });
   }
 
   private async fetchAgents(

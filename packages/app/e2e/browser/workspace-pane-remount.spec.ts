@@ -9,6 +9,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { clickSettingsBackToWorkspace, openCompactSettings } from "../support/helpers/settings";
 import { openSettings } from "../support/helpers/app";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
   clickFirstTerminalTab,
   waitForWorkspaceTabsVisible,
@@ -64,12 +65,14 @@ test.describe("Workspace pane mounting", () => {
         .first()
         .elementHandle();
       expect(originalComposer).not.toBeNull();
+      const emptyPanesBeforeSplit = await page.getByTestId("workspace-pane-empty-state").count();
 
-      await page.getByRole("button", { name: "Split pane right" }).first().click();
-      await expect(page.getByTestId("message-input-root").filter({ visible: true })).toHaveCount(
-        2,
+      await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+      await expect(page.getByTestId("workspace-pane-empty-state")).toHaveCount(
+        emptyPanesBeforeSplit + 1,
         { timeout: 30_000 },
       );
+      await expect(page.getByTestId("message-input-root").filter({ visible: true })).toHaveCount(1);
 
       const originalStillConnected = await originalComposer!.evaluate((node) => node.isConnected);
       expect(originalStillConnected).toBe(true);

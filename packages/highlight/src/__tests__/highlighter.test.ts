@@ -75,6 +75,49 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights Nix code", () => {
+    const code = 'let message = "hello"; in message';
+    const result = highlightCode(code, "default.nix");
+
+    const letToken = result[0].find((token) => token.text === "let");
+    expect(letToken?.style).toBe("keyword");
+
+    const stringToken = result[0].find((token) => token.text.includes("hello"));
+    expect(stringToken?.style).toBe("string");
+  });
+
+  it("highlights Svelte components across script, markup, and style", () => {
+    const code = [
+      '<script lang="ts">',
+      "  let count: number = 1;",
+      "</script>",
+      "",
+      "{#if count > 0}",
+      '  <span class="badge">{count}</span>',
+      "{/if}",
+      "",
+      "<style>",
+      "  .badge {",
+      "    color: red;",
+      "  }",
+      "</style>",
+    ].join("\n");
+    const result = highlightCode(code, "Counter.svelte");
+
+    expect(result[1].find((t) => t.text === "let")?.style).toBe("keyword");
+    expect(result[1].find((t) => t.text === "number")?.style).toBe("type");
+
+    expect(result[4].find((t) => t.text === "if")?.style).toBe("keyword");
+    expect(result[4].find((t) => t.text === "count")?.style).toBe("variable");
+
+    expect(result[5].find((t) => t.text === "span")?.style).toBe("tag");
+    expect(result[5].find((t) => t.text === "class")?.style).toBe("attribute");
+    expect(result[5].find((t) => t.text === "count")?.style).toBe("variable");
+
+    expect(result[9].find((t) => t.text === "badge")?.style).toBe("class");
+    expect(result[10].find((t) => t.text === "color")?.style).toBe("property");
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

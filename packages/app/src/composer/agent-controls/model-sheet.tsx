@@ -4,14 +4,17 @@ import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } fro
 import { StyleSheet } from "react-native-unistyles";
 import { Bot } from "lucide-react-native";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker } from "@/agent-profiles";
+import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
-import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
+import {
+  resolveModelBrowserScrolling,
+  resolveModelSheetOpening,
+} from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -33,6 +36,8 @@ interface CompactModelSheetProps {
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => void;
+  onEditProfile?: (profileId: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
@@ -49,6 +54,30 @@ function shortModelLabel(label: string): string {
   return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
 }
 
+function resolveModelSheetProfileActions(
+  onCreateProfile: ((seed: AgentProfileSeed) => void) | undefined,
+  onEditProfile: ((profileId: string) => void) | undefined,
+  close: () => void,
+): {
+  create?: (seed: AgentProfileSeed) => void;
+  edit?: (profileId: string) => void;
+} {
+  return {
+    create: onCreateProfile
+      ? (seed: AgentProfileSeed) => {
+          close();
+          onCreateProfile(seed);
+        }
+      : undefined,
+    edit: onEditProfile
+      ? (profileId: string) => {
+          close();
+          onEditProfile(profileId);
+        }
+      : undefined,
+  };
+}
+
 export function CompactModelSheet({
   providers,
   selectedProvider,
@@ -59,6 +88,8 @@ export function CompactModelSheet({
   profiles = null,
   onApplyProfile,
   onEditProfiles,
+  onCreateProfile,
+  onEditProfile,
   onOpen,
   onClose,
   onRetryProvider,
@@ -71,6 +102,7 @@ export function CompactModelSheet({
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
+  const modelBrowserScrolling = resolveModelBrowserScrolling(usesBottomSheet);
   const [isOpen, setIsOpen] = useState(false);
   const [isModelBrowserOpen, setIsModelBrowserOpen] = useState(false);
   const availableProviders = useMemo(() => {
@@ -94,6 +126,7 @@ export function CompactModelSheet({
     selectedModel,
     isLoading,
     autoFocusSearch: isWeb && !usesBottomSheet,
+    profiles,
     serverId,
   });
   const ProviderIcon =
@@ -186,6 +219,8 @@ export function CompactModelSheet({
     close();
     onEditProfiles?.();
   }, [close, onEditProfiles]);
+
+  const profileActions = resolveModelSheetProfileActions(onCreateProfile, onEditProfile, close);
 
   const toggle = useCallback(() => {
     if (isOpen) {
@@ -280,9 +315,11 @@ export function CompactModelSheet({
             onSelect={usesBottomSheet ? handleSearchSelect : handleDesktopSelect}
             onApplyProfile={handleApplyProfile}
             onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
+            onCreateProfile={profileActions.create}
+            onEditProfile={profileActions.edit}
             onRetryProvider={onRetryProvider}
             isRetryingProvider={isRetryingProvider}
-            scrolling="independent"
+            scrolling={modelBrowserScrolling}
             searchAllOnFocus={usesBottomSheet}
             rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
           />
@@ -322,10 +359,14 @@ export function CompactModelSheet({
             <ModelBrowser
               state={modelBrowser}
               onSelect={handleBrowserSelect}
+              onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
+              onCreateProfile={profileActions.create}
+              onEditProfile={profileActions.edit}
               onRetryProvider={onRetryProvider}
               isRetryingProvider={isRetryingProvider}
-              scrolling="independent"
+              scrolling={modelBrowserScrolling}
               searchAllOnFocus
+              showProfilesSection={false}
             />
           </View>
         </AdaptiveModalSheet>
@@ -359,7 +400,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   triggerLabels: {
@@ -372,7 +413,7 @@ const styles = StyleSheet.create((theme) => ({
   triggerThinking: {
     flexShrink: 0,
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   providerIcon: {

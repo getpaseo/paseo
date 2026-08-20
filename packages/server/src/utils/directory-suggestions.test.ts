@@ -223,7 +223,7 @@ describe("searchDirectoryEntries", () => {
     expect(suffixRootBrowses).toEqual([rootEntries, rootEntries]);
   });
 
-  it("anchors rooted one-segment queries to their root parent", async () => {
+  it("matches rooted queries against the full path at any depth", async () => {
     mkdirSync(path.join(searchRoot, "nested", "pso-global"), { recursive: true });
     mkdirSync(path.join(searchRoot, "pso-root"), { recursive: true });
     const absoluteQuery = path.join(configuredSearchRoot, "pso");
@@ -236,7 +236,11 @@ describe("searchDirectoryEntries", () => {
       pathQueryPolicy: "rooted" as const,
       rootAliases: ["~"],
     };
-    const expected = [{ path: "pso-root", kind: "directory" }];
+    const expected = [
+      { path: "pso-root", kind: "directory" },
+      { path: "nested/pso-global", kind: "directory" },
+      { path: "projects/paseo-desktop", kind: "directory" },
+    ];
 
     await expect(searchDirectoryEntries({ ...common, query: "~/pso" })).resolves.toEqual(expected);
     await expect(searchDirectoryEntries({ ...common, query: "./pso" })).resolves.toEqual(expected);
@@ -264,7 +268,10 @@ describe("searchDirectoryEntries", () => {
         { path: "projects", kind: "directory" },
         { path: "src", kind: "directory" },
       ],
-      projectEntries: [{ path: "projects/paseo-desktop", kind: "directory" }],
+      projectEntries: [
+        { path: "projects", kind: "directory" },
+        { path: "projects/paseo-desktop", kind: "directory" },
+      ],
     });
   });
 
@@ -686,7 +693,7 @@ describe("relative typed-entry configuration", () => {
       path.join(workspaceDir, "src", "components", "chat-input.tsx"),
       "export const ChatInput = null;\n",
     );
-    writeFileSync(path.join(workspaceDir, "docs", "notes.md"), "notes\n");
+    writeFileSync(path.join(workspaceDir, "docs", "search-notes.md"), "notes\n");
   });
 
   afterEach(() => {
@@ -801,11 +808,11 @@ describe("relative typed-entry configuration", () => {
   it("resolves an exact gitignored path while keeping it out of discovery results", async () => {
     initGitRepo(workspaceDir, "generated/\n");
     mkdirSync(path.join(workspaceDir, "generated"), { recursive: true });
-    writeFileSync(path.join(workspaceDir, "generated", "notes.md"), "generated notes\n");
+    writeFileSync(path.join(workspaceDir, "generated", "search-notes.md"), "generated notes\n");
 
     const exactResults = await searchRelativeDirectoryEntries({
       cwd: workspaceDir,
-      query: "generated/notes.md",
+      query: "generated/search-notes.md",
       limit: 1,
       includeFiles: true,
       includeDirectories: false,
@@ -814,7 +821,7 @@ describe("relative typed-entry configuration", () => {
     });
     const fuzzyResults = await searchRelativeDirectoryEntries({
       cwd: workspaceDir,
-      query: "notes",
+      query: "search-notes",
       limit: 20,
       includeFiles: true,
       includeDirectories: false,
@@ -822,8 +829,8 @@ describe("relative typed-entry configuration", () => {
     });
 
     expect({ exactResults, fuzzyResults }).toEqual({
-      exactResults: [{ path: "generated/notes.md", kind: "file" }],
-      fuzzyResults: [{ path: "docs/notes.md", kind: "file" }],
+      exactResults: [{ path: "generated/search-notes.md", kind: "file" }],
+      fuzzyResults: [{ path: "docs/search-notes.md", kind: "file" }],
     });
   });
 
@@ -846,7 +853,7 @@ describe("relative typed-entry configuration", () => {
       });
       const staysInside = await searchRelativeDirectoryEntries({
         cwd: workspaceDir,
-        query: "inside-link/notes.md",
+        query: "inside-link/search-notes.md",
         limit: 1,
         includeFiles: true,
         includeDirectories: false,
@@ -855,7 +862,7 @@ describe("relative typed-entry configuration", () => {
 
       expect({ escaping, staysInside }).toEqual({
         escaping: [],
-        staysInside: [{ path: "inside-link/notes.md", kind: "file" }],
+        staysInside: [{ path: "inside-link/search-notes.md", kind: "file" }],
       });
     },
   );
@@ -898,6 +905,51 @@ describe("relative typed-entry configuration", () => {
       includeDirectories: true,
     });
 
-    expect(results).toEqual([{ path: "src/components", kind: "directory" }]);
+    expect(results).toEqual([
+      { path: "src/components", kind: "directory" },
+      { path: "src/components/chat-input.tsx", kind: "file" },
+    ]);
+  });
+
+  it("matches a path fragment anywhere in the full file path", async () => {
+    const targetPath = path.join(
+      workspaceDir,
+      "something",
+      "something-else",
+      "skills",
+      "paseo-advisor",
+      "SKILL.md",
+    );
+    mkdirSync(path.dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, "skill\n");
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "skills/",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results).toEqual([
+      {
+        path: "something/something-else/skills/paseo-advisor/SKILL.md",
+        kind: "file",
+      },
+    ]);
+  });
+
+  it("fuzzy-matches natural language against the full path", async () => {
+    mkdirSync(path.join(workspaceDir, "blankpage", "editor"), { recursive: true });
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "blank page editor",
+      limit: 20,
+      includeFiles: false,
+      includeDirectories: true,
+    });
+
+    expect(results).toEqual([{ path: "blankpage/editor", kind: "directory" }]);
   });
 });
