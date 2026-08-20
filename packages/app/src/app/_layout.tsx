@@ -131,8 +131,7 @@ import {
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { PluginCatalogSync } from "@/plugins";
-import { useInstalledPlugins } from "@/plugins/registry";
-import { buildPluginTheme, findPluginTheme } from "@/plugins/theme";
+import { buildPluginTheme, findPluginTheme, usePluginThemes } from "@/plugins/theme";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -650,14 +649,14 @@ function MobileGestureWrapper({
 function ProvidersWrapper({ children }: { children: ReactNode }) {
   const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
-  const plugins = useInstalledPlugins();
+  const pluginThemes = usePluginThemes();
   // Null while the catalog is still loading, and once the selected contribution is gone.
   const pluginTheme = useMemo(
     () =>
       settings.theme === PLUGIN_THEME_SLOT
-        ? findPluginTheme(plugins, settings.pluginThemeId)
+        ? findPluginTheme(pluginThemes, settings.pluginThemeId)
         : null,
-    [plugins, settings.theme, settings.pluginThemeId],
+    [pluginThemes, settings.theme, settings.pluginThemeId],
   );
 
   // Apply theme setting on mount and when it changes

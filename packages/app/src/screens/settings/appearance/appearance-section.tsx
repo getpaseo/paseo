@@ -40,8 +40,7 @@ import {
   type Theme,
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
-import { useInstalledPlugins } from "@/plugins/registry";
-import { collectPluginThemes, type PluginThemeOption } from "@/plugins/theme";
+import { usePluginThemes, type PluginThemeOption } from "@/plugins/theme";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
 
@@ -518,8 +517,7 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
-  const plugins = useInstalledPlugins();
-  const pluginThemes = useMemo(() => collectPluginThemes(plugins), [plugins]);
+  const pluginThemes = usePluginThemes();
   const selectedPluginTheme =
     settings.theme === PLUGIN_THEME_SLOT
       ? (pluginThemes.find((option) => option.id === settings.pluginThemeId) ?? null)

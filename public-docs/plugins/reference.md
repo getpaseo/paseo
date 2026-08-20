@@ -217,6 +217,10 @@ Only one contributed theme is active at a time. Selecting one persists the choic
 later disabled or removed, Paseo falls back to the default theme rather than leaving the app
 unpainted.
 
+Themes need a host that supports them. A daemon released before `addTheme` compiles the call into
+the plugin's backend bundle, where it does not exist, and the plugin fails to start with
+`plugin.addTheme is not a function`. Update the host.
+
 ## Workspace panels
 
 Register one panel for workspace or agent context:

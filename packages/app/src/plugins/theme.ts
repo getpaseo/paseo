@@ -1,6 +1,9 @@
+import { useMemo } from "react";
 import { z } from "zod";
 import type { PluginTheme, PluginThemeContribution } from "@getpaseo/plugin";
+import { useHostFeatureMap } from "@/runtime/host-features";
 import { buildDarkSemanticColors, buildDarkTheme, darkTheme, type Theme } from "@/styles/theme";
+import { useInstalledPlugins } from "./registry";
 import type { InstalledPlugin } from "./types";
 
 export function toPluginTheme(theme: Theme): PluginTheme {
@@ -78,9 +81,13 @@ export interface PluginThemeOption {
   contribution: PluginThemeContribution;
 }
 
-export function collectPluginThemes(plugins: InstalledPlugin[]): PluginThemeOption[] {
+export function collectPluginThemes(
+  plugins: InstalledPlugin[],
+  supportedHosts: ReadonlySet<string>,
+): PluginThemeOption[] {
   const options = new Map<string, PluginThemeOption>();
   for (const plugin of plugins) {
+    if (!supportedHosts.has(plugin.serverId)) continue;
     for (const contribution of plugin.themes) {
       const id = `${plugin.id}/theme/${contribution.id}`;
       if (!options.has(id)) options.set(id, { id, contribution });
@@ -89,14 +96,42 @@ export function collectPluginThemes(plugins: InstalledPlugin[]): PluginThemeOpti
   return [...options.values()];
 }
 
+function supportedThemeHosts(support: ReadonlyMap<string, boolean>): Set<string> {
+  const serverIds = new Set<string>();
+  for (const [serverId, supported] of support) {
+    if (supported) serverIds.add(serverId);
+  }
+  return serverIds;
+}
+
 /**
- * Returns null when the selected theme is gone — plugin disabled, removed, failed to load, or no
- * longer contributing that id. Callers fall back to the default theme rather than an empty slot.
+ * The themes on offer, from the hosts that can actually run one. A daemon that predates the
+ * `pluginThemes` capability leaves `addTheme` in the server bundle it compiles, so this is the
+ * single place the app decides a host's themes are usable.
+ */
+export function usePluginThemes(): PluginThemeOption[] {
+  const plugins = useInstalledPlugins();
+  const serverIds = useMemo(
+    () => [...new Set(plugins.map((plugin) => plugin.serverId))],
+    [plugins],
+  );
+  // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
+  const support = useHostFeatureMap(serverIds, "pluginThemes");
+  return useMemo(
+    () => collectPluginThemes(plugins, supportedThemeHosts(support)),
+    [plugins, support],
+  );
+}
+
+/**
+ * Returns null when the selected theme is gone — plugin disabled, removed, failed to load, no
+ * longer contributing that id, or on a host that cannot run themes. Callers fall back to the
+ * default theme rather than an empty slot.
  */
 export function findPluginTheme(
-  plugins: InstalledPlugin[],
+  options: PluginThemeOption[],
   id: string | null,
 ): PluginThemeContribution | null {
   if (id === null) return null;
-  return collectPluginThemes(plugins).find((option) => option.id === id)?.contribution ?? null;
+  return options.find((option) => option.id === id)?.contribution ?? null;
 }

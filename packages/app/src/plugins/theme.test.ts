@@ -98,25 +98,51 @@ describe("buildPluginTheme", () => {
 
 describe("collectPluginThemes", () => {
   it("coalesces the same contribution across hosts", () => {
-    const options = collectPluginThemes([
-      installed("host-a", [MOCHA]),
-      installed("host-b", [MOCHA]),
-    ]);
+    const options = collectPluginThemes(
+      [installed("host-a", [MOCHA]), installed("host-b", [MOCHA])],
+      new Set(["host-a", "host-b"]),
+    );
+
+    expect(options.map((option) => option.id)).toEqual(["catppuccin/theme/mocha"]);
+  });
+
+  // COMPAT(pluginThemes): a daemon without the capability keeps `addTheme` in the server bundle
+  // it compiles, so its themes are not offered at all.
+  it("drops themes from a host that predates the pluginThemes capability", () => {
+    expect(collectPluginThemes([installed("old-host", [MOCHA])], new Set())).toEqual([]);
+  });
+
+  it("keeps themes from the supported host when one peer is too old", () => {
+    const options = collectPluginThemes(
+      [installed("new-host", [MOCHA]), installed("old-host", [MOCHA])],
+      new Set(["new-host"]),
+    );
 
     expect(options.map((option) => option.id)).toEqual(["catppuccin/theme/mocha"]);
   });
 });
 
 describe("findPluginTheme", () => {
+  const supported = new Set(["host-a", "old-host"]);
+
   it("resolves the persisted selection", () => {
-    expect(findPluginTheme([installed("host-a", [MOCHA])], "catppuccin/theme/mocha")).toBe(MOCHA);
+    const options = collectPluginThemes([installed("host-a", [MOCHA])], supported);
+    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBe(MOCHA);
   });
 
   it("returns null when the plugin is gone so the app falls back to the default theme", () => {
-    expect(findPluginTheme([], "catppuccin/theme/mocha")).toBeNull();
+    expect(
+      findPluginTheme(collectPluginThemes([], supported), "catppuccin/theme/mocha"),
+    ).toBeNull();
   });
 
   it("returns null when the plugin no longer contributes that theme", () => {
-    expect(findPluginTheme([installed("host-a", [])], "catppuccin/theme/mocha")).toBeNull();
+    const options = collectPluginThemes([installed("host-a", [])], supported);
+    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBeNull();
+  });
+
+  it("returns null when only an old daemon offers the persisted theme", () => {
+    const options = collectPluginThemes([installed("old-host", [MOCHA])], new Set());
+    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBeNull();
   });
 });

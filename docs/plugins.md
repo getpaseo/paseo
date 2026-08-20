@@ -204,6 +204,11 @@ slot with `UnistylesRuntime.updateTheme`. One slot covers any number of contribu
 only one theme is active at a time. See [unistyles.md](unistyles.md) for the runtime-patching rules
 the appearance settings share.
 
+`addTheme` is a client registration, so the compiler strips it from the backend bundle. A daemon
+that predates it does not, and the plugin fails to start there. Daemons advertise
+`features.pluginThemes` in `server_info`; `usePluginThemes` is the one place the app reads it, and
+a host without it contributes no themes.
+
 The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
 so equal themes on several hosts coalesce the way sidebar contributions do. The app resolves that id
 against the installed catalog on every change; an id nothing contributes falls back to the default
