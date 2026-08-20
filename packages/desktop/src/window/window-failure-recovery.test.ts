@@ -184,6 +184,21 @@ describe("setupWindowFailureRecovery", () => {
     expect(dialogOptions()).toHaveLength(1);
   });
 
+  it("drops a queued crash prompt once a fresh load completes", async () => {
+    const win = createFakeWindow();
+    win.emit("unresponsive");
+    // The renderer dies behind the open hang dialog, then a reload lands before the user answers.
+    win.emitWebContents("render-process-gone", {}, { reason: "crashed" });
+    win.emitWebContents("did-finish-load");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Answering Wait must not surface a crash prompt for a renderer that has been replaced.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(dialogOptions().map((options) => options.message)).toEqual([
+      "This window is not responding",
+    ]);
+  });
+
   it("ignores a clean renderer exit", async () => {
     const win = createFakeWindow();
     win.emitWebContents("render-process-gone", {}, { reason: "clean-exit" });

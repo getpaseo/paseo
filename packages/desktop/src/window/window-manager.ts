@@ -594,9 +594,15 @@ export function setupWindowFailureRecovery(win: BrowserWindow): void {
 
   win.on("closed", clearWaitTimer);
 
-  // A fresh load means a live renderer, so any hang the window was in is over. This also covers
-  // reloads the user triggers from the menu rather than from the dialog.
-  win.webContents.on("did-finish-load", clearHang);
+  // A fresh load means a live renderer, so every failure this window was in is over: the hang,
+  // and anything still queued behind an open dialog. Keeping the queue would put "This window
+  // has crashed" over the healthy replacement, with its Reload and Close acting on a window
+  // that already recovered. This also covers reloads the user triggers from the menu rather
+  // than from the dialog.
+  win.webContents.on("did-finish-load", () => {
+    clearHang();
+    queued = null;
+  });
 
   win.webContents.on("render-process-gone", (_event, details) => {
     // A gone renderer is not a hung one; without this the re-check timer would offer the hang
