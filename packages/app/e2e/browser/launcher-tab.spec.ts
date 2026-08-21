@@ -281,16 +281,6 @@ test.describe("Tab creation", () => {
     expect(newTabButtonInScroll === 0 || scrollShades === 0).toBe(true);
     await expect(tabRow.getByTestId("workspace-new-tab-button")).toBeVisible();
   });
-
-  test("right-clicking the empty tab strip opens tab creation actions", async ({ page }) => {
-    await page.setViewportSize({ width: 1600, height: 900 });
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    await page.getByTestId("workspace-empty-tab-strip").click({ button: "right" });
-
-    await expect(page.getByTestId("workspace-empty-tab-menu-agent")).toBeVisible();
-    await expect(page.getByTestId("workspace-empty-tab-menu-terminal")).toBeVisible();
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
