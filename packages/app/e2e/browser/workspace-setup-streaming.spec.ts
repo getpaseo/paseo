@@ -1,9 +1,10 @@
 import { test, expect } from "../support/fixtures";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
-  ensureSidePanel,
-  getWorkspaceTabTestIds,
+  closeSetupTab,
   waitForWorkspaceTabsVisible,
+  expectFailedSetupTabSeededInMainPane,
+  expectSetupTabNotSeeded,
   expectNoTerminalTabs,
   clickFirstTerminalTab,
   expectFirstTerminalTabContains,
@@ -21,6 +22,7 @@ import {
   expectSetupPanel,
   openHomeWithProject,
   navigateToWorkspaceViaSidebar,
+  returnHomeFromWorkspace,
   openWorkspaceScriptsMenu,
   startWorkspaceScriptFromMenu,
   closeWorkspaceScriptsMenu,
@@ -62,10 +64,7 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
-      await ensureSidePanel(page);
-      await expect
-        .poll(() => getWorkspaceTabTestIds(page), { timeout: 30_000 })
-        .not.toContain(`workspace-tab-setup_${workspace.id}`);
+      await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
       await client.close();
       await repo.cleanup();
@@ -104,10 +103,7 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
-      await ensureSidePanel(page);
-      await expect
-        .poll(() => getWorkspaceTabTestIds(page), { timeout: 30_000 })
-        .not.toContain(`workspace-tab-setup_${workspace.id}`);
+      await expectSetupTabNotSeeded(page, workspace.id);
       await expectSetupPanel(page);
       await waitForWorkspaceTabsVisible(page);
       await clickNewChat(page);
@@ -166,7 +162,7 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
-  test("streams a failed setup snapshot when setup fails", async ({ page }) => {
+  test("seeds a failed setup tab once in the main pane", async ({ page }) => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-failure-", {
       paseoConfig: {
@@ -196,10 +192,12 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
       await waitForWorkspaceTabsVisible(page);
-      const setupTabTestId = `workspace-tab-setup_${workspace.id}`;
-      await expect.poll(() => getWorkspaceTabTestIds(page)).toContain(setupTabTestId);
-      const sidePanel = await ensureSidePanel(page);
-      await expect(sidePanel.getByTestId(setupTabTestId)).toHaveCount(0);
+      await expectFailedSetupTabSeededInMainPane(page, workspace.id);
+
+      await closeSetupTab(page, workspace.id);
+      await returnHomeFromWorkspace(page);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
       await client.close();
       await repo.cleanup();

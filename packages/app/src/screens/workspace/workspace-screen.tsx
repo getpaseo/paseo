@@ -59,6 +59,7 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import {
   canDismissPaneInLayout,
   collectAllTabs,
+  DEFAULT_PANE_ID,
   findPaneById,
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
@@ -1695,6 +1696,7 @@ function WorkspaceScreenContent({
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
   const ensureWorkspaceSetupStatus = useWorkspaceSetupStore((state) => state.ensureSetupStatus);
+  const claimFailedSetupSurface = useWorkspaceSetupStore((state) => state.claimFailedSetupSurface);
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
   const uiTabs = useMemo(
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
@@ -1969,7 +1971,6 @@ function WorkspaceScreenContent({
   );
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
-  const autoOpenedSetupTabWorkspaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isRouteFocused) {
@@ -1979,16 +1980,6 @@ function WorkspaceScreenContent({
       return;
     }
     if (!shouldSeedWorkspaceSetupTab(workspaceSetupSnapshot)) {
-      if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
-        autoOpenedSetupTabWorkspaceRef.current = null;
-      }
-      return;
-    }
-    if (hasSetupTab) {
-      autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
-      return;
-    }
-    if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
       return;
     }
 
@@ -1999,17 +1990,28 @@ function WorkspaceScreenContent({
     if (!target) {
       return;
     }
-
-    const tabId = openWorkspaceTabInBackground(persistenceKey, target);
-    if (!tabId) {
+    if (
+      !claimFailedSetupSurface({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+      })
+    ) {
+      return;
+    }
+    if (hasSetupTab) {
       return;
     }
 
-    autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
+    openWorkspaceTabInBackground(persistenceKey, target, {
+      mode: "prefer",
+      paneId: DEFAULT_PANE_ID,
+    });
   }, [
+    claimFailedSetupSurface,
     hasSetupTab,
     isRouteFocused,
     normalizedWorkspaceId,
+    normalizedServerId,
     openWorkspaceTabInBackground,
     persistenceKey,
     workspaceSetupSnapshot,

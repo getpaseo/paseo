@@ -13,6 +13,46 @@ export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   return ids;
 }
 
+function setupTabTestId(workspaceId: string): string {
+  return `workspace-tab-setup_${workspaceId}`;
+}
+
+async function waitForSetupToReachWorkspace(page: Page): Promise<void> {
+  const actionsButton = page.getByTestId("workspace-header-menu-trigger");
+  await expect(actionsButton).toBeVisible({ timeout: 30_000 });
+  await actionsButton.click();
+  await expect(page.getByTestId("workspace-header-show-setup")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Escape");
+}
+
+export async function expectSetupTabNotSeeded(page: Page, workspaceId: string): Promise<void> {
+  await waitForSetupToReachWorkspace(page);
+  const tab = page.getByTestId(setupTabTestId(workspaceId));
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await expect(tab).toHaveCount(0);
+    await page.waitForTimeout(100);
+  }
+}
+
+export async function expectFailedSetupTabSeededInMainPane(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const tabId = setupTabTestId(workspaceId);
+  await expect(page.getByTestId(tabId).filter({ visible: true }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  const panel = await ensureSidePanel(page);
+  await expect(panel.getByTestId(tabId)).toHaveCount(0);
+}
+
+export async function closeSetupTab(page: Page, workspaceId: string): Promise<void> {
+  const tabId = setupTabTestId(workspaceId);
+  await page.getByTestId(tabId).filter({ visible: true }).first().click({ button: "right" });
+  await page.getByTestId(`workspace-tab-context-setup_${workspaceId}-close`).click();
+  await expect(page.getByTestId(tabId)).toHaveCount(0);
+}
+
 function visibleTestId(page: Page, testId: string) {
   return page.getByTestId(testId).filter({ visible: true });
 }

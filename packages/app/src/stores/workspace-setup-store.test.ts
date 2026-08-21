@@ -126,6 +126,7 @@ describe("workspace-setup-store", () => {
       pendingWorkspaceSetup: null,
       snapshots: {},
       requestedKeys: new Set(),
+      surfacedFailedSetupKeys: new Set(),
     });
   });
 
@@ -225,6 +226,33 @@ describe("workspace-setup-store", () => {
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("running"))).toBe(false);
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("completed"))).toBe(false);
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("failed", "Setup failed"))).toBe(true);
+  });
+
+  it("claims one failed setup surface until a later setup lifecycle begins", () => {
+    const store = useWorkspaceSetupStore.getState();
+    const identity = { serverId: "server-1", workspaceId: "42" };
+
+    store.upsertProgress({
+      serverId: identity.serverId,
+      payload: { ...makeSnapshot("failed", "Setup failed"), workspaceId: identity.workspaceId },
+    });
+
+    expect(store.claimFailedSetupSurface(identity)).toBe(true);
+    expect(useWorkspaceSetupStore.getState().claimFailedSetupSurface(identity)).toBe(false);
+
+    useWorkspaceSetupStore.getState().upsertProgress({
+      serverId: identity.serverId,
+      payload: { ...makeSnapshot("running"), workspaceId: identity.workspaceId },
+    });
+    useWorkspaceSetupStore.getState().upsertProgress({
+      serverId: identity.serverId,
+      payload: {
+        ...makeSnapshot("failed", "Setup failed again"),
+        workspaceId: identity.workspaceId,
+      },
+    });
+
+    expect(useWorkspaceSetupStore.getState().claimFailedSetupSurface(identity)).toBe(true);
   });
 
   it("ensureSetupStatus fetches setup status once and stores the snapshot", async () => {

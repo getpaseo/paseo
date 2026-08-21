@@ -255,7 +255,7 @@ export interface WorkspaceTabSnapshot {
   hasActivePendingDraftCreate?: boolean;
 }
 
-const DEFAULT_PANE_ID = "main";
+export const DEFAULT_PANE_ID = "main";
 /** The pane id is persisted, so it keeps its pre-rename spelling. */
 export const SIDE_PANEL_PANE_ID = "explorer";
 const DEFAULT_LAYOUT_GROUP_ID = "workspace-root";
@@ -1171,7 +1171,6 @@ const SIDE_PANEL_EXCLUDED_TAB_KINDS: ReadonlySet<WorkspaceTabTarget["kind"]> = n
   "terminal",
   "draft",
   "browser",
-  "setup",
 ]);
 
 function resolvePlacementPane(input: {

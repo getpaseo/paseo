@@ -921,7 +921,7 @@ describe("workspace-layout-store actions", () => {
     expect(layout.focusedPaneId).toBe("explorer");
   });
 
-  it("keeps a background setup tab out of the focused explorer pane without moving focus", () => {
+  it("places a background setup tab in the main pane without moving focus", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
     store.openTab({
@@ -935,6 +935,7 @@ describe("workspace-layout-store actions", () => {
       workspaceKey,
       target: { kind: "setup", workspaceId: WORKSPACE_ID },
       intent: "background",
+      placement: { mode: "prefer", paneId: "main" },
     });
 
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
