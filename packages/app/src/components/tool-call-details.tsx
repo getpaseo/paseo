@@ -639,14 +639,33 @@ interface UnknownDetail {
 }
 
 function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunction): ReactNode[] {
-  const plainInputText =
-    typeof detail.input === "string" && detail.output === null ? detail.input : null;
+  const isInputString = typeof detail.input === "string" && detail.input.trim().length > 0;
+  const hasNoOutput =
+    detail.output === null ||
+    detail.output === undefined ||
+    (typeof detail.output === "string" && detail.output.trim().length === 0);
 
-  if (plainInputText !== null) {
+  if (isInputString && hasNoOutput) {
     return [
       <ScrollableMarkdownSection
         key="unknown-markdown-text"
-        text={formatThinkingText(plainInputText)}
+        text={formatThinkingText(detail.input as string)}
+        ds={ds}
+      />,
+    ];
+  }
+
+  const isOutputString = typeof detail.output === "string" && detail.output.trim().length > 0;
+  const hasNoInput =
+    detail.input === null ||
+    detail.input === undefined ||
+    (typeof detail.input === "string" && detail.input.trim().length === 0);
+
+  if (isOutputString && hasNoInput) {
+    return [
+      <ScrollableMarkdownSection
+        key="unknown-markdown-text"
+        text={formatThinkingText(detail.output as string)}
         ds={ds}
       />,
     ];
