@@ -141,4 +141,23 @@ describe("createKeepAwakeCommandHandlers", () => {
 
     expect(powerSaveBlocker.start).not.toHaveBeenCalled();
   });
+
+  it("ignores a disabled window's low or unknown battery reading entirely", () => {
+    const handlers = createKeepAwakeCommandHandlers();
+    const windowA = createFakeSender(1);
+    const windowB = createFakeSender(2);
+
+    // Window B isn't asking to hold the block at all (e.g. idle, no running
+    // agent); its battery reading — real or unresolved — must not affect
+    // window A's own, actually-enabled, actually-safe request.
+    handlers.desktop_set_keep_awake({ enabled: false, batteryLevel: 0.02 }, { sender: windowB });
+    handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: 0.9 }, { sender: windowA });
+
+    expect(powerSaveBlocker.start).toHaveBeenCalledTimes(1);
+    expect(powerSaveBlocker.stop).not.toHaveBeenCalled();
+
+    handlers.desktop_set_keep_awake({ enabled: false, batteryLevel: null }, { sender: windowB });
+
+    expect(powerSaveBlocker.stop).not.toHaveBeenCalled();
+  });
 });

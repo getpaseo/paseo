@@ -44,24 +44,31 @@ function parseKeepAwakeRequest(args: Record<string, unknown> | undefined): KeepA
 // Desktop supports multiple windows sharing this one command-handler instance
 // (registered once at startup), so state is tracked per sender rather than as
 // a single last-write-wins value: any window reporting a running agent holds
-// the block, and the most conservative (lowest) known battery reading wins.
-// A sender's entry is dropped as soon as its WebContents goes away — closed,
-// reloaded away, or crashed — so a window that disappears can never keep the
-// block held on its own say after nothing is left to report otherwise.
+// the block, and the most conservative (lowest) known battery reading among
+// those *enabled* windows wins. A sender's entry is dropped as soon as its
+// WebContents goes away — closed, reloaded away, or crashed — so a window
+// that disappears can never keep the block held on its own say after nothing
+// is left to report otherwise.
 //
-// An enabled window that hasn't resolved its own battery reading yet must not
-// be silently dropped just because another window happens to have a known,
-// safe reading — that would let one window's "unknown" bypass the fail-closed
-// cutoff via a sibling's optimistic report. So the aggregate battery level is
-// forced to null (unknown) whenever any enabled request doesn't know its own.
+// A window that isn't asking to hold the block contributes nothing here, not
+// even its battery reading, known or unknown: a disabled window is exactly
+// the kind of window most likely to be idle/backgrounded and reporting a
+// stale battery level (Chromium can throttle event delivery to backgrounded
+// renderers), so trusting it over an enabled window's own live reading would
+// make the aggregate less accurate, not more conservative. Two *enabled*
+// windows disagreeing about a real, current reading is the case the min and
+// the fail-closed "unknown" check both still exist to protect against.
 function aggregateKeepAwakeRequests(requests: Iterable<KeepAwakeRequest>): KeepAwakeRequest {
   let enabled = false;
   let batteryLevel: number | null = null;
   let hasUnknownBatteryWhileEnabled = false;
   for (const request of requests) {
-    enabled = enabled || request.enabled;
+    if (!request.enabled) {
+      continue;
+    }
+    enabled = true;
     if (request.batteryLevel === null) {
-      hasUnknownBatteryWhileEnabled = hasUnknownBatteryWhileEnabled || request.enabled;
+      hasUnknownBatteryWhileEnabled = true;
       continue;
     }
     batteryLevel =
