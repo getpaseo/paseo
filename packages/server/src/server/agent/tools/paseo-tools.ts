@@ -61,6 +61,7 @@ import {
   waitForAgentWithTimeout,
 } from "../mcp-shared.js";
 import { sendPromptToAgent, setupFinishNotification } from "../agent-prompt.js";
+import type { FinishNotifyMode } from "../agent-prompt.js";
 import { respondToAgentPermission } from "../permission-response.js";
 import {
   archiveAgentCommand,
@@ -1010,8 +1011,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
       ),
   };
+  const notifyModeField = z
+    .enum(["once", "each"])
+    .optional()
+    .describe(
+      'How long the finish watcher stays armed. "once" (default) sends one notification, then stops. "each" re-notifies on every finish until the agent closes or errors — use it when the agent you are watching takes several turns, for example because it orchestrates children of its own.',
+    );
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    notifyMode: notifyModeField,
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1040,6 +1048,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
+    notifyMode: notifyModeField,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
   const legacyTopLevelCreateAgentInputSchema = {
@@ -1104,6 +1113,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    notifyMode: notifyModeField,
     background: z
       .boolean()
       .optional()
@@ -1422,9 +1432,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const { parsedArgs, worktree } = resolvedArgs;
       let requestedBackground: boolean;
       let notifyOnFinish: boolean;
+      let notifyMode: FinishNotifyMode = "once";
       if (resolvedArgs.kind === "agent-scoped") {
         requestedBackground = true;
         notifyOnFinish = parsedArgs.notifyOnFinish;
+        notifyMode = ("notifyMode" in parsedArgs ? parsedArgs.notifyMode : undefined) ?? "once";
       } else {
         requestedBackground = resolvedArgs.parsedArgs.background;
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
@@ -1463,6 +1475,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           mode: parsedArgs.settings?.modeId,
           background: requestedBackground,
           notifyOnFinish,
+          notifyMode,
           detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,
@@ -1880,6 +1893,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       sessionMode,
       background = Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
+      notifyMode,
     }) => {
       const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
 
@@ -1898,6 +1912,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           agentStorage,
           childAgentId: agentId,
           callerAgentId,
+          ...(notifyMode ? { notifyMode } : {}),
           logger: childLogger,
         });
       }
