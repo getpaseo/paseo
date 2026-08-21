@@ -467,12 +467,17 @@ describe("translation resources", () => {
   });
 
   it("includes hook and modal utility keys for the Batch 4M migration", () => {
+    expect(en.composer.attachments.addImageOrVideo).toBe("Add images or video");
     expect(en.imageAttachmentPicker.permissionTitle).toBe("Permission required");
     expect(en.imageAttachmentPicker.permissionMessage).toBe(
       "Please allow access to your photo library to attach images.",
     );
+    expect(en.imageAttachmentPicker.permissionMediaMessage).toBe(
+      "Please allow access to your photo library to attach images or videos.",
+    );
     expect(en.imageAttachmentPicker.errorTitle).toBe("Error");
     expect(en.imageAttachmentPicker.failedToSelect).toBe("Failed to select image");
+    expect(en.imageAttachmentPicker.failedToSelectMedia).toBe("Failed to select images or video");
     expect(en.imageAttachmentPicker.dialogTitle).toBe("Attach images");
     expect(en.imageAttachmentPicker.dialogFilterName).toBe("Images");
     expect(en.common.states.copied).toBe("Copied");
