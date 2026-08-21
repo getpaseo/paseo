@@ -13,12 +13,12 @@ function splitSeparator(page: Page): Locator {
 }
 
 export async function openExplorerSplit(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open explorer" }).click();
+  await page.getByRole("button", { name: "Open side panel" }).click();
   await expect(splitSeparator(page)).toHaveCount(1, { timeout: 30_000 });
 }
 
 export async function hideExplorerSplit(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Close explorer" }).click();
+  await page.getByRole("button", { name: "Close side panel" }).click();
   await expect(splitSeparator(page)).toHaveCount(0, { timeout: 30_000 });
 }
 

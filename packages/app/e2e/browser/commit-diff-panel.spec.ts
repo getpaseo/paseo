@@ -51,6 +51,19 @@ test("commit history shows dates and shares diff layout preferences", async ({
   const panel = page.getByTestId("commit-diff-panel").filter({ visible: true });
   await expect(panel.getByTestId("commit-diff-toolbar")).toBeVisible({ timeout: 30_000 });
   const layoutToggle = panel.getByTestId("commit-diff-toggle-layout");
+  const [commitToolbarBox, layoutToggleBox, layoutToggleGlyphBox] = await Promise.all([
+    panel.getByTestId("commit-diff-header").boundingBox(),
+    layoutToggle.boundingBox(),
+    layoutToggle.locator("svg").boundingBox(),
+  ]);
+  if (!commitToolbarBox || !layoutToggleBox || !layoutToggleGlyphBox) {
+    throw new Error("Commit-diff toolbar geometry could not be measured");
+  }
+  expect(commitToolbarBox.height).toBe(36);
+  expect(layoutToggleBox.width).toBe(24);
+  expect(layoutToggleBox.height).toBe(24);
+  expect(layoutToggleGlyphBox.width).toBe(14);
+  expect(layoutToggleGlyphBox.height).toBe(14);
   await expect(layoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible({ timeout: 30_000 });
   await expectCommitDiffHeaderGeometry(panel);

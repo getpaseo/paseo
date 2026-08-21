@@ -137,6 +137,18 @@ describe("panel-store migration", () => {
     expect(state.treeRailWidth).toBe(DEFAULT_TREE_RAIL_WIDTH);
   });
 
+  it("narrows an existing install's tree rail to the new default width", () => {
+    expect(DEFAULT_TREE_RAIL_WIDTH).toBeLessThan(320);
+    expect(migratePanelState({ treeRailWidth: 320 }, 15).treeRailWidth).toBe(
+      DEFAULT_TREE_RAIL_WIDTH,
+    );
+  });
+
+  it("defaults the file panel tree to open and keeps it closed once closed", () => {
+    expect(migratePanelState({}, 15).fileTreeVisible).toBe(true);
+    expect(migratePanelState({ fileTreeVisible: false }, 16).fileTreeVisible).toBe(false);
+  });
+
   it("drops persisted compact panel state so cold starts return to content", () => {
     const state = migratePanelState(
       { mobileView: "agent-list", mobilePanel: { target: "file-explorer", revision: 42 } },

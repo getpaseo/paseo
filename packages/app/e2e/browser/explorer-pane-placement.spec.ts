@@ -9,7 +9,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { ensureExplorerPane, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 function visible(page: Page, testId: string): Locator {
   return page.getByTestId(testId).filter({ visible: true });
@@ -37,9 +37,8 @@ function mainTabRow(page: Page): Locator {
 }
 
 async function focusExplorerPane(page: Page): Promise<void> {
-  await ensureExplorerPane(page);
+  await openChangesPanel(page);
   const changesTab = visible(page, "workspace-tab-working_diff").first();
-  await changesTab.click({ position: { x: 12, y: 13 } });
   await expect(changesTab).toHaveAttribute("aria-selected", "true");
 }
 
@@ -54,11 +53,15 @@ async function closeSeededDraftInMainPane(page: Page): Promise<void> {
   await expect(draftTabChip(page)).toHaveCount(0, { timeout: 15_000 });
 }
 
-async function emptyPaneBox(page: Page) {
-  const paneChild = page
+function emptyPaneChild(page: Page): Locator {
+  return page
     .getByTestId("split-group-child")
-    .filter({ hasText: "No tabs in this pane." })
+    .filter({ has: page.getByTestId("workspace-pane-empty-state") })
     .first();
+}
+
+async function emptyPaneBox(page: Page) {
+  const paneChild = emptyPaneChild(page);
   await expect(paneChild).toBeVisible({ timeout: 15_000 });
   const box = await paneChild.boundingBox();
   expect(box).not.toBeNull();
@@ -170,7 +173,7 @@ test.describe("explorer pane tab placement", () => {
         });
         // The split must have taken: agent pane + empty main + explorer = 3 tab rows.
         await expect(visible(page, "workspace-tabs-row")).toHaveCount(3, { timeout: 10_000 });
-        await expect(page.getByText("No tabs in this pane.")).toBeVisible();
+        await expect(page.getByTestId("workspace-pane-empty-state")).toBeVisible();
       });
 
       await test.step("app must stay interactive after the split", async () => {
@@ -183,12 +186,10 @@ test.describe("explorer pane tab placement", () => {
         await chip.click({ position: { x: 12, y: 13 }, timeout: 5_000 });
         await expect(chip).toHaveAttribute("aria-selected", "true", { timeout: 5_000 });
 
-        // Clicking inside the empty pane (focuses it) must not lock anything.
-        const emptyPane = page
-          .getByTestId("split-group-child")
-          .filter({ hasText: "No tabs in this pane." })
-          .first();
-        await emptyPane.click({ timeout: 5_000 });
+        // Clicking inside the empty pane (focuses it) must not lock anything. Aim
+        // above the vertically centred launcher, which would open a tab instead.
+        const emptyPane = emptyPaneChild(page);
+        await emptyPane.click({ position: { x: 40, y: 120 }, timeout: 5_000 });
 
         // The empty pane's + menu must open and dismiss cleanly.
         const emptyPaneTrigger = emptyPane.getByTestId("workspace-new-tab-menu-trigger").first();
@@ -207,7 +208,9 @@ test.describe("explorer pane tab placement", () => {
         });
 
         // The agent chip must have moved into the previously empty pane and stay clickable.
-        await expect(page.getByText("No tabs in this pane.")).toHaveCount(0, { timeout: 10_000 });
+        await expect(page.getByTestId("workspace-pane-empty-state")).toHaveCount(0, {
+          timeout: 10_000,
+        });
         await agentTabChip(page, agentId)
           .first()
           .click({ position: { x: 12, y: 13 } });

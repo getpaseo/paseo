@@ -35,6 +35,7 @@ import {
   type AgentPromptInput,
   type AgentProvider,
   type AgentRunOptions,
+  type AgentSteerOptions,
   type AgentRunResult,
   type AgentSession,
   type AgentSessionConfig,
@@ -293,6 +294,12 @@ export interface AgentManagerOptions {
 export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
+
+function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
+  if (!options) return undefined;
+  const { clearPendingPermissions: _, ...runOptions } = options;
+  return runOptions;
+}
 
 export interface WaitForAgentOptions {
   signal?: AbortSignal;
@@ -2395,7 +2402,7 @@ export class AgentManager {
   async steerAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentSteerOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2423,7 +2430,7 @@ export class AgentManager {
   async steerOrReplaceActiveTurn(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2457,7 +2464,12 @@ export class AgentManager {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     return {
       status: "replaced",
-      iterator: await this.replaceAdmittedForegroundTurn(agent, expectedTurnId, prompt, options),
+      iterator: await this.replaceAdmittedForegroundTurn(
+        agent,
+        expectedTurnId,
+        prompt,
+        stripSteerOptions(options),
+      ),
     };
   }
 
