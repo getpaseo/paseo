@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { FONT_SIZE, type Theme } from "./theme";
 import { isWeb } from "@/constants/platform";
 
@@ -11,6 +12,16 @@ function contentHeadingLineHeight(contentSize: number, tier: keyof typeof FONT_S
   return Math.round(contentHeadingSize(contentSize, tier) * 1.3);
 }
 
+function headingLineHeightStyle(
+  contentSize: number,
+  tier: keyof typeof FONT_SIZE,
+  platform: typeof Platform.OS,
+): { lineHeight: number | undefined } {
+  return platform === "android"
+    ? { lineHeight: undefined }
+    : { lineHeight: contentHeadingLineHeight(contentSize, tier) };
+}
+
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.
  *
@@ -18,7 +29,7 @@ function contentHeadingLineHeight(contentSize: number, tier: keyof typeof FONT_S
  *   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
  *   <Markdown style={markdownStyles}>{content}</Markdown>
  */
-export function createMarkdownStyles(theme: Theme) {
+export function createMarkdownStyles(theme: Theme, platform = Platform.OS) {
   return {
     // =========================================================================
     // BASE STYLES
@@ -66,7 +77,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "4xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "4xl", platform),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -79,7 +90,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "3xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "3xl", platform),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -92,7 +103,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "2xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "2xl", platform),
     },
 
     heading4: {
@@ -102,7 +113,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "xl", platform),
     },
 
     heading5: {
@@ -112,7 +123,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "lg"),
+      ...headingLineHeightStyle(theme.fontSize.content, "lg", platform),
     },
 
     heading6: {
@@ -122,7 +133,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foregroundMuted,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "lg"),
+      ...headingLineHeightStyle(theme.fontSize.content, "lg", platform),
       textTransform: "uppercase" as const,
       letterSpacing: 0.5,
     },
@@ -357,8 +368,8 @@ export function createMarkdownStyles(theme: Theme) {
  * Creates a smaller variant of markdown styles for compact UI elements
  * like thought bubbles, tooltips, or side panels.
  */
-export function createCompactMarkdownStyles(theme: Theme) {
-  const baseStyles = createMarkdownStyles(theme);
+export function createCompactMarkdownStyles(theme: Theme, platform = Platform.OS) {
+  const baseStyles = createMarkdownStyles(theme, platform);
 
   return {
     ...baseStyles,
@@ -374,7 +385,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: contentHeadingSize(theme.fontSize.content, "2xl"),
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "2xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "2xl", platform),
     },
 
     heading2: {
@@ -382,7 +393,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: contentHeadingSize(theme.fontSize.content, "xl"),
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "xl"),
+      ...headingLineHeightStyle(theme.fontSize.content, "xl", platform),
     },
 
     heading3: {
@@ -390,7 +401,7 @@ export function createCompactMarkdownStyles(theme: Theme) {
       fontSize: contentHeadingSize(theme.fontSize.content, "lg"),
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: contentHeadingLineHeight(theme.fontSize.content, "lg"),
+      ...headingLineHeightStyle(theme.fontSize.content, "lg", platform),
     },
 
     paragraph: {
