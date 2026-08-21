@@ -14,15 +14,21 @@ describe("window chrome", () => {
     expect(
       resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: true }),
     ).toEqual({ topLeft: null, topRight: null });
+    expect(
+      resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: true }),
+    ).toEqual({ topLeft: null, topRight: null });
   });
 
-  it("places native controls in their physical top corner", () => {
+  it("reserves the traffic light corner on macOS", () => {
     expect(
       resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: false }),
     ).toEqual({ topLeft: { width: 78, height: 45 }, topRight: null });
+  });
+
+  it("reserves nothing on Windows and Linux because the app draws its own controls", () => {
     expect(
       resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: false }),
-    ).toEqual({ topLeft: null, topRight: { width: 140, height: 48 } });
+    ).toEqual({ topLeft: null, topRight: null });
   });
 
   it("insets and reserves only claimed corners", () => {

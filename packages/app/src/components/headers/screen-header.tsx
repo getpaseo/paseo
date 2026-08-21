@@ -9,8 +9,9 @@ import {
   HEADER_TOP_PADDING_MOBILE,
   useIsCompactFormFactor,
 } from "@/constants/layout";
-import { WindowChromeSafeArea } from "@/utils/desktop-window";
+import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import { WindowControls } from "@/components/desktop/window-controls";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -35,6 +36,7 @@ export function ScreenHeader({
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const ownsTopRight = useOwnsWindowChromeCorner("top-right");
   const isMobile = useIsCompactFormFactor();
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
@@ -59,7 +61,10 @@ export function ScreenHeader({
         >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>
-          <View style={rightCombinedStyle}>{right}</View>
+          <View style={rightCombinedStyle}>
+            {right}
+            {ownsTopRight ? <WindowControls /> : null}
+          </View>
         </WindowChromeSafeArea>
       </View>
     </View>
@@ -79,7 +84,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    // flex-end, not space-between: the leading group already grows to fill the row, so the
+    // two behave identically until the trailing actions outgrow the space left for them.
+    // At that point space-between overflows at the end, pushing the actions through the
+    // window-control reservation and off the window. flex-end overflows at the start, so
+    // extra actions expand leftward into the title, which truncates.
+    justifyContent: "flex-end",
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
     userSelect: "none",

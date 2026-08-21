@@ -3626,6 +3626,7 @@ function WorkspaceScreenContent({
           onReorderTabs={handleReorderTabsInFocusedPane}
           focusModeEnabled={desktopFocusModeEnabled}
           onExitFocusMode={toggleFocusMode}
+          mountWindowControls={!showScreenHeader}
         />
       ) : null}
 

@@ -5,6 +5,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
   clipboard,
+  dialog,
   ipcMain,
   nativeTheme,
   shell,
@@ -32,12 +33,6 @@ export interface WindowControlsOverlayUpdate {
   trafficLightOffsetY?: number;
 }
 
-export interface WindowControlsOverlayState {
-  height: number;
-  backgroundColor?: string;
-  foregroundColor?: string;
-}
-
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {
     return input;
@@ -52,23 +47,6 @@ export function resolveSystemWindowTheme(): WindowTheme {
 
 export function getWindowBackgroundColor(theme: WindowTheme): string {
   return theme === "dark" ? "#181B1A" : "#ffffff";
-}
-
-export function createWindowControlsOverlayState(theme: WindowTheme): WindowControlsOverlayState {
-  const overlay = getTitleBarOverlayOptions(theme);
-  return {
-    height: overlay.height ?? 29,
-    backgroundColor: overlay.color,
-    foregroundColor: overlay.symbolColor,
-  };
-}
-
-export function getTitleBarOverlayOptions(theme: WindowTheme): Electron.TitleBarOverlayOptions {
-  if (theme === "dark") {
-    return { color: "#181B1A", symbolColor: "#e4e4e7", height: 29 };
-  }
-
-  return { color: "#ffffff", symbolColor: "#09090b", height: 29 };
 }
 
 export function getMainWindowChromeOptions(input: {
@@ -86,10 +64,13 @@ export function getMainWindowChromeOptions(input: {
     };
   }
 
+  // SPIKE: no titleBarOverlay on Windows/Linux. The renderer draws the controls itself
+  // (packages/app/src/components/desktop/window-controls.tsx) so they sit in the header's
+  // own flex row and line up with the header icons. Without the overlay Chromium reports
+  // navigator.windowControlsOverlay.visible === false, so nothing reserves a band.
   return {
     titleBarStyle: "hidden",
     frame: false,
-    titleBarOverlay: getTitleBarOverlayOptions(input.theme),
     autoHideMenuBar: true,
   };
 }
@@ -169,31 +150,6 @@ export function readWindowControlsOverlayUpdate(
   };
 }
 
-export function resolveRuntimeTitleBarOverlayOptions(
-  state: WindowControlsOverlayState,
-): Electron.TitleBarOverlayOptions {
-  return {
-    color: state.backgroundColor?.trim() === "" ? undefined : state.backgroundColor,
-    symbolColor: state.foregroundColor?.trim() === "" ? undefined : state.foregroundColor,
-    height: Math.max(0, state.height - 1),
-  };
-}
-
-export function applyWindowControlsOverlayUpdate(input: {
-  win: Pick<BrowserWindow, "setTitleBarOverlay">;
-  current: WindowControlsOverlayState;
-  update: WindowControlsOverlayUpdate;
-}): WindowControlsOverlayState {
-  const next: WindowControlsOverlayState = {
-    height: input.update.height ?? input.current.height,
-    backgroundColor: input.update.backgroundColor ?? input.current.backgroundColor,
-    foregroundColor: input.update.foregroundColor ?? input.current.foregroundColor,
-  };
-
-  input.win.setTitleBarOverlay(resolveRuntimeTitleBarOverlayOptions(next));
-  return next;
-}
-
 export function applyMacWindowControlsUpdate(input: {
   win: Pick<BrowserWindow, "setWindowButtonPosition">;
   update: WindowControlsOverlayUpdate;
@@ -209,8 +165,6 @@ export function applyMacWindowControlsUpdate(input: {
 }
 
 export function registerWindowManager(): void {
-  const overlayStateByWindow = new WeakMap<BrowserWindow, WindowControlsOverlayState>();
-
   ipcMain.handle("paseo:window:toggleMaximize", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
@@ -219,6 +173,18 @@ export function registerWindowManager(): void {
     } else {
       win.maximize();
     }
+  });
+
+  ipcMain.handle("paseo:window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("paseo:window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
+  ipcMain.handle("paseo:window:isMaximized", (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
 
   ipcMain.handle("paseo:window:isFullscreen", (event) => {
@@ -247,6 +213,12 @@ export function registerWindowManager(): void {
   });
 
   ipcMain.handle("paseo:window:updateWindowControls", (event, update?: unknown) => {
+    // macOS is the only platform with OS-drawn window buttons whose position we influence;
+    // elsewhere the app draws its own controls, so there is no overlay to update.
+    if (process.platform !== "darwin") {
+      return;
+    }
+
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) {
       return;
@@ -261,19 +233,7 @@ export function registerWindowManager(): void {
       win.setBackgroundColor(nextUpdate.backgroundColor);
     }
 
-    if (process.platform === "darwin") {
-      applyMacWindowControlsUpdate({ win, update: nextUpdate });
-      return;
-    }
-
-    const current =
-      overlayStateByWindow.get(win) ?? createWindowControlsOverlayState(resolveSystemWindowTheme());
-    const nextState = applyWindowControlsOverlayUpdate({
-      win,
-      current,
-      update: nextUpdate,
-    });
-    overlayStateByWindow.set(win, nextState);
+    applyMacWindowControlsUpdate({ win, update: nextUpdate });
   });
 }
 
@@ -468,5 +428,200 @@ export function setupDragDropPrevention(win: BrowserWindow): void {
     if (url.startsWith("file://")) {
       event.preventDefault();
     }
+  });
+}
+
+/**
+ * A frameless window draws its own controls in the renderer, so when the renderer dies or
+ * hangs there is nothing left to click: the preload's boot controls are DOM too. Only the main
+ * process can still offer a way out, which is why VS Code prompts from here rather than relying
+ * on the titlebar (windowImpl.ts onWindowError). Without this the user has Alt+F4 or the
+ * taskbar, and Ferdium shipped precisely that (ferdium/ferdium-app#230).
+ */
+
+/** Chromium reports an aborted load for ordinary navigation races; only real failures matter. */
+const ERR_ABORTED = -3;
+
+export function shouldReportLoadFailure(errorCode: number, isMainFrame: boolean): boolean {
+  return isMainFrame && errorCode !== ERR_ABORTED;
+}
+
+export function shouldReportProcessGone(reason: string): boolean {
+  // A clean exit is the renderer going away on purpose, e.g. while the window closes.
+  return reason !== "clean-exit";
+}
+
+/** How long a requested close may take before the window is torn down regardless. */
+const CLOSE_GRACE_MS = 2000;
+
+/** How long after "Wait" to re-offer recovery if the renderer is still hung. */
+const HUNG_RECHECK_MS = 20000;
+
+interface WindowFailurePrompt {
+  message: string;
+  detail: string;
+  waitable: boolean;
+}
+
+/**
+ * Dismissing this dialog must never be the destructive choice. Electron's `cancelId` is the
+ * button Escape and the dialog's own close box map to, so it points at the first button, which
+ * is non-destructive in both shapes: Wait when the renderer may still recover, Reload when it
+ * is already gone. Close is only ever reached by choosing it.
+ */
+export function buildFailurePromptButtons(waitable: boolean): {
+  buttons: string[];
+  defaultId: number;
+  cancelId: number;
+} {
+  const buttons = waitable ? ["Wait", "Reload", "Close"] : ["Reload", "Close"];
+  return { buttons, defaultId: 0, cancelId: 0 };
+}
+
+export function setupWindowFailureRecovery(win: BrowserWindow): void {
+  let prompting = false;
+  // A window can go unresponsive and then die while its dialog is still open. Dropping the
+  // second event would leave the user answering a question about a renderer that no longer
+  // exists, and "Wait" would dismiss the only recovery path they had. Queue instead.
+  let queued: WindowFailurePrompt | null = null;
+  let hung = false;
+  let waitTimer: NodeJS.Timeout | null = null;
+
+  function clearWaitTimer(): void {
+    if (!waitTimer) return;
+    clearTimeout(waitTimer);
+    waitTimer = null;
+  }
+
+  /**
+   * Forget that the renderer was ever hung. Anything that replaces or removes the renderer -
+   * a reload, a close, a crash, a fresh load - ends the hang, and leaving the flag set would let
+   * the re-check timer fire "This window is not responding" over a healthy replacement.
+   */
+  function clearHang(): void {
+    hung = false;
+    clearWaitTimer();
+  }
+
+  function closeWindow(): void {
+    // close() rather than destroy(): the window-state persistence flush hangs off the close
+    // event, and destroy() does not emit it, so tearing the window down directly would leave
+    // the next launch restoring stale geometry. A hung renderer can still swallow the close,
+    // so fall back to destroy() once the grace period is up.
+    win.close();
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.destroy();
+    }, CLOSE_GRACE_MS);
+  }
+
+  async function prompt(input: WindowFailurePrompt): Promise<void> {
+    if (win.isDestroyed()) return;
+    if (prompting) {
+      // Keep the newest description of the problem; a crash supersedes a hang.
+      queued = input;
+      return;
+    }
+    prompting = true;
+    let choice: string | undefined;
+    try {
+      const { buttons, defaultId, cancelId } = buildFailurePromptButtons(input.waitable);
+      const { response } = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons,
+        defaultId,
+        cancelId,
+        message: input.message,
+        detail: input.detail,
+        noLink: true,
+      });
+      if (win.isDestroyed()) return;
+      choice = buttons[response];
+      if (choice === "Reload") {
+        queued = null;
+        clearHang();
+        win.reload();
+      } else if (choice === "Close") {
+        queued = null;
+        clearHang();
+        closeWindow();
+      }
+    } catch {
+      // The window can be closed from the taskbar, Alt+F4 or an app quit while this dialog is
+      // open, which rejects showMessageBox with "Object has been destroyed". Nothing is left to
+      // recover at that point, and these callers are fire-and-forget, so swallow it rather than
+      // raise an unhandled rejection in the main process.
+      return;
+    } finally {
+      prompting = false;
+    }
+
+    // Choosing Wait means "leave it alone", so an identical hang prompt must not reappear
+    // immediately. Drop any queued hang, and re-offer only if the window is still hung later:
+    // `unresponsive` fires once per episode, so without this a permanently hung window would
+    // never be offered a way out again.
+    if (choice === "Wait") {
+      if (queued?.waitable) queued = null;
+      clearWaitTimer();
+      waitTimer = setTimeout(() => {
+        waitTimer = null;
+        if (hung && !win.isDestroyed()) void prompt(input);
+      }, HUNG_RECHECK_MS);
+    }
+
+    const next = queued;
+    queued = null;
+    if (next && !win.isDestroyed()) {
+      await prompt(next);
+    }
+  }
+
+  // Keep the wording window-scoped. "<app> has stopped working" is what Windows says when a
+  // process is gone for good, and it reads as terminal; only this window's renderer died, the
+  // app is still running, and Reload fixes it. VS Code words its prompts the same way.
+  win.on("unresponsive", () => {
+    hung = true;
+    void prompt({
+      message: "This window is not responding",
+      detail: "Wait for it to recover, reload it, or close it.",
+      waitable: true,
+    });
+  });
+
+  win.on("responsive", () => {
+    clearHang();
+    if (queued?.waitable) queued = null;
+  });
+
+  win.on("closed", clearWaitTimer);
+
+  // A fresh load means a live renderer, so every failure this window was in is over: the hang,
+  // and anything still queued behind an open dialog. Keeping the queue would put "This window
+  // has crashed" over the healthy replacement, with its Reload and Close acting on a window
+  // that already recovered. This also covers reloads the user triggers from the menu rather
+  // than from the dialog.
+  win.webContents.on("did-finish-load", () => {
+    clearHang();
+    queued = null;
+  });
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    // A gone renderer is not a hung one; without this the re-check timer would offer the hang
+    // prompt again over whatever replaces it.
+    clearHang();
+    if (!shouldReportProcessGone(details.reason)) return;
+    void prompt({
+      message: "This window has crashed",
+      detail: `Its renderer exited (${details.reason}). Reload the window, or close it.`,
+      waitable: false,
+    });
+  });
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    if (!shouldReportLoadFailure(errorCode, isMainFrame)) return;
+    void prompt({
+      message: "This window could not load",
+      detail: `${errorDescription} (${errorCode}). Reload the window, or close it.`,
+      waitable: false,
+    });
   });
 }

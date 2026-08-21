@@ -2,17 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applyMacWindowControlsUpdate,
-  applyWindowControlsOverlayUpdate,
-  createWindowControlsOverlayState,
+  buildFailurePromptButtons,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
-  getTitleBarOverlayOptions,
   readBadgeCount,
   readWindowControlsOverlayUpdate,
   readWindowTheme,
-  resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
+  shouldReportLoadFailure,
+  shouldReportProcessGone,
 } from "./window-manager";
 
 describe("window-manager", () => {
@@ -47,24 +46,6 @@ describe("window-manager", () => {
     });
   });
 
-  describe("getTitleBarOverlayOptions", () => {
-    it("returns light title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("light")).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 29,
-      });
-    });
-
-    it("returns dark title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 29,
-      });
-    });
-  });
-
   describe("readWindowControlsOverlayUpdate", () => {
     it("accepts partial runtime overlay updates", () => {
       expect(
@@ -95,60 +76,6 @@ describe("window-manager", () => {
     });
   });
 
-  describe("resolveRuntimeTitleBarOverlayOptions", () => {
-    it("applies the VS Code height minus border adjustment", () => {
-      expect(
-        resolveRuntimeTitleBarOverlayOptions({
-          height: 48,
-          backgroundColor: "#ffffff",
-          foregroundColor: "#09090b",
-        }),
-      ).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 47,
-      });
-    });
-  });
-
-  describe("applyWindowControlsOverlayUpdate", () => {
-    it("merges cached colors with later runtime height updates", () => {
-      const setTitleBarOverlay = vi.fn();
-      let state = createWindowControlsOverlayState("dark");
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: {
-          backgroundColor: "#181B1A",
-          foregroundColor: "#e4e4e7",
-        },
-      });
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: { height: 48 },
-      });
-
-      expect(state).toEqual({
-        height: 48,
-        backgroundColor: "#181B1A",
-        foregroundColor: "#e4e4e7",
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(1, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 28,
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(2, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 47,
-      });
-    });
-  });
-
   describe("applyMacWindowControlsUpdate", () => {
     it("uses the focus and normal traffic-light positions", () => {
       const setWindowButtonPosition = vi.fn();
@@ -168,7 +95,7 @@ describe("window-manager", () => {
   });
 
   describe("getMainWindowChromeOptions", () => {
-    it("uses frameless hidden title bars with overlay on windows", () => {
+    it("leaves windows frameless with no overlay, so the app draws the controls", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "win32",
@@ -178,15 +105,10 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#181B1A",
-          symbolColor: "#e4e4e7",
-          height: 29,
-        },
       });
     });
 
-    it("uses frameless hidden title bars with overlay on linux", () => {
+    it("leaves linux frameless with no overlay, so the app draws the controls", () => {
       expect(
         getMainWindowChromeOptions({
           platform: "linux",
@@ -196,11 +118,6 @@ describe("window-manager", () => {
         titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#ffffff",
-          symbolColor: "#09090b",
-          height: 29,
-        },
       });
     });
 
@@ -237,6 +154,51 @@ describe("window-manager", () => {
         width: 1024,
         height: 720,
       });
+    });
+  });
+
+  describe("shouldReportLoadFailure", () => {
+    it("reports a failed main-frame load", () => {
+      expect(shouldReportLoadFailure(-105, true)).toBe(true);
+    });
+
+    it("ignores an aborted load, which ordinary navigation races produce", () => {
+      expect(shouldReportLoadFailure(-3, true)).toBe(false);
+    });
+
+    it("ignores subframe failures, which leave the window usable", () => {
+      expect(shouldReportLoadFailure(-105, false)).toBe(false);
+    });
+  });
+
+  describe("shouldReportProcessGone", () => {
+    it("reports a crashed renderer", () => {
+      expect(shouldReportProcessGone("crashed")).toBe(true);
+      expect(shouldReportProcessGone("oom")).toBe(true);
+    });
+
+    it("ignores a clean exit, which happens while the window closes", () => {
+      expect(shouldReportProcessGone("clean-exit")).toBe(false);
+    });
+  });
+
+  describe("buildFailurePromptButtons", () => {
+    it("offers Wait while the renderer may still recover", () => {
+      expect(buildFailurePromptButtons(true).buttons).toEqual(["Wait", "Reload", "Close"]);
+    });
+
+    it("drops Wait once the renderer is gone", () => {
+      expect(buildFailurePromptButtons(false).buttons).toEqual(["Reload", "Close"]);
+    });
+
+    it("never maps dismissal or the default to Close", () => {
+      // Escape and the dialog's own close box resolve to cancelId. Pointing that at Close would
+      // destroy the window for a user who only wanted the dialog gone.
+      for (const waitable of [true, false]) {
+        const { buttons, defaultId, cancelId } = buildFailurePromptButtons(waitable);
+        expect(buttons[cancelId]).not.toBe("Close");
+        expect(buttons[defaultId]).not.toBe("Close");
+      }
     });
   });
 });

@@ -3,14 +3,11 @@ import { View, type ViewProps } from "react-native";
 import {
   DESKTOP_TRAFFIC_LIGHT_HEIGHT,
   DESKTOP_TRAFFIC_LIGHT_WIDTH,
-  DESKTOP_WINDOW_CONTROLS_HEIGHT,
-  DESKTOP_WINDOW_CONTROLS_WIDTH,
   getIsElectronRuntime,
   getIsElectronRuntimeMac,
 } from "@/constants/layout";
 import { getDesktopWindow } from "@/desktop/electron/window";
 import { isNative } from "@/constants/platform";
-
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
 type WindowChromeSafeAreaPlacement = "inline" | "below";
 
@@ -76,21 +73,21 @@ export function intersectWindowChromeCorners(
   );
 }
 
+/**
+ * Only macOS draws window buttons over the renderer, so only macOS reserves a corner. On
+ * Windows and Linux the app draws its own controls as flex items inside the header row, so
+ * they take up layout space instead of floating above it, leaving no band to avoid.
+ */
 export function resolveWindowChromeObstruction(input: {
   isElectron: boolean;
   isMac: boolean;
   isFullscreen: boolean;
 }): WindowChromeObstruction {
   if (!input.isElectron || input.isFullscreen) return EMPTY_OBSTRUCTION;
-  if (input.isMac) {
-    return {
-      topLeft: { width: DESKTOP_TRAFFIC_LIGHT_WIDTH, height: DESKTOP_TRAFFIC_LIGHT_HEIGHT },
-      topRight: null,
-    };
-  }
+  if (!input.isMac) return EMPTY_OBSTRUCTION;
   return {
-    topLeft: null,
-    topRight: { width: DESKTOP_WINDOW_CONTROLS_WIDTH, height: DESKTOP_WINDOW_CONTROLS_HEIGHT },
+    topLeft: { width: DESKTOP_TRAFFIC_LIGHT_WIDTH, height: DESKTOP_TRAFFIC_LIGHT_HEIGHT },
+    topRight: null,
   };
 }
 

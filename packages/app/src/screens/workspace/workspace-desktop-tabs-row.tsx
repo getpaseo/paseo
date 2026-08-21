@@ -105,6 +105,7 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
+import { WindowControls } from "@/components/desktop/window-controls";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -541,6 +542,19 @@ function WorkspaceExitFocusModeButton({
   );
 }
 
+/**
+ * Focus mode unmounts the workspace `ScreenHeader`, so the app-drawn window controls would
+ * disappear and the preload's fallback set would take over. This row still touches the window's
+ * top edge there, so it hosts them instead, keeping exactly one set on screen.
+ */
+function WorkspaceRowWindowControls({ visible }: { visible: boolean }) {
+  if (!visible) {
+    return null;
+  }
+
+  return <WindowControls />;
+}
+
 function resolvePaneMaximizeReservedWidth(visible: boolean, measuredWidth: number): number {
   return visible ? measuredWidth : 0;
 }
@@ -677,6 +691,12 @@ interface WorkspaceDesktopTabsRowProps {
   onTogglePaneMaximized?: () => void;
   focusModeEnabled: boolean;
   onExitFocusMode: () => void;
+  /**
+   * Focus mode unmounts the workspace `ScreenHeader`, which is where the app-drawn window
+   * controls normally live. This row is the surface that still touches the window's top edge
+   * there, so it mounts them instead. Exactly one surface may do so at a time.
+   */
+  mountWindowControls?: boolean;
 }
 
 interface ResolvedWorkspaceDesktopTabsRowProps extends Omit<WorkspaceDesktopTabsRowProps, "tabs"> {
@@ -1158,6 +1178,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   onTogglePaneMaximized,
   focusModeEnabled,
   onExitFocusMode,
+  mountWindowControls = false,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1701,6 +1722,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         onPress={onTogglePaneMaximized}
         onLayout={handlePaneMaximizeButtonLayout}
       />
+      <WorkspaceRowWindowControls visible={mountWindowControls} />
     </View>
   );
 

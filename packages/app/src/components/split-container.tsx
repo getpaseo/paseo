@@ -1262,6 +1262,10 @@ function SplitPaneView({
             onTogglePaneMaximized={handleToggleMaximized}
             focusModeEnabled={Boolean(focusModeEnabled)}
             onExitFocusMode={onExitFocusMode}
+            // Focus mode renders one pane and hides the workspace header, so this row is the
+            // surface at the window's top edge and hosts the window controls. With the header
+            // present it owns them instead, so exactly one set renders either way.
+            mountWindowControls={Boolean(focusModeEnabled)}
           />
         </WindowChromeSafeArea>
 

@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       setFullscreen: (fullscreen: boolean) =>
         ipcRenderer.invoke("paseo:window:setFullscreen", fullscreen),
       isFullscreen: () => ipcRenderer.invoke("paseo:window:isFullscreen"),
+      minimize: () => ipcRenderer.invoke("paseo:window:minimize"),
+      close: () => ipcRenderer.invoke("paseo:window:close"),
+      isMaximized: () => ipcRenderer.invoke("paseo:window:isMaximized"),
       updateWindowControls: (update: {
         height?: number;
         backgroundColor?: string;
@@ -126,3 +129,147 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },
 });
+
+// Boot window controls.
+//
+// The app draws its own minimise/maximise/close inside the header row, which means they do
+// not exist until the renderer paints and the bundle mounts. Between the window appearing and
+// that moment - and for good if the bundle throws or the page fails to load - a frameless
+// window would have no way to be closed except Alt+F4 or the taskbar. Ferdium shipped exactly
+// that (ferdium/ferdium-app#230, a broken titlebar dependency), and VS Code's pre-workbench
+// splash paints the titlebar background with no buttons at all.
+//
+// So the preload injects a plain-DOM fallback set as soon as the document exists, then removes
+// it the moment the app's own controls appear. Exactly one set is ever visible. This lives here
+// rather than in index.html because the preload runs ahead of every page script, covers the
+// packaged app:// entry and the Metro dev URL alike, and needs no inline-script CSP allowance.
+const BOOT_CONTROLS_ID = "paseo-boot-window-controls";
+const APP_CONTROL_SELECTOR = '[data-testid="window-control-close"]';
+
+function installBootWindowControls(): void {
+  // macOS draws real traffic lights, and a native frame needs nothing from us.
+  if (process.platform === "darwin") return;
+
+  const glyph = (paths: string) =>
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+  const style = document.createElement("style");
+  style.textContent = `
+#${BOOT_CONTROLS_ID} {
+  position: fixed;
+  top: 4px;
+  right: 12px;
+  z-index: 2147483647;
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+#${BOOT_CONTROLS_ID} button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #71717a;
+  cursor: default;
+}
+#${BOOT_CONTROLS_ID} button:hover { background: #f4f4f5; color: #1a1a1e; }
+#${BOOT_CONTROLS_ID} button[data-close]:hover { background: #c42b1c; color: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  #${BOOT_CONTROLS_ID} button { color: #a1a1aa; }
+  #${BOOT_CONTROLS_ID} button:hover { background: #27272a; color: #fafafa; }
+}`;
+
+  const container = document.createElement("div");
+  container.id = BOOT_CONTROLS_ID;
+
+  const buttons: { label: string; channel: string; paths: string; close?: boolean }[] = [
+    { label: "Minimize", channel: "paseo:window:minimize", paths: '<path d="M5 12h14"/>' },
+    {
+      label: "Maximize",
+      channel: "paseo:window:toggleMaximize",
+      paths: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+    },
+    {
+      label: "Close",
+      channel: "paseo:window:close",
+      paths: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+      close: true,
+    },
+  ];
+
+  for (const spec of buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", spec.label);
+    button.setAttribute("data-testid", `boot-window-control-${spec.label.toLowerCase()}`);
+    if (spec.close) button.setAttribute("data-close", "true");
+    button.innerHTML = glyph(spec.paths);
+    button.addEventListener("click", () => {
+      void ipcRenderer.invoke(spec.channel);
+    });
+    container.appendChild(button);
+  }
+
+  // Attach to documentElement, not head/body: DOMContentLoaded does not fire until the app
+  // bundle has executed, which is the exact window these buttons exist to cover.
+  const root = document.documentElement;
+  root.appendChild(style);
+  root.appendChild(container);
+
+  // Hand over as soon as the app renders its own set, and take back over if they ever go away
+  // (a route with no header, or focus mode, legitimately has none).
+  //
+  // This observer watches the whole document for the whole session, so it has to be cheap: the
+  // check is coalesced into one microtask per mutation batch, and writes only when the answer
+  // changed, which makes ordinary DOM churn - streamed tokens, terminal output - a no-op.
+  let scheduled = false;
+  // window.setTimeout in the sandboxed renderer returns a number, not a Node timer handle.
+  let reshowTimer: number | null = null;
+
+  const apply = (display: string) => {
+    if (container.style.display !== display) container.style.display = display;
+  };
+
+  const sync = () => {
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      if (document.querySelector(APP_CONTROL_SELECTOR)) {
+        // Hide immediately: two visible sets at once is the one state that must never be seen.
+        if (reshowTimer) {
+          window.clearTimeout(reshowTimer);
+          reshowTimer = null;
+        }
+        apply("none");
+        return;
+      }
+      // Re-showing waits a beat, so a header that unmounts and remounts within a frame or two
+      // during navigation does not flash the fallback.
+      if (reshowTimer) return;
+      reshowTimer = window.setTimeout(() => {
+        reshowTimer = null;
+        if (!document.querySelector(APP_CONTROL_SELECTOR)) apply("flex");
+      }, 250);
+    });
+  };
+
+  sync();
+  new MutationObserver(sync).observe(root, { childList: true, subtree: true });
+}
+
+// documentElement exists as soon as parsing starts, well before body or DOMContentLoaded.
+if (document.documentElement) {
+  installBootWindowControls();
+} else {
+  const pending = setInterval(() => {
+    if (!document.documentElement) return;
+    clearInterval(pending);
+    installBootWindowControls();
+  }, 10);
+}

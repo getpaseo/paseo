@@ -30,7 +30,7 @@ import { usePullRequestPanelAvailability } from "@/panels/pull-request-availabil
 import { PullRequestContent } from "@/panels/pull-request";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 
-function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
+function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void { }
 
 interface ExplorerSidebarProps {
   serverId: string;
@@ -192,6 +192,7 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
@@ -261,6 +262,7 @@ function ExplorerSidebarContent({
           )}
         </View>
         <View style={styles.headerRightSection}>
+
           <Pressable
             onPress={onClose}
             style={styles.closeButton}
@@ -278,6 +280,7 @@ function ExplorerSidebarContent({
               />
             )}
           </Pressable>
+
         </View>
       </WindowChromeSafeArea>
 

@@ -46,6 +46,7 @@ import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
   getIsElectronRuntime,
+  getIsElectronRuntimeMac,
   HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
 } from "@/constants/layout";
@@ -698,7 +699,9 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
   const foreground = theme.colors.foreground;
 
   useEffect(() => {
-    if (!enabled || isNative) return;
+    // Only macOS has OS-drawn window buttons whose position we influence. Windows and Linux
+    // draw their controls in the renderer, so there is nothing on the OS side to update.
+    if (!enabled || isNative || !getIsElectronRuntimeMac()) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
