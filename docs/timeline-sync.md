@@ -5,6 +5,9 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
+The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
+authority and repopulates those rows when an agent resumes.
+
 The invariants are:
 
 > A continuously subscribed client applies every committed row in order. Opening or resuming an
@@ -12,7 +15,7 @@ The invariants are:
 > through backward pagination.
 
 Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
-to 64 KiB, and the same bounded item is used for durable timeline rows and live stream events.
+to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
 
