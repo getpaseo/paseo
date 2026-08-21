@@ -257,8 +257,6 @@ export const en = {
       older: "Older",
     },
     status: {
-      connected: "Connected",
-      configuredRow: "Configured; connection not reported",
       initializing: "Starting",
       idle: "Idle",
       running: "Running",
@@ -1813,6 +1811,8 @@ export const en = {
     loading: "Checking MCP servers…",
     empty: "No MCP servers",
     status: {
+      connected: "Connected",
+      configuredRow: "Configured; connection not reported",
       connecting: "Connecting",
       needsAuth: "Needs auth",
       failed: "Failed",

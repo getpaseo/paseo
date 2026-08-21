@@ -260,8 +260,6 @@ export const ko: TranslationResources = {
       older: "이전",
     },
     status: {
-      connected: "연결됨",
-      configuredRow: "구성됨; 연결 상태 미보고",
       initializing: "시작 중",
       idle: "대기 중",
       running: "실행 중",
@@ -1812,6 +1810,8 @@ export const ko: TranslationResources = {
     loading: "MCP 서버 확인 중…",
     empty: "MCP 서버 없음",
     status: {
+      connected: "연결됨",
+      configuredRow: "구성됨; 연결 상태 미보고",
       connecting: "연결 중",
       needsAuth: "인증 필요",
       failed: "실패",

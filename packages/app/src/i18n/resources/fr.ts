@@ -263,8 +263,6 @@ export const fr: TranslationResources = {
       older: "Plus vieux",
     },
     status: {
-      connected: "Connecté",
-      configuredRow: "Configuré ; connexion non signalée",
       initializing: "Départ",
       idle: "Inactif",
       running: "En cours d'exécution",
@@ -1854,6 +1852,8 @@ export const fr: TranslationResources = {
     loading: "Vérification des serveurs MCP…",
     empty: "Aucun serveur MCP",
     status: {
+      connected: "Connecté",
+      configuredRow: "Configuré ; connexion non signalée",
       connecting: "Connexion en cours",
       needsAuth: "Authentification requise",
       failed: "Échec",

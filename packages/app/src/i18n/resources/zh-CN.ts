@@ -259,8 +259,6 @@ export const zhCN: TranslationResources = {
       older: "更早",
     },
     status: {
-      connected: "已连接",
-      configuredRow: "已配置；未报告连接状态",
       initializing: "正在启动",
       idle: "空闲",
       running: "运行中",
@@ -1782,6 +1780,8 @@ export const zhCN: TranslationResources = {
     loading: "正在检查 MCP 服务器…",
     empty: "没有 MCP 服务器",
     status: {
+      connected: "已连接",
+      configuredRow: "已配置；未报告连接状态",
       connecting: "连接中",
       needsAuth: "需要授权",
       failed: "失败",

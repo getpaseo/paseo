@@ -261,8 +261,6 @@ export const ru: TranslationResources = {
       older: "Более ранние",
     },
     status: {
-      connected: "Подключено",
-      configuredRow: "Настроено; подключение не сообщается",
       initializing: "Запускается",
       idle: "Ожидает",
       running: "Работает",
@@ -1833,6 +1831,8 @@ export const ru: TranslationResources = {
     loading: "Проверка серверов MCP…",
     empty: "Нет серверов MCP",
     status: {
+      connected: "Подключено",
+      configuredRow: "Настроено; подключение не сообщается",
       connecting: "Подключение",
       needsAuth: "Нужна авторизация",
       failed: "Ошибка",

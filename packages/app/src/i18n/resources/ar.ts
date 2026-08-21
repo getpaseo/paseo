@@ -259,8 +259,6 @@ export const ar: TranslationResources = {
       older: "أقدم",
     },
     status: {
-      connected: "متّصل",
-      configuredRow: "مهيّأ; لم يُبلّغ عن الاتّصال",
       initializing: "البدء",
       idle: "عاطل",
       running: "جري",
@@ -1803,6 +1801,8 @@ export const ar: TranslationResources = {
     loading: "جارٍ فحص خوادم MCP…",
     empty: "لا توجد خوادم MCP",
     status: {
+      connected: "متّصل",
+      configuredRow: "مهيّأ; لم يُبلّغ عن الاتّصال",
       connecting: "جارٍ الاتصال",
       needsAuth: "يتطلب مصادقة",
       failed: "فشل",

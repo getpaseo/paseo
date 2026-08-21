@@ -262,8 +262,6 @@ export const ptBR: TranslationResources = {
       older: "Mais antigas",
     },
     status: {
-      connected: "Conectado",
-      configuredRow: "Configurado; conexão não informada",
       initializing: "Iniciando",
       idle: "Ocioso",
       running: "Em execução",
@@ -1836,6 +1834,8 @@ export const ptBR: TranslationResources = {
     loading: "Verificando servidores MCP…",
     empty: "Nenhum servidor MCP",
     status: {
+      connected: "Conectado",
+      configuredRow: "Configurado; conexão não informada",
       connecting: "Conectando",
       needsAuth: "Requer autenticação",
       failed: "Falhou",

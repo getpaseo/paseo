@@ -80,18 +80,34 @@ function readyView(
   return { kind: "ready", servers, source, isRefreshing };
 }
 
-function panelElement(
-  view: AgentMcpServersView,
-  onRefresh: () => void,
-  onOpenChange = vi.fn(),
-  open = false,
-) {
+/**
+ * A stand-in for `McpServersControl`: holds the open state the panel is controlled by,
+ * so a test opens it by clicking the trigger exactly as a user does. Mounting already
+ * open instead races the surface's entering animation against test teardown.
+ */
+function ControlledPanel({
+  view,
+  onRefresh,
+  onOpenChange,
+}: {
+  view: AgentMcpServersView;
+  onRefresh: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const handleOpenChange = React.useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      onOpenChange(next);
+    },
+    [onOpenChange],
+  );
   return (
     <I18nextProvider i18n={i18n}>
       <McpServersPanel
         view={view}
         open={open}
-        onOpenChange={onOpenChange}
+        onOpenChange={handleOpenChange}
         onRefresh={onRefresh}
         glyphSize={16}
       />
@@ -99,13 +115,18 @@ function panelElement(
   );
 }
 
+function panelElement(view: AgentMcpServersView, onRefresh: () => void, onOpenChange = vi.fn()) {
+  return <ControlledPanel view={view} onRefresh={onRefresh} onOpenChange={onOpenChange} />;
+}
+
+/** Mounts the panel and opens it, which is the state most assertions are about. */
 function mountPanel(view: AgentMcpServersView, onRefresh = vi.fn()) {
-  mount(panelElement(view, onRefresh, vi.fn(), true));
+  mount(panelElement(view, onRefresh));
+  click(trigger());
   return onRefresh;
 }
 
-// A read-only `ComposerTrackRow` renders its accessibility label but not its testID, so rows are
-// addressed the way a screen reader would address them.
+/** Rows are addressed by their accessible name, which is what a reader actually gets. */
 function row(name: string): HTMLElement | null {
   const element = document.querySelector(`[aria-label^="${name}"]`);
   return element instanceof HTMLElement ? element : null;
@@ -162,7 +183,7 @@ describe("MCP servers panel", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     act(() => {
-      mounted[0]?.root.render(panelElement(readyView(MIXED, true), onRefresh, vi.fn(), true));
+      mounted[0]?.root.render(panelElement(readyView(MIXED, true), onRefresh));
     });
     click(byTestId("mcp-panel-refresh") as Element);
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -206,7 +227,7 @@ describe("MCP servers panel", () => {
 
   it("reports its open state, which is what gates the fetch", () => {
     const onOpenChange = vi.fn();
-    mount(panelElement({ kind: "loading" }, vi.fn(), onOpenChange, false));
+    mount(panelElement({ kind: "loading" }, vi.fn(), onOpenChange));
 
     // Closed on mount and nothing requested: a Codex agent answers this in ~3.5s and
     // 1.1MB, far too much to spend on every agent someone clicks on.
@@ -234,7 +255,7 @@ describe("MCP servers panel", () => {
   });
 
   it("renders nothing at all when the provider cannot report MCP status", () => {
-    mount(panelElement({ kind: "unsupported" }, vi.fn(), vi.fn(), true));
+    mount(panelElement({ kind: "unsupported" }, vi.fn()));
 
     // Not an empty panel and not an error inside one — no trigger in the toolbar.
     expect(byTestId("mcp-panel-trigger")).toBeNull();
