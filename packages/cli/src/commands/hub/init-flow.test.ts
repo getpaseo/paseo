@@ -82,6 +82,7 @@ describe("Hub guided setup continuation", () => {
       },
     ]);
     assert.equal(daemon.connections, 1);
+    assert.deepEqual(daemon.snapshotCwds, [cwd]);
     const hub = await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8");
     assert.match(hub, /daemon: macbook/u);
     assert.match(hub, /provider: codex\n    model: gpt-5\n    mode: full-access/u);
@@ -289,6 +290,7 @@ class MemoryCredentials implements HubCredentialStore {
 
 class SetupDaemon implements HubDaemonClient {
   connections = 0;
+  readonly snapshotCwds: Array<string | undefined> = [];
   private origin: string | null = null;
 
   constructor(
@@ -321,7 +323,8 @@ class SetupDaemon implements HubDaemonClient {
     return { status: this.origin === null ? disconnectedStatus() : status(this.origin) };
   }
 
-  async getProvidersSnapshot() {
+  async getProvidersSnapshot(options?: { cwd?: string }) {
+    this.snapshotCwds.push(options?.cwd);
     return { entries: this.providerEntries };
   }
 

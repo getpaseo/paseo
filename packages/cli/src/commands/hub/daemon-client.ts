@@ -10,11 +10,17 @@ export interface HubStatus {
   lastError: string | null;
 }
 
+export interface HubProvidersSnapshotOptions {
+  cwd?: string;
+}
+
 export interface HubDaemonClient {
   connectHub(url: string, token: string): Promise<{ status: HubStatus }>;
   getHubStatus(): Promise<{ status: HubStatus }>;
   disconnectHub(force: boolean): Promise<{ status: HubStatus; warning?: string }>;
-  getProvidersSnapshot(): Promise<{ entries: ProviderSnapshotEntry[] }>;
+  getProvidersSnapshot(
+    options?: HubProvidersSnapshotOptions,
+  ): Promise<{ entries: ProviderSnapshotEntry[] }>;
   close(): Promise<void>;
 }
 

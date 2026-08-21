@@ -134,7 +134,7 @@ export async function runHubGuidedSetup(
   const resources = await loadSetupResources(origin, environment);
   const daemon = await loadDaemonResource(origin, daemonId, environment);
   log.success(`Connected as ${daemon.slug}`);
-  const agent = await chooseStarterAgentRuntime(environment);
+  const agent = await chooseStarterAgentRuntime(environment, cwd);
   const provider = await chooseProvider(environment);
   const providerFilters = await collectProviderFilters(provider, resources, cwd, environment);
   const scaffold = createHubInitScaffold({
@@ -383,9 +383,10 @@ async function chooseProvider(environment: HubGuidedSetupEnvironment): Promise<H
 
 async function chooseStarterAgentRuntime(
   environment: HubGuidedSetupEnvironment,
+  cwd: string,
 ): Promise<HubStarterAgentRuntime> {
   const snapshot = await withHubDaemon(environment.daemon, undefined, (daemon) =>
-    daemon.getProvidersSnapshot(),
+    daemon.getProvidersSnapshot({ cwd }),
   );
   const providers = availableStarterAgentProviders(snapshot.entries);
   if (providers.length === 0) {
