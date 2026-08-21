@@ -4,6 +4,7 @@ import type {
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginThemeContribution,
   PluginWorkspacePanelContribution,
 } from "@getpaseo/plugin";
 
@@ -15,6 +16,7 @@ export interface EvaluatedPlugin {
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  themes: PluginThemeContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -28,5 +30,6 @@ export type {
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginThemeContribution,
   PluginWorkspacePanelContribution,
 };

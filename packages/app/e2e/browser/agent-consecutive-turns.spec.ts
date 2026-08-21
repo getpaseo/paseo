@@ -726,7 +726,7 @@ async function recordDelayedRunningTransition(
   gate.holdNextAgentStreamEvent("turn_started");
   gate.holdNextAgentUpdate(agent.agentId, "running");
   gate.holdNextServerMessage("send_agent_message_response");
-  gate.setAgentStreamItemSuppressed("assistant_message", true);
+  gate.setAgentStreamSuppressed(true);
   await recordTurnFrames(page, prompt);
   await installActivityContinuityOracle(page, prompt);
   await submitMessage(page, prompt);
@@ -779,13 +779,13 @@ async function recordDelayedRunningTransition(
     const checkpoints = await readActivityContinuityOracle(page);
     expectActivityContinuity(checkpoints);
     expect(elapsedBeforeAuthoritative).toBe(0);
-    gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.setAgentStreamSuppressed(false);
     return { frames, checkpoints };
   } finally {
     if (!turnReleased) gate.releaseHeldAgentStreamEvent("turn_started");
     if (!snapshotReleased) gate.releaseHeldAgentUpdate(agent.agentId, "running");
     if (!responseReleased) gate.releaseHeldServerMessage("send_agent_message_response");
-    gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.setAgentStreamSuppressed(false);
   }
 }
 
@@ -814,6 +814,8 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     await expectComposerVisible(page);
 
     const prompt = "Delay synthetic user message by 300ms.";
+    gate.holdNextServerMessage("fetch_agent_timeline_response");
+    gate.setAgentStreamEventSuppressed("timeline", true);
     await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
     await expectAttachmentPill(page, "composer-image-attachment-pill");
     await recordTurnFrames(page, prompt);
@@ -821,7 +823,10 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
 
     const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
     await expect(submittedRow).toBeVisible();
-    await gate.waitForServerMessage("fetch_agent_timeline_response");
+    await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+    gate.truncateHeldTimelineAfterLast("user_message");
+    gate.releaseHeldServerMessage("fetch_agent_timeline_response");
+    await expect(submittedRow.getByTestId("rewind-menu-trigger")).toBeVisible();
     await recordPaintsFor(page, 80);
     expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
   } finally {
