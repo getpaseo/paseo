@@ -23,6 +23,58 @@ A project configuration is one versioned bundle:
 
 [single-repo-team-bot](https://github.com/getpaseo/hub/tree/main/examples/single-repo-team-bot) is a complete bundle in this shape: Discord, Slack, and GitHub workflows running a classifier and a worker on shared partials. Copy `.paseo/` into your repository and replace the placeholders its README lists.
 
+## Generated starter bundle
+
+`paseo hub init`, and the guided setup that interactive `paseo hub login` offers, write two files for the directory you run them in:
+
+```yaml
+# .paseo/hub.yml
+environments:
+  my-macbook:
+    kind: daemon
+    daemon: my-macbook
+    cwd: /Users/you/code/your-repo
+agents:
+  starter:
+    provider: codex
+    model: gpt-5
+    mode: full-access
+```
+
+The environment is named after the connected daemon and points at the directory setup ran in. `provider`, `model`, and `mode` are the runtime you chose from what that daemon reported, so the starter agent is a complete selection before its first run. `mode` is omitted for a provider that exposes none.
+
+```yaml
+# .paseo/workflows/slack-help.yml
+name: slack-help
+on: slack.mention
+max_runtime: 2h
+filters:
+  workspace: T01234567
+  from_users:
+    - U01234567
+steps:
+  - id: work
+    environment: my-macbook
+    max_runtime: 90m
+    idle_timeout: 10m
+    agent: starter
+    prompt:
+      - text: |
+          Answer with hub.reply, then complete this request and call hub.finish_execution when done.
+
+          <user-prompt>
+          ${{ paseo.prompt }}
+          </user-prompt>
+    allow_outputs:
+      - type: slack.reply
+        max: 1
+        required: true
+```
+
+`filters` carries provider-native identifiers: the Slack team and member ID above, the Discord guild and user ID for a Discord starter, and `owner/name` plus your login for GitHub. A Discord starter is `discord-help.yml` and a GitHub starter is `github-help.yml`, each with the reply capability its provider supports.
+
+The generated workflow allows one user in one workspace. Read [Hub security](/docs/hub/security) before widening it.
+
 ## Sources
 
 A configuration comes from one source:

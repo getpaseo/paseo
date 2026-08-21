@@ -34,7 +34,7 @@ steps:
       - { type: slack.reply, max: 1, required: true }
 ```
 
-Slack filters use IDs, not display names. `from_users` matches the author, `workspace` the team, and `channels` the channel. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
+Slack filters use IDs, not display names or Hub connection slugs. `from_users` matches the author, `workspace` the team, and `channels` the channel. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
 
 The reply posts in the triggering thread. A root message gets a thread; a threaded message stays there. `slack.reply` grants `hub.reply`, but does not add reply instructions to the prompt.
 
@@ -45,3 +45,13 @@ Leading declared inputs follow the mention:
 ```
 
 Hub consumes consecutive declared headers and exposes the remainder as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).
+
+## Find your Slack IDs
+
+| Filter       | Where to copy it                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| `workspace`  | Open Slack in a browser. The team ID is the `T…` segment of the URL.                        |
+| `from_users` | Your avatar → **Profile** → **⋮** → **Copy member ID**. Member IDs start with `U`.          |
+| `channels`   | Channel name → **About**. The channel ID is at the bottom of the panel and starts with `C`. |
+
+[Guided setup](/docs/hub/quickstart) fills `workspace` from the Slack app you connected and asks you for your member ID, so a generated starter already carries both.

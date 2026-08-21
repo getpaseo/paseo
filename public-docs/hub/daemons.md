@@ -18,7 +18,11 @@ Log in from the machine first:
 paseo hub login https://hub.example.com
 ```
 
-The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`. Then enroll the daemon:
+The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`.
+
+In an interactive terminal, login then offers to finish setup: whether to connect this daemon, and whether to initialize and deploy a starter workflow. Both default to yes. Declining the first prints `paseo hub connect <origin>`, declining the second prints `paseo hub init`, and `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through the questions.
+
+Enroll the daemon on its own when you declined, or when the machine is already logged in:
 
 ```sh
 paseo hub connect
