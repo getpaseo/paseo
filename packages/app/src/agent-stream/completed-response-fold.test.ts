@@ -64,6 +64,7 @@ function tool(
 }
 
 function project(input: {
+  enabled?: boolean;
   tail: StreamItem[];
   head?: StreamItem[];
   isTurnActive?: boolean;
@@ -71,6 +72,7 @@ function project(input: {
   preserveLeadingResponse?: boolean;
 }) {
   return projectCompletedResponseFolds({
+    enabled: input.enabled ?? true,
     tail: input.tail,
     head: input.head ?? [],
     isTurnActive: input.isTurnActive ?? false,
@@ -80,6 +82,15 @@ function project(input: {
 }
 
 describe("projectCompletedResponseFolds", () => {
+  it("passes the timeline through when completed response folding is disabled", () => {
+    const tail = [user("user", 1), thought("thought", 2), assistant("final", 3)];
+
+    const result = project({ enabled: false, tail });
+
+    expect(result.tail).toBe(tail);
+    expect(result.foldsByAnchorItemId.size).toBe(0);
+  });
+
   it("replaces completed response work with one reversible fold anchor", () => {
     const result = project({
       tail: [

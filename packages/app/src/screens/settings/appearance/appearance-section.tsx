@@ -247,6 +247,32 @@ function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps
   );
 }
 
+interface CollapseCompletedResponsesRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function CollapseCompletedResponsesRow({ value, onChange }: CollapseCompletedResponsesRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.general.collapseCompletedResponses.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.general.collapseCompletedResponses.description")}
+        </Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={t("settings.general.collapseCompletedResponses.label")}
+      />
+    </View>
+  );
+}
+
 interface ChatOutlineRowProps {
   value: boolean;
   onChange: (value: boolean) => void;
@@ -581,6 +607,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleCollapseCompletedResponsesChange = useCallback(
+    (collapseCompletedResponses: boolean) => {
+      void updateSettings({ collapseCompletedResponses });
+    },
+    [updateSettings],
+  );
+
   const handleChatOutlineChange = useCallback(
     (chatOutlineEnabled: boolean) => {
       void updateSettings({ chatOutlineEnabled });
@@ -696,6 +729,10 @@ export function AppearanceSection() {
           <AutoExpandReasoningRow
             value={settings.autoExpandReasoning}
             onChange={handleAutoExpandReasoningChange}
+          />
+          <CollapseCompletedResponsesRow
+            value={settings.collapseCompletedResponses}
+            onChange={handleCollapseCompletedResponsesChange}
           />
           <ToolCallDetailRow
             value={settings.toolCallDetailLevel}

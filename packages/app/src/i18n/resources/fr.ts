@@ -1994,6 +1994,10 @@ export const fr: TranslationResources = {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
       },
+      collapseCompletedResponses: {
+        label: "Replier les réponses terminées",
+        description: "Afficher un résumé du travail et la réponse finale une fois l’agent terminé",
+      },
       toolCallDetail: {
         label: "Affichage des appels d’outils",
         description: "Comment les appels d’outils apparaissent dans la chronologie",

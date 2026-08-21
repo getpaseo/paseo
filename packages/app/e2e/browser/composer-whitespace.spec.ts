@@ -105,7 +105,6 @@ test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
     await awaitAssistantMessage(page);
-    await page.getByRole("button", { name: "Show work", exact: true }).click();
     await waitForScrollableChat(page, { minScrollableDistance: 200, timeout: 30_000 });
     await scrollAgentChatToBottom(page);
 

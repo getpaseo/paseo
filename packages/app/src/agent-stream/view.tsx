@@ -320,6 +320,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   ) {
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
+    const collapseCompletedResponses = useSettings(
+      (settings) => settings.collapseCompletedResponses,
+    );
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -555,6 +558,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const completedResponseProjection = useMemo(
       () =>
         projectCompletedResponseFolds({
+          enabled: collapseCompletedResponses,
           tail: mountedToolCallTail,
           head: projectedToolCalls.head,
           isTurnActive,
@@ -563,6 +567,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [
         expandedCompletedResponseIds,
+        collapseCompletedResponses,
         hasOlder,
         isTurnActive,
         mountedToolCallTail,

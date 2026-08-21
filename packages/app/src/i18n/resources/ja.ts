@@ -1958,6 +1958,10 @@ export const ja: TranslationResources = {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
       },
+      collapseCompletedResponses: {
+        label: "完了した応答を折りたたむ",
+        description: "エージェントの完了後に作業の概要と最終回答を表示します",
+      },
       toolCallDetail: {
         label: "ツール呼び出しの表示",
         description: "タイムラインでのツール呼び出しの表示方法",

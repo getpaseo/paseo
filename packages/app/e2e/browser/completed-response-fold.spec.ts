@@ -14,6 +14,12 @@ test("keeps the complete final answer visible while settled response work is fol
   });
 
   try {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ collapseCompletedResponses: true }),
+      );
+    });
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);

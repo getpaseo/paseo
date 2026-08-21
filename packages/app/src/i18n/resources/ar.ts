@@ -1941,6 +1941,10 @@ export const ar: TranslationResources = {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
       },
+      collapseCompletedResponses: {
+        label: "طيّ الردود المكتملة",
+        description: "عرض ملخص للعمل والإجابة النهائية بعد انتهاء الوكيل",
+      },
       toolCallDetail: {
         label: "عرض استدعاءات الأدوات",
         description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",

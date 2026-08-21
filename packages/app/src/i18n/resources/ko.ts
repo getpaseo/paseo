@@ -1952,6 +1952,10 @@ export const ko: TranslationResources = {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
       },
+      collapseCompletedResponses: {
+        label: "완료된 응답 접기",
+        description: "에이전트가 완료되면 작업 요약과 최종 답변을 표시합니다.",
+      },
       toolCallDetail: {
         label: "도구 호출 표시",
         description: "타임라인에 도구 호출이 표시되는 방식",

@@ -1991,6 +1991,10 @@ export const es: TranslationResources = {
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
       },
+      collapseCompletedResponses: {
+        label: "Contraer respuestas completadas",
+        description: "Mostrar un resumen del trabajo y la respuesta final cuando termine el agente",
+      },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",
         description: "Cómo aparecen las llamadas a herramientas en la cronología",

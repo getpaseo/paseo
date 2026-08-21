@@ -27,6 +27,7 @@ const activeTailProjectionCache = new WeakMap<
     }
   >
 >();
+const EMPTY_COMPLETED_RESPONSE_FOLDS = new Map<string, CompletedResponseFold>();
 
 function isToolCallRunning(item: Extract<StreamItem, { kind: "tool_call" }>): boolean {
   return item.payload.data.status === "running" || item.payload.data.status === "executing";
@@ -212,12 +213,21 @@ function getActiveTailProjection(
 }
 
 export function projectCompletedResponseFolds(input: {
+  enabled: boolean;
   tail: StreamItem[];
   head: StreamItem[];
   isTurnActive: boolean;
   expandedResponseIds: ReadonlySet<string>;
   preserveLeadingResponse?: boolean;
 }): CompletedResponseFoldProjection {
+  if (!input.enabled) {
+    return {
+      tail: input.tail,
+      head: input.head,
+      foldsByAnchorItemId: EMPTY_COMPLETED_RESPONSE_FOLDS,
+    };
+  }
+
   // Live head rows normally extend the final tail response. Cache the settled tail projection so
   // each streamed delta does not rebuild long, already-settled history or invalidate its list rows.
   if (input.isTurnActive && !input.head.some((item) => item.kind === "user_message")) {

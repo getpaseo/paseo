@@ -65,6 +65,10 @@ test("does not repeat an assistant block when the current app paginates a publis
         localStorage.setItem("@paseo:e2e", "1");
         localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededHost]));
         localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+        localStorage.setItem(
+          "@paseo:app-settings",
+          JSON.stringify({ collapseCompletedResponses: true }),
+        );
       },
       { seededHost: host, preferences: buildCreateAgentPreferences() },
     );

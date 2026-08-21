@@ -1975,6 +1975,10 @@ export const ptBR: TranslationResources = {
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
       },
+      collapseCompletedResponses: {
+        label: "Recolher respostas concluídas",
+        description: "Mostrar um resumo do trabalho e a resposta final quando o agente terminar",
+      },
       toolCallDetail: {
         label: "Exibição de chamadas de ferramentas",
         description: "Como as chamadas de ferramentas aparecem na linha do tempo",

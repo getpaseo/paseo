@@ -94,6 +94,7 @@ export interface AppSettings {
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
   autoExpandReasoning: boolean;
+  collapseCompletedResponses: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
@@ -144,6 +145,7 @@ const StoredAppSettingsSchema = z.strictObject({
   sidebarRowItems: SidebarRowItemsSchema.optional(),
   sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional(),
   autoExpandReasoning: z.boolean().optional(),
+  collapseCompletedResponses: z.boolean().optional(),
   toolCallDetailLevel: z.enum(["overview", "detailed"]).optional(),
   compactToolCalls: z.boolean().optional(),
   chatOutlineEnabled: z.boolean().optional(),
@@ -177,6 +179,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   autoExpandReasoning: false,
+  collapseCompletedResponses: false,
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
@@ -344,6 +347,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   }
   if (typeof stored.chatOutlineEnabled === "boolean") {
     result.chatOutlineEnabled = stored.chatOutlineEnabled;
+  }
+  if (typeof stored.collapseCompletedResponses === "boolean") {
+    result.collapseCompletedResponses = stored.collapseCompletedResponses;
   }
   if (typeof stored.openSupportingTabsInSidePanel === "boolean") {
     result.openSupportingTabsInSidePanel = stored.openSupportingTabsInSidePanel;

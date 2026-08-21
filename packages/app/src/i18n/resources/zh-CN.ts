@@ -1917,6 +1917,10 @@ export const zhCN: TranslationResources = {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
       },
+      collapseCompletedResponses: {
+        label: "折叠已完成的回复",
+        description: "代理完成后显示工作摘要和最终回答",
+      },
       toolCallDetail: {
         label: "工具调用显示",
         description: "工具调用在时间线中的显示方式",

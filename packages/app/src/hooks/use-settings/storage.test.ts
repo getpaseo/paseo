@@ -496,6 +496,17 @@ describe("appearance settings", () => {
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
     expect(result.toolCallDetailLevel).toBe("detailed");
+    expect(result.collapseCompletedResponses).toBe(false);
+  });
+
+  it("restores the opt-in completed response folding preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ collapseCompletedResponses: true }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).collapseCompletedResponses).toBe(true);
   });
 
   it("migrates the enabled compact tool call preference to overview", async () => {
