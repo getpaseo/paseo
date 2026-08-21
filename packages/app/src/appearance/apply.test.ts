@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
 import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
-import { applyAppearance, type AppearanceInput } from "./apply-appearance";
+import { applyAppearance, type AppearanceInput } from "./apply";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
 // UnistylesRuntime.updateTheme is a spy that records (themeName, updater) calls.

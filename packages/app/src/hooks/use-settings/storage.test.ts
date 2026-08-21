@@ -403,6 +403,21 @@ describe("saveAppSettings", () => {
     });
   });
 
+  it("persists a selected plugin theme", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { theme: "plugin", pluginThemeId: "catppuccin/theme/mocha" },
+      deps,
+    });
+
+    const loaded = await loadAppSettingsFromStorage(deps);
+    expect(loaded.theme).toBe("plugin");
+    expect(loaded.pluginThemeId).toBe("catppuccin/theme/mocha");
+  });
+
   // The row items are written as one object through one strict schema, so an item the schema
   // does not know does not just fail to persist itself — it takes every sibling toggle with it.
   it.each(SIDEBAR_ROW_ITEMS)("persists the %s row item being switched off", async (item) => {

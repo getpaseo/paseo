@@ -75,3 +75,18 @@ describe("Sidebar interaction surfaces", () => {
     },
   );
 });
+
+describe("Built-in light theme", () => {
+  it("preserves its authored aliases and terminal contrast through the semantic builder", () => {
+    expect(lightTheme.colors).toMatchObject({
+      primary: "#18181b",
+      primaryForeground: "#fafafa",
+      destructiveForeground: "#ffffff",
+      successForeground: "#ffffff",
+      terminal: {
+        black: "#1a1a1e",
+        brightBlack: "#3f3f46",
+      },
+    });
+  });
+});

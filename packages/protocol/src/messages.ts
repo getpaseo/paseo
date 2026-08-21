@@ -3324,6 +3324,10 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
+        // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
+        // so a theme plugin cannot start there at all.
+        pluginThemes: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
