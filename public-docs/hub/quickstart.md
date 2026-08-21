@@ -71,7 +71,7 @@ Setup then validates the bundle, writes it, and deploys:
     └── slack-help.yml
 ```
 
-If `.paseo/` already exists, setup asks before replacing it. Declining the daemon connection prints `paseo hub connect <hub>`, and declining the starter workflow prints `paseo hub init`, so you can resume either one later.
+If `.paseo/` already exists, setup asks before replacing it. Declining the daemon connection prints `paseo hub connect <hub>; then paseo hub init` — both commands, because connecting alone does not create the workflow. Declining only the starter workflow prints `paseo hub init`.
 
 ## 5. Mention the bot
 
@@ -81,7 +81,7 @@ In the channel you invited the bot to:
 @Paseo have a look
 ```
 
-Hub starts the agent on your daemon and posts its reply in the Slack thread. The terminal prints the project's activity URL; open it if nothing runs. [Activity](/docs/hub/activity) records every event Hub accepted, including the ones that matched nothing.
+Hub starts the agent on your daemon and posts its reply in the Slack thread. The terminal prints the project's Activity URL, where the run appears. If nothing runs, [Activity](/docs/hub/activity) tells a filtered mention from one that never matched a workflow.
 
 ## Next
 
@@ -90,4 +90,4 @@ Hub starts the agent on your daemon and posts its reply in the Slack thread. The
 - [Workflows](/docs/hub/workflows) — routing, prompts, and provider replies.
 - [Hub security](/docs/hub/security) — read this before widening `from_users` or giving an agent GitHub authority.
 
-Hub keeps its local state in your user data directory, normally `~/.local/share/paseo-hub`. [Self-hosting](/docs/hub/self-hosting) covers PostgreSQL, public URLs, environment-managed apps, Docker, and cloud deployment when you outgrow the local run.
+Hub keeps its local state in your user data directory, normally `~/.local/share/paseo-hub`. [Self-hosting](/docs/hub/self-hosting) covers deployment and advanced configuration when you outgrow the local run.

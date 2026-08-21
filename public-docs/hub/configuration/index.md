@@ -71,7 +71,9 @@ steps:
         required: true
 ```
 
-`filters` carries provider-native identifiers: the Slack team and member ID above, the Discord guild and user ID for a Discord starter, and `owner/name` plus your login for GitHub. A Discord starter is `discord-help.yml` and a GitHub starter is `github-help.yml`, each with the reply capability its provider supports.
+`filters` carries the identity each provider matches on: the Slack team and member ID above, the Discord guild and user ID for a Discord starter, and `owner/name` plus your login for GitHub.
+
+A Discord starter is `discord-help.yml` and carries `discord.reply`, the counterpart of the `slack.reply` above. A GitHub starter is `github-help.yml` and declares no reply output; GitHub has no reply capability, so a step that must comment needs a [`github` block](/docs/hub/github) instead.
 
 The generated workflow allows one user in one workspace. Read [Hub security](/docs/hub/security) before widening it.
 
