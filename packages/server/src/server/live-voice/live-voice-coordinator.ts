@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import type { Logger } from "pino";
 
-import type { AgentProvider, AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import type {
+  AgentPermissionResponse,
+  AgentProvider,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "../agent/agent-sdk-types.js";
 import { PASEO_MCP_SERVER_NAME } from "../agent/runtime-mcp-config.js";
 import {
   asAgentRealtimeVoiceSession,
@@ -160,6 +165,23 @@ export interface LiveVoiceHostAgent {
   session: unknown;
 }
 
+interface LiveVoiceHostSession extends AgentRealtimeVoiceSession {
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void;
+  respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<unknown>;
+}
+
+function asLiveVoiceHostSession(value: unknown): LiveVoiceHostSession | null {
+  const realtime = asAgentRealtimeVoiceSession(value);
+  if (!realtime || value == null || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<LiveVoiceHostSession>;
+  return typeof candidate.subscribe === "function" &&
+    typeof candidate.respondToPermission === "function"
+    ? (candidate as LiveVoiceHostSession)
+    : null;
+}
+
 /**
  * The slice of the agent manager the coordinator needs. `AgentManager` satisfies
  * it structurally; tests supply a minimal fake.
@@ -188,6 +210,8 @@ interface LiveVoiceCall {
   state: "starting" | "active" | "stopping" | "closed";
   seq: number;
   unsubscribeRealtime: (() => void) | null;
+  unsubscribeHost: (() => void) | null;
+  deniedHostPermissionIds: Set<string>;
   startTimer: NodeJS.Timeout | null;
   /**
    * A provider may answer `realtimeStart` with an empty result and deliver the
@@ -301,6 +325,8 @@ export class LiveVoiceCoordinator {
       state: "starting",
       seq: 0,
       unsubscribeRealtime: null,
+      unsubscribeHost: null,
+      deniedHostPermissionIds: new Set(),
       startTimer: null,
       bufferedAnswerSdp: null,
       sdpWaiter: null,
@@ -321,6 +347,9 @@ export class LiveVoiceCoordinator {
       }
       call.hostAgentId = host.agentId;
       call.provider = host.provider;
+      call.unsubscribeHost = host.provider.subscribe((event) => {
+        this.handleHostEvent(call, host.provider, event);
+      });
       call.unsubscribeRealtime = host.provider.subscribeRealtimeEvents((event) => {
         this.handleRealtimeEvent(call, event);
       });
@@ -459,7 +488,7 @@ export class LiveVoiceCoordinator {
     request: LiveVoiceStartRequest,
   ): Promise<{
     agentId: string;
-    provider: AgentRealtimeVoiceSession;
+    provider: LiveVoiceHostSession;
     context: LiveVoiceStartContext | null;
   }> {
     if (!this.agents.hasPaseoMcpInjection()) {
@@ -492,6 +521,9 @@ export class LiveVoiceCoordinator {
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
+      ...(this.hostProfile.providerOptions
+        ? { providerOptions: this.hostProfile.providerOptions }
+        : {}),
       toolPolicy: {
         preapproved: LIVE_VOICE_ROUTING_TOOLS.map((tool) => ({
           kind: "mcp" as const,
@@ -535,7 +567,7 @@ export class LiveVoiceCoordinator {
     // Provider-agnostic on purpose: any provider whose session implements the
     // realtime seam and advertises the capability can host a call.
     const provider = agent.capabilities.supportsLiveVoice
-      ? asAgentRealtimeVoiceSession(agent.session)
+      ? asLiveVoiceHostSession(agent.session)
       : null;
     if (!provider) {
       // Spawned but useless — don't leave it running.
@@ -559,6 +591,46 @@ export class LiveVoiceCoordinator {
       "live_voice.host.started",
     );
     return { agentId: agent.id, provider, context };
+  }
+
+  private handleHostEvent(
+    call: LiveVoiceCall,
+    provider: LiveVoiceHostSession,
+    event: AgentStreamEvent,
+  ): void {
+    if (event.type !== "permission_requested") {
+      return;
+    }
+    if (call.deniedHostPermissionIds.has(event.request.id)) {
+      return;
+    }
+    call.deniedHostPermissionIds.add(event.request.id);
+
+    const response: AgentPermissionResponse = {
+      behavior: "deny",
+      message: "Live Voice can only act through Paseo routing tools.",
+    };
+    this.logger.warn(
+      {
+        liveSessionId: call.liveSessionId,
+        hostAgentId: call.hostAgentId,
+        permissionId: event.request.id,
+        permissionName: event.request.name,
+      },
+      "live_voice.host.permission_auto_denied",
+    );
+    void provider.respondToPermission(event.request.id, response).catch((error) => {
+      if (call.state === "closed" || this.calls.get(call.liveSessionId) !== call) {
+        return;
+      }
+      this.publish(call, {
+        kind: "error",
+        code: "host_permission_denial_failed",
+        message: "Live Voice could not reject an unsupported host action.",
+        fatal: true,
+      });
+      this.close(call, "error", error instanceof Error ? error.message : String(error));
+    });
   }
 
   /**
@@ -799,6 +871,8 @@ export class LiveVoiceCoordinator {
     }
     call.unsubscribeRealtime?.();
     call.unsubscribeRealtime = null;
+    call.unsubscribeHost?.();
+    call.unsubscribeHost = null;
 
     const waiter = call.sdpWaiter;
     call.sdpWaiter = null;

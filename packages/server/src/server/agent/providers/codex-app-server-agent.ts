@@ -176,9 +176,9 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
 const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
-// `--enable realtime_conversation` plus the `version: "v3"` WebRTC transport
-// only exist in 0.145.0+. Older binaries reject the flag at launch, so gate it.
-const CODEX_LIVE_VOICE_MIN_VERSION: readonly [number, number, number] = [0, 145, 0];
+// Live Voice's v3 WebRTC transport and restricted hidden-host config require
+// Codex 0.147.0+. Older binaries either lack realtime or reject the config.
+const CODEX_LIVE_VOICE_MIN_VERSION: readonly [number, number, number] = [0, 147, 0];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -214,7 +214,7 @@ const CODEX_REALTIME_TRANSPORT_FAILURE_PATTERNS: readonly RegExp[] = [
 // The last Codex whose realtime transport we have seen hold up end to end.
 // Reported failures cluster on newer builds, and this is the one lever a user
 // has, so name it in the error rather than making them guess.
-const CODEX_LIVE_VOICE_KNOWN_GOOD_VERSION = "0.145.0";
+const CODEX_LIVE_VOICE_KNOWN_GOOD_VERSION = "0.147.0";
 
 /**
  * Turns a Codex realtime error into something the user can act on. Non-transport

@@ -142,11 +142,13 @@ project or ordinary visible agent. Which agent provider hosts it comes from a
 host profile (`agent/providers/live-voice-host-profiles.ts`) — the coordinator
 and everything under `server/live-voice/` are provider-neutral, and the daemon
 advertises the choice as `features.liveVoiceHostProvider`. Today the only
-profile is Codex. Negotiation and control messages travel over the existing
-authenticated Paseo WebSocket, while microphone and remote speech media travel
-directly between the app's WebRTC peer and the realtime provider. The app never
-receives or stores a provider API key for this path: Codex uses its existing
-ChatGPT-subscription authentication to establish the realtime session.
+profile is Codex, with a 0.147.0 minimum because the hidden host relies on that
+version's restricted tool configuration. Negotiation and control messages
+travel over the existing authenticated Paseo WebSocket, while microphone and
+remote speech media travel directly between the app's WebRTC peer and the
+realtime provider. The app never receives or stores a provider API key for this
+path: Codex uses its existing ChatGPT-subscription authentication to establish
+the realtime session.
 
 Live Voice requires **Enable Paseo tools** on its host. The app excludes hosts
 that advertise the setting as off, and the daemon rejects the start request as
@@ -183,6 +185,15 @@ hidden Live Voice host on A
   -> authenticated existing socket on B
   -> B's top-level Paseo tool catalog
 ```
+
+The hidden host is non-interactive and fail-closed. Its provider profile removes
+native shell, browser, computer, image-generation, app/plugin, and subagent tools,
+disables project instructions and web search, and runs with read-only sandboxing
+and no approval prompts. Any provider permission request that still reaches the
+host is denied immediately so it cannot hold the spoken conversation open. This
+does not auto-deny work on an ordinary Paseo agent: those permission requests are
+reported into the call, where the user can approve or deny them by voice through
+`respond_to_permission`.
 
 Each hop of that route is cheap; what is expensive is a model turn, because the
 user hears silence for the whole of it. So the tools are shaped to spend hops

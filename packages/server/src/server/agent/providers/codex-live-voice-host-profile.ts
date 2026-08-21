@@ -1,4 +1,49 @@
 import type { LiveVoiceHostProfile } from "../../live-voice/live-voice-host-profile.js";
+import type { CodexProviderOptions } from "./codex/options.js";
+
+/**
+ * The host dispatches Paseo actions; it never performs machine-local work.
+ * Removing native action tools keeps a mistaken delegation from becoming an
+ * approval prompt, while never/read-only make unsupported or future tools fail closed.
+ */
+export const CODEX_LIVE_VOICE_PROVIDER_OPTIONS = {
+  approval_policy: "never",
+  sandbox_mode: "read-only",
+  web_search: "disabled",
+  project_doc_max_bytes: 0,
+  tools: {
+    experimental_request_user_input: { enabled: false },
+    update_plan: { enabled: false },
+  },
+  features: {
+    apps: false,
+    browser_use: false,
+    browser_use_external: false,
+    browser_use_full_cdp_access: false,
+    code_mode: false,
+    code_mode_only: false,
+    computer_use: false,
+    current_time_reminder: false,
+    deferred_executor: false,
+    goals: false,
+    hooks: false,
+    image_generation: false,
+    memories: false,
+    multi_agent: false,
+    multi_agent_v2: false,
+    plugins: false,
+    recommended_plugins: false,
+    remote_plugin: false,
+    request_permissions_tool: false,
+    shell_tool: false,
+    skill_mcp_dependency_install: false,
+    skill_search: false,
+    token_budget: false,
+    tool_suggest: false,
+    view_image: false,
+    workspace_dependencies: false,
+  },
+} satisfies CodexProviderOptions;
 
 /**
  * Codex's Live Voice hosting profile — the adapter that maps codex specifics
@@ -34,6 +79,7 @@ export const CODEX_LIVE_VOICE_HOST_PROFILE: LiveVoiceHostProfile = {
   provider: "codex",
   model: "gpt-5.6-luna",
   thinkingOptionId: "medium",
+  providerOptions: CODEX_LIVE_VOICE_PROVIDER_OPTIONS,
   contextLimits: {
     contextTokenBudget: 3_000,
     bytesPerToken: 4,

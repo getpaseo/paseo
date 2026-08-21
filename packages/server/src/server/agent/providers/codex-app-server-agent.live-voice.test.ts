@@ -87,6 +87,20 @@ function realtimeRequests(
 }
 
 describe("codex live voice", () => {
+  test.each([
+    ["codex-cli 0.146.0", false],
+    ["codex-cli 0.147.0", true],
+  ])("requires Codex 0.147.0 or newer (%s)", async (version, expected) => {
+    const client = new CodexAppServerAgentClient(createTestLogger());
+    const internals = client as unknown as {
+      resolveCodexVersion: () => Promise<string | null>;
+      resolveLiveVoiceEnabled: () => Promise<boolean>;
+    };
+    internals.resolveCodexVersion = async () => version;
+
+    await expect(internals.resolveLiveVoiceEnabled()).resolves.toBe(expected);
+  });
+
   test("reads v3 voice choices from the upstream app-server catalog", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/realtime/listVoices": () => ({
@@ -239,7 +253,7 @@ describe("codex live voice", () => {
         message:
           "stream disconnected before completion: Connection reset without closing handshake" +
           " — Codex's own realtime transport (codex-cli 0.146.0) dropped the call." +
-          " If every call fails this way, pin @openai/codex to 0.145.0.",
+          " If every call fails this way, pin @openai/codex to 0.147.0.",
       },
     ]);
   });
@@ -260,7 +274,7 @@ describe("codex live voice", () => {
         message:
           "failed to connect realtime websocket: HTTP error: 404 Not Found" +
           " — Codex's own realtime transport dropped the call." +
-          " If every call fails this way, pin @openai/codex to 0.145.0.",
+          " If every call fails this way, pin @openai/codex to 0.147.0.",
       },
     ]);
   });

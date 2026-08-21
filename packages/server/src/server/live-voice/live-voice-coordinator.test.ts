@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentRealtimeVoiceEvent } from "../agent/agent-realtime-voice.js";
-import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import type {
+  AgentPermissionResponse,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "../agent/agent-sdk-types.js";
 import {
   LiveVoiceCoordinator,
   type LiveVoiceContextProvider,
@@ -22,6 +26,7 @@ const TEST_HOST_PROFILE: LiveVoiceHostProfile = {
   provider: "test-realtime-provider",
   model: "test-fast-model",
   thinkingOptionId: "medium",
+  providerOptions: { host_policy: "routing-only" },
   contextLimits: { contextTokenBudget: 3_000, bytesPerToken: 4 },
 };
 
@@ -44,11 +49,19 @@ interface FakeProviderSession {
   realtimeStop(): Promise<void>;
   realtimeAppendText(params: FakeAppendTextParams): Promise<void>;
   readonly appendedText: FakeAppendTextParams[];
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void;
+  respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void>;
   subscribeRealtimeEvents(callback: (event: AgentRealtimeVoiceEvent) => void): () => void;
   emit(event: AgentRealtimeVoiceEvent): void;
+  emitHostEvent(event: AgentStreamEvent): void;
+  readonly permissionResponses: Array<{
+    requestId: string;
+    response: AgentPermissionResponse;
+  }>;
   readonly startCalls: FakeStartParams[];
   readonly stopCalls: number[];
   readonly subscriberCount: () => number;
+  readonly hostSubscriberCount: () => number;
 }
 
 /**
@@ -59,20 +72,32 @@ function createFakeProviderSession(options?: {
   onStart?: (emit: (event: AgentRealtimeVoiceEvent) => void) => void;
   startError?: Error;
   appendTextError?: Error;
+  permissionResponseError?: Error;
 }): FakeProviderSession {
   const subscribers = new Set<(event: AgentRealtimeVoiceEvent) => void>();
+  const hostSubscribers = new Set<(event: AgentStreamEvent) => void>();
   const startCalls: FakeStartParams[] = [];
   const stopCalls: number[] = [];
   const appendedText: FakeAppendTextParams[] = [];
+  const permissionResponses: Array<{
+    requestId: string;
+    response: AgentPermissionResponse;
+  }> = [];
   const emit = (event: AgentRealtimeVoiceEvent): void => {
     for (const subscriber of Array.from(subscribers)) subscriber(event);
+  };
+  const emitHostEvent = (event: AgentStreamEvent): void => {
+    for (const subscriber of Array.from(hostSubscribers)) subscriber(event);
   };
   return {
     startCalls,
     stopCalls,
     appendedText,
+    permissionResponses,
     subscriberCount: () => subscribers.size,
+    hostSubscriberCount: () => hostSubscribers.size,
     emit,
+    emitHostEvent,
     async realtimeStart(params) {
       startCalls.push(params);
       if (options?.startError) throw options.startError;
@@ -84,6 +109,16 @@ function createFakeProviderSession(options?: {
     async realtimeAppendText(params) {
       if (options?.appendTextError) throw options.appendTextError;
       appendedText.push(params);
+    },
+    subscribe(callback) {
+      hostSubscribers.add(callback);
+      return () => {
+        hostSubscribers.delete(callback);
+      };
+    },
+    async respondToPermission(requestId, response) {
+      if (options?.permissionResponseError) throw options.permissionResponseError;
+      permissionResponses.push({ requestId, response });
     },
     subscribeRealtimeEvents(callback) {
       subscribers.add(callback);
@@ -246,6 +281,7 @@ describe("LiveVoiceCoordinator", () => {
         cwd: HOST_CWD,
         title: "Live Voice host",
         internal: true,
+        providerOptions: { host_policy: "routing-only" },
         toolPolicy: {
           preapproved: [
             { kind: "mcp", server: "paseo", tool: "list_hosts" },
@@ -273,6 +309,75 @@ describe("LiveVoiceCoordinator", () => {
 
     expect(await startCall(harness)).toMatchObject({ accepted: true });
     expect(harness.createConfigs[0]?.cwd).toBe(os.homedir());
+  });
+
+  it("auto-denies a permission request from the hidden host instead of stalling the call", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    const permissionEvent: AgentStreamEvent = {
+      type: "permission_requested",
+      provider: TEST_HOST_PROFILE.provider,
+      request: {
+        id: "host-permission-1",
+        provider: TEST_HOST_PROFILE.provider,
+        name: "CommandExecution",
+        kind: "tool",
+        title: "Run outside the sandbox",
+      },
+    };
+    harness.provider().emitHostEvent(permissionEvent);
+    harness.provider().emitHostEvent(permissionEvent);
+
+    expect(harness.provider().permissionResponses).toEqual([
+      {
+        requestId: "host-permission-1",
+        response: {
+          behavior: "deny",
+          message: "Live Voice can only act through Paseo routing tools.",
+        },
+      },
+    ]);
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
+    expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
+  });
+
+  it("closes the call visibly if an unexpected host permission cannot be denied", async () => {
+    const harness = createHarness({
+      makeProvider: () =>
+        createFakeProviderSession({
+          onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+          permissionResponseError: new Error("permission vanished"),
+        }),
+    });
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.provider().emitHostEvent({
+      type: "permission_requested",
+      provider: TEST_HOST_PROFILE.provider,
+      request: {
+        id: "host-permission-1",
+        provider: TEST_HOST_PROFILE.provider,
+        name: "CommandExecution",
+        kind: "tool",
+      },
+    });
+    await Promise.resolve();
+
+    expect(harness.updates.map((update) => update.event)).toEqual([
+      { kind: "started" },
+      {
+        kind: "error",
+        code: "host_permission_denial_failed",
+        message: "Live Voice could not reject an unsupported host action.",
+        fatal: true,
+      },
+      { kind: "closed", cause: "error", detail: "permission vanished" },
+    ]);
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("preserves the legacy local catalog when the owner cannot route across hosts", async () => {
@@ -410,6 +515,7 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates.filter((update) => update.event.kind === "closed")).toHaveLength(1);
     expect(harness.provider().stopCalls).toHaveLength(1);
     expect(harness.provider().subscriberCount()).toBe(0);
+    expect(harness.provider().hostSubscriberCount()).toBe(0);
     expect(harness.closedHostIds).toEqual(["host-1"]);
     expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
     expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);

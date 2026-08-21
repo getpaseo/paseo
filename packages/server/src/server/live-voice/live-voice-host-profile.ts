@@ -1,4 +1,4 @@
-import type { AgentProvider } from "../agent/agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { LiveVoiceContextLimits } from "./live-voice-context.js";
 
 /**
@@ -17,6 +17,8 @@ export interface LiveVoiceHostProfile {
    */
   model: string;
   thinkingOptionId: string;
+  /** Provider-native restrictions for the hidden host session. */
+  providerOptions?: AgentSessionConfig["providerOptions"];
   /** How the provider counts snapshot context, so budgeting matches its limits. */
   contextLimits: LiveVoiceContextLimits;
 }
