@@ -104,6 +104,14 @@ describe("Hub init scaffold", () => {
       const scaffold = createHubInitScaffold({
         cwd,
         daemonSlug: "build-studio",
+        agent: {
+          provider: "codex",
+          model: "gpt-5",
+          mode: "full-access",
+          label: "Codex · GPT-5 · Full access",
+          suggested: true,
+          key: "codex\u0000gpt-5\u0000full-access",
+        },
         provider,
         providerFilters,
       });
@@ -124,6 +132,9 @@ describe("Hub init scaffold", () => {
       if (provider === "slack") expect(parsed.filters.workspace).toBe("T123456");
       if (provider === "discord") expect(parsed.filters.guild).toBe("123456789");
       expect(parsed.filters.channels).toBeUndefined();
+      expect(YAML.parse(scaffold.hub)).toMatchObject({
+        agents: { starter: { provider: "codex", model: "gpt-5", mode: "full-access" } },
+      });
 
       let validatedPaths: readonly string[] = [];
       const result = await runHubDeploy(

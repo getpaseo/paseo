@@ -3,6 +3,7 @@ import YAML from "yaml";
 import type { HubDeployBundle } from "./deploy-bundle.js";
 import type { HubProject } from "./hub-client/index.js";
 import type { HubStatus } from "./daemon-client.js";
+import type { HubStarterAgentRuntime } from "./starter-agent-runtime.js";
 
 export type HubInitProvider = "github" | "slack" | "discord";
 
@@ -25,6 +26,7 @@ export interface HubInitOpeningPlan {
 export interface HubInitScaffoldInput {
   cwd: string;
   daemonSlug: string;
+  agent: HubStarterAgentRuntime;
   provider: HubInitProvider;
   providerFilters: Readonly<Record<string, string>>;
 }
@@ -101,9 +103,10 @@ export function createHubInitScaffold(input: HubInitScaffoldInput): HubInitScaff
         },
       },
       agents: {
-        codex: {
-          provider: "codex",
-          mode: "full-access",
+        starter: {
+          provider: input.agent.provider,
+          model: input.agent.model,
+          ...(input.agent.mode === undefined ? {} : { mode: input.agent.mode }),
         },
       },
     },
@@ -184,7 +187,7 @@ function workflow(input: {
         environment: input.environment,
         max_runtime: "90m",
         idle_timeout: "10m",
-        agent: "codex",
+        agent: "starter",
         prompt: [
           {
             text: `${replyInstruction}complete this request and call hub.finish_execution when done.\n\n<user-prompt>\n\${{ paseo.prompt }}\n</user-prompt>\n`,

@@ -534,6 +534,10 @@ class FakeDaemon implements HubDaemonClient {
     return { status: hubStatus("connected", this.origin) };
   }
 
+  async getProvidersSnapshot() {
+    return { entries: [] };
+  }
+
   async disconnectHub(force: boolean) {
     this.disconnects += 1;
     this.disconnectForces.push(force);

@@ -24,7 +24,11 @@ describe("Hub guided setup continuation", () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers([true, true], ["slack"], ["U123"]);
+    const prompts = new PromptAnswers(
+      [true, true],
+      ["codex\u0000gpt-5\u0000full-access", "slack"],
+      ["U123"],
+    );
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
     const environment = setupEnvironment(cwd, credentials, daemon, prompts, calls);
 
@@ -45,7 +49,8 @@ describe("Hub guided setup continuation", () => {
       "Connect this daemon to https://hub.test?",
       "Initialize and deploy a starter workflow?",
     ]);
-    assert.deepEqual(prompts.selections, ["Trigger provider"]);
+    assert.deepEqual(prompts.selections, ["Starter agent runtime", "Trigger provider"]);
+    assert.deepEqual(prompts.selectionOptions[0], ["Codex · GPT-5 · Full access (suggested)"]);
     assert.deepEqual(calls, [
       { operation: "token", origin: "https://hub.test" },
       { operation: "projects", origin: "https://hub.test" },
@@ -63,7 +68,9 @@ describe("Hub guided setup continuation", () => {
       },
     ]);
     assert.equal(daemon.connections, 1);
-    assert.match(await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"), /daemon: macbook/u);
+    const hub = await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8");
+    assert.match(hub, /daemon: macbook/u);
+    assert.match(hub, /provider: codex\n    model: gpt-5\n    mode: full-access/u);
   });
 
   it("prints exact actionable resume commands for login continuation declines", async () => {
@@ -101,6 +108,37 @@ describe("Hub guided setup continuation", () => {
       /Existing .paseo\/ bundle left unchanged/u,
     );
     assert.deepEqual(prompts.confirmations, ["Replace the existing .paseo/ Hub bundle?"]);
+  });
+
+  it("refuses an incomplete Claude default before writing a starter bundle", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new SetupDaemon([
+      {
+        provider: "claude",
+        status: "ready",
+        enabled: true,
+        models: [{ provider: "claude", id: "sonnet", label: "Sonnet", isDefault: true }],
+        modes: [{ id: "auto", label: "Auto" }],
+        defaultModeId: null,
+      },
+    ]);
+
+    await assert.rejects(
+      runHubGuidedSetup(
+        setupEnvironment(cwd, credentials, daemon, new PromptAnswers([], [], []), []),
+        {
+          origin: "https://hub.test",
+          daemonId: "daemon-1",
+          deploy: true,
+        },
+      ),
+      /Configure an enabled provider with a selectable model and default mode/u,
+    );
+    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"), {
+      code: "ENOENT",
+    });
   });
 });
 
@@ -170,6 +208,7 @@ function setupEnvironment(
 class PromptAnswers {
   readonly confirmations: string[] = [];
   readonly selections: string[] = [];
+  readonly selectionOptions: string[][] = [];
   readonly messages: string[] = [];
 
   constructor(
@@ -183,8 +222,16 @@ class PromptAnswers {
     return this.confirmAnswers.shift() ?? false;
   }
 
-  async select(options: { message: string }): Promise<string> {
+  async select(options: {
+    message: string;
+    options?: { label: string; hint?: string }[];
+  }): Promise<string> {
     this.selections.push(options.message);
+    this.selectionOptions.push(
+      options.options?.map(
+        (option) => `${option.label}${option.hint ? ` (${option.hint})` : ""}`,
+      ) ?? [],
+    );
     return this.selectAnswers.shift() ?? "";
   }
 
@@ -223,6 +270,20 @@ class SetupDaemon implements HubDaemonClient {
   connections = 0;
   private origin: string | null = null;
 
+  constructor(
+    private readonly providerEntries = [
+      {
+        provider: "codex",
+        status: "ready" as const,
+        enabled: true,
+        label: "Codex",
+        models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
+        modes: [{ id: "full-access", label: "Full access" }],
+        defaultModeId: "full-access",
+      },
+    ],
+  ) {}
+
   async connectHub(origin: string) {
     this.connections += 1;
     this.origin = origin;
@@ -231,6 +292,10 @@ class SetupDaemon implements HubDaemonClient {
 
   async getHubStatus() {
     return { status: this.origin === null ? disconnectedStatus() : status(this.origin) };
+  }
+
+  async getProvidersSnapshot() {
+    return { entries: this.providerEntries };
   }
 
   async disconnectHub() {
