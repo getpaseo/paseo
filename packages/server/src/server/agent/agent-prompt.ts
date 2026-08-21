@@ -462,6 +462,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         return;
       }
 
+      if (event.type === "timeline_replacement") {
+        return;
+      }
+
       if (event.event.type === "permission_requested") {
         // A permission pause is an intermediate checkpoint. Forget the run
         // observed before it so an idle state during follow-up startup cannot

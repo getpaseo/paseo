@@ -23,6 +23,7 @@ import {
   isTimelineResumeSnapshotAuthoritative,
   planTimelineTailFetch,
 } from "@/timeline/timeline-sync-plan";
+import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import {
   createViewedTimelineSync,
   type TimelineDeliveryMode,
@@ -788,6 +789,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       applyTimelineResponse(message.payload);
     });
 
+    const unsubTimelineReplacement = client.on("agent.timeline.replacement", (message) => {
+      if (message.type !== "agent.timeline.replacement") return;
+      void requestTimelineReplacement(
+        {
+          fetchAgentTimeline: (agentId, request) =>
+            getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request),
+        },
+        message.payload.agentId,
+      ).catch((error: unknown) => {
+        console.warn("[Session] timeline replacement refresh failed", { serverId, error });
+      });
+    });
+
     const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
       if (message.type !== "agent.provider_subagents.update") return;
       useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
@@ -983,6 +997,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     return () => {
+      unsubTimelineReplacement();
       unsubAgentStream();
       unsubAgentTimeline();
       unsubProviderSubagentUpdate();
