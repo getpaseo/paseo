@@ -594,6 +594,10 @@ export async function scrollTimelineUntilOlderHistoryIsReachable(
     }
     const previousHeight = await readTimelineViewport(page);
     await userScrollsTimelineToHistoryStart(page);
+    if ((await prompt.count()) > 0) {
+      await expect(prompt).toBeVisible();
+      return;
+    }
     await expect
       .poll(async () => (await readTimelineViewport(page)).scrollHeight)
       .toBeGreaterThan(previousHeight.scrollHeight);

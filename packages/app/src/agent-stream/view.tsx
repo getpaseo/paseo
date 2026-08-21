@@ -532,21 +532,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         toolCallDetailLevel,
       ],
     );
-    const completedResponseProjection = useMemo(
-      () =>
-        projectCompletedResponseFolds({
-          tail: projectedToolCalls.tail,
-          head: projectedToolCalls.head,
-          isTurnActive,
-          expandedResponseIds: expandedCompletedResponseIds,
-        }),
-      [
-        expandedCompletedResponseIds,
-        isTurnActive,
-        projectedToolCalls.head,
-        projectedToolCalls.tail,
-      ],
-    );
     const {
       start: historyWindowStart,
       hasLocalHistory,
@@ -554,12 +539,36 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       loadOlder,
     } = useStreamHistoryWindow({
       agentId,
-      items: completedResponseProjection.tail,
+      items: projectedToolCalls.tail,
       loadRemoteOlder,
     });
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
+    const mountedToolCallTail = useMemo(
+      () =>
+        historyWindowStart > 0
+          ? projectedToolCalls.tail.slice(historyWindowStart)
+          : projectedToolCalls.tail,
+      [historyWindowStart, projectedToolCalls.tail],
+    );
+    const completedResponseProjection = useMemo(
+      () =>
+        projectCompletedResponseFolds({
+          tail: mountedToolCallTail,
+          head: projectedToolCalls.head,
+          isTurnActive,
+          expandedResponseIds: expandedCompletedResponseIds,
+          preserveLeadingResponse: hasOlder,
+        }),
+      [
+        expandedCompletedResponseIds,
+        hasOlder,
+        isTurnActive,
+        mountedToolCallTail,
+        projectedToolCalls.head,
+      ],
+    );
 
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
@@ -569,7 +578,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         head: completedResponseProjection.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
-        historyStart: historyWindowStart,
       });
     }, [
       isMobile,
@@ -577,7 +585,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       completedResponseProjection.head,
       completedResponseProjection.tail,
       effectiveTurnPresentation.startedAt,
-      historyWindowStart,
     ]);
     const streamLayout = useMemo(
       () =>

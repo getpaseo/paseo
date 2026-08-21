@@ -19,7 +19,13 @@ type CachedActiveTailProjection = Pick<
 
 const activeTailProjectionCache = new WeakMap<
   StreamItem[],
-  WeakMap<object, CachedActiveTailProjection>
+  WeakMap<
+    object,
+    {
+      foldedLeading?: CachedActiveTailProjection;
+      preservedLeading?: CachedActiveTailProjection;
+    }
+  >
 >();
 
 function isToolCallRunning(item: Extract<StreamItem, { kind: "tool_call" }>): boolean {
@@ -117,6 +123,7 @@ function projectResponseRows(input: {
   head: StreamItem[];
   isTurnActive: boolean;
   expandedResponseIds: ReadonlySet<string>;
+  preserveLeadingResponse: boolean;
 }): CompletedResponseFoldProjection {
   const responses = partitionVisibleResponses([...input.tail, ...input.head]);
   const removedItemIds = new Set<string>();
@@ -125,6 +132,10 @@ function projectResponseRows(input: {
   for (let responseIndex = 0; responseIndex < responses.length; responseIndex += 1) {
     const response = responses[responseIndex];
     if (!response) continue;
+
+    // A mounted history window can start in the middle of a response. Keep that leading response
+    // intact until all older rows are mounted so pagination never classifies a partial response.
+    if (input.preserveLeadingResponse && responseIndex === 0) continue;
 
     const isActiveResponse = input.isTurnActive && responseIndex === responses.length - 1;
     if (isActiveResponse) continue;
@@ -168,6 +179,7 @@ function projectResponseRows(input: {
 function getActiveTailProjection(
   tail: StreamItem[],
   expandedResponseIds: ReadonlySet<string>,
+  preserveLeadingResponse: boolean,
 ): CachedActiveTailProjection {
   let cacheByExpansion = activeTailProjectionCache.get(tail);
   if (!cacheByExpansion) {
@@ -176,7 +188,9 @@ function getActiveTailProjection(
   }
 
   const expansionKey = expandedResponseIds as object;
-  const cached = cacheByExpansion.get(expansionKey);
+  const cachedByLeadingPolicy = cacheByExpansion.get(expansionKey);
+  const cacheKey = preserveLeadingResponse ? "preservedLeading" : "foldedLeading";
+  const cached = cachedByLeadingPolicy?.[cacheKey];
   if (cached) return cached;
 
   const projected = projectResponseRows({
@@ -184,12 +198,16 @@ function getActiveTailProjection(
     head: [],
     isTurnActive: true,
     expandedResponseIds,
+    preserveLeadingResponse,
   });
   const activeTailProjection = {
     tail: projected.tail,
     foldsByAnchorItemId: projected.foldsByAnchorItemId,
   };
-  cacheByExpansion.set(expansionKey, activeTailProjection);
+  cacheByExpansion.set(expansionKey, {
+    ...cachedByLeadingPolicy,
+    [cacheKey]: activeTailProjection,
+  });
   return activeTailProjection;
 }
 
@@ -198,11 +216,16 @@ export function projectCompletedResponseFolds(input: {
   head: StreamItem[];
   isTurnActive: boolean;
   expandedResponseIds: ReadonlySet<string>;
+  preserveLeadingResponse?: boolean;
 }): CompletedResponseFoldProjection {
   // Live head rows normally extend the final tail response. Cache the settled tail projection so
   // each streamed delta does not rebuild long, already-settled history or invalidate its list rows.
   if (input.isTurnActive && !input.head.some((item) => item.kind === "user_message")) {
-    const projectedTail = getActiveTailProjection(input.tail, input.expandedResponseIds);
+    const projectedTail = getActiveTailProjection(
+      input.tail,
+      input.expandedResponseIds,
+      input.preserveLeadingResponse ?? false,
+    );
     return {
       tail: projectedTail.tail,
       head: input.head,
@@ -210,5 +233,8 @@ export function projectCompletedResponseFolds(input: {
     };
   }
 
-  return projectResponseRows(input);
+  return projectResponseRows({
+    ...input,
+    preserveLeadingResponse: input.preserveLeadingResponse ?? false,
+  });
 }

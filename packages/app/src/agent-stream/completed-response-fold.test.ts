@@ -68,12 +68,14 @@ function project(input: {
   head?: StreamItem[];
   isTurnActive?: boolean;
   expandedResponseIds?: ReadonlySet<string>;
+  preserveLeadingResponse?: boolean;
 }) {
   return projectCompletedResponseFolds({
     tail: input.tail,
     head: input.head ?? [],
     isTurnActive: input.isTurnActive ?? false,
     expandedResponseIds: input.expandedResponseIds ?? new Set(),
+    preserveLeadingResponse: input.preserveLeadingResponse ?? false,
   });
 }
 
@@ -158,6 +160,15 @@ describe("projectCompletedResponseFolds", () => {
     expect(first.tail).toBe(second.tail);
     expect(first.tail.map((item) => item.id)).toEqual(["old-user", "old-final", "active-user"]);
     expect(first.foldsByAnchorItemId).toBe(second.foldsByAnchorItemId);
+  });
+
+  it("keeps a partial leading response expanded while older history exists", () => {
+    const tail = [thought("thought", 1), tool("tool", 2), assistant("final", 3)];
+
+    const result = project({ tail, preserveLeadingResponse: true });
+
+    expect(result.tail).toEqual(tail);
+    expect(result.foldsByAnchorItemId.size).toBe(0);
   });
 
   it("treats hidden system turns as one visible response", () => {
