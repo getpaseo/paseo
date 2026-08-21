@@ -315,10 +315,11 @@ async function configureInterruptInSettings(page: Page): Promise<void> {
 
 async function selectSendBehaviorInSettings(
   page: Page,
-  buttonName: string,
+  behaviorLabel: string,
   stored: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: buttonName, exact: true }).click();
+  await page.getByRole("button", { name: /^Default send: / }).click();
+  await page.getByRole("menuitem", { name: behaviorLabel, exact: true }).click();
   await expect
     .poll(async () => {
       const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
