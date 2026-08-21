@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const changesStateSchema = z
   .strictObject({
-    // COMPAT(changesModeState): accepted from v0.5.0-beta.3 tab state; mode selection is ephemeral.
+    // COMPAT(changesModeState): fields persisted by v0.5.0-beta.3; remove after 2026-11-21. Mode selection is ephemeral.
     mode: z.enum(["uncommitted", "base"]).optional(),
     baseRef: z.string().optional(),
     layout: z.enum(["unified", "split"]),
