@@ -761,6 +761,8 @@ export interface AgentClient {
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
   unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /** Delete provider-owned resources that are scoped to one logical Paseo agent. */
+  deleteAgentResources?(agentId: string): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

@@ -2887,6 +2887,11 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agentId);
   }
 
+  async deleteProviderAgentResources(agentId: string, provider: AgentProvider): Promise<void> {
+    const client = this.requireClient(provider);
+    await client.deleteAgentResources?.(agentId);
+  }
+
   async getLastAssistantMessage(agentId: string): Promise<string | null> {
     const agent = this.agents.get(agentId);
     if (!agent) {

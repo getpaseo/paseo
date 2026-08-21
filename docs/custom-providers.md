@@ -588,6 +588,34 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 }
 ```
 
+Paseo treats the canonical `hermes` provider ID as a stateful agent provider. Before starting a
+new or resumed Paseo agent, it derives a stable profile name from that Paseo agent ID, creates the
+profile from Hermes' `default` profile when necessary, and launches ACP with that profile's
+`HERMES_HOME`. Every Paseo agent, including the first one, therefore has separate Hermes sessions,
+memory files, state database, and profile-scoped external-memory configuration. A resumed Paseo
+agent reuses its original profile; archived agents retain their profiles so they remain resumable.
+Permanently deleting an agent also deletes its dedicated Hermes profile and copied credentials.
+
+Profile creation snapshots configuration, credentials, personality, and skills but resets
+`MEMORY.md` and `USER.md`; workers do not inherit the parent profile's durable memories. Later
+memory writes remain in the assigned profile and are not loaded by other Paseo agents. Paseo uses
+Hermes' supported profile CLI and does not create per-profile command aliases. Before every launch,
+Paseo keeps built-in `MEMORY.md` and
+`USER.md` enabled but disables external memory-provider writes, removes the shared `claude-mem` MCP
+server, and disables a cloned Claude Mem bridge. Honcho and Claude Mem are not used for worker
+memory because their shared workspace is not a strict profile boundary.
+
+Provider catalog and diagnostic probes use a separate deterministic probe profile. They never open
+ACP sessions in the default Hermes profile and never share an agent's profile.
+
+When a Paseo agent created before this isolation feature is resumed for the first time, Paseo uses
+Hermes' consistent quick-snapshot mechanism to copy the legacy default profile's runtime database
+into that agent's new profile before ACP loads the native session. Before launch, Paseo securely
+removes every session except the exact native session being resumed, including unrelated messages,
+usage records, delegation state, prompts, and routing state. This one-time migration preserves
+resumability without copying the former shared-history database into every worker. Newly created
+agents never receive legacy runtime state.
+
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
 
 ### How ACP providers work in Paseo

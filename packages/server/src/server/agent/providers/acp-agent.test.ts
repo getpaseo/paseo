@@ -124,7 +124,10 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  launchEnv?: Record<string, string>,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -143,6 +146,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      launchEnv,
       ...(terminateProcess ? { terminateProcess } : {}),
     },
   );
@@ -653,6 +657,32 @@ describe("ACPAgentSession terminal tools", () => {
       "git",
       ["status", "--short"],
       expect.objectContaining({ cwd: "/repo" }),
+    );
+  });
+
+  test("keeps terminal subprocesses inside the session launch environment", async () => {
+    const child = createTerminalChildStub();
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const session = createSession(undefined, {
+      HERMES_HOME: "/profiles/paseo-isolated",
+      HERMES_PROFILE: "paseo-isolated",
+    });
+
+    await session.createTerminal({
+      sessionId: "session-1",
+      command: "env",
+      env: [{ name: "HERMES_HOME", value: "/profiles/attacker-controlled" }],
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "env",
+      [],
+      expect.objectContaining({
+        envOverlay: expect.objectContaining({
+          HERMES_HOME: "/profiles/paseo-isolated",
+          HERMES_PROFILE: "paseo-isolated",
+        }),
+      }),
     );
   });
 

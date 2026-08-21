@@ -6,7 +6,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
-import type { AgentProviderNotice } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentProviderNotice } from "./agent-sdk-types.js";
 
 export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycle">;
 
@@ -149,6 +149,39 @@ export async function closeAgentCommand(
   agentId: string,
 ): Promise<void> {
   await dependencies.agentManager.closeAgent(agentId);
+}
+
+interface PermanentDeleteAgentManager {
+  deleteProviderAgentResources(agentId: string, provider: AgentProvider): Promise<void>;
+  deleteAgentState(agentId: string): Promise<void>;
+}
+
+interface PermanentDeleteAgentStorage {
+  remove(agentId: string): Promise<void>;
+}
+
+export async function deleteAgentPermanentlyCommand(
+  dependencies: {
+    agentManager: PermanentDeleteAgentManager;
+    agentStorage: PermanentDeleteAgentStorage;
+    logger: Logger;
+  },
+  input: { agentId: string; provider: AgentProvider | null },
+): Promise<void> {
+  const { agentId, provider } = input;
+  if (provider) {
+    try {
+      await dependencies.agentManager.deleteProviderAgentResources(agentId, provider);
+    } catch (error) {
+      dependencies.logger.warn(
+        { err: error, agentId, provider },
+        "Provider resource cleanup failed during permanent agent deletion",
+      );
+    }
+  }
+
+  await dependencies.agentStorage.remove(agentId);
+  await dependencies.agentManager.deleteAgentState(agentId);
 }
 
 export interface UpdateAgentResult {

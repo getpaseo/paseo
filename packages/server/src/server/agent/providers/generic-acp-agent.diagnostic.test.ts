@@ -154,6 +154,147 @@ describe("GenericACPAgentClient diagnostics", () => {
     });
   });
 
+  test("launches a real ACP subprocess inside the prepared Hermes profile home", async () => {
+    await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
+      const envTracePath = path.join(testDir, "env.json");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", envTracePath],
+        providerId: "hermes",
+        hermesProfileManager: {
+          async prepare(agentId: string) {
+            expect(agentId).toBe("agent-isolated");
+            return { profile: "paseo-isolated", home: "/profiles/paseo-isolated" };
+          },
+        },
+      });
+
+      const session = await client.createSession(
+        { provider: "acp", cwd: testDir },
+        { agentId: "agent-isolated" },
+      );
+      await session.close();
+
+      expect(JSON.parse(await readFile(envTracePath, "utf8"))).toEqual({
+        HERMES_HOME: "/profiles/paseo-isolated",
+        HERMES_PROFILE: "paseo-isolated",
+      });
+    });
+  });
+
+  test("resumes a real ACP subprocess inside the requested Hermes profile", async () => {
+    await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
+      const envTracePath = path.join(testDir, "resume-env.json");
+      const prepared: Array<{
+        agentId: string;
+        includeRuntimeState?: boolean;
+        runtimeSessionId?: string;
+      }> = [];
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", envTracePath],
+        providerId: "hermes",
+        hermesProfileManager: {
+          async prepare(
+            agentId: string,
+            options?: { includeRuntimeState?: boolean; runtimeSessionId?: string },
+          ) {
+            prepared.push({ agentId, ...options });
+            return { profile: "paseo-resumed", home: "/profiles/paseo-resumed" };
+          },
+        },
+      });
+
+      const session = await client.resumeSession(
+        {
+          provider: "acp",
+          sessionId: "native-session-1",
+          nativeHandle: "native-session-1",
+          metadata: { cwd: testDir },
+        },
+        undefined,
+        { agentId: "agent-resumed" },
+      );
+      await session.close();
+
+      expect(prepared).toEqual([
+        {
+          agentId: "agent-resumed",
+          includeRuntimeState: true,
+          runtimeSessionId: "native-session-1",
+        },
+      ]);
+      expect(JSON.parse(await readFile(envTracePath, "utf8"))).toEqual({
+        HERMES_HOME: "/profiles/paseo-resumed",
+        HERMES_PROFILE: "paseo-resumed",
+      });
+    });
+  });
+
+  test("launches provider probes in the dedicated Hermes probe profile", async () => {
+    await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
+      const envTracePath = path.join(testDir, "probe-env.json");
+      const prepared: string[] = [];
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", envTracePath],
+        providerId: "hermes",
+        hermesProfileManager: {
+          async prepare(agentId: string) {
+            prepared.push(agentId);
+            return { profile: "paseo-probe", home: "/profiles/paseo-probe" };
+          },
+        },
+      });
+
+      await client.fetchCatalog({ scope: "global", force: true });
+
+      expect(prepared).toEqual(["__paseo_provider_probe__"]);
+      expect(JSON.parse(await readFile(envTracePath, "utf8"))).toEqual({
+        HERMES_HOME: "/profiles/paseo-probe",
+        HERMES_PROFILE: "paseo-probe",
+      });
+    });
+  });
+
+  test("fails closed before spawning Hermes without a logical agent ID", async () => {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, "unused-acp-agent.cjs"],
+      providerId: "hermes",
+      hermesProfileManager: {
+        async prepare() {
+          throw new Error("must not prepare without an agent ID");
+        },
+      },
+    });
+
+    await expect(client.createSession({ provider: "acp", cwd: tmpdir() })).rejects.toThrow(
+      "requires a Paseo agent ID",
+    );
+  });
+
+  test("deletes the dedicated Hermes profile through the public provider interface", async () => {
+    const deleted: string[] = [];
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, "unused-acp-agent.cjs"],
+      providerId: "hermes",
+      hermesProfileManager: {
+        async prepare() {
+          return { profile: "paseo-isolated", home: "/profiles/paseo-isolated" };
+        },
+        async delete(agentId: string) {
+          deleted.push(agentId);
+        },
+      },
+    });
+
+    await client.deleteAgentResources("agent-1");
+
+    expect(deleted).toEqual(["agent-1"]);
+  });
+
   test("reports a missing launcher without dropping the rest of the diagnostic", async () => {
     await withTempDir("paseo-missing-acp-agent-", async (testDir) => {
       const missingCommand = path.join(testDir, "missing-acp-agent");
@@ -230,8 +371,15 @@ const readline = require("node:readline");
 const mode = process.argv[2];
 const pidPath = process.argv[3];
 const initializeTracePath = process.argv[4];
+const envTracePath = process.argv[5];
 if (pidPath) {
   fs.writeFileSync(pidPath, String(process.pid));
+}
+if (envTracePath) {
+  fs.writeFileSync(
+    envTracePath,
+    JSON.stringify({ HERMES_HOME: process.env.HERMES_HOME, HERMES_PROFILE: process.env.HERMES_PROFILE }),
+  );
 }
 const rl = readline.createInterface({ input: process.stdin });
 
@@ -250,12 +398,12 @@ rl.on("line", (line) => {
     }
     send(message.id, {
       protocolVersion: message.params?.protocolVersion ?? 1,
-      agentCapabilities: {},
+      agentCapabilities: { loadSession: true },
     });
     return;
   }
 
-  if (message.method === "session/new") {
+  if (message.method === "session/new" || message.method === "session/load") {
     if (mode === "hang-session") {
       return;
     }

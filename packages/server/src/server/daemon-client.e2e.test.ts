@@ -931,13 +931,10 @@ test("resume_agent auto-unarchives archived agents", async () => {
       throw new Error("Expected persistence handle for resume test");
     }
     const resumed = await ctx.client.resumeAgent(handle);
+    expect(resumed.id).toBe(created.id);
     const resumedDetails = await ctx.client.fetchAgent({ agentId: resumed.id });
     expect(resumedDetails).not.toBeNull();
     expect(resumedDetails?.agent.archivedAt).toBeNull();
-
-    if (resumed.id !== created.id) {
-      await ctx.client.deleteAgent(resumed.id);
-    }
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

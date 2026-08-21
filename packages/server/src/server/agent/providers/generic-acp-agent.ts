@@ -1,7 +1,19 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentFeature,
+  AgentLaunchContext,
+  AgentPersistenceHandle,
+  AgentSession,
+  AgentSessionConfig,
+  FetchCatalogOptions,
+  ImportableProviderSession,
+  ListImportableSessionsOptions,
+  ProviderCatalog,
+  ProviderRefreshContext,
+} from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
@@ -17,6 +29,7 @@ import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { HermesCliProfileCommand, HermesProfileManager } from "./hermes-profile-manager.js";
 
 export const GenericACPProviderParamsSchema = z
   .object({
@@ -51,6 +64,8 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  hermesProfileManager?: Pick<HermesProfileManager, "prepare"> &
+    Partial<Pick<HermesProfileManager, "delete">>;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -58,6 +73,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
   private readonly providerId?: string;
   private readonly label?: string;
   private readonly diagnosticPhaseTimeoutMs?: number;
+  private readonly hermesProfileManager?: Pick<HermesProfileManager, "prepare"> &
+    Partial<Pick<HermesProfileManager, "delete">>;
+  private probeProfileReady?: Promise<void>;
 
   constructor(options: GenericACPAgentClientOptions) {
     const providerParams = parseGenericACPProviderParams(options.providerParams);
@@ -82,6 +100,63 @@ export class GenericACPAgentClient extends ACPAgentClient {
     this.providerId = options.providerId;
     this.label = options.label;
     this.diagnosticPhaseTimeoutMs = options.diagnosticPhaseTimeoutMs;
+    this.hermesProfileManager =
+      options.hermesProfileManager ??
+      (options.providerId === "hermes"
+        ? new HermesProfileManager({
+            command: new HermesCliProfileCommand({
+              executable: options.command[0],
+              env: options.env,
+            }),
+          })
+        : undefined);
+  }
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    return super.createSession(config, await this.scopeHermesLaunchContext(launchContext));
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    return super.resumeSession(
+      handle,
+      overrides,
+      await this.scopeHermesLaunchContext(launchContext, handle.sessionId),
+    );
+  }
+
+  async deleteAgentResources(agentId: string): Promise<void> {
+    if (!this.hermesProfileManager) return;
+    if (!this.hermesProfileManager.delete) {
+      throw new Error("Hermes profile isolation cannot delete provider-owned resources");
+    }
+    await this.hermesProfileManager.delete(agentId);
+  }
+
+  override async fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
+    await this.ensureHermesProbeProfile();
+    return super.fetchCatalog(options, context);
+  }
+
+  override async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    await this.ensureHermesProbeProfile();
+    return super.listFeatures(config);
+  }
+
+  override async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
+    await this.ensureHermesProbeProfile();
+    return super.listImportableSessions(options);
   }
 
   protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
@@ -98,6 +173,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
+    await this.ensureHermesProbeProfile();
     const providerName = formatProviderName(this.label, this.providerId);
     const entries: DiagnosticEntry[] = [
       { label: "Provider ID", value: this.providerId ?? "unknown" },
@@ -143,6 +219,48 @@ export class GenericACPAgentClient extends ACPAgentClient {
       commandConfig: { mode: "replace", argv: this.command },
       defaultBinary: this.command[0],
     });
+  }
+
+  private async scopeHermesLaunchContext(
+    launchContext?: AgentLaunchContext,
+    runtimeSessionId?: string,
+  ): Promise<AgentLaunchContext | undefined> {
+    if (!this.hermesProfileManager) return launchContext;
+    const agentId = launchContext?.agentId?.trim();
+    if (!agentId) {
+      throw new Error("Hermes profile isolation requires a Paseo agent ID");
+    }
+
+    const assignment = await this.hermesProfileManager.prepare(agentId, {
+      includeRuntimeState: runtimeSessionId !== undefined,
+      ...(runtimeSessionId === undefined ? {} : { runtimeSessionId }),
+    });
+    return {
+      ...launchContext,
+      env: {
+        ...launchContext?.env,
+        HERMES_HOME: assignment.home,
+        HERMES_PROFILE: assignment.profile,
+      },
+    };
+  }
+
+  private async ensureHermesProbeProfile(): Promise<void> {
+    if (!this.hermesProfileManager) return;
+    this.probeProfileReady ??= this.hermesProfileManager
+      .prepare("__paseo_provider_probe__")
+      .then((assignment) => {
+        if (!this.runtimeSettings) {
+          throw new Error("Hermes profile isolation requires provider runtime settings");
+        }
+        this.runtimeSettings.env = {
+          ...this.runtimeSettings.env,
+          HERMES_HOME: assignment.home,
+          HERMES_PROFILE: assignment.profile,
+        };
+        return undefined;
+      });
+    await this.probeProfileReady;
   }
 
   private async getACPProbeRowsForDiagnostic() {

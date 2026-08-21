@@ -6,6 +6,7 @@ import type { StoredAgentRecord } from "./agent-storage.js";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
+  deleteAgentPermanentlyCommand,
   detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
@@ -164,6 +165,33 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 const logger = createTestLogger();
 
 describe("agent lifecycle commands", () => {
+  test("permanently deletes durable state when provider resource cleanup fails", async () => {
+    const calls: string[] = [];
+
+    await deleteAgentPermanentlyCommand(
+      {
+        agentManager: {
+          async deleteProviderAgentResources() {
+            calls.push("provider-cleanup");
+            throw new Error("Hermes CLI unavailable");
+          },
+          async deleteAgentState(agentId: string) {
+            calls.push(`state:${agentId}`);
+          },
+        },
+        agentStorage: {
+          async remove(agentId: string) {
+            calls.push(`storage:${agentId}`);
+          },
+        },
+        logger,
+      },
+      { agentId: "agent-1", provider: "hermes" },
+    );
+
+    expect(calls).toEqual(["provider-cleanup", "storage:agent-1", "state:agent-1"]);
+  });
+
   test("cancels only when the agent has an in-flight run", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);

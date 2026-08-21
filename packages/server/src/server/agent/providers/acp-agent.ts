@@ -2394,7 +2394,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: commandEnvOverlays,
+        overlays: [...commandEnvOverlays, this.launchEnv],
       }),
       shell: terminalCommand.shell,
       stdio: ["ignore", "pipe", "pipe"],
