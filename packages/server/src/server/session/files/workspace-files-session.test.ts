@@ -690,6 +690,4 @@ describe("WorkspaceFilesSession", () => {
       },
     ]);
   });
-
-
 });

@@ -12,7 +12,6 @@ import {
   FlatList,
   Pressable,
   Text,
-  TextInput,
   View,
   type ListRenderItemInfo,
   type PressableStateCallbackType,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { MaterialFileIcon } from "@/components/material-file-icon";
+import { EditingTextInput } from "@/components/ui/text-input";
 import { TreeChevron } from "@/components/tree-primitives";
 import {
   DropdownMenu,
@@ -64,7 +64,8 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedRegex = withUnistyles(Regex);
 const ThemedSlidersHorizontal = withUnistyles(SlidersHorizontal);
 const ThemedWholeWord = withUnistyles(WholeWord);
-const ThemedTextInput = withUnistyles(TextInput, (theme: Theme) => ({
+const ThemedTextInput = withUnistyles(EditingTextInput, (theme: Theme) => ({
+  // Placeholders sit at foregroundMuted and no dimmer — see docs/design.md §14.
   placeholderTextColor: theme.colors.foregroundMuted,
   selectionColor: theme.colors.foreground,
 }));
@@ -261,7 +262,7 @@ export function FileSearchPane({
       </View>
       <View style={styles.optionsRow}>
         <ThemedTextInput
-          value={options.includePattern ?? ""}
+          initialValue={options.includePattern ?? ""}
           onChangeText={updateIncludePattern}
           placeholder="Include: *.ts"
           accessibilityLabel="Files to include"
@@ -271,7 +272,7 @@ export function FileSearchPane({
           testID="files-search-include"
         />
         <ThemedTextInput
-          value={options.excludePattern ?? ""}
+          initialValue={options.excludePattern ?? ""}
           onChangeText={updateExcludePattern}
           placeholder="Exclude: *.test.ts"
           accessibilityLabel="Files to exclude"
@@ -509,7 +510,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     backgroundColor: theme.colors.surface1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     outlineWidth: 0,
   },
   centerState: {
@@ -526,7 +527,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     textAlign: "center",
   },
   resultsContainer: {
@@ -542,11 +543,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   summaryText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   truncatedText: {
     color: theme.colors.statusWarning,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   resultsList: {
     flex: 1,
@@ -575,7 +576,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   matchCount: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   matchRow: {
     minHeight: 28,
@@ -592,7 +593,7 @@ const styles = StyleSheet.create((theme) => ({
     width: 32,
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     textAlign: "right",
   },
   lineContent: {
@@ -600,7 +601,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   matchHighlight: {
     color: theme.colors.accentBright,
