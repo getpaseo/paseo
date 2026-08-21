@@ -2074,6 +2074,36 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
+  test("clears permissions blocking an accepted human steer", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_steer_permission");
+    openCode.sessionPromptAsyncEvents = [];
+    const { turnId } = await session.startTurn("first");
+    openCode.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-steer",
+        sessionID: "ses_steer_permission",
+        permission: "bash",
+        patterns: ["echo blocked"],
+        metadata: { command: "echo blocked", cwd: "/workspace/repo" },
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.steerActiveTurn?.("change course", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(openCode.calls.permissionReply).toContainEqual(
+      expect.objectContaining({ requestID: "permission-steer", reply: "reject" }),
+    );
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    await session.close();
+  });
+
   test("keeps multiple native steers correlated in admission order", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer_fifo");
     openCode.sessionPromptAsyncEvents = [];
@@ -2119,9 +2149,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     openCode.sessionPromptAsyncImplementation = async () => {
       promptCount += 1;
       if (promptCount === 1) return { data: {}, error: undefined };
-      return {
-        error: { _tag: "SessionNotFoundError", message: "session not found" },
-      } as unknown as { data: unknown; error: unknown };
+      return { error: new Error("missing"), response: { status: 404 } };
     };
     const { turnId } = await session.startTurn("first");
 
