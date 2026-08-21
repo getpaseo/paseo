@@ -1839,6 +1839,26 @@ export const fr: TranslationResources = {
   sidebarCallout: {
     dismiss: "Rejeter",
   },
+  mcpServers: {
+    agentNotRunning: "L'agent n'est pas en cours d'exécution",
+    source: {
+      configured:
+        "Serveurs configurés. Le fournisseur de cet agent n'indique pas s'ils se sont connectés.",
+      startup: "Signalé au démarrage de la session ; les connexions ont pu changer depuis.",
+    },
+    title: "Serveurs MCP",
+    open: "Serveurs MCP",
+    refresh: "Actualiser les serveurs MCP",
+    loading: "Vérification des serveurs MCP…",
+    empty: "Aucun serveur MCP",
+    status: {
+      connecting: "Connexion en cours",
+      needsAuth: "Authentification requise",
+      failed: "Échec",
+      disabled: "Désactivé",
+      unknown: "Inconnu",
+    },
+  },
   contextWindow: {
     title: "Fenêtre contextuelle",
     used: "{{percentage}}% utilisé",

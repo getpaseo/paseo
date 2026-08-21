@@ -115,6 +115,9 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type AgentMcpReport,
+  type AgentMcpServer,
+  type AgentMcpServerStatus,
   type AgentRuntimeInfo,
   type FetchCatalogOptions,
   type ImportableProviderSession,
@@ -312,7 +315,63 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsMcpStatus: true,
 };
+
+/**
+ * Claude reports MCP state in two places that do not always agree: the `init` system
+ * message carries a name/status pair per server, and the `mcpServerStatus()` control
+ * request answers live with errors, scope and the tool list. The control request is
+ * the better source and is what the panel's refresh calls; the init list is kept as
+ * the fallback for CLIs old enough to reject the control request.
+ */
+function normalizeClaudeMcpStatus(status: string): AgentMcpServerStatus {
+  switch (status) {
+    case "connected":
+      return "connected";
+    case "failed":
+      return "failed";
+    case "needs-auth":
+      return "needs_auth";
+    case "pending":
+      return "connecting";
+    case "disabled":
+      return "disabled";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Whether the CLI rejected `mcpServerStatus` because it has never heard of it, as
+ * opposed to failing to answer it. The SDK surfaces this as a plain Error, so the
+ * message is the only signal available.
+ */
+function isUnknownControlRequestError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("unknown control request") ||
+    message.includes("unsupported control request") ||
+    message.includes("unrecognized control request")
+  );
+}
+
+function toAgentMcpServer(entry: {
+  name: string;
+  status: string;
+  error?: string;
+  scope?: string;
+  tools?: unknown[];
+}): AgentMcpServer {
+  return {
+    name: entry.name,
+    status: normalizeClaudeMcpStatus(entry.status),
+    ...(entry.error ? { error: entry.error } : {}),
+    ...(entry.scope ? { scope: entry.scope } : {}),
+    ...(Array.isArray(entry.tools) ? { toolCount: entry.tools.length } : {}),
+  };
+}
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -2073,6 +2132,8 @@ class ClaudeAgentSession implements AgentSession {
   private nextTurnOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
+  /** Last `init` MCP list. Only read when the live control request is unavailable. */
+  private initMcpServers: AgentMcpServer[] | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
   private compacting = false;
@@ -2736,6 +2797,25 @@ class ClaudeAgentSession implements AgentSession {
       commandMap.set(REWIND_COMMAND_NAME, REWIND_COMMAND);
     }
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async listMcpServers(): Promise<AgentMcpReport> {
+    const q = await this.ensureQuery();
+    try {
+      return { servers: (await q.mcpServerStatus()).map(toAgentMcpServer), source: "live" };
+    } catch (error) {
+      // Only an old CLI that does not know the control request earns the startup list.
+      // Falling back on any error would let a timeout or a dead connection be answered
+      // with cached health, turning a real outage into a panel full of green ticks.
+      if (this.initMcpServers && isUnknownControlRequestError(error)) {
+        this.logger.debug(
+          { err: error, agentId: this.agentId },
+          "provider.claude.mcp_status.control_request_unsupported; using init list",
+        );
+        return { servers: this.initMcpServers, source: "startup" };
+      }
+      throw error;
+    }
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -4515,6 +4595,9 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingFreshSessionId = null;
       threadStartedSessionId = newSessionId;
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
+    }
+    if (Array.isArray(message.mcp_servers)) {
+      this.initMcpServers = message.mcp_servers.map(toAgentMcpServer);
     }
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;

@@ -1798,6 +1798,25 @@ export const ko: TranslationResources = {
   sidebarCallout: {
     dismiss: "닫기",
   },
+  mcpServers: {
+    agentNotRunning: "에이전트가 실행 중이 아닙니다",
+    source: {
+      configured: "구성된 서버입니다. 이 에이전트의 공급자는 연결 여부를 보고하지 않습니다.",
+      startup: "세션 시작 시점의 정보입니다. 그동안 변경되었을 수 있습니다.",
+    },
+    title: "MCP 서버",
+    open: "MCP 서버",
+    refresh: "MCP 서버 새로 고침",
+    loading: "MCP 서버 확인 중…",
+    empty: "MCP 서버 없음",
+    status: {
+      connecting: "연결 중",
+      needsAuth: "인증 필요",
+      failed: "실패",
+      disabled: "비활성화",
+      unknown: "알 수 없음",
+    },
+  },
   contextWindow: {
     title: "컨텍스트 윈도우",
     used: "{{percentage}}% 사용됨",

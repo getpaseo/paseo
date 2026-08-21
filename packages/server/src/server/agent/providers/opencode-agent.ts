@@ -50,6 +50,9 @@ import {
   type ListImportableSessionsOptions,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
+  type AgentMcpReport,
+  type AgentMcpServer,
+  type AgentMcpServerStatus,
   type McpServerConfig,
   type ProviderCatalog,
   type SteerActiveTurnOptions,
@@ -123,7 +126,26 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: true,
+  supportsMcpStatus: true,
 };
+
+function normalizeOpenCodeMcpStatus(status: string): AgentMcpServerStatus {
+  switch (status) {
+    case "connected":
+      return "connected";
+    case "failed":
+      return "failed";
+    case "disabled":
+      return "disabled";
+    // OpenCode splits "you have to authenticate" into a plain OAuth case and a
+    // dynamic-client-registration case. Both mean the same thing to a reader.
+    case "needs_auth":
+    case "needs_client_registration":
+      return "needs_auth";
+    default:
+      return "unknown";
+  }
+}
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
@@ -4887,6 +4909,25 @@ class OpenCodeAgentSession implements AgentSession {
       return { providerID: parts[0], modelID: parts.slice(1).join("/") };
     }
     return { providerID: "opencode", modelID: model };
+  }
+
+  async listMcpServers(): Promise<AgentMcpReport> {
+    // Dynamically-added servers only exist once the session has configured them,
+    // so make sure that has happened before asking what is connected.
+    await this.ensureMcpServersConfigured();
+    const response = await this.client.mcp.status({ directory: this.config.cwd });
+    const servers: AgentMcpServer[] = [];
+    for (const [name, entry] of Object.entries(response.data ?? {})) {
+      const server: AgentMcpServer = { name, status: normalizeOpenCodeMcpStatus(entry.status) };
+      // `needs_client_registration` carries an error string but is a warning-tone state.
+      // The panel draws every error in the danger token, so keeping it here would put a
+      // red message beside an amber glyph — two tokens for one status.
+      if (server.status === "failed" && "error" in entry && typeof entry.error === "string") {
+        server.error = entry.error;
+      }
+      servers.push(server);
+    }
+    return { servers, source: "live" };
   }
 
   private async ensureMcpServersConfigured(): Promise<void> {

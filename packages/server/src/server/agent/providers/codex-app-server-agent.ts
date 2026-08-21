@@ -9,6 +9,7 @@ import {
   type AgentResumeSessionOptions,
   type AgentMode,
   type AgentModelDefinition,
+  type AgentMcpReport,
   type McpServerConfig,
   type AgentPersistenceHandle,
   type AgentPermissionRequest,
@@ -71,6 +72,7 @@ import {
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { parseCodexMcpServerStatus } from "../mcp-status.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
@@ -209,12 +211,13 @@ function formatOutOfBandStatusMessage(text: string): string {
   return `${text.replace(/\n+$/u, "")}\n\n`;
 }
 
-const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
+export const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
   supportsDynamicModes: false,
   supportsMcpServers: true,
+  supportsMcpStatus: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
   supportsRewindConversation: true,
@@ -6653,6 +6656,20 @@ export class CodexAppServerAgentSession implements AgentSession {
         questions,
       });
     });
+  }
+
+  /**
+   * Codex answers `mcpServerStatus/list` over the app-server connection this session
+   * already holds, so the report is live and costs no extra process. A server that
+   * completed its MCP handshake comes back with `serverInfo`; one that did not comes
+   * back with `serverInfo: null` and no tools, which is the connection signal.
+   */
+  async listMcpServers(): Promise<AgentMcpReport> {
+    const client = this.client;
+    if (!client) {
+      throw new Error("Codex app-server connection is not ready");
+    }
+    return parseCodexMcpServerStatus(await client.request("mcpServerStatus/list", {}));
   }
 
   private handleMcpElicitationRequest(params: unknown, serverRequestId: number): Promise<unknown> {

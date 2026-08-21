@@ -90,6 +90,7 @@ import {
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
+  type AgentMcpReport,
   type McpServerConfig,
   type ProviderCatalog,
   type ResolveAgentCreateConfigInput,
@@ -125,6 +126,7 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import { configuredMcpServers } from "../mcp-status.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
@@ -785,6 +787,18 @@ function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): b
   );
 }
 
+/**
+ * Ties `supportsMcpStatus` to `supportsMcpServers` for every ACP provider at once.
+ *
+ * Applied here rather than in each provider's capability literal because the answer is
+ * the same for all of them — ACP has no status channel, so a provider Paseo can inject
+ * MCP config into can list those servers and one it cannot has nothing to report. Doing
+ * it per-provider is a line every new ACP adapter would have to remember.
+ */
+function withAcpMcpStatus(capabilities: AgentCapabilityFlags): AgentCapabilityFlags {
+  return { ...capabilities, supportsMcpStatus: capabilities.supportsMcpServers };
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
@@ -827,7 +841,7 @@ export class ACPAgentClient implements AgentClient {
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
-    this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
+    this.capabilities = withAcpMcpStatus(options.capabilities ?? DEFAULT_ACP_CAPABILITIES);
     this.logger = options.logger.child({
       module: "agent",
       provider: options.provider,
@@ -1466,7 +1480,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
-    this.capabilities = options.capabilities;
+    this.capabilities = withAcpMcpStatus(options.capabilities);
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
@@ -2543,6 +2557,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     } catch (error) {
       throw toACPRequestError(error);
     }
+  }
+
+  /**
+   * ACP has no status channel — `mcpServers` goes in on `session/new` and nothing
+   * comes back, for every agent on the protocol. So this lists what Paseo passed in
+   * and leaves each row `unknown` rather than implying a connection nobody confirmed.
+   */
+  async listMcpServers(): Promise<AgentMcpReport> {
+    if (!this.capabilities.supportsMcpServers) {
+      return { servers: [], source: "configured" };
+    }
+    return configuredMcpServers(this.config.mcpServers);
   }
 
   private acpMcpServers(): McpServer[] {

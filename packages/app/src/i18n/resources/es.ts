@@ -1834,6 +1834,26 @@ export const es: TranslationResources = {
   sidebarCallout: {
     dismiss: "Despedir",
   },
+  mcpServers: {
+    agentNotRunning: "El agente no está en ejecución",
+    source: {
+      configured:
+        "Servidores configurados. El proveedor de este agente no informa si se conectaron.",
+      startup: "Informado al iniciar la sesión; las conexiones pueden haber cambiado.",
+    },
+    title: "Servidores MCP",
+    open: "Servidores MCP",
+    refresh: "Actualizar servidores MCP",
+    loading: "Comprobando servidores MCP…",
+    empty: "Sin servidores MCP",
+    status: {
+      connecting: "Conectando",
+      needsAuth: "Requiere autenticación",
+      failed: "Falló",
+      disabled: "Desactivado",
+      unknown: "Desconocido",
+    },
+  },
   contextWindow: {
     title: "ventana contextual",
     used: "{{percentage}}% utilizado",

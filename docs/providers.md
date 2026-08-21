@@ -59,6 +59,53 @@ Claude first-party model metadata lives in `packages/server/src/server/agent/pro
 
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
 
+## Reporting MCP server status
+
+`supportsMcpServers` says Paseo may inject MCP config into a provider. `supportsMcpStatus` is a
+different claim: this provider can report what its MCP servers are doing. Set it only when you
+implement `AgentSession.listMcpServers`, which the `agent.mcp.list` RPC and the composer's MCP
+servers panel are gated on.
+
+Every provider answers in the same vocabulary — one `AgentMcpServer[]`, one status set, one row
+design in the panel. Map the provider's own words onto `AgentMcpServerStatus` and fall back to
+`unknown` rather than widening the union. `unknown` is the honest answer both when the runtime
+reported something the app does not recognise and when it cannot report at all; never substitute
+`connected` for it, because a green row nobody verified is worse than an unresolved one.
+
+| Provider                                         | Source                                                                   | `source` it reports                                                                                                                                                                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude                                           | `Query.mcpServerStatus()` control request                                | `live`. Falls back to the `init` message's `mcp_servers` as `startup`, but only when the CLI rejects the control request as unknown — answering a timeout with cached health would turn an outage into a panel of green ticks. |
+| Codex                                            | `mcpServerStatus/list` over the session's existing app-server connection | `live`, costing no extra process. Codex signals a connection by filling in `serverInfo` and tools; a null one means it is not holding the server open but not why, so only `authStatus` lifts a row above `unknown`.           |
+| OpenCode                                         | `client.mcp.status()`                                                    | `live`. `needs_client_registration` collapses onto `needs_auth`, and its error string is dropped: the panel draws every error in the danger token, which would put a red message beside an amber glyph.                        |
+| ACP (Copilot, Cursor, Kimi, Kiro, Trae, generic) | what Paseo passed to `session/new`                                       | `configured` — names only. ACP has no status channel. Implemented once on `ACPAgentSession`.                                                                                                                                   |
+| Pi                                               | Paseo's generated `mcp.json`                                             | `configured`. The `pi-mcp-adapter` has no status RPC.                                                                                                                                                                          |
+| OMP, mock                                        | —                                                                        | `supportsMcpServers: false`; no MCP, so no panel.                                                                                                                                                                              |
+
+`configuredMcpServers` in `agent/mcp-status.ts` is the names-only floor. `ACPAgentSession` derives
+`supportsMcpStatus` from `supportsMcpServers` for every ACP provider at once, so a new ACP adapter
+gets the panel without touching its capability literal, and one that takes no MCP config cannot
+advertise a list it has no way to fill.
+
+The response separates three outcomes, and the app treats each differently:
+
+- `unavailable: "unsupported"` — static. This provider can never report, so the app removes the
+  control and may cache that verdict.
+- `unavailable: "agent_not_running"` — transient. The same agent answers once its runtime is up,
+  so this must never be cached as terminal or the control stays gone for the session.
+- `error` — a failure a retry might fix. Do not phrase a missing capability as one.
+
+Cost is not uniform and the panel is built around that. Claude answers in about 3ms; Codex answers
+`mcpServerStatus/list` with every server's full tool schemas — measured at 1.1 MB and ~3.5s against
+a real account, and it ignores any parameter asking for less. So the app fetches only while the
+panel is open, and `McpStatusCache` holds a short per-agent entry and coalesces concurrent calls,
+which is what stops two clients or a reconnect each paying that price. Manual refresh sets `force`
+to skip the cached entry, though it still joins an in-flight call. If you add a provider whose
+source is expensive, do not paper over it with a per-provider special case in the app — the panel
+treats every provider the same and that is what keeps it predictable.
+
+Prefer a connection the session already owns over a subprocess. Codex used to shell out to
+`codex mcp list --json`, which only reads config; the app-server call is both live and cheaper.
+
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
 Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.

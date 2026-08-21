@@ -1806,6 +1806,25 @@ export const ja: TranslationResources = {
   sidebarCallout: {
     dismiss: "閉じる",
   },
+  mcpServers: {
+    agentNotRunning: "エージェントは実行されていません",
+    source: {
+      configured: "設定済みのサーバー。このエージェントのプロバイダーは接続状態を報告しません。",
+      startup: "セッション開始時の情報です。現在は変わっている可能性があります。",
+    },
+    title: "MCP サーバー",
+    open: "MCP サーバー",
+    refresh: "MCP サーバーを更新",
+    loading: "MCP サーバーを確認中…",
+    empty: "MCP サーバーなし",
+    status: {
+      connecting: "接続中",
+      needsAuth: "認証が必要",
+      failed: "失敗",
+      disabled: "無効",
+      unknown: "不明",
+    },
+  },
   contextWindow: {
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",

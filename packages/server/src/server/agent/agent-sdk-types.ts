@@ -1,4 +1,8 @@
 import type {
+  AgentMcpReport,
+  AgentMcpServer,
+  AgentMcpServerStatus,
+  AgentMcpSource,
   AgentProviderNotice,
   AgentTaskItem,
   ProviderOptions,
@@ -7,7 +11,14 @@ import type {
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type {
+  AgentMcpReport,
+  AgentMcpServer,
+  AgentMcpServerStatus,
+  AgentMcpSource,
+  AgentProviderNotice,
+  AgentTaskItem,
+};
 
 export type AgentProvider = string;
 
@@ -190,6 +201,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /** The runtime can report which MCP servers it actually connected to. */
+  supportsMcpStatus?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -657,6 +670,11 @@ export interface AgentSession {
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
+  /**
+   * The agent's MCP servers, tagged with where the report came from.
+   * `capabilities.supportsMcpStatus` says whether this provider has it at all.
+   */
+  listMcpServers?(): Promise<AgentMcpReport>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;

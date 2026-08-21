@@ -14,6 +14,7 @@ import {
   type AgentMetadata,
   type AgentMode,
   type AgentModelDefinition,
+  type AgentMcpReport,
   type McpServerConfig,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
@@ -38,6 +39,7 @@ import {
   type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
+import { configuredMcpServers } from "../../mcp-status.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
@@ -761,6 +763,9 @@ function withPiCapabilities(supportsMcpServers: boolean): AgentCapabilityFlags {
   return {
     ...PI_CAPABILITIES,
     supportsMcpServers,
+    // Pi only takes MCP config when the pi-mcp-adapter extension is loaded, and that
+    // is exactly what supportsMcpServers already encodes — so the two move together.
+    supportsMcpStatus: supportsMcpServers,
   };
 }
 
@@ -1541,6 +1546,17 @@ export class PiRpcAgentSession implements AgentSession {
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
+  }
+
+  /**
+   * The pi-mcp-adapter has no status RPC, so this is the set Paseo wrote into the
+   * per-agent mcp.json, left `unknown` — same position as the ACP agents.
+   */
+  async listMcpServers(): Promise<AgentMcpReport> {
+    if (!this.capabilities.supportsMcpServers) {
+      return { servers: [], source: "configured" };
+    }
+    return configuredMcpServers(this.config.mcpServers);
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {

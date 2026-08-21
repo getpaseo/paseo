@@ -117,11 +117,14 @@ import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
+  type AgentMcpServer,
+  type AgentMcpSource,
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
   type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
+import { McpStatusCache } from "./agent/mcp-status-cache.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
@@ -710,6 +713,12 @@ export class Session {
     appVisibilityChangedAt: Date;
   } | null = null;
   private registeredPushToken: string | null = null;
+  /**
+   * Shared across this session's clients so two panels, or a reconnect, do not each pay
+   * for a provider call. Session-scoped rather than daemon-wide only because that is the
+   * lifetime the handler already has; the win is coalescing, not global reuse.
+   */
+  private readonly mcpStatusCache = new McpStatusCache();
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
@@ -2563,6 +2572,9 @@ export class Session {
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);
         return;
+      case "agent.mcp.list.request":
+        await this.handleAgentMcpListRequest(msg);
+        return;
       case "register_push_token":
         this.handleRegisterPushToken(msg.token);
         return;
@@ -4048,6 +4060,74 @@ export class Session {
     this.registeredPushToken = token;
     this.pushNotifications.renew(token);
     this.sessionLogger.info("Registered push token");
+  }
+
+  /**
+   * Live MCP connection status for one agent. Unlike commands there is no draft
+   * variant: an agent that has not started has no runtime to ask, and the panel
+   * that calls this only exists once an agent is focused.
+   */
+  private async handleAgentMcpListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.mcp.list.request" }>,
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const emit = (payload: {
+      servers: AgentMcpServer[];
+      source?: AgentMcpSource;
+      error: string | null;
+      unavailable?: "unsupported" | "agent_not_running";
+    }): void => {
+      this.emit({
+        type: "agent.mcp.list.response",
+        payload: {
+          agentId,
+          servers: payload.servers,
+          ...(payload.source ? { source: payload.source } : {}),
+          ...(payload.unavailable ? { unavailable: payload.unavailable } : {}),
+          fetchedAt: new Date().toISOString(),
+          error: payload.error,
+          requestId,
+        },
+      });
+    };
+
+    try {
+      const existing = this.agentManager.getAgent(agentId);
+      const stored = existing ? null : await this.agentStorage.get(agentId);
+      const agent =
+        existing || (stored && !stored.archivedAt)
+          ? await ensureAgentLoaded(agentId, {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              logger: this.sessionLogger,
+            })
+          : null;
+
+      if (!agent) {
+        emit({ servers: [], error: `Agent not found: ${agentId}` });
+        return;
+      }
+      const session = agent.session;
+      // Two reasons the panel has nothing to show, and the app treats them differently:
+      // a provider that can never report is permanent, an agent that is not running
+      // will answer as soon as it starts.
+      if (!session) {
+        emit({ servers: [], error: null, unavailable: "agent_not_running" });
+        return;
+      }
+      if (!session.listMcpServers) {
+        emit({ servers: [], error: null, unavailable: "unsupported" });
+        return;
+      }
+
+      const report = await this.mcpStatusCache.read(agentId, msg.force === true, () =>
+        session.listMcpServers!(),
+      );
+      emit({ servers: report.servers, source: report.source, error: null });
+    } catch (error) {
+      this.sessionLogger.error({ err: error, agentId }, "Failed to list MCP servers");
+      emit({ servers: [], error: getErrorMessage(error) });
+    }
   }
 
   /**

@@ -82,6 +82,7 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
+  AgentMcpListResponseMessage,
   ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -459,6 +460,7 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+type AgentMcpListPayload = AgentMcpListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -4791,6 +4793,20 @@ export class DaemonClient {
       requestId: options?.requestId,
       message: {
         type: "provider.usage.list.request",
+      },
+    });
+  }
+
+  async listMcpServers(
+    agentId: string,
+    options?: { requestId?: string; force?: boolean },
+  ): Promise<AgentMcpListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "agent.mcp.list.request",
+        agentId,
+        ...(options?.force ? { force: true } : {}),
       },
     });
   }

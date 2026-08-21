@@ -260,6 +260,7 @@ export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
 export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
 import type {
   AgentCapabilityFlags,
+  AgentMcpServer,
   AgentModelDefinition,
   AgentMode,
   AgentPermissionRequest,
@@ -397,6 +398,10 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindFiles: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindBoth: z.boolean().optional().default(false),
+    // COMPAT(mcpStatus): added in v0.5.0, remove after 2027-02-21.
+    // Stays undefined-when-absent on purpose: the app reads "old daemon" from the
+    // absence, so it must not default to false.
+    supportsMcpStatus: z.boolean().optional(),
   })
   .catchall(z.boolean());
 
@@ -2707,6 +2712,14 @@ export const ListCommandsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentMcpListRequestSchema = z.object({
+  type: z.literal("agent.mcp.list.request"),
+  agentId: z.string(),
+  /** Set by the panel's refresh control to bypass the daemon's cached report. */
+  force: z.boolean().optional(),
+  requestId: z.string(),
+});
+
 export const RegisterPushTokenMessageSchema = z.object({
   type: z.literal("register_push_token"),
   token: z.string(),
@@ -3090,6 +3103,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ClientHeartbeatMessageSchema,
   PingMessageSchema,
   ListCommandsRequestSchema,
+  AgentMcpListRequestSchema,
   RegisterPushTokenMessageSchema,
   PushUnregisterRequestSchema,
   ListTerminalsRequestSchema,
@@ -5774,6 +5788,36 @@ export const ListCommandsResponseSchema = z.object({
   }),
 });
 
+const AgentMcpServerSchema: z.ZodType<AgentMcpServer> = z.object({
+  name: z.string(),
+  status: z.enum(["connected", "connecting", "failed", "needs_auth", "disabled", "unknown"]),
+  error: z.string().optional(),
+  scope: z.string().optional(),
+  toolCount: z.number().optional(),
+});
+
+export const AgentMcpListResponseSchema = z.object({
+  type: z.literal("agent.mcp.list.response"),
+  payload: z.object({
+    agentId: z.string(),
+    servers: z.array(AgentMcpServerSchema),
+    /**
+     * Why there is nothing to show, when there is nothing to show.
+     *
+     * `unsupported` is static — this provider can never report, so the app removes the
+     * control. `agent_not_running` is transient: the same agent will answer once its
+     * runtime is up, so the app must not cache it as a terminal verdict or the control
+     * would stay gone for the rest of the session. Absent means the report is usable.
+     */
+    unavailable: z.enum(["unsupported", "agent_not_running"]).optional(),
+    /** How much the statuses are worth — see `AgentMcpSource`. */
+    source: z.enum(["live", "startup", "configured"]).optional(),
+    fetchedAt: z.string(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 // ============================================================================
 // Terminal Outbound Messages
 // ============================================================================
@@ -6324,6 +6368,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
   ListCommandsResponseSchema,
+  AgentMcpListResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
   CreateTerminalResponseSchema,
@@ -6765,6 +6810,8 @@ export type ClearAgentAttentionResponseMessage = z.infer<
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
+export type AgentMcpListRequest = z.infer<typeof AgentMcpListRequestSchema>;
+export type AgentMcpListResponseMessage = z.infer<typeof AgentMcpListResponseSchema>;
 export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
 export type PushUnregisterRequest = z.infer<typeof PushUnregisterRequestSchema>;
 export type PushUnregisterResponse = z.infer<typeof PushUnregisterResponseSchema>;

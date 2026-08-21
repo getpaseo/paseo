@@ -578,7 +578,7 @@ export const en = {
         closeRight: "Close to the right",
         closeOthers: "Close other tabs",
         reloadAgent: "Reload agent",
-        reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
+        reloadAgentTooltip: "Reload agent to update skills, MCP servers or login status.",
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
@@ -1797,6 +1797,26 @@ export const en = {
   },
   sidebarCallout: {
     dismiss: "Dismiss",
+  },
+  mcpServers: {
+    agentNotRunning: "Agent is not running",
+    source: {
+      configured:
+        "Configured servers. This agent's provider does not report whether they connected.",
+      startup: "Reported when the session started; connections may have changed since.",
+    },
+    title: "MCP servers",
+    open: "MCP servers",
+    refresh: "Refresh MCP servers",
+    loading: "Checking MCP servers…",
+    empty: "No MCP servers",
+    status: {
+      connecting: "Connecting",
+      needsAuth: "Needs auth",
+      failed: "Failed",
+      disabled: "Disabled",
+      unknown: "Unknown",
+    },
   },
   contextWindow: {
     title: "Context window",

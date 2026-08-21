@@ -6,6 +6,7 @@ import {
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -117,6 +118,7 @@ const AgentCapabilitiesSchema = z.strictObject({
   supportsRewindConversation: z.boolean().optional(),
   supportsRewindFiles: z.boolean().optional(),
   supportsRewindBoth: z.boolean().optional(),
+  supportsMcpStatus: z.boolean().optional(),
 });
 
 const StoredProjectCheckoutSchema = z.union([
@@ -481,6 +483,34 @@ function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"
   return agent.projectPlacement ?? null;
 }
 
+/**
+ * The optional capability flags, projected in one place.
+ *
+ * They are omitted rather than defaulted so the strict schema above can tell "this host
+ * never said" from "this host said false" — the MCP panel reads exactly that difference.
+ * Kept out of `serializeAgent` because every new optional flag would otherwise push that
+ * function past its complexity budget.
+ */
+function serializeOptionalCapabilities(
+  capabilities: AgentCapabilityFlags,
+): Record<string, boolean> {
+  const optional: Array<keyof AgentCapabilityFlags> = [
+    "supportsSessionListing",
+    "supportsMcpStatus",
+    "supportsRewindConversation",
+    "supportsRewindFiles",
+    "supportsRewindBoth",
+  ];
+  const projected: Record<string, boolean> = {};
+  for (const key of optional) {
+    const value = capabilities[key];
+    if (typeof value === "boolean") {
+      projected[key] = value;
+    }
+  }
+  return projected;
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -502,24 +532,13 @@ function serializeAgent(agent: Agent): StoredAgent {
         }
       : {}),
     capabilities: {
+      ...serializeOptionalCapabilities(agent.capabilities),
       supportsStreaming: agent.capabilities.supportsStreaming,
       supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
-      ...(agent.capabilities.supportsSessionListing !== undefined
-        ? { supportsSessionListing: agent.capabilities.supportsSessionListing }
-        : {}),
       supportsDynamicModes: agent.capabilities.supportsDynamicModes,
       supportsMcpServers: agent.capabilities.supportsMcpServers,
       supportsReasoningStream: agent.capabilities.supportsReasoningStream,
       supportsToolInvocations: agent.capabilities.supportsToolInvocations,
-      ...(agent.capabilities.supportsRewindConversation !== undefined
-        ? { supportsRewindConversation: agent.capabilities.supportsRewindConversation }
-        : {}),
-      ...(agent.capabilities.supportsRewindFiles !== undefined
-        ? { supportsRewindFiles: agent.capabilities.supportsRewindFiles }
-        : {}),
-      ...(agent.capabilities.supportsRewindBoth !== undefined
-        ? { supportsRewindBoth: agent.capabilities.supportsRewindBoth }
-        : {}),
     },
     currentModeId: agent.currentModeId,
     availableModes: [],

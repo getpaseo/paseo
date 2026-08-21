@@ -42,6 +42,7 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
+import { McpServersControl } from "@/composer/mcp-panel";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -292,11 +293,25 @@ function renderContextWindowMeter(
   );
 }
 
+/**
+ * The composer's ambient-status rail: the context ring and the MCP plug, in that order.
+ *
+ * The ring keeps its reserved slot so it can fade in without shifting its siblings; the plug has
+ * no slot of its own because it is absent for most providers and reserving space for a control
+ * that will never appear leaves a hole next to the mic.
+ */
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
+  mcp: ReactElement | null,
   reserveSlot: boolean,
 ): ReactNode {
-  return reserveSlot ? <View style={styles.contextWindowMeterSlot}>{meter}</View> : null;
+  if (!reserveSlot) return null;
+  return (
+    <View style={styles.ambientStatusRail}>
+      <View style={styles.contextWindowMeterSlot}>{meter}</View>
+      {mcp}
+    </View>
+  );
 }
 
 interface RenderLeftContentArgs {
@@ -1974,9 +1989,13 @@ function ComposerContentImpl({
       contextWindowMeterGlyphSize,
     ],
   );
+  const mcpServersControl = useMemo(
+    () => <McpServersControl serverId={serverId} agentId={agentId} glyphSize={buttonIconSize} />,
+    [agentId, buttonIconSize, serverId],
+  );
   const beforeVoiceContent = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent),
-    [contextWindowMeter, hasAgent],
+    () => resolveContextWindowPlacement(contextWindowMeter, mcpServersControl, hasAgent),
+    [contextWindowMeter, hasAgent, mcpServersControl],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2406,6 +2425,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
     marginLeft: theme.spacing[1],
   },
   rightControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  ambientStatusRail: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],

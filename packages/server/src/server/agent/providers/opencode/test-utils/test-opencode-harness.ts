@@ -92,6 +92,7 @@ export class TestOpenCodeClient {
     globalEvent: [] as unknown[],
     mcpAdd: [] as unknown[],
     mcpConnect: [] as unknown[],
+    mcpStatus: [] as unknown[],
     permissionReply: [] as unknown[],
     permissionList: [] as unknown[],
     providerList: [] as unknown[],
@@ -121,6 +122,7 @@ export class TestOpenCodeClient {
   experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   mcpAddResponse: OpenCodeResponse = {};
   mcpConnectResponse: OpenCodeResponse = {};
+  mcpStatusResponse: OpenCodeResponse = { data: {} };
   permissionReplyResponse: OpenCodeResponse = {};
   permissionListResponse: OpenCodeResponse = { data: [] };
   permissionListImplementation:
@@ -236,6 +238,10 @@ export class TestOpenCodeClient {
         connect: async (parameters: unknown) => {
           this.calls.mcpConnect.push(parameters);
           return this.mcpConnectResponse;
+        },
+        status: async (parameters: unknown) => {
+          this.calls.mcpStatus.push(parameters);
+          return this.mcpStatusResponse;
         },
       },
       permission: {

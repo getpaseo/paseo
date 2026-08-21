@@ -151,6 +151,60 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * The provider can report which MCP servers its runtime actually connected to.
+   * Distinct from `supportsMcpServers`, which only says Paseo may inject config.
+   * Absent on daemons older than the MCP servers panel, which is what lets the
+   * app tell "this host cannot report" from "this agent has no servers".
+   */
+  supportsMcpStatus?: boolean;
+}
+
+/**
+ * Connection state of one MCP server, as reported by the agent runtime.
+ *
+ * Providers report their own vocabularies (Claude says `needs-auth`, OpenCode says
+ * `needs_client_registration`); each provider maps onto this set and falls back to
+ * `unknown` rather than widening it, so the UI never has to render a status it has
+ * no icon for.
+ */
+export type AgentMcpServerStatus =
+  | "connected"
+  | "connecting"
+  | "failed"
+  | "needs_auth"
+  | "disabled"
+  /** The runtime reported a state this version does not recognise. */
+  | "unknown";
+
+/**
+ * Where a report came from, which is what tells you how much its statuses are worth.
+ *
+ * `live` — the runtime was asked, just now, what it is connected to.
+ * `startup` — a real connection report, but captured when the session started, so a
+ *   server that has dropped since will still read healthy.
+ * `configured` — nobody was asked. These are the servers the agent was set up with and
+ *   the per-row statuses carry no connection information at all.
+ *
+ * One field at the report level rather than a per-row status, because it is a fact
+ * about the source and not about any individual server.
+ */
+export type AgentMcpSource = "live" | "startup" | "configured";
+
+export interface AgentMcpReport {
+  servers: AgentMcpServer[];
+  source: AgentMcpSource;
+}
+
+export interface AgentMcpServer {
+  name: string;
+  status: AgentMcpServerStatus;
+  /** Set when the runtime explains a `failed` status. */
+  error?: string;
+  /** Config layer the server came from — Claude reports project/user/local/claudeai/managed. */
+  scope?: string;
+  /** Number of tools the server exposes, when the runtime reports them. */
+  toolCount?: number;
 }
 
 export interface AgentPersistenceHandle {
