@@ -90,6 +90,87 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("renders a lockfile-sized read-only source with a bounded CodeMirror DOM", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-lockfile-",
+      title: "Large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    const lockfile = `${'{"packages":['}${Array.from({ length: 42_000 }, (_, index) => `{"name":"package-${index}","version":"1.0.0"}`).join(",")}]}`;
+    await writeFile(path.join(session.cwd, "package-lock.json"), lockfile, "utf8");
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "package-lock.json");
+
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(editor(page)).toContainText('"package-0"');
+      await expect.poll(() => page.locator(".cm-line").count()).toBeLessThan(200);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("keeps the app interactive around a plain 11 MB source", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-plain-",
+      title: "Plain large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    await writeFile(
+      path.join(session.cwd, "plain.txt"),
+      "plain source\n".repeat(1_050_000),
+      "utf8",
+    );
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "plain.txt");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(editor(page)).toContainText("plain source");
+      await expect.poll(() => page.locator(".cm-line").count()).toBeLessThan(200);
+
+      await page.getByTestId(`workspace-tab-agent_${session.agentId}`).first().click();
+      await expect(page.getByTestId("message-input-root")).toBeVisible();
+      await page.getByTestId("workspace-tab-file_plain.txt").first().click();
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("refuses a file above the display budget and keeps its tab recoverable", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-unsupported-",
+      title: "Unsupported large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    await writeFile(
+      path.join(session.cwd, "too-large.txt"),
+      Buffer.alloc(51 * 1024 * 1024),
+      "utf8",
+    );
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "too-large.txt");
+      await expect(page.getByTestId("file-source-too-large")).toContainText(
+        "This file is too large to display",
+      );
+
+      await page.getByTestId(`workspace-tab-agent_${session.agentId}`).first().click();
+      await expect(page.getByTestId("message-input-root")).toBeVisible();
+      await page.getByTestId("workspace-tab-file_too-large.txt").first().click();
+      await expect(page.getByTestId("file-source-too-large")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens an assistant file link at its referenced line", async ({ page }) => {
     const target = "target.ts:42";
     const session = await seedAgentWithFileLink({

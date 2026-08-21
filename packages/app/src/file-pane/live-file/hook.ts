@@ -1,6 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { LiveFileModel, type LiveFileSession } from "./model";
+import { SOURCE_PRESENTATION_BUDGETS } from "../source/presentation";
+import { isWeb } from "@/constants/platform";
 
 export function useLiveFile(input: {
   client: DaemonClient | null;
@@ -18,7 +20,12 @@ export function useLiveFile(input: {
         return client.subscribeFile(target, onVersion);
       },
       read(target) {
-        return client.readFile(target.cwd, target.path);
+        return client.readFile(
+          target.cwd,
+          target.path,
+          undefined,
+          SOURCE_PRESENTATION_BUDGETS[isWeb ? "web" : "native"].plain,
+        );
       },
     };
   }, [input.client]);
