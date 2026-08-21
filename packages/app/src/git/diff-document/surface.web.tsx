@@ -16,6 +16,7 @@ import {
 } from "./model";
 import { paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
+import { createMeasuredAdvances } from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
 import type {
   DiffHit,
@@ -816,18 +817,11 @@ function createWebTextMeasurer(typography: DiffTypography): TextMeasurer {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) return { measure: () => 0 };
-  return {
-    measure(text, weight = "regular") {
-      context.font = `${weight === "semibold" ? 600 : 400} ${typography.size}px ${typography.family}`;
-      return context.measureText(text).width;
-    },
-    measureAdvances(graphemes) {
-      context.font = `${typography.size}px ${typography.family}`;
-      let prefix = "";
-      return graphemes.map((grapheme) => {
-        prefix += grapheme;
-        return context.measureText(prefix).width;
-      });
-    },
+  const measure = (text: string, weight: "regular" | "semibold" = "regular") => {
+    context.font = `${weight === "semibold" ? 600 : 400} ${typography.size}px ${typography.family}`;
+    return context.measureText(text).width;
   };
+  // Canvas exposes no glyph coverage, so `requiresShaping` alone decides which
+  // runs a shaper has to see -- there is no `glyphIds` to fall back on.
+  return { measure, measureAdvances: createMeasuredAdvances((text) => measure(text)) };
 }

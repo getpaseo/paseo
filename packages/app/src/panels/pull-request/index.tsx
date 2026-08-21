@@ -1,6 +1,7 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
+import { StyleSheet } from "react-native-unistyles";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
@@ -12,29 +13,24 @@ import {
 } from "@/git/pull-request-panel";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
 import { getPullRequestIdentity, resolvePullRequestContentState } from "./state";
 
-export function usePullRequestAutoAdd(input: {
-  workspaceKey: string | null;
+/**
+ * Whether this workspace's branch has a pull request. Detection only offers the
+ * pull request as something the user can open; it never opens a tab on its own.
+ */
+export function useHasPullRequest(input: {
   serverId: string;
   cwd: string | null;
   enabled: boolean;
-}): void {
+}): boolean {
   const status = useCheckoutPrStatusQuery({
     serverId: input.serverId,
     cwd: input.cwd || "",
     enabled: input.enabled,
   }).status;
-  const observePullRequest = useWorkspaceLayoutStore((state) => state.observePullRequest);
-  const identity = getPullRequestIdentity(status);
-
-  useEffect(() => {
-    if (input.workspaceKey) {
-      observePullRequest(input.workspaceKey, identity);
-    }
-  }, [identity, input.workspaceKey, observePullRequest]);
+  return getPullRequestIdentity(status) !== null;
 }
 
 export function PullRequestContent(input: {
@@ -75,9 +71,9 @@ export function PullRequestContent(input: {
     return <PullRequestPaneSkeleton />;
   }
   return (
-    <View style={EMPTY_STYLE} testID="pull-request-empty-state">
-      <Text style={EMPTY_TITLE_STYLE}>{t("panels.pullRequest.emptyTitle")}</Text>
-      <Text>{t("panels.pullRequest.emptyDescription")}</Text>
+    <View style={styles.empty} testID="pull-request-empty-state">
+      <Text style={styles.emptyTitle}>{t("panels.pullRequest.emptyTitle")}</Text>
+      <Text style={styles.emptyDescription}>{t("panels.pullRequest.emptyDescription")}</Text>
     </View>
   );
 }
@@ -91,12 +87,18 @@ export function usePullRequestData(input: {
   return usePrPaneData(input);
 }
 
-const EMPTY_STYLE = {
-  flex: 1,
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 8,
-  padding: 24,
-} as const;
-
-const EMPTY_TITLE_STYLE = { fontWeight: "600" } as const;
+const styles = StyleSheet.create((theme) => ({
+  empty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    padding: 24,
+  },
+  emptyTitle: {
+    color: theme.colors.foreground,
+  },
+  emptyDescription: {
+    color: theme.colors.foregroundMuted,
+  },
+}));

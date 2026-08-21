@@ -70,7 +70,7 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 
 export async function openNewTabMenuWithShortcut(page: Page): Promise<void> {
   await pressNewTabShortcut(page);
-  await expect(page.getByRole("menuitem", { name: /New agent/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /^Agent/ })).toBeVisible();
 }
 
 export async function pressDirectNewTabShortcut(page: Page, key: string): Promise<void> {

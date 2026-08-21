@@ -242,6 +242,19 @@ focused invalidation capture; React Native's generated stacks make that mode hig
 Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
 the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
+For the desktop Side panel toggle, run the app against the root checkout's daemon and use:
+
+```bash
+npm run profile:explorer-toggle --workspace=@getpaseo/app
+```
+
+The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Side panel pane,
+records an idle control, then measures settled and 50 ms burst Cmd+E toggles. It reports
+input-to-DOM and input-to-paint latency, React commits, mounts, unmounts, and DOM mutations. Set
+`PASEO_PROFILE_TRACE_PATH=/tmp/explorer-toggle.trace.json` or
+`PASEO_PROFILE_CPU_PATH=/tmp/explorer-toggle.cpuprofile` for separate Chromium captures. Override
+the app URL, daemon port, workspace, or server with the corresponding `PASEO_PROFILE_*` variables.
+
 For sustained composer typing, run the paired composer-versus-textarea benchmark against a seeded
 daemon:
 

@@ -21,9 +21,9 @@ const theme = {
     borderAccent: "#2F3534",
   },
   fontSize: {
-    xs: 12,
-    sm: 14,
-    base: 16,
+    xs: 10,
+    sm: 12,
+    base: 14,
   },
   opacity: {
     50: 0.5,
@@ -78,12 +78,12 @@ describe("control geometry", () => {
 
     expect(geometry.fieldTextSm.fontSize).toBe(14);
     expect(geometry.fieldTextSm.lineHeight).toBe(20);
-    expect(geometry.fieldTextMd.fontSize).toBe(16);
-    expect(geometry.fieldTextMd.lineHeight).toBe(22);
+    expect(geometry.fieldTextMd.fontSize).toBe(14);
+    expect(geometry.fieldTextMd.lineHeight).toBe(20);
     expect(geometry.formTextInputSm.fontSize).toBe(14);
     expect(geometry.formTextInputSm.lineHeight).toBe(20);
-    expect(geometry.formTextInputMd.fontSize).toBe(16);
-    expect(geometry.formTextInputMd.lineHeight).toBe(22);
+    expect(geometry.formTextInputMd.fontSize).toBe(14);
+    expect(geometry.formTextInputMd.lineHeight).toBe(20);
   });
 
   it("derives field padding from line height without changing the control height", () => {
@@ -96,13 +96,13 @@ describe("control geometry", () => {
     );
 
     expect(geometry.fieldControlMd.minHeight).toBe(44);
-    expect(geometry.fieldControlMd.paddingVertical).toBe(11);
+    expect(geometry.fieldControlMd.paddingVertical).toBe(12);
     expect(geometry.fieldTextMd.lineHeight + geometry.fieldControlMd.paddingVertical * 2).toBe(
       geometry.fieldControlMd.minHeight,
     );
 
     expect(geometry.formTextInputSm.paddingVertical).toBe(6);
-    expect(geometry.formTextInputMd.paddingVertical).toBe(11);
+    expect(geometry.formTextInputMd.paddingVertical).toBe(12);
   });
 
   it("keeps segmented controls ghost with button-radius segments in a button-sized track", () => {

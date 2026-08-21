@@ -16,11 +16,10 @@ export function isSidebarActiveAgent(input: AgentStateBucketInput): boolean {
 }
 
 // Most urgent first, for collapsing a project's workspaces into one badge. This is
-// deliberately NOT the flat status-list order (STATUS_BUCKET_ORDER in
-// hooks/sidebar-status-view-model.ts), which ranks "attention" above "running": on a
+// deliberately NOT STATUS_BUCKET_ORDER below, which ranks "attention" above "running": on a
 // collapsed project row we want an actively-working project to keep showing the loader,
-// so "running" outranks "attention" here. Blocked (needs_input) and failed still win over
-// both; done stays last.
+// so "running" outranks "attention" here. needs_input and failed still win over both;
+// done stays last.
 const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "needs_input",
   "failed",
@@ -28,6 +27,19 @@ const STATUS_BUCKET_PRIORITY: readonly SidebarStateBucket[] = [
   "attention",
   "done",
 ];
+
+/**
+ * The order states are listed in when all of them are shown side by side rather than collapsed
+ * into one — the sidebar's status groups, and the subagent pill's segments. Anything the user has
+ * to act on comes before anything that is still moving on its own.
+ */
+export const STATUS_BUCKET_ORDER: readonly SidebarStateBucket[] = [
+  "needs_input",
+  "failed",
+  "attention",
+  "running",
+  "done",
+] as const;
 
 /**
  * Collapses many workspace status buckets into the single most urgent one, so a

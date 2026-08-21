@@ -451,11 +451,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   pluginTitle: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
-  error: { color: theme.colors.statusDanger, fontSize: theme.fontSize.xs },
+  error: { color: theme.colors.statusDanger, fontSize: theme.fontSize.sm },
   empty: { padding: theme.spacing[4], alignItems: "center" },
   logsState: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
     paddingVertical: theme.spacing[6],
   },
@@ -469,16 +469,16 @@ const styles = StyleSheet.create((theme) => ({
   logStdout: {
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   logStderr: {
     color: theme.colors.statusDanger,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   logMessage: {
     color: theme.colors.foreground,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

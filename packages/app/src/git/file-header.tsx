@@ -382,7 +382,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   name: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
     flexShrink: 1,
@@ -390,7 +390,7 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   directory: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
     flex: 1,
@@ -398,5 +398,5 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   directorySpacer: { flex: 1, minWidth: 0 },
-  tooltip: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.sm },
+  tooltip: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.base },
 }));

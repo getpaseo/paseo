@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
@@ -297,19 +297,52 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
-async function readClaudeKeychainCredentials(): Promise<unknown | null> {
+type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
+
+// Keep this in sync with Claude Code's Keychain account derivation.
+const CLAUDE_KEYCHAIN_ACCOUNT_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const CLAUDE_KEYCHAIN_FALLBACK_ACCOUNT = "claude-code-user";
+
+export function claudeKeychainAccount(
+  user: string = process.env["USER"] || userInfo().username,
+): string {
+  return CLAUDE_KEYCHAIN_ACCOUNT_PATTERN.test(user) ? user : CLAUDE_KEYCHAIN_FALLBACK_ACCOUNT;
+}
+
+async function runSecurityCommand(args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
-      { timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS },
-    );
-    const raw = stdout.trim();
-    if (!raw) return null;
-    return JSON.parse(raw);
+    const { stdout } = await execFileAsync("security", args, {
+      timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS,
+    });
+    return stdout.trim() || null;
   } catch {
     return null;
   }
+}
+
+/** Read Claude Code's account-specific Keychain item, then try the legacy lookup. */
+export async function readClaudeKeychainCredentials(
+  run: ClaudeKeychainCommandRunner = runSecurityCommand,
+  account: string = claudeKeychainAccount(),
+): Promise<unknown | null> {
+  const lookups = [
+    ["find-generic-password", "-a", account, "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+    ["find-generic-password", "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+  ];
+
+  for (const args of lookups) {
+    const raw = await run(args);
+    if (!raw) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const creds = ClaudeCredentialsSchema.safeParse(parsed);
+    if (creds.success && creds.data.claudeAiOauth?.accessToken) return parsed;
+  }
+  return null;
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {

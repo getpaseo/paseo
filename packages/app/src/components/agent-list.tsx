@@ -259,8 +259,8 @@ function SessionRow({
   );
 
   const archivedIcon = useMemo(
-    () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
-    [theme.fontSize.xs, theme.colors.foregroundMuted],
+    () => <Archive size={theme.fontSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.fontSize.sm, theme.colors.foregroundMuted],
   );
   const showDesktopAttention =
     !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
@@ -617,7 +617,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   sectionTitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
   },
@@ -655,7 +655,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceTitleText: {
     flexShrink: 0,
     maxWidth: 220,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   rowMetaRow: {
@@ -680,7 +680,7 @@ const styles = StyleSheet.create((theme) => ({
   sessionTitle: {
     flexShrink: 1,
     minWidth: 0,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "400",
     color: theme.colors.foreground,
     opacity: 0.86,
@@ -690,11 +690,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   sessionMetaText: {
     maxWidth: "100%",
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   sessionMetaSeparator: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     opacity: 0.7,
   },
@@ -705,20 +705,20 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   columnMeta: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 132,
   },
   columnMetaFixed: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 72,
     textAlign: "right" as const,
   },
   columnMetaHost: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 120,
@@ -754,7 +754,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.3,
   },
   sheetTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     textAlign: "center",

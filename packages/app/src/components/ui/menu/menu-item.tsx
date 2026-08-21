@@ -1,6 +1,7 @@
 import {
   useCallback,
   useMemo,
+  useState,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -14,6 +15,7 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
@@ -126,6 +128,71 @@ export function MenuHint({
   );
 }
 
+/**
+ * Where a row's label starts, measured from the surface's edge: the fill's inset, its border and
+ * its padding. Content a page renders itself — a swatch row, a caption — sits on this rail or it
+ * reads as a line that slipped out of the list.
+ */
+export function menuRowContentInset(theme: Theme): number {
+  return theme.spacing[1] + theme.borderWidth[1] + theme.spacing[2];
+}
+
+/**
+ * A text field on a menu page, drawn as the row it stands in for: same box as a row's fill, same
+ * left rail for the text inside it. The form kit's `FormTextInput` carries a screen's geometry
+ * (12pt padding, 32pt tall) and lands its text 4pt inside the labels above it, which is exactly
+ * the misalignment a menu makes obvious.
+ *
+ * `AdaptiveTextInput` underneath, so a compact sheet gets `BottomSheetTextInput` and the keyboard
+ * moves the sheet rather than covering it. That also means the compact presentation has to be a
+ * sheet: `BottomSheetTextInput` outside a sheet has no context to read.
+ */
+export function MenuTextField({
+  initialValue,
+  onChangeText,
+  placeholder,
+  accessibilityLabel,
+  autoFocus = false,
+  editable = true,
+  onSubmitEditing,
+  testID,
+}: {
+  initialValue?: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  /** Falls back to `placeholder`, which already names the field. */
+  accessibilityLabel?: string;
+  autoFocus?: boolean;
+  editable?: boolean;
+  onSubmitEditing?: () => void;
+  testID?: string;
+}): ReactElement {
+  const [focused, setFocused] = useState(false);
+  const handleFocus = useCallback(() => setFocused(true), []);
+  const handleBlur = useCallback(() => setFocused(false), []);
+  const fieldStyle = useMemo(() => [styles.field, focused ? styles.fieldFocused : null], [focused]);
+  return (
+    <View style={fieldStyle}>
+      <AdaptiveTextInput
+        initialValue={initialValue}
+        onChangeText={onChangeText}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onSubmitEditing={onSubmitEditing}
+        placeholder={placeholder}
+        accessibilityLabel={accessibilityLabel ?? placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoFocus={autoFocus}
+        editable={editable}
+        returnKeyType="done"
+        style={styles.fieldInput}
+        testID={testID}
+      />
+    </View>
+  );
+}
+
 function resolveLeadingContent(input: {
   isPending: boolean | undefined;
   isSuccess: boolean;
@@ -228,6 +295,14 @@ export function MenuItem({
     selectItem(onSelect, closeOnSelect);
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
+  // A row that draws a check has to say so as well: a multi-select page is a list of things that
+  // are on or off, and the check is the only thing telling a sighted user which. Rows that answer
+  // no such question stay plain buttons.
+  const accessibilityState = useMemo(
+    () => (selected === undefined ? undefined : { checked: selected }),
+    [selected],
+  );
+
   const itemPressableStyle = useCallback(
     ({
       pressed,
@@ -263,6 +338,8 @@ export function MenuItem({
     <Pressable
       testID={testID}
       accessibilityRole="menuitem"
+      accessibilityState={accessibilityState}
+      aria-checked={selected}
       tabIndex={-1}
       dataSet={itemDataSet}
       disabled={isDisabled}
@@ -314,7 +391,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
   },
   labelText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   // `border` sits between surface1 and surface2, which put it within a hair of the hover fill and
@@ -343,12 +420,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   hintText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   // The fill is inset from the surface's edges and rounded, so a hovered row reads as a chip
@@ -375,6 +452,31 @@ const styles = StyleSheet.create((theme) => ({
     outlineWidth: 0,
     outlineColor: "transparent",
   },
+  // The same box as `item`, filled the way a hovered row is filled, so the field sits in the
+  // column of rows rather than beside it. Every number here is `item`'s: change one, change both.
+  field: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: MENU_ITEM_HEIGHT,
+    marginHorizontal: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  fieldFocused: {
+    borderColor: theme.colors.borderAccent,
+  },
+  fieldInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.sm,
+    lineHeight: MENU_ITEM_LINE_HEIGHT,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+  },
   itemHovered: {
     backgroundColor: theme.colors.surface2,
   },
@@ -392,7 +494,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.72,
   },
   itemText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: MENU_ITEM_LINE_HEIGHT,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
@@ -408,7 +510,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemDescription: {
     marginTop: 2,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   checkSlot: {

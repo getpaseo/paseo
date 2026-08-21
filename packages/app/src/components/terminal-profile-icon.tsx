@@ -23,9 +23,15 @@ function ProviderProfileIcon({
 
 const ThemedProviderProfileIcon = withUnistyles(ProviderProfileIcon);
 
-export function TerminalProfileIcon({ iconKey }: { iconKey: string | undefined }): ReactElement {
+export function TerminalProfileIcon({
+  iconKey,
+  size = 14,
+}: {
+  iconKey: string | undefined;
+  size?: number;
+}): ReactElement {
   if (!iconKey) {
-    return <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
+    return <ThemedSquareTerminal size={size} uniProps={mutedColorMapping} />;
   }
-  return <ThemedProviderProfileIcon iconKey={iconKey} size={14} uniProps={mutedColorMapping} />;
+  return <ThemedProviderProfileIcon iconKey={iconKey} size={size} uniProps={mutedColorMapping} />;
 }

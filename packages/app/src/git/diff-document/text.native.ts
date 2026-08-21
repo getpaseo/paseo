@@ -9,8 +9,9 @@ import { fragmentTextForRange } from "./model";
 import { codeTextColor } from "./palette";
 import {
   createCachedAsciiTextMetrics,
+  createChunkedAdvanceMeasurer,
   createFallbackAwareTextMeasurer,
-  requiresNativeParagraph,
+  requiresShaping,
   type CachedAsciiTextMetrics,
 } from "./text-measurement";
 import type { DiffCell, DiffDocumentModel, DiffFragment, DiffPalette, TextMeasurer } from "./types";
@@ -120,34 +121,35 @@ export function createNativeTextMeasurer(input: {
   });
   return {
     ...fallbackAware,
-    measureAdvances(graphemes) {
-      const text = graphemes.join("");
-      if (!requiresRetainedParagraph(text, asciiMetrics))
-        return asciiMetrics.measureAdvances(graphemes);
-      const paragraph = createParagraph({
-        text,
-        families,
-        fontSize: input.fontSize,
-        lineHeight: Math.round(input.fontSize * 1.5),
-        color: Skia.Color("black"),
-      });
-      let end = 0;
-      const advances = graphemes.map((grapheme) => {
-        end += grapheme.length;
-        const rectangles = paragraph.getRectsForRange(0, end);
-        return rectangles.reduce(
-          (right, rectangle) => Math.max(right, rectangle.x + rectangle.width),
-          0,
-        );
-      });
-      paragraph.dispose();
-      return advances;
-    },
+    measureAdvances: createChunkedAdvanceMeasurer({
+      requiresShaping: (text) => requiresRetainedParagraph(text, asciiMetrics),
+      measureAdditive: (graphemes) => asciiMetrics.measureAdvances(graphemes),
+      measureShaped(graphemes) {
+        const paragraph = createParagraph({
+          text: graphemes.join(""),
+          families,
+          fontSize: input.fontSize,
+          lineHeight: Math.round(input.fontSize * 1.5),
+          color: Skia.Color("black"),
+        });
+        let end = 0;
+        const advances = graphemes.map((grapheme) => {
+          end += grapheme.length;
+          const rectangles = paragraph.getRectsForRange(0, end);
+          return rectangles.reduce(
+            (right, rectangle) => Math.max(right, rectangle.x + rectangle.width),
+            0,
+          );
+        });
+        paragraph.dispose();
+        return advances;
+      },
+    }),
   };
 }
 
 function requiresRetainedParagraph(text: string, asciiMetrics: CachedAsciiTextMetrics): boolean {
-  return requiresNativeParagraph(text) || !asciiMetrics.hasEveryGlyph(text);
+  return requiresShaping(text) || !asciiMetrics.hasEveryGlyph(text);
 }
 
 function createFragmentParagraph(input: {

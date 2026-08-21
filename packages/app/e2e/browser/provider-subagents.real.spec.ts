@@ -89,6 +89,9 @@ test.describe("real provider subagent timelines", () => {
         }
         await rows.first().click();
 
+        // Choosing a row is a menu selection: the track panel goes with it.
+        await expect(page.getByTestId("subagents-track-header-panel")).toBeHidden();
+
         const panel = page.getByTestId("provider-subagent-panel");
         await expect(panel).toBeVisible({ timeout: 30_000 });
         if (scenario.expectedSubtitle) {

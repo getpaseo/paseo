@@ -1,7 +1,7 @@
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -79,6 +79,66 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
+  test("keeps timeline activity in memory and removes obsolete timeline files at startup", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-cleanup-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const obsoleteTimelineDirectory = path.join(paseoHome, "agent-timelines");
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
+    await mkdir(obsoleteTimelineDirectory, { recursive: true });
+    await writeFile(path.join(obsoleteTimelineDirectory, "obsolete.json"), "{}\n", "utf-8");
+
+    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+    try {
+      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "timeline stays in memory",
+      });
+      await daemonHandle.daemon.agentManager.flush();
+
+      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await daemonHandle.close();
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("does not create a timeline directory for live timeline activity", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-memory-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
+    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+    const timelineDirectory = path.join(daemonHandle.paseoHome, "agent-timelines");
+    try {
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "timeline stays in memory",
+      });
+      await daemonHandle.daemon.agentManager.flush();
+
+      await expect(access(timelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await daemonHandle.close();
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test("reload applies live HTTP, MCP, Git, provider, relay, and app policies", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-config-reload-runtime-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
@@ -111,6 +171,14 @@ describe("paseo daemon bootstrap", () => {
     config.agentClients = createTestAgentClients();
     config.agentStoragePath = path.join(paseoHome, "agents");
     config.isDev = true;
+    config.speech = {
+      providers: {
+        dictationStt: { provider: "local", explicit: true, enabled: false },
+        voiceTurnDetection: { provider: "local", explicit: true, enabled: false },
+        voiceStt: { provider: "local", explicit: true, enabled: false },
+        voiceTts: { provider: "local", explicit: true, enabled: false },
+      },
+    };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
     let client: DaemonClient | null = null;
     let proxyUpstream: http.Server | null = null;

@@ -9,6 +9,8 @@ import {
   clickNewChat,
   clickNewTerminal,
   countTabsOfKind,
+  waitForTabBar,
+  pressNewTabShortcut,
   getTabTestIds,
   waitForTabWithTitle,
   measureTileTransition,
@@ -22,13 +24,37 @@ import {
   setupDeterministicPrompt,
 } from "../support/helpers/terminal-perf";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import {
+  expectTerminalOutputContains,
+  seedTerminalProfiles,
+  type TerminalProfile,
+} from "../support/helpers/new-workspace-launch";
+import { gotoAppShell } from "../support/helpers/app";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { getServerId } from "../support/helpers/server-id";
 
 // ─── Shared state ──────────────────────────────────────────────────────────
 
 let workspace: SeededWorkspace;
+let secondWorkspaceId: string | null = null;
+
+const EMPTY_PROMPT_PROFILE: TerminalProfile = {
+  id: "e2e-empty-prompt",
+  name: "Empty Prompt",
+  command: "/bin/sh",
+  args: ["-c", 'echo prompt-args: "$#"; sleep 10', "profile-name", "{{{prompt}}}"],
+};
 
 test.beforeAll(async () => {
   workspace = await seedWorkspace({ repoPrefix: "launcher-e2e-" });
+  const created = await workspace.client.createWorkspace({
+    source: { kind: "directory", path: workspace.repoPath, projectId: workspace.projectId },
+    title: "launcher-e2e-cmd-t-switch-target",
+  });
+  if (!created.workspace) {
+    throw new Error(created.error ?? "Failed to create secondary workspace for cmd+t switch test");
+  }
+  secondWorkspaceId = created.workspace.id;
 });
 
 test.afterAll(async () => {
@@ -40,6 +66,40 @@ test.afterAll(async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe("Tab creation", () => {
+  test("Cmd+T keeps opening the New tab menu after workspace switches", async ({ page }) => {
+    if (!secondWorkspaceId) {
+      throw new Error("Secondary workspace was not created");
+    }
+
+    const serverId = getServerId();
+    const newTabMenuItem = page.getByRole("menuitem", { name: /^Agent/ });
+
+    const switchWorkspaceRow = async (workspaceId: string) => {
+      const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`).first();
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await row.click();
+      // The shortcut must follow the route, so prove the route actually moved first.
+      await expect(page).toHaveURL(new RegExp(`workspace/${workspaceId}(\\b|/|$)`), {
+        timeout: 15_000,
+      });
+      await waitForTabBar(page);
+    };
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+
+    const sequence = [workspace.workspaceId, secondWorkspaceId];
+    for (let i = 0; i < 8; i++) {
+      await switchWorkspaceRow(sequence[i % sequence.length]);
+      await pressNewTabShortcut(page);
+      await expect(newTabMenuItem, `New tab menu did not open after switch ${i}`).toBeVisible({
+        timeout: 5_000,
+      });
+      await page.keyboard.press("Escape");
+      await expect(newTabMenuItem).toBeHidden({ timeout: 5_000 });
+    }
+  });
+
   test("retained inactive workspaces cannot own New tab shortcuts", async ({ page }) => {
     await gotoWorkspace(page, workspace.workspaceId);
     const workspaceUrl = page.url();
@@ -49,7 +109,7 @@ test.describe("Tab creation", () => {
     await expect(page.getByRole("navigation", { name: "Settings" })).toBeVisible();
 
     await page.keyboard.press(`${modifier}+t`);
-    await expect(page.getByRole("menuitem", { name: /New agent/ })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: /^Agent/ })).toHaveCount(0);
 
     await page.goto(workspaceUrl);
     await assertNewTabMenuTriggerVisible(page);
@@ -89,8 +149,8 @@ test.describe("Tab creation", () => {
     await gotoWorkspace(page, workspace.workspaceId);
     await openNewTabMenuWithShortcut(page);
 
-    const agent = page.getByRole("menuitem", { name: /New agent/ });
-    const terminal = page.getByRole("menuitem", { name: /New terminal/ });
+    const agent = page.getByRole("menuitem", { name: /^Agent/ });
+    const terminal = page.getByRole("menuitem", { name: /^Terminal/ });
     const changes = page.getByRole("menuitem", { name: /Changes/ });
     const files = page.getByRole("menuitem", { name: /Files/ });
     const shortcutPrefix = process.platform === "darwin" ? /⇧⌘/ : /Ctrl.*Shift/;
@@ -135,6 +195,23 @@ test.describe("Tab creation", () => {
     const tabsAfter = await getTabTestIds(page);
     const terminalTabs = tabsAfter.filter((id) => id.includes("terminal"));
     expect(terminalTabs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("launching a profile from the New tab menu drops its empty prompt argument", async ({
+    page,
+  }) => {
+    test.setTimeout(45_000);
+    const profileSeed = await seedTerminalProfiles([EMPTY_PROMPT_PROFILE]);
+
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).click();
+      await page.getByRole("menuitem", { name: EMPTY_PROMPT_PROFILE.name }).click();
+
+      await expectTerminalOutputContains(page, "prompt-args: 0");
+    } finally {
+      await profileSeed.restore();
+    }
   });
 
   test("tab bar shows action buttons per pane", async ({ page }) => {

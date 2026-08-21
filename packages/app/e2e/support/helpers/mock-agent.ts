@@ -84,9 +84,9 @@ export async function openAgentRoute(
   page: Page,
   input: { workspaceId: string; agentId: string },
 ): Promise<void> {
-  await page.goto(buildAgentRoute(input.workspaceId, input.agentId));
+  await page.goto(buildAgentRoute(input.workspaceId, input.agentId), { waitUntil: "commit" });
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
-    { timeout: 60_000 },
+    { timeout: 60_000, waitUntil: "commit" },
   );
 }

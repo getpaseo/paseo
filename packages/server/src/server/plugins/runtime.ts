@@ -10,7 +10,9 @@ import { readPluginManifest } from "./manifest.js";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
-const ENTRY_FILENAME = "index.tsx";
+const ENTRY_FILENAME = "index.ts";
+// COMPAT(plugin-index-tsx): added in v0.4, remove after 2027-02-17
+const LEGACY_ENTRY_FILENAME = "index.tsx";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
@@ -169,6 +171,10 @@ function terminatePluginChild(child: PluginChild): void {
   if (!child.killed) child.kill();
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
   return new Promise((resolve, reject) => {
     child.send(message, (error) => {
@@ -181,9 +187,13 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
   });
 }
 
-async function requireRegularFile(filePath: string, label: string): Promise<void> {
-  const info = await stat(filePath).catch(() => null);
-  if (!info?.isFile()) throw new Error(`${label} is missing: ${filePath}`);
+async function resolveEntryPath(directory: string): Promise<string> {
+  for (const filename of [ENTRY_FILENAME, LEGACY_ENTRY_FILENAME]) {
+    const filePath = path.join(directory, filename);
+    const info = await stat(filePath).catch(() => null);
+    if (info?.isFile()) return filePath;
+  }
+  throw new Error(`Plugin entry point is missing: ${path.join(directory, ENTRY_FILENAME)}`);
 }
 
 export class PluginRuntime {
@@ -217,12 +227,17 @@ export class PluginRuntime {
     canPublish: () => boolean = () => true,
   ): Promise<void> {
     if (this.plugins.has(pluginId)) throw new Error(`Plugin is already running: ${pluginId}`);
-    const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath);
+    this.appendLog(pluginId, "stdout", "[paseo] Loading plugin");
+    const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath).catch((error) => {
+      this.appendLog(pluginId, "stderr", `[paseo] Plugin failed to load: ${describeError(error)}`);
+      throw error;
+    });
     if (!canPublish()) {
       await this.stopPlugin(loaded);
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
     this.plugins.set(pluginId, loaded);
+    this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
 
   async stopPluginById(pluginId: string): Promise<boolean> {
@@ -290,8 +305,7 @@ export class PluginRuntime {
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
     await readPluginManifest(directory);
-    const entryPath = path.join(directory, ENTRY_FILENAME);
-    await requireRegularFile(entryPath, "Plugin entry point");
+    const entryPath = await resolveEntryPath(directory);
     const bundles = await compilePlugin(entryPath);
     const sessionHost = this.sessionHost;
     if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
@@ -394,9 +408,11 @@ export class PluginRuntime {
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
+    this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
     if (loaded.child.killed) {
       loaded.sessionSocket.peerClosed();
       await loaded.sessionClosed;
+      this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
       return;
     }
     const closed = new Promise<void>((resolve) =>
@@ -410,6 +426,7 @@ export class PluginRuntime {
     await closed;
     loaded.sessionSocket.peerClosed();
     await loaded.sessionClosed;
+    this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 
   private rejectPending(loaded: LoadedPlugin, message: string): void {
@@ -421,6 +438,7 @@ export class PluginRuntime {
   }
 
   private appendLog(pluginId: string, stream: PluginLogEntry["stream"], message: string): void {
+    const boundedMessage = Buffer.from(message).subarray(0, MAX_LOG_LINE_BYTES).toString("utf8");
     let tail = this.logTails.get(pluginId);
     if (!tail) {
       tail = { entries: [], bytes: 0, nextSequence: 1 };
@@ -430,10 +448,10 @@ export class PluginRuntime {
       sequence: tail.nextSequence++,
       timestamp: new Date().toISOString(),
       stream,
-      message,
+      message: boundedMessage,
     };
     tail.entries.push(entry);
-    tail.bytes += Buffer.byteLength(message);
+    tail.bytes += Buffer.byteLength(boundedMessage);
     while (tail.entries.length > MAX_LOG_ENTRIES || tail.bytes > MAX_LOG_BYTES) {
       const removed = tail.entries.shift();
       if (!removed) break;

@@ -58,7 +58,7 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: "auto",
     minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   runningText: {
     color: theme.colors.foreground,

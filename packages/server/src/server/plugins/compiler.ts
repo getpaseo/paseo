@@ -1,9 +1,77 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { parse } from "@babel/parser";
-import { build, type Plugin } from "esbuild";
+import type { Plugin } from "esbuild";
+import { PLUGIN_SDK_SPECIFIERS } from "./plugin-sdk-specifiers.js";
+
+const nodeRequire = createRequire(import.meta.url);
+const ESBUILD_BINARY_PATH = "ESBUILD_BINARY_PATH";
+
+// esbuild resolves its own platform binary via require.resolve() the first time its
+// module is evaluated. Inside the packaged desktop app that resolves to a path under
+// app.asar even though electron-builder unpacks the real binary to app.asar.unpacked.
+// child_process.spawn bypasses Electron's asar fs shim, so the OS rejects that path
+// with ENOTDIR. Point esbuild at the real unpacked binary before its module loads.
+export function unpackedEsbuildBinaryFromPackageDir(
+  esbuildPackageDir: string,
+  platform: NodeJS.Platform,
+  arch: string,
+): string | null {
+  const asarSegment = `${path.sep}app.asar${path.sep}`;
+  const asarIndex = esbuildPackageDir.indexOf(asarSegment);
+  if (asarIndex === -1) return null;
+  return path.join(
+    esbuildPackageDir.slice(0, asarIndex),
+    "app.asar.unpacked",
+    "node_modules",
+    `@esbuild/${platform}-${arch}`,
+    ...(platform === "win32" ? ["esbuild.exe"] : ["bin", "esbuild"]),
+  );
+}
+
+export function resolveExistingAsarUnpackedEsbuildBinary(
+  esbuildPackageDir: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  exists: (file: string) => boolean = existsSync,
+): string | null {
+  const binaryPath = unpackedEsbuildBinaryFromPackageDir(esbuildPackageDir, platform, arch);
+  return binaryPath && exists(binaryPath) ? binaryPath : null;
+}
+
+function resolveAsarUnpackedEsbuildBinary(): string | null {
+  let esbuildDir: string;
+  try {
+    esbuildDir = path.dirname(nodeRequire.resolve("esbuild/package.json"));
+  } catch {
+    return null;
+  }
+  return resolveExistingAsarUnpackedEsbuildBinary(esbuildDir);
+}
+
+function loadEsbuild(): typeof import("esbuild") {
+  const previousBinaryPath = process.env[ESBUILD_BINARY_PATH];
+  const unpackedBinary = resolveAsarUnpackedEsbuildBinary();
+  if (unpackedBinary) process.env[ESBUILD_BINARY_PATH] = unpackedBinary;
+
+  try {
+    // esbuild reads this variable while its CommonJS module is evaluated. Keep
+    // the compatibility bridge local so it cannot become an agent's environment.
+    return nodeRequire("esbuild") as typeof import("esbuild");
+  } finally {
+    if (previousBinaryPath === undefined) delete process.env[ESBUILD_BINARY_PATH];
+    else process.env[ESBUILD_BINARY_PATH] = previousBinaryPath;
+  }
+}
 
 type PluginBuildTarget = "client" | "server";
+
+interface SourceRange {
+  start: number;
+  end: number;
+}
 
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
   client: new Set(["handle"]),
@@ -13,6 +81,7 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
     "addWorkspacePanel",
     "addCommandCenterItem",
     "addAttachmentSource",
+    "addTheme",
   ]),
 };
 
@@ -54,7 +123,7 @@ function defaultPluginFunction(programBody: unknown[]): { body: object; contextN
       Reflect.get(statement, "type") === "ExportDefaultDeclaration",
   );
   if (defaultExports.length !== 1) {
-    throw new Error("Plugin index.tsx must have exactly one default export function");
+    throw new Error("Plugin entry point must have exactly one default export function");
   }
   const declaration = Reflect.get(defaultExports[0] as object, "declaration");
   const declarationType =
@@ -88,7 +157,7 @@ function collectRemovedRegistrationRanges(
   node: unknown,
   contextName: string,
   removedNames: ReadonlySet<string>,
-  ranges: Array<{ start: number; end: number }>,
+  ranges: SourceRange[],
 ): void {
   if (node === null || typeof node !== "object") return;
   if (Reflect.get(node, "type") === "ExpressionStatement") {
@@ -97,7 +166,9 @@ function collectRemovedRegistrationRanges(
       const start = Reflect.get(node, "start");
       const end = Reflect.get(node, "end");
       if (typeof start !== "number" || typeof end !== "number") {
-        throw new Error(`Could not locate plugin context ${name} registration in index.tsx`);
+        throw new Error(
+          `Could not locate plugin context ${name} registration in plugin entry point`,
+        );
       }
       ranges.push({ start, end });
       return;
@@ -113,25 +184,79 @@ function collectRemovedRegistrationRanges(
   }
 }
 
-function removeOppositeTargetRegistrations(source: string, target: PluginBuildTarget): string {
+function moduleTarget(specifier: string): PluginBuildTarget | null {
+  if (/\.client(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "client";
+  if (/\.server(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "server";
+  return null;
+}
+
+function collectOppositeTargetImportRanges(
+  programBody: unknown[],
+  target: PluginBuildTarget,
+  ranges: SourceRange[],
+): void {
+  for (const statement of programBody) {
+    if (
+      statement === null ||
+      typeof statement !== "object" ||
+      Reflect.get(statement, "type") !== "ImportDeclaration"
+    ) {
+      continue;
+    }
+    const source = Reflect.get(statement, "source");
+    const specifier =
+      source !== null && typeof source === "object" ? Reflect.get(source, "value") : null;
+    if (typeof specifier !== "string") continue;
+    const importedTarget = moduleTarget(specifier);
+    if (importedTarget === null || importedTarget === target) continue;
+    const start = Reflect.get(statement, "start");
+    const end = Reflect.get(statement, "end");
+    if (typeof start !== "number" || typeof end !== "number") {
+      throw new Error(`Could not locate ${importedTarget}-only import in plugin entry point`);
+    }
+    ranges.push({ start, end });
+  }
+}
+
+function filterEntrypoint(source: string, target: PluginBuildTarget): string {
   const ast = parse(source, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
   });
   const pluginFunction = defaultPluginFunction(ast.program.body);
-  const ranges: Array<{ start: number; end: number }> = [];
+  const ranges: SourceRange[] = [];
   collectRemovedRegistrationRanges(
     pluginFunction.body,
     pluginFunction.contextName,
     REGISTRATIONS_REMOVED_BY_TARGET[target],
     ranges,
   );
+  collectOppositeTargetImportRanges(ast.program.body, target, ranges);
 
   let output = source;
-  for (const range of ranges.toReversed()) {
+  for (const range of ranges.toSorted((left, right) => right.start - left.start)) {
     output = `${output.slice(0, range.start)}${output.slice(range.end)}`;
   }
   return output;
+}
+
+function createRuntimeBoundaryPlugin(target: PluginBuildTarget): Plugin {
+  return {
+    name: `paseo-plugin-${target}-runtime-boundary`,
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /\.(?:client|server)(?:\.[cm]?[jt]sx?)?$/ }, (args) => {
+        const importedTarget = moduleTarget(args.path);
+        if (importedTarget === null || importedTarget === target) return null;
+        return {
+          errors: [
+            {
+              text: `${importedTarget}-only module cannot be imported into the plugin ${target} bundle: ${args.path}`,
+            },
+          ],
+        };
+      });
+    },
+  };
 }
 
 function wrapCommonJsBundle(code: string): string {
@@ -167,8 +292,9 @@ function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
 }
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
+  const { build } = loadEsbuild();
   const source = await readFile(entryPath, "utf8");
-  const filteredSource = removeOppositeTargetRegistrations(source, target);
+  const filteredSource = filterEntrypoint(source, target);
   const result = await build({
     stdin: {
       contents: filteredSource,
@@ -183,15 +309,16 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     external:
       target === "client"
         ? [
-            "@paseo/plugin",
+            ...PLUGIN_SDK_SPECIFIERS,
             "@tanstack/react-query",
             "react",
             "react/jsx-runtime",
             "react-native",
             "zod",
           ]
-        : ["@paseo/plugin", "zod"],
-    plugins: [createUnusedPlatformModulePlugin(target)],
+        : [...PLUGIN_SDK_SPECIFIERS, "zod"],
+    plugins: [createRuntimeBoundaryPlugin(target), createUnusedPlatformModulePlugin(target)],
+    logLevel: "silent",
     treeShaking: true,
     write: false,
   });

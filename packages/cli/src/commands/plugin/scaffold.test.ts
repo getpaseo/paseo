@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("plugin scaffold", () => {
-  it("creates a standalone strict TSX project that typechecks", async () => {
+  it("creates a standalone split-runtime project that typechecks", async () => {
     const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
     directories.push(parent);
     const directory = path.join(parent, "hello-plugin");
@@ -34,6 +34,12 @@ describe("plugin scaffold", () => {
     expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
+    await expect(readFile(path.join(directory, "index.ts"), "utf8")).resolves.toContain(
+      'from "./main.client"',
+    );
+    await expect(readFile(path.join(directory, "main.client.tsx"), "utf8")).resolves.toContain(
+      "Hello from my plugin",
+    );
   });
 
   it("typechecks client and server Paseo API access", async () => {
@@ -41,27 +47,45 @@ describe("plugin scaffold", () => {
     directories.push(parent);
     const directory = path.join(parent, "paseo-api-plugin");
     await scaffoldPluginDirectory(directory);
-    await writeFile(
-      path.join(directory, "index.tsx"),
-      `import React from "react";
-import { Text } from "react-native";
+    await Promise.all([
+      writeFile(
+        path.join(directory, "inspect.shared.ts"),
+        `import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
-import {
-  defineRpc,
-  type PluginContext,
-  type PluginAgentPanelProps,
-  usePaseo,
-  useAgent,
-  useWorkspace,
-} from "@paseo/plugin";
 
-const inspect = defineRpc({
+export const inspect = defineRpc({
   name: "inspect",
   input: z.object({}),
   output: z.object({ configured: z.boolean() }),
 });
+`,
+      ),
+      writeFile(
+        path.join(directory, "inspect.server.ts"),
+        `import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type { output as ZodOutput } from "zod";
+import { inspect } from "./inspect.shared";
 
-function Surface() {
+export async function inspectConfig(
+  _input: ZodOutput<typeof inspect.input>,
+  { paseo }: PluginHandlerContext,
+) {
+  return { configured: Boolean((await paseo.config.get()).config) };
+}
+`,
+      ),
+      writeFile(
+        path.join(directory, "main.client.tsx"),
+        `import React from "react";
+import { Text } from "react-native";
+import {
+  type PluginAgentPanelProps,
+  useAgent,
+  usePaseo,
+  useWorkspace,
+} from "@getpaseo/plugin";
+
+export function Surface() {
   const paseo = usePaseo();
   const createWorkspace = () => paseo.workspaces.create({
     source: { kind: "directory", path: "/repo" },
@@ -70,7 +94,7 @@ function Surface() {
   return <Text>Paseo API</Text>;
 }
 
-function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
+export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => {
     // @ts-expect-error Plugin snapshots are readonly.
     workspace.name = "mutated";
@@ -83,11 +107,17 @@ function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   });
   return <Text>{workspaceName}: {agentTitle}</Text>;
 }
+`,
+      ),
+      writeFile(
+        path.join(directory, "index.ts"),
+        `import type { PluginContext } from "@getpaseo/plugin";
+import { AgentPanel, Surface } from "./main.client";
+import { inspectConfig } from "./inspect.server";
+import { inspect } from "./inspect.shared";
 
 export default function contribute(plugin: PluginContext) {
-  plugin.handle(inspect, async (_input, { paseo }) => ({
-    configured: Boolean((await paseo.config.get()).config),
-  }));
+  plugin.handle(inspect, inspectConfig);
   plugin.addSurface("main", Surface);
   plugin.addWorkspacePanel({
     id: "review",
@@ -110,7 +140,8 @@ export default function contribute(plugin: PluginContext) {
   return () => {};
 }
 `,
-    );
+      ),
+    ]);
 
     const configPath = path.join(directory, "tsconfig.json");
     const loaded = ts.readConfigFile(configPath, ts.sys.readFile);

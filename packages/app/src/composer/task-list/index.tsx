@@ -4,17 +4,13 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { TaskListRow } from "@/components/task-list-row";
-import { useSessionStore } from "@/stores/session-store";
 import type { TodoEntry } from "@/types/stream";
 
 export const AgentTaskList = memo(function AgentTaskList({
-  serverId,
-  agentId,
+  tasks,
 }: {
-  serverId: string;
-  agentId: string;
+  tasks: TodoEntry[] | undefined;
 }) {
-  const tasks = useSessionStore((state) => state.sessions[serverId]?.agentTasks.get(agentId));
   if (!tasks?.length) return null;
   return <TaskListCard tasks={tasks} />;
 });
@@ -28,11 +24,12 @@ const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] 
   // Counts only. The active task used to ride along in the header, where it was the first thing
   // truncated on a phone; the panel shows it in full, in place, with the rest of the list.
   const label = t("message.todo.tasksProgress", { completed, total: tasks.length });
+  const segments = useMemo(() => [{ bucket: null, text: label }], [label]);
 
   return (
     <ComposerTrackPill
       testID="agent-task-list-header"
-      label={label}
+      segments={segments}
       panelTitle={t("message.todo.title")}
     >
       {tasks.map((task, index) => (

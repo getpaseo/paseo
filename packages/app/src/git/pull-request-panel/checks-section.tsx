@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, ScrollView, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, MessageSquarePlus } from "lucide-react-native";
@@ -11,6 +11,7 @@ import { summarizeChecks, type ChecksGroup } from "./checks-summary";
 import { canAddPullRequestCheckLogsToChat } from "./context-attachment";
 import type { PrPaneCheck } from "./data";
 import { CheckStatusIcon, foregroundMutedColorMapping, sectionKitStyles } from "./section-kit";
+import { useCheckGroupState } from "./check-group-state";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -67,17 +68,7 @@ export function ChecksSection({
   onAddLogsToChat,
 }: ChecksSectionProps) {
   const summary = useMemo(() => summarizeChecks(checks), [checks]);
-  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<CheckStatus>>(() => new Set());
-
-  const handleToggleGroup = useCallback((status: CheckStatus) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (!next.delete(status)) {
-        next.add(status);
-      }
-      return next;
-    });
-  }, []);
+  const { collapsedGroups, toggle: handleToggleGroup } = useCheckGroupState();
 
   return (
     <View testID="pr-pane-checks">
@@ -253,12 +244,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[0.5],
   },
   headline: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },
   detail: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   list: {
@@ -276,7 +267,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
   },
   groupLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
   },

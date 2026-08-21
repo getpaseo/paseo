@@ -174,4 +174,151 @@ describe("useChatOutline", () => {
 
     await waitFor(() => expect(onJumpError).toHaveBeenCalledOnce());
   });
+
+  it("reveals an already-loaded older prompt before scrolling to it", async () => {
+    runtime.listAgentTimelinePrompts.mockResolvedValue({
+      epoch: "epoch-1",
+      prompts: [{ seq: 1, timestamp: new Date(1).toISOString(), preview: "prompt" }],
+    });
+    const scrollToMessage = vi.fn();
+    const revealLoadedItem = vi.fn(() => true);
+    const viewport: StreamViewportHandle = {
+      scrollToBottom: vi.fn(),
+      prepareForViewportChange: vi.fn(),
+      scrollToMessage,
+    };
+    const viewportRef = { current: viewport };
+    const tail = [
+      {
+        id: "older-prompt",
+        kind: "user_message" as const,
+        text: "prompt",
+        timestamp: new Date(1),
+        timelineCursor: { epoch: "epoch-1", seq: 1 },
+      },
+    ];
+    const { result, rerender } = renderHook(
+      ({ visibleItemIds }) =>
+        useChatOutline({
+          agentId: "agent-1",
+          serverId: "server-1",
+          timelineEpoch: "epoch-1",
+          tail,
+          head: [],
+          enabled: true,
+          viewportRef,
+          onJumpError: vi.fn(),
+          visibleItemIds,
+          revealLoadedItem,
+        }),
+      { initialProps: { visibleItemIds: new Set<string>() } },
+    );
+
+    await waitFor(() => expect(result.current.prompts).toHaveLength(1));
+    await act(async () => result.current.jumpToPrompt(1));
+    expect(revealLoadedItem).toHaveBeenCalledWith("older-prompt");
+    expect(scrollToMessage).not.toHaveBeenCalled();
+
+    rerender({ visibleItemIds: new Set(["older-prompt"]) });
+    await waitFor(() => expect(scrollToMessage).toHaveBeenCalledWith("older-prompt"));
+  });
+
+  it("reveals a fetched prompt that lands outside the mounted history window", async () => {
+    runtime.listAgentTimelinePrompts.mockResolvedValue({
+      epoch: "epoch-1",
+      prompts: [{ seq: 1, timestamp: new Date(1).toISOString(), preview: "prompt" }],
+    });
+    const fetch = deferred<void>();
+    runtime.fetchAgentTimeline.mockReturnValue(fetch.promise);
+    const scrollToMessage = vi.fn();
+    const revealLoadedItem = vi.fn(() => true);
+    const viewportRef = {
+      current: {
+        scrollToBottom: vi.fn(),
+        prepareForViewportChange: vi.fn(),
+        scrollToMessage,
+      },
+    };
+    const fetchedPrompt = {
+      id: "fetched-prompt",
+      kind: "user_message" as const,
+      text: "prompt",
+      timestamp: new Date(1),
+      timelineCursor: { epoch: "epoch-1", seq: 1 },
+    };
+    const { result, rerender } = renderHook(
+      ({ tail, visibleItemIds }) =>
+        useChatOutline({
+          agentId: "agent-1",
+          serverId: "server-1",
+          timelineEpoch: "epoch-1",
+          tail,
+          head: [],
+          enabled: true,
+          viewportRef,
+          onJumpError: vi.fn(),
+          visibleItemIds,
+          revealLoadedItem,
+        }),
+      {
+        initialProps: {
+          tail: [] as (typeof fetchedPrompt)[],
+          visibleItemIds: new Set<string>(),
+        },
+      },
+    );
+
+    await waitFor(() => expect(result.current.prompts).toHaveLength(1));
+    act(() => result.current.jumpToPrompt(1));
+    await waitFor(() => expect(runtime.fetchAgentTimeline).toHaveBeenCalledOnce());
+
+    rerender({ tail: [fetchedPrompt], visibleItemIds: new Set<string>() });
+    await waitFor(() => expect(revealLoadedItem).toHaveBeenCalledWith(fetchedPrompt.id));
+    expect(scrollToMessage).not.toHaveBeenCalled();
+
+    rerender({ tail: [fetchedPrompt], visibleItemIds: new Set([fetchedPrompt.id]) });
+    await waitFor(() => expect(scrollToMessage).toHaveBeenCalledOnce());
+    expect(scrollToMessage).toHaveBeenCalledWith(fetchedPrompt.id);
+    await act(async () => fetch.resolve());
+  });
+
+  it("jumps directly to a loaded prompt in the live head", async () => {
+    runtime.listAgentTimelinePrompts.mockResolvedValue({
+      epoch: "epoch-1",
+      prompts: [{ seq: 2, timestamp: new Date(2).toISOString(), preview: "prompt" }],
+    });
+    const scrollToMessage = vi.fn();
+    const viewport: StreamViewportHandle = {
+      scrollToBottom: vi.fn(),
+      prepareForViewportChange: vi.fn(),
+      scrollToMessage,
+    };
+    const livePrompt = {
+      id: "live-prompt",
+      kind: "user_message" as const,
+      text: "prompt",
+      timestamp: new Date(2),
+      timelineCursor: { epoch: "epoch-1", seq: 2 },
+    };
+    const revealLoadedItem = vi.fn();
+    revealLoadedItem.mockReturnValue(false);
+    const { result } = renderHook(() =>
+      useChatOutline({
+        agentId: "agent-1",
+        serverId: "server-1",
+        timelineEpoch: "epoch-1",
+        tail: [],
+        head: [livePrompt],
+        enabled: true,
+        viewportRef: { current: viewport },
+        onJumpError: vi.fn(),
+        visibleItemIds: new Set([livePrompt.id]),
+        revealLoadedItem,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.prompts).toHaveLength(1));
+    await act(async () => result.current.jumpToPrompt(2));
+    expect(scrollToMessage).toHaveBeenCalledWith("live-prompt");
+  });
 });

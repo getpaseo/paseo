@@ -1,8 +1,9 @@
 import type { StyleProp, TextStyle } from "react-native";
 import { useMemo } from "react";
-import { TextInput, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 
 interface SettingsTextAreaProps {
   accessibilityLabel: string;
@@ -29,7 +30,7 @@ export function SettingsTextArea({
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       multiline
-      value={value}
+      initialValue={value}
       onChangeText={onChangeText}
       placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
@@ -49,7 +50,7 @@ export function SettingsTextAreaCard(props: SettingsTextAreaProps) {
 const styles = StyleSheet.create((theme) => ({
   input: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
     minHeight: 96,

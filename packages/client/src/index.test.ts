@@ -227,6 +227,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect(Object.keys(paseo).sort()).toEqual(["agents", "config", "providers", "workspaces"]);
   expect("connect" in paseo).toBe(false);
   expect("close" in paseo).toBe(false);
+  expect("skills" in paseo.agents).toBe(false);
 });
 
 test("agent actions list the daemon directory without exposing the low-level client", async () => {

@@ -139,6 +139,84 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate attachment source: issues");
   });
 
+  it("collects a contributed theme", () => {
+    const plugin = evaluatePluginClientBundle(
+      "catppuccin",
+      bundle(`
+        plugin.addTheme({
+          id: "mocha",
+          name: "Catppuccin Mocha",
+          appearance: "dark",
+          colors: {
+            background: "#1e1e2e",
+            foreground: "#cdd6f4",
+            raised: "#313244",
+            control: "#45475a",
+            border: "#45475a",
+            accent: "#cba6f7",
+            mutedForeground: "#a6adc8",
+            ring: "#6c7086",
+          },
+        });
+      `),
+    );
+
+    expect(plugin.themes.map((theme) => [theme.id, theme.name])).toEqual([
+      ["mocha", "Catppuccin Mocha"],
+    ]);
+    expect(plugin.themes[0]?.colors.accent).toBe("#cba6f7");
+  });
+
+  it("rejects a theme with a color that is not a hex value", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "catppuccin",
+        bundle(`
+          plugin.addTheme({
+            id: "mocha",
+            name: "Catppuccin Mocha",
+            appearance: "dark",
+            colors: {
+              background: "rebeccapurple",
+              foreground: "#cdd6f4",
+              raised: "#313244",
+              control: "#45475a",
+              border: "#45475a",
+              mutedForeground: "#a6adc8",
+              ring: "#6c7086",
+            },
+          });
+        `),
+      ),
+    ).toThrow("Must be a hex color");
+  });
+
+  it("rejects duplicate theme ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "catppuccin",
+        bundle(`
+          const theme = {
+            id: "mocha",
+            name: "Catppuccin Mocha",
+            appearance: "dark",
+            colors: {
+              background: "#1e1e2e",
+              foreground: "#cdd6f4",
+              raised: "#313244",
+              control: "#45475a",
+              border: "#45475a",
+              mutedForeground: "#a6adc8",
+              ring: "#6c7086",
+            },
+          };
+          plugin.addTheme(theme);
+          plugin.addTheme(theme);
+        `),
+      ),
+    ).toThrow("Duplicate theme: mocha");
+  });
+
   it("rejects a sidebar placement whose surface does not exist", () => {
     expect(() =>
       evaluatePluginClientBundle(
@@ -160,6 +238,45 @@ describe("evaluatePluginClientBundle", () => {
     expect(() =>
       evaluatePluginClientBundle("example", `(function() { return { default: function() {} }; })`),
     ).toThrow("must return a cleanup function");
+  });
+
+  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
+        const search = defineRpc({ name: "issues.search", input: {}, output: {} });
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addAttachmentSource(defineAttachmentSource({
+            id: "issues",
+            title: "Issue",
+            icon: "CircleDot",
+            pickerTitle: "Attach issue",
+            searchPlaceholder: "Search",
+            search,
+          }));
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
+  });
+
+  it("rejects modules that are not part of the client runtime", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+          require("fs");
+          const module = { exports: {} };
+          module.exports.default = function() { return function() {}; };
+          return module.exports;
+        })`,
+      ),
+    ).toThrow('Module "fs" is not available in plugin client code');
   });
 
   it("does not publish partial contributions when setup fails", () => {

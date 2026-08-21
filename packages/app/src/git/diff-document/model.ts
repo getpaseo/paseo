@@ -8,6 +8,7 @@ import {
 } from "@/utils/diff-layout";
 import { compactHighlightTokens } from "@/utils/diff-rendering";
 import { getInlineReviewThreadState, getSplitInlineReviewThreadState } from "@/review/geometry";
+import { advancesFor } from "./text-measurement";
 import type {
   BuildDiffDocumentModelInput,
   DiffCell,
@@ -378,9 +379,7 @@ function measureGraphemeSlice(
 ): { graphemes: DiffGrapheme[]; width: number } {
   const segments = graphemes.slice(startIndex, endIndex);
   const displayGraphemes = segments.map((segment) => segment.text);
-  const advances = measureText.measureAdvances
-    ? measureText.measureAdvances(displayGraphemes)
-    : measurePrefixAdvances(displayGraphemes, measureText.measure);
+  const advances = advancesFor(measureText)(displayGraphemes);
   return {
     graphemes: segments.map((segment, index) => ({
       start: segment.start,
@@ -390,17 +389,6 @@ function measureGraphemeSlice(
     })),
     width: advances.at(-1) ?? 0,
   };
-}
-
-function measurePrefixAdvances(
-  graphemes: readonly string[],
-  measureText: (text: string) => number,
-): number[] {
-  let prefix = "";
-  return graphemes.map((grapheme) => {
-    prefix += grapheme;
-    return measureText(prefix);
-  });
 }
 
 export function fragmentTextForRange(fragment: DiffFragment, start: number, end: number): string {

@@ -7,6 +7,7 @@ import {
 } from "@/workspace-tabs/agent-visibility";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { selectSubagentsForParent } from "@/subagents/select";
+import { findPaneById, findPaneContainingTab } from "./workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
 
@@ -107,6 +108,7 @@ function reconcileWorkspaceTabs(workspaceKey: string, visibility: WorkspaceAgent
       terminalsHydrated: true,
       knownTerminalIds: [],
       standaloneTerminalIds: [],
+      hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
     }),
   );
@@ -250,5 +252,72 @@ describe("workspace subagents integration", () => {
         new Set(),
       ).map((row) => row.id),
     ).toEqual([child.id]);
+  });
+
+  it("opens a subagent in the side panel when focused", () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(workspaceKey).toBeTruthy();
+
+    const parent = makeAgent({
+      id: "parent-agent",
+      title: "Parent agent",
+    });
+    const child = makeAgent({
+      id: "child-agent",
+      parentAgentId: parent.id,
+      title: "Child agent",
+    });
+
+    initializeAgents([parent, child]);
+    reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
+
+    const store = useWorkspaceLayoutStore.getState();
+    const paneId = store.showSidePanel(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
+      target: { kind: "agent", agentId: child.id },
+      intent: "reveal",
+      parentTabId: `agent_${parent.id}`,
+      placement: { mode: "prefer", paneId },
+    });
+
+    const state = useWorkspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[workspaceKey!];
+    const sidePanelPaneId = state.sidePanelPaneIdByWorkspace[workspaceKey!];
+
+    expect(sidePanelPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(sidePanelPaneId);
+    expect(findPaneById(layout.root, sidePanelPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe(sidePanelPaneId);
+  });
+
+  it("opens a provider subagent in the side panel when focused", () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(workspaceKey).toBeTruthy();
+
+    const store = useWorkspaceLayoutStore.getState();
+    const paneId = store.showSidePanel(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
+      target: { kind: "provider_subagent", parentAgentId: "parent-agent", subagentId: "task-1" },
+      intent: "reveal",
+      parentTabId: "agent_parent-agent",
+      placement: { mode: "prefer", paneId },
+    });
+
+    const state = useWorkspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[workspaceKey!];
+    const sidePanelPaneId = state.sidePanelPaneIdByWorkspace[workspaceKey!];
+
+    expect(sidePanelPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(sidePanelPaneId);
+    expect(findPaneById(layout.root, sidePanelPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe(sidePanelPaneId);
   });
 });

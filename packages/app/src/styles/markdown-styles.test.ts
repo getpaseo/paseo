@@ -3,20 +3,20 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-st
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
-  it("uses the standard interface size for conversation prose and list markers", () => {
+  it("uses the content size for conversation prose and list markers", () => {
     const styles = createMarkdownStyles(darkTheme);
-    const proseLineHeight = Math.round(darkTheme.fontSize.sm * 1.4);
+    const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);
 
     expect(styles.body).toMatchObject({
-      fontSize: darkTheme.fontSize.sm,
+      fontSize: darkTheme.fontSize.content,
       lineHeight: proseLineHeight,
     });
     expect(styles.bullet_list_icon).toMatchObject({
-      fontSize: darkTheme.fontSize.sm,
+      fontSize: darkTheme.fontSize.content,
       lineHeight: proseLineHeight,
     });
     expect(styles.ordered_list_icon).toMatchObject({
-      fontSize: darkTheme.fontSize.sm,
+      fontSize: darkTheme.fontSize.content,
       lineHeight: proseLineHeight,
     });
   });
@@ -110,6 +110,18 @@ describe("createMarkdownStyles", () => {
       fontSize: darkTheme.fontSize.code,
     });
     expect(compactStyles.code_inline).not.toHaveProperty("lineHeight");
+  });
+
+  it("scales Markdown headings from content size with safe line heights", () => {
+    const largeContentTheme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, content: 21 },
+    };
+    const styles = createMarkdownStyles(largeContentTheme);
+
+    expect(styles.heading1.lineHeight).toBeGreaterThan(styles.heading1.fontSize);
+    expect(styles.heading2.lineHeight).toBeGreaterThan(styles.heading2.fontSize);
+    expect(styles.heading3.lineHeight).toBeGreaterThan(styles.heading3.fontSize);
   });
 
   it("keeps blockquotes quiet with a square left edge", () => {

@@ -10,7 +10,11 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import {
   ArrowLeft,
   ArrowRight,
@@ -89,10 +93,6 @@ type ElectronWebview = HTMLElement & {
   focus?: () => void;
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
-};
-
-type WebTextInput = TextInput & {
-  getNativeRef?: () => unknown;
 };
 
 interface BrowserElementAnnotation {
@@ -403,8 +403,10 @@ function clearAnnotationMarkers(webview: ElectronWebview): void {
   ).catch(ignoreWebviewJavaScriptError);
 }
 
-function getTextInputNativeElement(current: WebTextInput | null): HTMLInputElement | null {
-  const native = current?.getNativeRef?.() ?? current;
+function getTextInputNativeElement(
+  current: EditingTextInputHandle | null,
+): HTMLInputElement | null {
+  const native = current?.getNativeRef();
   return native instanceof HTMLInputElement ? native : null;
 }
 
@@ -606,7 +608,7 @@ export function BrowserPane({
   const webviewRef = useRef<ElectronWebview | null>(null);
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
   const webviewClipRef = useRef<HTMLElement | null>(null);
-  const urlInputRef = useRef<WebTextInput | null>(null);
+  const urlInputRef = useRef<EditingTextInputHandle | null>(null);
   const initialUrlRef = useRef(browser?.url ?? "https://example.com");
   const browserIdRef = useRef(browserId);
   browserIdRef.current = browserId;
@@ -674,6 +676,7 @@ export function BrowserPane({
 
   useEffect(() => {
     const nextUrl = browser?.url ?? "https://example.com";
+    urlInputRef.current?.replaceText(nextUrl);
     setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
   }, [browser?.url]);
 
@@ -1473,7 +1476,7 @@ export function BrowserPane({
             placeholderTextColor={theme.colors.foregroundMuted}
             ref={urlInputRef}
             style={urlInputStyle}
-            value={draftUrl}
+            initialValue={draftUrl}
           />
         </View>
         <View style={styles.chromeRight}>
@@ -1629,7 +1632,7 @@ function BrowserElementAnnotationCard({
           placeholder={t("workspace.browser.annotate.placeholder")}
           style={styles.annotationInput}
           uniProps={annotationInputMapping}
-          value={comment}
+          initialValue={comment}
         />
         <View style={styles.annotationActions}>
           <Button variant="ghost" size="sm" onPress={onCancel}>
@@ -1738,7 +1741,7 @@ const styles = StyleSheet.create((theme) => ({
   urlInput: {
     flex: 1,
     minWidth: 0,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingVertical: 0,
     paddingHorizontal: 0,
   },
@@ -1750,7 +1753,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   webviewWrap: {
     flex: 1,
@@ -1771,7 +1774,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   toolbarTooltipText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
   annotationOverlay: {
@@ -1803,7 +1806,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   annotationTitle: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "600",
     color: theme.colors.foreground,
   },
@@ -1815,13 +1818,13 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   annotationElement: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     marginBottom: theme.spacing[2],
   },
   annotationInput: {
     minHeight: 64,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
@@ -1844,10 +1847,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: 8,
   },
   unavailableTitle: {
-    fontSize: 16,
+    fontSize: theme.fontSize.base,
     fontWeight: "600",
   },
   unavailableSubtitle: {
-    fontSize: 12,
+    fontSize: theme.fontSize.sm,
   },
 }));

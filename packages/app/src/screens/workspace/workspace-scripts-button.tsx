@@ -774,8 +774,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   splitButtonText: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.5,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.5,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
   },
@@ -784,7 +784,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[1.5],
-    minHeight: theme.fontSize.sm * 1.5,
+    minHeight: theme.fontSize.base * 1.5,
   },
   scriptList: {
     paddingVertical: theme.spacing[1],
@@ -803,7 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   scriptName: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     lineHeight: 18,
     flexShrink: 1,
@@ -838,7 +838,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   hostLabel: {
     flexShrink: 1,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     lineHeight: 14,
     color: theme.colors.foregroundMuted,
   },
@@ -881,7 +881,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
   },
 }));

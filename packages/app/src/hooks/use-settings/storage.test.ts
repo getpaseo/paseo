@@ -6,7 +6,10 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
-  DEFAULT_UI_FONT_SIZE,
+  DEFAULT_CONTENT_FONT_SIZE,
+  DEFAULT_UI_BASE_FONT_SIZE,
+  defaultUiBaseFontSize,
+  defaultContentFontSize,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
   parseClampedFontSize,
@@ -15,6 +18,10 @@ import {
   type SettingsDeps,
 } from "./storage";
 import { createFakeDesktopBridge, createInMemoryKeyValueStorage } from "./fakes";
+import {
+  DEFAULT_SIDEBAR_ROW_ITEMS,
+  SIDEBAR_ROW_ITEMS,
+} from "@/components/sidebar/display-preferences/row-items";
 import { THEME_OPTIONS } from "@/styles/theme";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
@@ -43,6 +50,37 @@ describe("loadAppSettingsFromStorage", () => {
     });
     expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("steer");
   });
+  it("migrates a stored interrupt to steer and persists it", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendBehavior: "interrupt" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendBehavior).toBe("steer");
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "{}").sendBehavior).toBe(
+      "steer",
+    );
+  });
+
+  it("keeps an interrupt the user picked after the migration ran", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendBehavior: "interrupt" }),
+      }),
+    });
+    await loadAppSettingsFromStorage(deps);
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: { sendBehavior: "interrupt" },
+      deps,
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("interrupt");
+  });
+
   it("defaults theme to auto when storage is empty", async () => {
     const deps = makeDeps();
 
@@ -195,8 +233,43 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "dark",
+      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
     });
     expect(deps.storage.entries.get(APP_SETTINGS_KEY)).toBe(JSON.stringify(result));
+  });
+
+  it("preserves the legacy key's explicit interface size as content size", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [LEGACY_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: 17 }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.uiBaseFontSize).toBe(17);
+    expect(result.contentFontSize).toBe(17);
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      uiBaseFontSize: 17,
+      contentFontSize: 17,
+    });
+  });
+
+  it("preserves the legacy interface scale as content size", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [LEGACY_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 17 }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.uiBaseFontSize).toBe(15);
+    expect(result.contentFontSize).toBe(15);
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      uiBaseFontSize: 15,
+      contentFontSize: 15,
+    });
   });
 
   it("loads a persisted explicit language", async () => {
@@ -256,6 +329,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
+      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
     });
   });
 
@@ -299,6 +373,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
+      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -319,6 +394,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
+      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
     });
   });
 });
@@ -363,8 +439,36 @@ describe("saveAppSettings", () => {
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "light",
+      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
       toolCallDetailLevel: "overview",
     });
+  });
+
+  it("persists a selected plugin theme", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { theme: "plugin", pluginThemeId: "catppuccin/theme/mocha" },
+      deps,
+    });
+
+    const loaded = await loadAppSettingsFromStorage(deps);
+    expect(loaded.theme).toBe("plugin");
+    expect(loaded.pluginThemeId).toBe("catppuccin/theme/mocha");
+  });
+
+  // The row items are written as one object through one strict schema, so an item the schema
+  // does not know does not just fail to persist itself — it takes every sibling toggle with it.
+  it.each(SIDEBAR_ROW_ITEMS)("persists the %s row item being switched off", async (item) => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const sidebarRowItems = { ...DEFAULT_SIDEBAR_ROW_ITEMS, [item]: false };
+
+    await saveAppSettings({ queryClient, updates: { sidebarRowItems }, deps });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems).toEqual(sidebarRowItems);
   });
 });
 
@@ -387,7 +491,8 @@ describe("appearance settings", () => {
 
     expect(result.uiFontFamily).toBe("");
     expect(result.monoFontFamily).toBe("");
-    expect(result.uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
+    expect(result.uiBaseFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
+    expect(result.contentFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
     expect(result.toolCallDetailLevel).toBe("detailed");
@@ -436,27 +541,111 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("icon");
   });
 
-  it("clamps the UI font size into range and rejects non-numeric values", async () => {
+  it("uses a 15px mobile base and a 14px web base", () => {
+    expect(defaultUiBaseFontSize(true)).toBe(15);
+    expect(defaultUiBaseFontSize(false)).toBe(14);
+  });
+
+  it("uses a 15px content default on mobile and web", () => {
+    expect(defaultContentFontSize(true)).toBe(15);
+    expect(defaultContentFontSize(false)).toBe(15);
+    expect(DEFAULT_CONTENT_FONT_SIZE).toBe(defaultContentFontSize(false));
+  });
+
+  it("derives and persists content size from an existing interface-size preference", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 999 }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: 17 }),
       }),
     });
-    expect((await loadAppSettingsFromStorage(deps)).uiFontSize).toBe(24);
+
+    const result = await loadAppSettingsFromStorage(deps);
+    const persisted = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
+
+    expect(result.contentFontSize).toBe(17);
+    expect(persisted).toMatchObject({ uiBaseFontSize: 17, contentFontSize: 17 });
+  });
+
+  it("clamps the content font size into range and rejects non-numeric values", async () => {
+    const high = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentFontSize: 999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(high)).contentFontSize).toBe(21);
 
     const low = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 8 }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentFontSize: 8 }),
       }),
     });
-    expect((await loadAppSettingsFromStorage(low)).uiFontSize).toBe(11);
+    expect((await loadAppSettingsFromStorage(low)).contentFontSize).toBe(10);
 
     const bogus = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: "abc" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentFontSize: "abc" }),
       }),
     });
-    expect((await loadAppSettingsFromStorage(bogus)).uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
+    expect((await loadAppSettingsFromStorage(bogus)).contentFontSize).toBe(
+      DEFAULT_CONTENT_FONT_SIZE,
+    );
+  });
+
+  it.each([
+    { legacySize: 16, baseSize: 14 },
+    { legacySize: 17, baseSize: 15 },
+    { legacySize: 18, baseSize: 16 },
+  ])(
+    "migrates legacy interface size $legacySize to base size $baseSize",
+    async ({ legacySize, baseSize }) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: legacySize }),
+        }),
+      });
+
+      const result = await loadAppSettingsFromStorage(deps);
+      const persisted = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
+
+      expect(result.uiBaseFontSize).toBe(baseSize);
+      expect(persisted).toMatchObject({ uiBaseFontSize: baseSize });
+      expect(persisted).not.toHaveProperty("uiFontSize");
+    },
+  );
+
+  it("lets an explicit base size win over the legacy interface scale", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: 16, uiFontSize: 17 }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).uiBaseFontSize).toBe(16);
+  });
+
+  it("clamps the UI base font size into range and rejects non-numeric values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: 999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).uiBaseFontSize).toBe(21);
+
+    const low = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: 8 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(low)).uiBaseFontSize).toBe(10);
+
+    const bogus = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: "abc" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(bogus)).uiBaseFontSize).toBe(
+      DEFAULT_UI_BASE_FONT_SIZE,
+    );
   });
 
   it("clamps the code font size into range and rejects non-numeric values", async () => {
