@@ -171,6 +171,32 @@ They use typed plugin RPC only for plugin-specific backend work. Navigation is l
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
 
+## Events
+
+A server-target `contribute()` pushes one-way events to its own client surfaces with
+`plugin.emit(eventName, data)`. Client code reads them with `useEvent(eventName, handler)` from
+`@getpaseo/plugin`. Use this for data a panel didn't ask for — a poll loop, a webhook, a timer —
+not as a replacement for RPC request/response.
+
+```ts
+// index.ts (server contribute)
+export default function contribute(plugin: PluginContext) {
+  const stop = pollUpstream((update) => plugin.emit("roster.updated", update));
+  return () => stop();
+}
+```
+
+```tsx
+// panel.client.tsx
+useEvent("roster.updated", (data) => setRoster(data as Roster));
+```
+
+The daemon forwards `plugin.emit` to every connected client, the same way it pushes
+`agent_update`/`workspace_update` (see [architecture.md](architecture.md#websocket-protocol)). Unlike
+those, scoping happens on the client: the app runtime binds each plugin surface to its own plugin ID
+and drops any event whose `pluginId` doesn't match before `useEvent` sees it. There is no API
+that lets one plugin's client code address another plugin's events.
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,

@@ -362,7 +362,9 @@ export class PluginRuntime {
           } else if (message.type === "plugin_event") {
             // contribute() may emit synchronously, before the child reports ready
             // and before `loaded` exists — deliver by id instead of dropping.
-            this.emitPluginEvent(pluginId, message.eventName, message.data);
+            for (const listener of this.eventListeners) {
+              listener(pluginId, message.eventName, message.data);
+            }
           } else if (loaded) {
             this.handleChildMessage(loaded, message);
           }
@@ -399,10 +401,6 @@ export class PluginRuntime {
     };
     this.logger.info({ pluginId, methods }, "Loaded plugin");
     return loaded;
-  }
-
-  private emitPluginEvent(pluginId: string, eventName: string, data: unknown): void {
-    for (const listener of this.eventListeners) listener(pluginId, eventName, data);
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {

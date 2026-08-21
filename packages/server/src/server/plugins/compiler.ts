@@ -74,8 +74,7 @@ interface SourceRange {
 }
 
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
-  // "emit" is server-only (the subprocess pushes events out), same as "handle" is
-  // server-only-callable and stripped from the client build below it.
+  // handle and emit run only in the server subprocess.
   client: new Set(["handle", "emit"]),
   server: new Set([
     "addSurface",

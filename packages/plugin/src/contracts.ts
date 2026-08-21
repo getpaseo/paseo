@@ -193,7 +193,7 @@ export interface PluginContext {
    * `useEvent(eventName, handler)` on the client. Unlike `handle`, this has no
    * caller waiting for a reply — call it whenever the plugin backend has new
    * data a panel didn't ask for (e.g. a poll loop, a webhook, a timer).
-   * Server-target only, mirroring `handle`'s client-target-only restriction.
+   * Server-target only, like `handle`.
    */
   emit(eventName: string, data: unknown): void;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
