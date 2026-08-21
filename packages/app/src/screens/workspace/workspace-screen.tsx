@@ -91,7 +91,11 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
+import {
+  shouldSeedWorkspaceSetupTab,
+  shouldShowWorkspaceSetup,
+  useWorkspaceSetupStore,
+} from "@/stores/workspace-setup-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
@@ -185,7 +189,6 @@ import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-ch
 import { useHasPullRequest } from "@/panels/pull-request";
 import { fileStateForFilesView } from "@/panels/file/state";
 
-const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -1975,18 +1978,10 @@ function WorkspaceScreenContent({
     if (!persistenceKey) {
       return;
     }
-    if (!workspaceSetupSnapshot || !showWorkspaceSetup) {
+    if (!shouldSeedWorkspaceSetupTab(workspaceSetupSnapshot)) {
       if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
         autoOpenedSetupTabWorkspaceRef.current = null;
       }
-      return;
-    }
-
-    const snapshotAge = Date.now() - workspaceSetupSnapshot.updatedAt;
-    const shouldAutoOpen =
-      workspaceSetupSnapshot.status === "running" ||
-      snapshotAge <= WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS;
-    if (!shouldAutoOpen) {
       return;
     }
     if (hasSetupTab) {
@@ -2005,13 +2000,7 @@ function WorkspaceScreenContent({
       return;
     }
 
-    const tabId = openSupportingTab({
-      isCompact: isMobile,
-      workspaceKey: persistenceKey,
-      target,
-      openInSidePanelByDefault,
-      background: true,
-    });
+    const tabId = openWorkspaceTabInBackground(persistenceKey, target);
     if (!tabId) {
       return;
     }
@@ -2019,12 +2008,10 @@ function WorkspaceScreenContent({
     autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
   }, [
     hasSetupTab,
-    isMobile,
     isRouteFocused,
     normalizedWorkspaceId,
-    openInSidePanelByDefault,
+    openWorkspaceTabInBackground,
     persistenceKey,
-    showWorkspaceSetup,
     workspaceSetupSnapshot,
   ]);
 

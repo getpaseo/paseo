@@ -37,6 +37,10 @@ export function shouldShowWorkspaceSetup(snapshot: WorkspaceSetupSnapshot | null
   return snapshot.error !== null || snapshot.detail.commands.length > 0;
 }
 
+export function shouldSeedWorkspaceSetupTab(snapshot: WorkspaceSetupSnapshot | null): boolean {
+  return snapshot?.status === "failed";
+}
+
 interface WorkspaceSetupStoreState {
   pendingWorkspaceSetup: PendingWorkspaceSetup | null;
   snapshots: Record<string, WorkspaceSetupSnapshot>;

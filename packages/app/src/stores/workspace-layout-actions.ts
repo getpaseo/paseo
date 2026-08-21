@@ -1162,15 +1162,16 @@ export function removeTabFromTree(root: SplitNode, tabId: string): SplitNode {
   }).root;
 }
 
-// Tab kinds the user works *in* rather than consults. Reconciliation opens these
-// with nobody behind the click, and the side panel can hold focus from an earlier
-// reveal, so an ambient open must not drop an agent there just because focus stayed.
+// Tab kinds that belong in the main workspace rather than the side panel. Ambient
+// opens have nobody behind the click, and the side panel can retain focus from an
+// earlier reveal, so placement must route these back to the main workspace.
 const SIDE_PANEL_EXCLUDED_TAB_KINDS: ReadonlySet<WorkspaceTabTarget["kind"]> = new Set([
   "agent",
   "provider_subagent",
   "terminal",
   "draft",
   "browser",
+  "setup",
 ]);
 
 function resolvePlacementPane(input: {

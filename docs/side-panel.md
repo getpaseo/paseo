@@ -74,8 +74,8 @@ side panel, which the user summons and expects to find again, split size and all
 
 It does not seed itself. Revealing it opens an empty pane with the launcher; the user
 picks what goes in. Detecting a pull request makes the launcher's card available and
-opens nothing. Event-driven surfaces such as workspace setup progress still add a
-background tab, which never reveals the panel or moves focus.
+opens nothing. A failed workspace setup adds a background tab to the main pane.
+Running and successful setup never seed tabs.
 
 ## Routing preference
 
