@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  availableStarterAgentRuntimes,
-  suggestedStarterAgentRuntime,
+  availableStarterAgentProviders,
+  selectedStarterAgentRuntime,
+  suggestedStarterAgentChoice,
 } from "./starter-agent-runtime.js";
 
 describe("starter agent runtime choices", () => {
   it.each([
     {
-      name: "uses complete ready provider defaults as the suggestion",
+      name: "uses a complete daemon default as a staged suggestion",
       entries: [
         {
           provider: "codex",
@@ -27,37 +28,22 @@ describe("starter agent runtime choices", () => {
       ],
       expected: [
         {
-          provider: "codex",
-          model: "gpt-5",
-          mode: "read-only",
-          label: "Codex · GPT-5 · Read only",
-          suggested: false,
-        },
-        {
-          provider: "codex",
-          model: "gpt-5",
-          mode: "full-access",
-          label: "Codex · GPT-5 · Full access",
+          id: "codex",
+          label: "Codex",
           suggested: true,
-        },
-        {
-          provider: "codex",
-          model: "gpt-5-mini",
-          mode: "read-only",
-          label: "Codex · GPT-5 mini · Read only",
-          suggested: false,
-        },
-        {
-          provider: "codex",
-          model: "gpt-5-mini",
-          mode: "full-access",
-          label: "Codex · GPT-5 mini · Full access",
-          suggested: false,
+          models: [
+            { id: "gpt-5", label: "GPT-5", suggested: true },
+            { id: "gpt-5-mini", label: "GPT-5 mini", suggested: false },
+          ],
+          modes: [
+            { id: "read-only", label: "Read only", suggested: false },
+            { id: "full-access", label: "Full access", suggested: true },
+          ],
         },
       ],
     },
     {
-      name: "excludes Claude when the daemon lists modes without a compatible default",
+      name: "keeps Claude selectable when it has modes but no default mode",
       entries: [
         {
           provider: "claude",
@@ -69,7 +55,37 @@ describe("starter agent runtime choices", () => {
           defaultModeId: null,
         },
       ],
-      expected: [],
+      expected: [
+        {
+          id: "claude",
+          label: "Claude",
+          suggested: false,
+          models: [{ id: "sonnet", label: "Sonnet", suggested: true }],
+          modes: [{ id: "auto", label: "Auto", suggested: false }],
+        },
+      ],
+    },
+    {
+      name: "treats an invalid default mode as no suggestion",
+      entries: [
+        {
+          provider: "claude",
+          status: "ready" as const,
+          enabled: true,
+          models: [{ provider: "claude", id: "sonnet", label: "Sonnet", isDefault: true }],
+          modes: [{ id: "auto", label: "Auto" }],
+          defaultModeId: "missing",
+        },
+      ],
+      expected: [
+        {
+          id: "claude",
+          label: "claude",
+          suggested: false,
+          models: [{ id: "sonnet", label: "Sonnet", suggested: true }],
+          modes: [{ id: "auto", label: "Auto", suggested: false }],
+        },
+      ],
     },
     {
       name: "excludes unavailable, disabled, and model-less providers",
@@ -81,18 +97,25 @@ describe("starter agent runtime choices", () => {
       expected: [],
     },
   ])("$name", ({ entries, expected }) => {
-    const runtimes = availableStarterAgentRuntimes(entries);
-    expect(runtimes.map(({ key: _key, ...runtime }) => runtime)).toEqual(expected);
-    const suggested = suggestedStarterAgentRuntime(runtimes);
-    expect(suggested === undefined ? undefined : withoutKey(suggested)).toEqual(
-      expected.find((runtime) => runtime.suggested),
-    );
+    expect(availableStarterAgentProviders(entries)).toEqual(expected);
+  });
+
+  it("creates mode-less definitions for providers that expose no modes", () => {
+    const [provider] = availableStarterAgentProviders([
+      {
+        provider: "pi",
+        status: "ready",
+        enabled: true,
+        models: [{ provider: "pi", id: "default", label: "Default", isDefault: true }],
+        modes: [],
+      },
+    ]);
+
+    expect(provider).toBeDefined();
+    expect(selectedStarterAgentRuntime(provider!, "default")).toEqual({
+      provider: "pi",
+      model: "default",
+    });
+    expect(suggestedStarterAgentChoice(provider!.modes)).toBeUndefined();
   });
 });
-
-function withoutKey({
-  key: _key,
-  ...runtime
-}: ReturnType<typeof availableStarterAgentRuntimes>[number]) {
-  return runtime;
-}

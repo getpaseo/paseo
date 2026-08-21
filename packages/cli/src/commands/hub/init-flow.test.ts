@@ -26,7 +26,7 @@ describe("Hub guided setup continuation", () => {
     const daemon = new SetupDaemon();
     const prompts = new PromptAnswers(
       [true, true],
-      ["codex\u0000gpt-5\u0000full-access", "slack"],
+      ["codex", "gpt-5", "full-access", "slack"],
       ["U123"],
     );
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
@@ -49,8 +49,22 @@ describe("Hub guided setup continuation", () => {
       "Connect this daemon to https://hub.test?",
       "Initialize and deploy a starter workflow?",
     ]);
-    assert.deepEqual(prompts.selections, ["Starter agent runtime", "Trigger provider"]);
-    assert.deepEqual(prompts.selectionOptions[0], ["Codex · GPT-5 · Full access (suggested)"]);
+    assert.deepEqual(prompts.selections, [
+      "Starter agent provider",
+      "Starter agent model",
+      "Starter agent mode",
+      "Trigger provider",
+    ]);
+    assert.deepEqual(prompts.selectionOptions, [
+      ["Codex (suggested)"],
+      ["GPT-5 (suggested)", "GPT-5 mini"],
+      ["Read only", "Full access (suggested)"],
+      [
+        "GitHub (issue or pull request comment)",
+        "Slack (channel mention)",
+        "Discord (channel mention)",
+      ],
+    ]);
     assert.deepEqual(calls, [
       { operation: "token", origin: "https://hub.test" },
       { operation: "projects", origin: "https://hub.test" },
@@ -110,7 +124,7 @@ describe("Hub guided setup continuation", () => {
     assert.deepEqual(prompts.confirmations, ["Replace the existing .paseo/ Hub bundle?"]);
   });
 
-  it("refuses an incomplete Claude default before writing a starter bundle", async () => {
+  it("writes the explicitly selected Claude mode when the daemon has no default", async () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     credentials.save({ origin: "https://hub.test", credential: "secret" });
@@ -125,20 +139,27 @@ describe("Hub guided setup continuation", () => {
       },
     ]);
 
-    await assert.rejects(
-      runHubGuidedSetup(
-        setupEnvironment(cwd, credentials, daemon, new PromptAnswers([], [], []), []),
-        {
-          origin: "https://hub.test",
-          daemonId: "daemon-1",
-          deploy: true,
-        },
-      ),
-      /Configure an enabled provider with a selectable model and default mode/u,
-    );
-    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"), {
-      code: "ENOENT",
+    const prompts = new PromptAnswers([true], ["claude", "sonnet", "auto", "slack"], ["U123"]);
+    const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
+
+    await runHubGuidedSetup(setupEnvironment(cwd, credentials, daemon, prompts, calls), {
+      origin: "https://hub.test",
+      daemonId: "daemon-1",
+      deploy: true,
     });
+    assert.deepEqual(prompts.selectionOptions.slice(0, 3), [
+      ["claude"],
+      ["Sonnet (suggested)"],
+      ["Auto"],
+    ]);
+    assert.match(
+      await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8"),
+      /provider: claude\n    model: sonnet\n    mode: auto/u,
+    );
+    assert.deepEqual(
+      calls.slice(-2).map(({ operation }) => operation),
+      ["validate", "install"],
+    );
   });
 });
 
@@ -277,8 +298,14 @@ class SetupDaemon implements HubDaemonClient {
         status: "ready" as const,
         enabled: true,
         label: "Codex",
-        models: [{ provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true }],
-        modes: [{ id: "full-access", label: "Full access" }],
+        models: [
+          { provider: "codex", id: "gpt-5", label: "GPT-5", isDefault: true },
+          { provider: "codex", id: "gpt-5-mini", label: "GPT-5 mini" },
+        ],
+        modes: [
+          { id: "read-only", label: "Read only" },
+          { id: "full-access", label: "Full access" },
+        ],
         defaultModeId: "full-access",
       },
     ],

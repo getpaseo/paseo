@@ -93,6 +93,21 @@ describe("Hub init planning", () => {
 });
 
 describe("Hub init scaffold", () => {
+  it("omits mode for a provider that explicitly exposes none", () => {
+    const scaffold = createHubInitScaffold({
+      cwd: "/workspace",
+      daemonSlug: "build-studio",
+      agent: { provider: "pi", model: "default" },
+      provider: "slack",
+      providerFilters: { workspace: "T123456", user: "U123456" },
+    });
+
+    expect(YAML.parse(scaffold.hub)).toMatchObject({
+      agents: { starter: { provider: "pi", model: "default" } },
+    });
+    expect(YAML.parse(scaffold.hub).agents.starter.mode).toBeUndefined();
+  });
+
   it.each([
     ["github", { repo: "getpaseo/paseo", user: "boudra" }],
     ["slack", { workspace: "T123456", user: "U123456" }],
@@ -108,9 +123,6 @@ describe("Hub init scaffold", () => {
           provider: "codex",
           model: "gpt-5",
           mode: "full-access",
-          label: "Codex · GPT-5 · Full access",
-          suggested: true,
-          key: "codex\u0000gpt-5\u0000full-access",
         },
         provider,
         providerFilters,

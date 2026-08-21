@@ -43,8 +43,10 @@ import { runHubProjects } from "./projects.js";
 import type { HubReporter } from "./reporter.js";
 import { normalizeHubOrigin } from "./origin.js";
 import {
-  availableStarterAgentRuntimes,
-  suggestedStarterAgentRuntime,
+  availableStarterAgentProviders,
+  selectedStarterAgentRuntime,
+  suggestedStarterAgentChoice,
+  type HubStarterAgentProvider,
   type HubStarterAgentRuntime,
 } from "./starter-agent-runtime.js";
 
@@ -385,24 +387,17 @@ async function chooseStarterAgentRuntime(
   const snapshot = await withHubDaemon(environment.daemon, undefined, (daemon) =>
     daemon.getProvidersSnapshot(),
   );
-  const runtimes = availableStarterAgentRuntimes(snapshot.entries);
-  const suggested = suggestedStarterAgentRuntime(runtimes);
-  if (runtimes.length === 0) {
+  const providers = availableStarterAgentProviders(snapshot.entries);
+  if (providers.length === 0) {
     throw new HubCommandError(
       "HUB_AGENT_RUNTIME_REQUIRED",
-      "No complete agent runtime is available from this daemon. Configure an enabled provider with a selectable model and default mode, then run paseo hub init again.",
+      "No usable agent runtime is available from this daemon. Configure an enabled provider with a selectable model, then run paseo hub init again.",
     );
   }
-  const selected = await requiredSelect(environment, {
-    message: "Starter agent runtime",
-    ...(suggested === undefined ? {} : { initialValue: suggested.key }),
-    options: runtimes.map((runtime) => ({
-      value: runtime.key,
-      label: runtime.label,
-      ...(runtime.suggested ? { hint: "suggested" } : {}),
-    })),
-  });
-  const runtime = runtimes.find((candidate) => candidate.key === selected);
+  const provider = await chooseStarterAgentProvider(environment, providers);
+  const model = await chooseStarterAgentModel(environment, provider);
+  const mode = await chooseStarterAgentMode(environment, provider);
+  const runtime = selectedStarterAgentRuntime(provider, model, mode);
   if (runtime === undefined) {
     throw new HubCommandError(
       "HUB_AGENT_RUNTIME_SELECTION_INVALID",
@@ -410,6 +405,69 @@ async function chooseStarterAgentRuntime(
     );
   }
   return runtime;
+}
+
+async function chooseStarterAgentProvider(
+  environment: HubGuidedSetupEnvironment,
+  providers: readonly HubStarterAgentProvider[],
+): Promise<HubStarterAgentProvider> {
+  const suggested = suggestedStarterAgentChoice(providers);
+  const selected = await requiredSelect(environment, {
+    message: "Starter agent provider",
+    ...(suggested === undefined ? {} : { initialValue: suggested.id }),
+    options: providers.map((provider) => ({
+      value: provider.id,
+      label: provider.label,
+      ...(provider.suggested ? { hint: "suggested" } : {}),
+    })),
+  });
+  const provider = providers.find((candidate) => candidate.id === selected);
+  if (provider === undefined) throw invalidStarterAgentSelection();
+  return provider;
+}
+
+async function chooseStarterAgentModel(
+  environment: HubGuidedSetupEnvironment,
+  provider: HubStarterAgentProvider,
+): Promise<string> {
+  const suggested = suggestedStarterAgentChoice(provider.models);
+  const selected = await requiredSelect(environment, {
+    message: "Starter agent model",
+    ...(suggested === undefined ? {} : { initialValue: suggested.id }),
+    options: provider.models.map((model) => ({
+      value: model.id,
+      label: model.label,
+      ...(model.suggested ? { hint: "suggested" } : {}),
+    })),
+  });
+  if (!provider.models.some((model) => model.id === selected)) throw invalidStarterAgentSelection();
+  return selected;
+}
+
+async function chooseStarterAgentMode(
+  environment: HubGuidedSetupEnvironment,
+  provider: HubStarterAgentProvider,
+): Promise<string | undefined> {
+  if (provider.modes.length === 0) return undefined;
+  const suggested = suggestedStarterAgentChoice(provider.modes);
+  const selected = await requiredSelect(environment, {
+    message: "Starter agent mode",
+    ...(suggested === undefined ? {} : { initialValue: suggested.id }),
+    options: provider.modes.map((mode) => ({
+      value: mode.id,
+      label: mode.label,
+      ...(mode.suggested ? { hint: "suggested" } : {}),
+    })),
+  });
+  if (!provider.modes.some((mode) => mode.id === selected)) throw invalidStarterAgentSelection();
+  return selected;
+}
+
+function invalidStarterAgentSelection(): HubCommandError {
+  return new HubCommandError(
+    "HUB_AGENT_RUNTIME_SELECTION_INVALID",
+    "The selected starter agent runtime is no longer available. Run paseo hub init again.",
+  );
 }
 
 async function collectProviderFilters(

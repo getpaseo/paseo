@@ -4,48 +4,72 @@ export interface HubStarterAgentRuntime {
   provider: string;
   model: string;
   mode?: string;
-  label: string;
-  suggested: boolean;
-  key: string;
 }
 
-export function availableStarterAgentRuntimes(
+export interface HubStarterAgentProvider {
+  id: string;
+  label: string;
+  models: readonly HubStarterAgentModel[];
+  modes: readonly HubStarterAgentMode[];
+  suggested: boolean;
+}
+
+export interface HubStarterAgentModel {
+  id: string;
+  label: string;
+  suggested: boolean;
+}
+
+export interface HubStarterAgentMode {
+  id: string;
+  label: string;
+  suggested: boolean;
+}
+
+export function availableStarterAgentProviders(
   entries: readonly ProviderSnapshotEntry[],
-): HubStarterAgentRuntime[] {
+): HubStarterAgentProvider[] {
   return entries.flatMap((entry) => {
     if (entry.status !== "ready" || !entry.enabled) return [];
-    const models = entry.models?.filter((model) => model.isSelectable !== false) ?? [];
-    const modes = entry.modes ?? [];
-    if (models.length === 0 || (modes.length > 0 && !hasDefaultMode(entry))) return [];
+    const models = (entry.models ?? [])
+      .filter((model) => model.isSelectable !== false)
+      .map((model) => ({ id: model.id, label: model.label, suggested: model.isDefault === true }));
+    if (models.length === 0) return [];
 
-    return models.flatMap((model) =>
-      (modes.length === 0 ? [undefined] : modes).map((mode) => createRuntime(entry, model, mode)),
-    );
+    const modes = (entry.modes ?? []).map((mode) => ({
+      id: mode.id,
+      label: mode.label,
+      suggested: mode.id === entry.defaultModeId,
+    }));
+    return [
+      {
+        id: entry.provider,
+        label: entry.label ?? entry.provider,
+        models,
+        modes,
+        suggested:
+          models.some((model) => model.suggested) &&
+          (modes.length === 0 || modes.some((mode) => mode.suggested)),
+      },
+    ];
   });
 }
 
-export function suggestedStarterAgentRuntime(
-  runtimes: readonly HubStarterAgentRuntime[],
+export function suggestedStarterAgentChoice<T extends { suggested: boolean }>(
+  choices: readonly T[],
+): T | undefined {
+  return choices.find((choice) => choice.suggested);
+}
+
+export function selectedStarterAgentRuntime(
+  provider: HubStarterAgentProvider,
+  modelId: string,
+  modeId?: string,
 ): HubStarterAgentRuntime | undefined {
-  return runtimes.find((runtime) => runtime.suggested);
-}
-
-function createRuntime(
-  entry: ProviderSnapshotEntry,
-  model: NonNullable<ProviderSnapshotEntry["models"]>[number],
-  mode: NonNullable<ProviderSnapshotEntry["modes"]>[number] | undefined,
-): HubStarterAgentRuntime {
-  const runtime: HubStarterAgentRuntime = {
-    provider: entry.provider,
-    model: model.id,
-    key: [entry.provider, model.id, mode?.id ?? ""].join("\u0000"),
-    label: [entry.label ?? entry.provider, model.label, mode?.label].filter(Boolean).join(" · "),
-    suggested: model.isDefault === true && (mode === undefined || mode.id === entry.defaultModeId),
-  };
-  if (mode !== undefined) runtime.mode = mode.id;
-  return runtime;
-}
-
-function hasDefaultMode(entry: ProviderSnapshotEntry): boolean {
-  return entry.modes?.some((mode) => mode.id === entry.defaultModeId) ?? false;
+  if (!provider.models.some((model) => model.id === modelId)) return undefined;
+  if (provider.modes.length === 0) {
+    return modeId === undefined ? { provider: provider.id, model: modelId } : undefined;
+  }
+  if (modeId === undefined || !provider.modes.some((mode) => mode.id === modeId)) return undefined;
+  return { provider: provider.id, model: modelId, mode: modeId };
 }
