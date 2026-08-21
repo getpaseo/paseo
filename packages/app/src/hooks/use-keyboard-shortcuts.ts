@@ -5,7 +5,10 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { holdReleaseAction, type KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  holdReleaseAction,
+  type KeyboardActionDefinition,
+} from "@/keyboard/keyboard-action-dispatcher";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,

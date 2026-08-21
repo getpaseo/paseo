@@ -594,6 +594,10 @@ function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
   };
 }
 
+function serializeAgentFailure(agent: Agent) {
+  return agent.lastFailure ? { lastFailure: agent.lastFailure } : {};
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -639,7 +643,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     pendingPermissions: [],
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
-    ...(agent.lastFailure ? { lastFailure: agent.lastFailure } : {}),
+    ...serializeAgentFailure(agent),
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
