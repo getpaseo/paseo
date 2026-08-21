@@ -255,7 +255,7 @@ export interface WorkspaceTabSnapshot {
   hasActivePendingDraftCreate?: boolean;
 }
 
-const DEFAULT_PANE_ID = "main";
+export const DEFAULT_PANE_ID = "main";
 /** The pane id is persisted, so it keeps its pre-rename spelling. */
 export const SIDE_PANEL_PANE_ID = "explorer";
 const DEFAULT_LAYOUT_GROUP_ID = "workspace-root";
@@ -1162,15 +1162,17 @@ export function removeTabFromTree(root: SplitNode, tabId: string): SplitNode {
   }).root;
 }
 
-// Tab kinds the user works *in* rather than consults. Reconciliation opens these
-// with nobody behind the click, and the side panel can hold focus from an earlier
-// reveal, so an ambient open must not drop an agent there just because focus stayed.
+// Tab kinds that belong in the main workspace rather than the side panel. Ambient
+// opens, and preferred opens whose requested pane no longer exists, have nobody
+// behind the fallback. The side panel can retain focus from an earlier reveal, so
+// placement must route these back to the main workspace.
 const SIDE_PANEL_EXCLUDED_TAB_KINDS: ReadonlySet<WorkspaceTabTarget["kind"]> = new Set([
   "agent",
   "provider_subagent",
   "terminal",
   "draft",
   "browser",
+  "setup",
 ]);
 
 function resolvePlacementPane(input: {
@@ -1196,7 +1198,7 @@ function resolvePlacementPane(input: {
     findPaneById(createDefaultLayout().root, DEFAULT_PANE_ID);
   invariant(focusedPane, "Workspace layout must always have a pane");
   if (
-    input.placement.mode !== "ambient" ||
+    (input.placement.mode !== "ambient" && input.placement.mode !== "prefer") ||
     focusedPane.id !== input.sidePanelPaneId ||
     !SIDE_PANEL_EXCLUDED_TAB_KINDS.has(input.target.kind)
   ) {

@@ -2103,6 +2103,167 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("uses OpenCode native steer admission and reconciles the user echo", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("first");
+    const result = await session.steerActiveTurn?.("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    const request = openCode.calls.sessionPromptAsync[1] as {
+      sessionID: string;
+      messageID: string;
+      parts: Array<{ type: string; text?: string }>;
+    };
+    expect(request).toMatchObject({
+      sessionID: "ses_native_steer",
+    });
+    expect(request.messageID).toMatch(/^msg_/);
+    expect(request.parts).toEqual([{ type: "text", text: "steer this turn" }]);
+
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: { id: request.messageID, sessionID: "ses_native_steer", role: "user" },
+      },
+    });
+    await vi.waitFor(() => {
+      let found;
+      for (const e of events) {
+        if (
+          e.type === "timeline" &&
+          e.item.type === "user_message" &&
+          e.item.text === "steer this turn" &&
+          e.item.messageId === request.messageID &&
+          e.item.clientMessageId === "client-steer-1"
+        ) {
+          found = e;
+          break;
+        }
+      }
+      expect(found).toBeDefined();
+    });
+
+    await session.close();
+  });
+
+  test("clears permissions blocking an accepted human steer", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_steer_permission");
+    openCode.sessionPromptAsyncEvents = [];
+    const { turnId } = await session.startTurn("first");
+    openCode.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-steer",
+        sessionID: "ses_steer_permission",
+        permission: "bash",
+        patterns: ["echo blocked"],
+        metadata: { command: "echo blocked", cwd: "/workspace/repo" },
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.steerActiveTurn?.("change course", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(openCode.calls.permissionReply).toContainEqual(
+      expect.objectContaining({ requestID: "permission-steer", reply: "reject" }),
+    );
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    await session.close();
+  });
+
+  test("keeps multiple native steers correlated in admission order", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_fifo");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("first");
+    await session.steerActiveTurn?.("steer one", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    await session.steerActiveTurn?.("steer two", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-2",
+    });
+
+    const requests = openCode.calls.sessionPromptAsync.slice(1) as Array<{ messageID: string }>;
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: { id: request.messageID, sessionID: "ses_native_steer_fifo", role: "user" },
+        },
+      });
+    }
+    const userMessageTexts = () => {
+      const texts: string[] = [];
+      for (const e of events) {
+        if (e.type === "timeline" && e.item.type === "user_message") texts.push(e.item.text);
+      }
+      return texts;
+    };
+    await vi.waitFor(() => expect(userMessageTexts()).toEqual(["steer one", "steer two"]));
+
+    await session.close();
+  });
+
+  test("falls back only for a definitive native steer rejection", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_404");
+    openCode.sessionPromptAsyncEvents = [];
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
+      return { error: new Error("missing"), response: { status: 404 } };
+    };
+    const { turnId } = await session.startTurn("first");
+
+    await expect(
+      session.steerActiveTurn?.("steer", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).resolves.toEqual({ status: "unavailable" });
+
+    await session.close();
+  });
+
+  test("surfaces an ambiguous native steer failure", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_error");
+    openCode.sessionPromptAsyncEvents = [];
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
+      throw new Error("connection lost");
+    };
+    const { turnId } = await session.startTurn("first");
+
+    await expect(
+      session.steerActiveTurn?.("steer", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).rejects.toThrow("connection lost");
+
+    await session.close();
+  });
+
   test("sends exact Hub MCP permission grants without approving unrelated tools", async () => {
     const promptAsync = vi.fn(async () => ({ data: {}, error: undefined }));
     const fakeClient = {

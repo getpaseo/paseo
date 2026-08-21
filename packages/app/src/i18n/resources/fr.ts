@@ -904,6 +904,8 @@ export const fr: TranslationResources = {
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
+        seeUncommittedChanges: "Voir les modifications non validées",
+        seeCommittedChanges: "Voir les modifications validées",
         emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
@@ -2100,13 +2102,18 @@ export const fr: TranslationResources = {
         interfaceFontHint:
           "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
-        baseSize: "Taille de base",
-        baseSizeAccessibility: "Taille de base de la police",
+        interfaceSize: "Taille de l'interface",
+        interfaceSizeHint: "Utilisée pour la navigation, les contrôles et les libellés",
+        interfaceSizeAccessibility: "Taille de police de l'interface",
+        contentSize: "Taille du contenu",
+        contentSizeHint: "Utilisée pour le texte du chat et le Markdown rendu",
+        contentSizeAccessibility: "Taille de police du contenu",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
+        codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
       },
       syntax: {
@@ -2114,7 +2121,9 @@ export const fr: TranslationResources = {
         highlightTheme: "Thème de surbrillance",
         highlightThemeHint: "Couleurs du code, indépendamment du thème de l'application",
         highlightThemeAccessibility: "Thème phare:{{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
+        previewContent: "Aperçu du contenu et du code",
       },
     },
     shortcuts: {

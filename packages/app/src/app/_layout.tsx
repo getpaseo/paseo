@@ -20,7 +20,8 @@ import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { AppearanceProvider } from "@/appearance/provider";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
@@ -110,10 +111,9 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { getNextThemePreference, THEME_TO_UNISTYLES } from "@/styles/theme";
+import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
@@ -646,59 +646,29 @@ function MobileGestureWrapper({
 }
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
-  const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
 
-  // Apply theme setting on mount and when it changes
-  useEffect(() => {
-    if (settingsLoading) return;
-    if (settings.theme === "auto") {
-      UnistylesRuntime.setAdaptiveThemes(true);
-    } else {
-      UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
-    }
-  }, [settingsLoading, settings.theme]);
-
-  // Apply font / size / syntax appearance settings on mount and when they change.
-  // Sibling to the theme effect above; order is irrelevant because both patch all
-  // registered theme keys, so the active key is always current.
-  useEffect(() => {
-    if (settingsLoading) return;
-    applyAppearance({
-      uiFontFamily: settings.uiFontFamily,
-      monoFontFamily: settings.monoFontFamily,
-      uiBaseFontSize: settings.uiBaseFontSize,
-      codeFontSize: settings.codeFontSize,
-      syntaxTheme: settings.syntaxTheme,
-    });
-  }, [
-    settingsLoading,
-    settings.uiFontFamily,
-    settings.monoFontFamily,
-    settings.uiBaseFontSize,
-    settings.codeFontSize,
-    settings.syntaxTheme,
-  ]);
-
   return (
-    <VoiceProvider>
-      <DesktopWindowControlsSync enabled={!settingsLoading} />
-      <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
-      <HostSessionManager />
-      <FaviconStatusSync />
-      <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
-    </VoiceProvider>
+    <AppearanceProvider>
+      <VoiceProvider>
+        <DesktopWindowControlsSync />
+        <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
+        <HostSessionManager />
+        <FaviconStatusSync />
+        <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+      </VoiceProvider>
+    </AppearanceProvider>
   );
 }
 
-function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
+function DesktopWindowControlsSync() {
+  const { isLoading } = useAppSettings();
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
 
   useEffect(() => {
-    if (!enabled || isNative) return;
+    if (isLoading || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
@@ -706,7 +676,7 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground]);
+  }, [isLoading, surface0, foreground]);
 
   return null;
 }
