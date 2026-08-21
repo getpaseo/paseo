@@ -520,20 +520,13 @@ function forgeRefKey(ref: ForgeRef): string {
   return `${forgeItemKind(ref)}:${ref.number}`;
 }
 
-function attachmentKey(
-  attachment: { kind: string; item?: ForgeSearchItem } | undefined,
-): string | null {
+function attachmentKey(attachment: ComposerAttachment | undefined): string | null {
   if (
-    !attachment ||
-    attachment.kind === "image" ||
-    (attachment.kind !== "forge_change_request" &&
-      attachment.kind !== "forge_issue" &&
-      attachment.kind !== "forge_change_request" &&
-      attachment.kind !== "forge_issue")
+    attachment?.kind !== "forge_change_request" &&
+    attachment?.kind !== "forge_issue" &&
+    attachment?.kind !== "github_pr" &&
+    attachment?.kind !== "github_issue"
   ) {
-    return null;
-  }
-  if (!attachment.item) {
     return null;
   }
   return `${attachment.item.kind}:${attachment.item.number}`;
