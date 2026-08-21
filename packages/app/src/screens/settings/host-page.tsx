@@ -1079,12 +1079,12 @@ function BranchPrefixCard({ serverId }: { serverId: string }) {
       void patchConfig({ branchPrefixEnabled: next }).catch((error) => {
         console.error("[HostPage] Failed to update branch prefix enabled", error);
         Alert.alert(
-          "Unable to update branch name prefix",
-          error instanceof Error ? error.message : String(error),
+          t("settings.host.workspaces.branchPrefix.updateFailedTitle"),
+          t("settings.host.workspaces.branchPrefix.updateFailedMessage"),
         );
       });
     },
-    [patchConfig],
+    [patchConfig, t],
   );
 
   const commitPrefix = useCallback(() => {
@@ -1092,11 +1092,11 @@ function BranchPrefixCard({ serverId }: { serverId: string }) {
     void patchConfig({ branchPrefix: draft }).catch((error) => {
       console.error("[HostPage] Failed to update branch prefix", error);
       Alert.alert(
-        "Unable to update branch name prefix",
-        error instanceof Error ? error.message : String(error),
+        t("settings.host.workspaces.branchPrefix.updateFailedTitle"),
+        t("settings.host.workspaces.branchPrefix.updateFailedMessage"),
       );
     });
-  }, [draft, persistedPrefix, patchConfig]);
+  }, [draft, persistedPrefix, patchConfig, t]);
 
   const previewHint = draft.trim()
     ? t("settings.host.workspaces.branchPrefix.fieldHint", {

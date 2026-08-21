@@ -2343,6 +2343,8 @@ export const es: TranslationResources = {
           fieldLabel: "Prefijo",
           fieldHint: "Vista previa: {{branch}}",
           placeholder: "p. ej. feature/ o myname-",
+          updateFailedTitle: "No se pudo actualizar el prefijo del nombre de rama",
+          updateFailedMessage: "Comprueba tu conexión e inténtalo de nuevo.",
         },
       },
       terminalProfiles: {

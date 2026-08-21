@@ -2358,6 +2358,8 @@ export const en = {
           fieldLabel: "Prefix",
           fieldHint: "Preview: {{branch}}",
           placeholder: "e.g. feature/ or myname-",
+          updateFailedTitle: "Unable to update branch name prefix",
+          updateFailedMessage: "Check your connection and try again.",
         },
       },
       terminalProfiles: {

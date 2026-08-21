@@ -2265,6 +2265,8 @@ export const zhCN: TranslationResources = {
           fieldLabel: "前缀",
           fieldHint: "预览：{{branch}}",
           placeholder: "例如 feature/ 或 myname-",
+          updateFailedTitle: "无法更新分支名称前缀",
+          updateFailedMessage: "请检查网络连接后重试。",
         },
       },
       terminalProfiles: {

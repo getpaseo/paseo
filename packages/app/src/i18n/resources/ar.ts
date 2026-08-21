@@ -2290,6 +2290,8 @@ export const ar: TranslationResources = {
           fieldLabel: "البادئة",
           fieldHint: "معاينة: {{branch}}",
           placeholder: "مثال: feature/ أو myname-",
+          updateFailedTitle: "تعذّر تحديث بادئة اسم الفرع",
+          updateFailedMessage: "تحقق من اتصالك وحاول مرة أخرى.",
         },
       },
       terminalProfiles: {

@@ -2327,6 +2327,8 @@ export const ptBR: TranslationResources = {
           fieldLabel: "Prefixo",
           fieldHint: "Prévia: {{branch}}",
           placeholder: "ex.: feature/ ou myname-",
+          updateFailedTitle: "Não foi possível atualizar o prefixo do nome da branch",
+          updateFailedMessage: "Verifique sua conexão e tente novamente.",
         },
       },
       terminalProfiles: {

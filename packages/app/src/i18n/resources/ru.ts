@@ -2333,6 +2333,8 @@ export const ru: TranslationResources = {
           fieldLabel: "Префикс",
           fieldHint: "Предпросмотр: {{branch}}",
           placeholder: "например, feature/ или myname-",
+          updateFailedTitle: "Не удалось обновить префикс имени ветки",
+          updateFailedMessage: "Проверьте подключение и повторите попытку.",
         },
       },
       terminalProfiles: {

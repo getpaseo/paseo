@@ -599,6 +599,42 @@ test("renames an eligible unnamed branch-off worktree once on first agent contex
   expect(branchAfterSecond).toBe("renamed-from-agent-context");
 });
 
+test("applies a configured branch prefix even when it ends in an underscore", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+
+  const created = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "dazzling-yak",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  const result = await attemptFirstAgentBranchAutoName({
+    cwd: created.worktree.worktreePath,
+    firstAgentContext: { prompt: "Build the agent context name" },
+    branchPrefix: "alice_",
+    generateBranchNameFromContext: async () => "renamed-from-agent-context",
+  });
+
+  expect(result).toEqual({
+    attempted: true,
+    renamed: true,
+    branchName: "alice_renamed-from-agent-context",
+  });
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: created.worktree.worktreePath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim(),
+  ).toBe("alice_renamed-from-agent-context");
+});
+
 test("falls back to a numeric suffix when the desired branch name already exists", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);

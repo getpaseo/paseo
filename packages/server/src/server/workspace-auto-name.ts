@@ -1,5 +1,4 @@
 import type pino from "pino";
-import { applyBranchPrefix } from "@getpaseo/protocol/branch-slug";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
@@ -117,6 +116,7 @@ export class WorkspaceAutoName {
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
       cwd: worktreeRoot,
       firstAgentContext: input.firstAgentContext,
+      branchPrefix: this.getBranchPrefix(),
       generateBranchNameFromContext: ({ firstAgentContext }) => {
         return this.generateFromContext({
           cwd: input.workspace.cwd,
@@ -124,9 +124,7 @@ export class WorkspaceAutoName {
           currentSelection: input.currentSelection,
         }).then((nextGenerated) => {
           generated = nextGenerated;
-          return nextGenerated?.branch
-            ? applyBranchPrefix(nextGenerated.branch, this.getBranchPrefix())
-            : null;
+          return nextGenerated?.branch ?? null;
         });
       },
     });

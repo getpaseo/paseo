@@ -2302,6 +2302,8 @@ export const ko: TranslationResources = {
           fieldLabel: "접두사",
           fieldHint: "미리보기: {{branch}}",
           placeholder: "예: feature/ 또는 myname-",
+          updateFailedTitle: "브랜치 이름 접두사를 업데이트할 수 없습니다",
+          updateFailedMessage: "연결을 확인한 후 다시 시도하세요.",
         },
       },
       terminalProfiles: {

@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { applyBranchPrefix } from "@getpaseo/protocol/branch-slug";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { getRealpathAwareRelativePath } from "../utils/path.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
@@ -153,6 +154,12 @@ async function planWorkspaceCwdForWorktree(
 export async function attemptFirstAgentBranchAutoName(options: {
   cwd: string;
   firstAgentContext: FirstAgentContext | undefined;
+  /**
+   * Applied to the generated name after it passes `validateBranchSlug`, so a
+   * user-configured prefix (which may contain underscores or repeated
+   * hyphens) never gets rejected by that generated-slug-only check.
+   */
+  branchPrefix?: string;
   generateBranchNameFromContext: (input: {
     cwd: string;
     firstAgentContext: FirstAgentContext;
@@ -204,10 +211,11 @@ export async function attemptFirstAgentBranchAutoName(options: {
     return { attempted: true, renamed: false, branchName: null };
   }
 
+  const prefixedBranchName = applyBranchPrefix(branchName, options.branchPrefix);
   const localBranchExistsImpl = options.localBranchExists ?? localBranchExists;
   const targetName = await findAvailableBranchName({
     cwd: options.cwd,
-    desiredName: branchName,
+    desiredName: prefixedBranchName,
     placeholderBranchName,
     localBranchExists: localBranchExistsImpl,
   });

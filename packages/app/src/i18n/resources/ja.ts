@@ -2311,6 +2311,8 @@ export const ja: TranslationResources = {
           fieldLabel: "プレフィックス",
           fieldHint: "プレビュー: {{branch}}",
           placeholder: "例: feature/ または myname-",
+          updateFailedTitle: "ブランチ名のプレフィックスを更新できませんでした",
+          updateFailedMessage: "接続を確認してもう一度お試しください。",
         },
       },
       terminalProfiles: {

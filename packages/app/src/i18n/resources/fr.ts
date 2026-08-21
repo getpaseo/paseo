@@ -2349,6 +2349,8 @@ export const fr: TranslationResources = {
           fieldLabel: "Préfixe",
           fieldHint: "Aperçu : {{branch}}",
           placeholder: "ex. feature/ ou myname-",
+          updateFailedTitle: "Impossible de mettre à jour le préfixe du nom de branche",
+          updateFailedMessage: "Vérifiez votre connexion et réessayez.",
         },
       },
       terminalProfiles: {
