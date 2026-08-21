@@ -88,7 +88,8 @@ interface SidebarSharedProps {
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
-  hasProjectsBeforeLabelFilter: boolean;
+  hasProjectsBeforeFilter: boolean;
+  hasActiveProjectFilter: boolean;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   isInitialLoad: boolean;
   isRevalidating: boolean;
@@ -143,7 +144,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
 
   const {
     projects,
-    hasProjectsBeforeLabelFilter,
+    hasProjectsBeforeFilter,
+    resolvedProjectFilters,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
@@ -251,7 +253,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     projectIconTargets,
     pinnedGroups,
     projects,
-    hasProjectsBeforeLabelFilter,
+    hasProjectsBeforeFilter,
+    hasActiveProjectFilter: resolvedProjectFilters.length > 0,
     workspaceEntriesByKey,
     isInitialLoad,
     isRevalidating,
@@ -606,7 +609,8 @@ function MobileSidebar({
   projectIconTargets,
   pinnedGroups,
   projects,
-  hasProjectsBeforeLabelFilter,
+  hasProjectsBeforeFilter,
+  hasActiveProjectFilter,
   workspaceEntriesByKey,
   isInitialLoad,
   isRevalidating,
@@ -725,7 +729,8 @@ function MobileSidebar({
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
             projects={projects}
-            hasProjectsBeforeLabelFilter={hasProjectsBeforeLabelFilter}
+            hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+            hasActiveProjectFilter={hasActiveProjectFilter}
             workspaceEntriesByKey={workspaceEntriesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
@@ -757,7 +762,8 @@ function DesktopSidebar({
   projectIconTargets,
   pinnedGroups,
   projects,
-  hasProjectsBeforeLabelFilter,
+  hasProjectsBeforeFilter,
+  hasActiveProjectFilter,
   workspaceEntriesByKey,
   isInitialLoad,
   isRevalidating,
@@ -930,7 +936,8 @@ function DesktopSidebar({
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
             projects={projects}
-            hasProjectsBeforeLabelFilter={hasProjectsBeforeLabelFilter}
+            hasProjectsBeforeFilter={hasProjectsBeforeFilter}
+            hasActiveProjectFilter={hasActiveProjectFilter}
             workspaceEntriesByKey={workspaceEntriesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}

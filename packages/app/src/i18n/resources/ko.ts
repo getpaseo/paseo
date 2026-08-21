@@ -882,6 +882,8 @@ export const ko: TranslationResources = {
         failedRefresh: "Git 상태를 새로고침하지 못했습니다.",
         emptyHiddenWhitespace: "공백을 숨긴 후 표시할 변경 사항이 없습니다",
         emptyUncommitted: "커밋되지 않은 변경 사항이 없습니다",
+        seeUncommittedChanges: "커밋되지 않은 변경 사항 보기",
+        seeCommittedChanges: "커밋된 변경 사항 보기",
         emptyAgainstBase: "{{baseRef}} 대비 변경 사항이 없습니다",
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
@@ -993,8 +995,6 @@ export const ko: TranslationResources = {
     },
     filter: {
       clear: "필터 지우기",
-      noMatchesTitle: "일치하는 워크스페이스가 없습니다",
-      noMatchesDescription: "워크스페이스를 보려면 레이블 필터를 변경하거나 지우세요.",
     },
     manage: {
       open: "레이블 관리…",
@@ -1050,6 +1050,15 @@ export const ko: TranslationResources = {
         label: "호스트",
         all: "모든 호스트",
       },
+      projectFilter: {
+        label: "프로젝트",
+        all: "모든 프로젝트",
+      },
+    },
+    filterEmpty: {
+      title: "일치하는 워크스페이스가 없습니다",
+      description: "워크스페이스를 보려면 사이드바 필터를 변경하거나 지우세요.",
+      clear: "필터 지우기",
     },
     pinned: {
       title: "고정됨",
@@ -2050,13 +2059,18 @@ export const ko: TranslationResources = {
         interfaceFont: "인터페이스 글꼴",
         interfaceFontHint: "앱 전체에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         interfaceFontAccessibility: "인터페이스 글꼴 패밀리",
-        baseSize: "기본 크기",
-        baseSizeAccessibility: "기본 글꼴 크기",
+        interfaceSize: "인터페이스 크기",
+        interfaceSizeHint: "탐색, 컨트롤 및 레이블에 사용됩니다",
+        interfaceSizeAccessibility: "인터페이스 글꼴 크기",
+        contentSize: "콘텐츠 크기",
+        contentSizeHint: "채팅 텍스트와 렌더링된 Markdown에 사용됩니다",
+        contentSizeAccessibility: "콘텐츠 글꼴 크기",
         codeFont: "코드 글꼴",
         codeFontHint:
           "코드, diff, 터미널 출력에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         codeFontAccessibility: "코드 글꼴 패밀리",
         codeSize: "코드 크기",
+        codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
       },
       syntax: {
@@ -2064,7 +2078,8 @@ export const ko: TranslationResources = {
         highlightTheme: "강조 테마",
         highlightThemeHint: "앱 테마와 독립적인 코드 색상",
         highlightThemeAccessibility: "강조 테마: {{value}}",
-        previewAccessibility: "구문 테마와 코드 글꼴의 실시간 미리보기",
+        previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
+        previewContent: "콘텐츠 및 코드 미리보기",
       },
     },
     shortcuts: {

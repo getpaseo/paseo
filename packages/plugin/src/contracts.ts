@@ -102,6 +102,24 @@ export interface PluginSidebarContribution {
   surface: string;
 }
 
+export interface PluginThemeColors {
+  background: string;
+  foreground: string;
+  raised: string;
+  control: string;
+  border: string;
+  accent?: string;
+  mutedForeground: string;
+  ring: string;
+}
+
+export interface PluginThemeContribution {
+  id: string;
+  name: string;
+  appearance: "light" | "dark";
+  colors: PluginThemeColors;
+}
+
 export interface PluginAttachmentSourceContribution {
   id: string;
   title: string;
@@ -175,6 +193,7 @@ export interface PluginContext {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addTheme(contribution: PluginThemeContribution): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;

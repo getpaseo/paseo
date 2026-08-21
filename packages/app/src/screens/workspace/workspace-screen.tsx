@@ -59,6 +59,7 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import {
   canDismissPaneInLayout,
   collectAllTabs,
+  DEFAULT_PANE_ID,
   findPaneById,
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
@@ -91,7 +92,11 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
+import {
+  shouldSeedWorkspaceSetupTab,
+  shouldShowWorkspaceSetup,
+  useWorkspaceSetupStore,
+} from "@/stores/workspace-setup-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
@@ -185,7 +190,6 @@ import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-ch
 import { useHasPullRequest } from "@/panels/pull-request";
 import { fileStateForFilesView } from "@/panels/file/state";
 
-const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -1692,6 +1696,7 @@ function WorkspaceScreenContent({
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
   const ensureWorkspaceSetupStatus = useWorkspaceSetupStore((state) => state.ensureSetupStatus);
+  const claimFailedSetupSurface = useWorkspaceSetupStore((state) => state.claimFailedSetupSurface);
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
   const uiTabs = useMemo(
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
@@ -1966,7 +1971,6 @@ function WorkspaceScreenContent({
   );
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
-  const autoOpenedSetupTabWorkspaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isRouteFocused) {
@@ -1975,25 +1979,7 @@ function WorkspaceScreenContent({
     if (!persistenceKey) {
       return;
     }
-    if (!workspaceSetupSnapshot || !showWorkspaceSetup) {
-      if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
-        autoOpenedSetupTabWorkspaceRef.current = null;
-      }
-      return;
-    }
-
-    const snapshotAge = Date.now() - workspaceSetupSnapshot.updatedAt;
-    const shouldAutoOpen =
-      workspaceSetupSnapshot.status === "running" ||
-      snapshotAge <= WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS;
-    if (!shouldAutoOpen) {
-      return;
-    }
-    if (hasSetupTab) {
-      autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
-      return;
-    }
-    if (autoOpenedSetupTabWorkspaceRef.current === persistenceKey) {
+    if (!shouldSeedWorkspaceSetupTab(workspaceSetupSnapshot)) {
       return;
     }
 
@@ -2004,27 +1990,30 @@ function WorkspaceScreenContent({
     if (!target) {
       return;
     }
-
-    const tabId = openSupportingTab({
-      isCompact: isMobile,
-      workspaceKey: persistenceKey,
-      target,
-      openInSidePanelByDefault,
-      background: true,
-    });
-    if (!tabId) {
+    if (
+      !claimFailedSetupSurface({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+      })
+    ) {
+      return;
+    }
+    if (hasSetupTab) {
       return;
     }
 
-    autoOpenedSetupTabWorkspaceRef.current = persistenceKey;
+    openWorkspaceTabInBackground(persistenceKey, target, {
+      mode: "prefer",
+      paneId: DEFAULT_PANE_ID,
+    });
   }, [
+    claimFailedSetupSurface,
     hasSetupTab,
-    isMobile,
     isRouteFocused,
     normalizedWorkspaceId,
-    openInSidePanelByDefault,
+    normalizedServerId,
+    openWorkspaceTabInBackground,
     persistenceKey,
-    showWorkspaceSetup,
     workspaceSetupSnapshot,
   ]);
 

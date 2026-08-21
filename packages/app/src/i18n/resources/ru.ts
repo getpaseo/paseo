@@ -890,6 +890,8 @@ export const ru: TranslationResources = {
         failedRefresh: "Не удалось обновить состояние Git.",
         emptyHiddenWhitespace: "После скрытия пробельных изменений видимых изменений нет",
         emptyUncommitted: "Нет незафиксированных изменений",
+        seeUncommittedChanges: "Показать незафиксированные изменения",
+        seeCommittedChanges: "Показать зафиксированные изменения",
         emptyAgainstBase: "Нет изменений относительно {{baseRef}}",
         checkingRepository: "Проверяем репозиторий...",
         notRepository: "Это не репозиторий Git",
@@ -1001,9 +1003,6 @@ export const ru: TranslationResources = {
     },
     filter: {
       clear: "Очистить фильтр",
-      noMatchesTitle: "Нет подходящих рабочих пространств",
-      noMatchesDescription:
-        "Измените или очистите фильтр меток, чтобы увидеть рабочие пространства.",
     },
     manage: {
       open: "Управление метками…",
@@ -1059,6 +1058,16 @@ export const ru: TranslationResources = {
         label: "Хост",
         all: "Все хосты",
       },
+      projectFilter: {
+        label: "Проект",
+        all: "Все проекты",
+      },
+    },
+    filterEmpty: {
+      title: "Нет подходящих рабочих пространств",
+      description:
+        "Измените или очистите фильтры боковой панели, чтобы увидеть рабочие пространства.",
+      clear: "Очистить фильтры",
     },
     pinned: {
       title: "Закреплённые",
@@ -2076,13 +2085,18 @@ export const ru: TranslationResources = {
         interfaceFontHint:
           "Используется во всём приложении. Оставьте поле пустым, чтобы использовать системный шрифт.",
         interfaceFontAccessibility: "Семейство интерфейсных шрифтов",
-        baseSize: "Базовый размер",
-        baseSizeAccessibility: "Базовый размер шрифта",
+        interfaceSize: "Размер интерфейса",
+        interfaceSizeHint: "Используется для навигации, элементов управления и подписей",
+        interfaceSizeAccessibility: "Размер шрифта интерфейса",
+        contentSize: "Размер содержимого",
+        contentSizeHint: "Используется для текста чата и отображаемого Markdown",
+        contentSizeAccessibility: "Размер шрифта содержимого",
         codeFont: "Шрифт кода",
         codeFontHint:
           "Используется для кода, диффов и вывода терминала. Оставьте поле пустым, чтобы использовать системный шрифт.",
         codeFontAccessibility: "Семейство шрифтов кода",
         codeSize: "Размер кода",
+        codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
       },
       syntax: {
@@ -2091,7 +2105,8 @@ export const ru: TranslationResources = {
         highlightThemeHint: "Цвета кода, не зависящие от темы приложения",
         highlightThemeAccessibility: "Тема подсветки: {{value}}",
         previewAccessibility:
-          "Предварительный просмотр темы синтаксиса и шрифта кода в реальном времени.",
+          "Предварительный просмотр типографики содержимого, темы синтаксиса и шрифта кода в реальном времени.",
+        previewContent: "Предварительный просмотр содержимого и кода",
       },
     },
     shortcuts: {

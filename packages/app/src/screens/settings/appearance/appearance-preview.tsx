@@ -26,6 +26,7 @@ const ZERO_WIDTH = "​";
 type RowType = "context" | "add" | "remove";
 
 interface PreviewOverrides {
+  contentFontSize?: number;
   monoFontFamily?: string;
   codeFontSize?: number;
 }
@@ -61,6 +62,12 @@ function buildCodeOverride(overrides: PreviewOverrides | undefined): TextStyle {
   }
   // High-churn draft values bypass the Unistyles CSS registry (docs/unistyles.md).
   return inlineUnistylesStyle(style);
+}
+
+function buildContentOverride(overrides: PreviewOverrides | undefined): TextStyle {
+  const fontSize = resolveSizeOverride(overrides?.contentFontSize);
+  if (fontSize === undefined) return {};
+  return inlineUnistylesStyle({ fontSize, lineHeight: Math.round(fontSize * 1.4) });
 }
 
 interface KeyedToken {
@@ -137,7 +144,9 @@ function markerStyle(type: RowType) {
 export function AppearancePreview({ overrides }: AppearancePreviewProps) {
   const { t } = useTranslation();
   const rows = useMemo(() => buildUnifiedRows(), []);
+  const contentOverride = useMemo(() => buildContentOverride(overrides), [overrides]);
   const codeOverride = useMemo(() => buildCodeOverride(overrides), [overrides]);
+  const contentStyle = useMemo(() => [styles.contentSample, contentOverride], [contentOverride]);
   const codeStyle = useMemo(() => [styles.codeLine, codeOverride], [codeOverride]);
   const addRowStyle = useMemo(() => [styles.row, styles.addRow], []);
   const removeRowStyle = useMemo(() => [styles.row, styles.removeRow], []);
@@ -155,6 +164,7 @@ export function AppearancePreview({ overrides }: AppearancePreviewProps) {
       dataSet={CODE_SURFACE_DATASET}
       style={styles.card}
     >
+      <Text style={contentStyle}>{t("settings.appearance.syntax.previewContent")}</Text>
       {rows.map((row) => (
         <View key={row.key} style={rowStyle(row.type)}>
           <Text style={codeStyle}>
@@ -200,6 +210,13 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: theme.lineHeight.diff,
     color: theme.colors.foreground,
     ...(isWeb ? { whiteSpace: "pre", overflowWrap: "normal" } : null),
+  },
+  contentSample: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.content,
+    lineHeight: Math.round(theme.fontSize.content * 1.4),
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
   },
   markerContext: {
     color: theme.colors.foregroundMuted,

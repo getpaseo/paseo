@@ -139,6 +139,84 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate attachment source: issues");
   });
 
+  it("collects a contributed theme", () => {
+    const plugin = evaluatePluginClientBundle(
+      "catppuccin",
+      bundle(`
+        plugin.addTheme({
+          id: "mocha",
+          name: "Catppuccin Mocha",
+          appearance: "dark",
+          colors: {
+            background: "#1e1e2e",
+            foreground: "#cdd6f4",
+            raised: "#313244",
+            control: "#45475a",
+            border: "#45475a",
+            accent: "#cba6f7",
+            mutedForeground: "#a6adc8",
+            ring: "#6c7086",
+          },
+        });
+      `),
+    );
+
+    expect(plugin.themes.map((theme) => [theme.id, theme.name])).toEqual([
+      ["mocha", "Catppuccin Mocha"],
+    ]);
+    expect(plugin.themes[0]?.colors.accent).toBe("#cba6f7");
+  });
+
+  it("rejects a theme with a color that is not a hex value", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "catppuccin",
+        bundle(`
+          plugin.addTheme({
+            id: "mocha",
+            name: "Catppuccin Mocha",
+            appearance: "dark",
+            colors: {
+              background: "rebeccapurple",
+              foreground: "#cdd6f4",
+              raised: "#313244",
+              control: "#45475a",
+              border: "#45475a",
+              mutedForeground: "#a6adc8",
+              ring: "#6c7086",
+            },
+          });
+        `),
+      ),
+    ).toThrow("Must be a hex color");
+  });
+
+  it("rejects duplicate theme ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "catppuccin",
+        bundle(`
+          const theme = {
+            id: "mocha",
+            name: "Catppuccin Mocha",
+            appearance: "dark",
+            colors: {
+              background: "#1e1e2e",
+              foreground: "#cdd6f4",
+              raised: "#313244",
+              control: "#45475a",
+              border: "#45475a",
+              mutedForeground: "#a6adc8",
+              ring: "#6c7086",
+            },
+          };
+          plugin.addTheme(theme);
+          plugin.addTheme(theme);
+        `),
+      ),
+    ).toThrow("Duplicate theme: mocha");
+  });
+
   it("rejects a sidebar placement whose surface does not exist", () => {
     expect(() =>
       evaluatePluginClientBundle(

@@ -27,6 +27,7 @@ function installation(
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    themes: [],
   };
 }
 

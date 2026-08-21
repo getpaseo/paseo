@@ -6,6 +6,7 @@ import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../se
 interface OpenCodeResponse {
   data?: unknown;
   error?: unknown;
+  response?: { status: number };
 }
 
 export class TestOpenCodeHarness implements OpenCodeServerManagerLike {

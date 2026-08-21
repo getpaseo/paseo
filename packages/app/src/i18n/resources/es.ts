@@ -906,6 +906,8 @@ export const es: TranslationResources = {
         failedRefresh: "No se pudo actualizar el estado de git.",
         emptyHiddenWhitespace: "No hay cambios visibles después de ocultar espacios en blanco",
         emptyUncommitted: "Sin cambios no confirmados",
+        seeUncommittedChanges: "Ver cambios no confirmados",
+        seeCommittedChanges: "Ver cambios confirmados",
         emptyAgainstBase: "Sin cambios frente a{{baseRef}}",
         checkingRepository: "Comprobando repositorio...",
         notRepository: "No es un repositorio de git",
@@ -1020,8 +1022,6 @@ export const es: TranslationResources = {
     },
     filter: {
       clear: "Borrar filtro",
-      noMatchesTitle: "Ningún espacio de trabajo coincide",
-      noMatchesDescription: "Cambia o borra el filtro de etiquetas para ver espacios de trabajo.",
     },
     manage: {
       open: "Gestionar etiquetas…",
@@ -1077,6 +1077,15 @@ export const es: TranslationResources = {
         label: "Host",
         all: "Todos los hosts",
       },
+      projectFilter: {
+        label: "Proyecto",
+        all: "Todos los proyectos",
+      },
+    },
+    filterEmpty: {
+      title: "Ningún espacio de trabajo coincide",
+      description: "Cambia o borra los filtros de la barra lateral para ver espacios de trabajo.",
+      clear: "Borrar filtros",
     },
     pinned: {
       title: "Anclados",
@@ -2090,13 +2099,18 @@ export const es: TranslationResources = {
         interfaceFontHint:
           "Utilizado en toda la aplicación. Déjelo vacío para el valor predeterminado del sistema.",
         interfaceFontAccessibility: "Familia de fuentes de interfaz",
-        baseSize: "Tamaño base",
-        baseSizeAccessibility: "Tamaño base de la fuente",
+        interfaceSize: "Tamaño de interfaz",
+        interfaceSizeHint: "Se usa en la navegación, los controles y las etiquetas",
+        interfaceSizeAccessibility: "Tamaño de fuente de interfaz",
+        contentSize: "Tamaño de contenido",
+        contentSizeHint: "Se usa en el texto del chat y el Markdown renderizado",
+        contentSizeAccessibility: "Tamaño de fuente de contenido",
         codeFont: "Fuente de código",
         codeFontHint:
           "Se utiliza en código, diferencias y salida del terminal. Déjelo vacío para el valor predeterminado del sistema.",
         codeFontAccessibility: "Familia de fuentes de código",
         codeSize: "Tamaño del código",
+        codeSizeHint: "Se usa en código, diferencias y la salida del terminal",
         codeSizeAccessibility: "Tamaño de fuente del código",
       },
       syntax: {
@@ -2104,7 +2118,9 @@ export const es: TranslationResources = {
         highlightTheme: "Tema destacado",
         highlightThemeHint: "Colores para el código, independientemente del tema de la aplicación.",
         highlightThemeAccessibility: "Tema destacado:{{value}}",
-        previewAccessibility: "Vista previa en vivo del tema de sintaxis y fuente del código",
+        previewAccessibility:
+          "Vista previa en vivo de la tipografía de contenido, el tema de sintaxis y la fuente del código",
+        previewContent: "Vista previa de contenido y código",
       },
     },
     shortcuts: {
