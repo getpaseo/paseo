@@ -48,17 +48,26 @@ function parseKeepAwakeRequest(args: Record<string, unknown> | undefined): KeepA
 // A sender's entry is dropped as soon as its WebContents goes away — closed,
 // reloaded away, or crashed — so a window that disappears can never keep the
 // block held on its own say after nothing is left to report otherwise.
+//
+// An enabled window that hasn't resolved its own battery reading yet must not
+// be silently dropped just because another window happens to have a known,
+// safe reading — that would let one window's "unknown" bypass the fail-closed
+// cutoff via a sibling's optimistic report. So the aggregate battery level is
+// forced to null (unknown) whenever any enabled request doesn't know its own.
 function aggregateKeepAwakeRequests(requests: Iterable<KeepAwakeRequest>): KeepAwakeRequest {
   let enabled = false;
   let batteryLevel: number | null = null;
+  let hasUnknownBatteryWhileEnabled = false;
   for (const request of requests) {
     enabled = enabled || request.enabled;
-    if (request.batteryLevel !== null) {
-      batteryLevel =
-        batteryLevel === null ? request.batteryLevel : Math.min(batteryLevel, request.batteryLevel);
+    if (request.batteryLevel === null) {
+      hasUnknownBatteryWhileEnabled = hasUnknownBatteryWhileEnabled || request.enabled;
+      continue;
     }
+    batteryLevel =
+      batteryLevel === null ? request.batteryLevel : Math.min(batteryLevel, request.batteryLevel);
   }
-  return { enabled, batteryLevel };
+  return { enabled, batteryLevel: hasUnknownBatteryWhileEnabled ? null : batteryLevel };
 }
 
 interface KeepAwakeSender {

@@ -116,4 +116,29 @@ describe("createKeepAwakeCommandHandlers", () => {
     handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: 0.05 }, { sender: windowB });
     expect(powerSaveBlocker.stop).toHaveBeenCalledTimes(1);
   });
+
+  it("fails closed if any enabled window hasn't resolved its own battery reading, even when another window reports a safe level", () => {
+    const handlers = createKeepAwakeCommandHandlers();
+    const windowA = createFakeSender(1);
+    const windowB = createFakeSender(2);
+
+    handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: 0.9 }, { sender: windowA });
+    expect(powerSaveBlocker.start).toHaveBeenCalledTimes(1);
+
+    // Window B hasn't resolved navigator.getBattery() yet. Its unknown reading
+    // must not be discarded just because window A's looked safe.
+    handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: null }, { sender: windowB });
+    expect(powerSaveBlocker.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts the block if an unresolved battery reading arrives before a known-safe one", () => {
+    const handlers = createKeepAwakeCommandHandlers();
+    const windowA = createFakeSender(1);
+    const windowB = createFakeSender(2);
+
+    handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: null }, { sender: windowA });
+    handlers.desktop_set_keep_awake({ enabled: true, batteryLevel: 0.9 }, { sender: windowB });
+
+    expect(powerSaveBlocker.start).not.toHaveBeenCalled();
+  });
 });
