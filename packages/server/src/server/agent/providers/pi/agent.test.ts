@@ -229,10 +229,12 @@ class SessionEvents {
     );
   }
 
-  nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
+  nextTurnCompletion(
+    turnId?: string,
+  ): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
-        event.type === "turn_completed",
+        event.type === "turn_completed" && (turnId === undefined || event.turnId === turnId),
     );
   }
 
@@ -941,6 +943,209 @@ describe("PiRpcAgentSession", () => {
       error: expect.stringContaining(
         'Provider finish_reason: error (stopReason=error, model=openrouter/google/gemini-2.5-flash-lite, responseId=gen-test, partial="I will use the write tool for qa.txt.")',
       ),
+    });
+  });
+
+  test("keeps a Pi turn active across automatic retries", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("retry this request");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: true,
+      messages: [
+        {
+          role: "assistant",
+          provider: "openrouter",
+          model: "model-a",
+          stopReason: "error",
+          errorMessage: "OpenAI API error (503): upstream failed",
+          content: [],
+        },
+      ],
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message:
+        "Provider retry (attempt 1): OpenAI API error (503): upstream failed (stopReason=error, model=openrouter/model-a)",
+    });
+    expect(events.eventTypes()).not.toContain("turn_failed");
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    await expect(session.startTurn("do not overlap")).rejects.toThrow(
+      "A Pi turn is already active",
+    );
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: [] }],
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.emit({ type: "agent_settled" });
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId,
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+  });
+
+  test("completes legacy Pi agent_end events without agent_settled", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("complete with legacy Pi events");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [] }],
+    });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId,
+    });
+  });
+
+  test("ignores a duplicated Pi terminal pair before the next turn starts", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId: firstTurnId } = await session.startTurn("first request");
+    fakeSession.finishTurn();
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({ turnId: firstTurnId });
+
+    const { turnId: recoveryTurnId } = await session.startTurn("next request");
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: [] }],
+    });
+    fakeSession.emit({ type: "agent_settled" });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+
+    fakeSession.finishTurn();
+    await expect(events.nextTurnCompletion(recoveryTurnId)).resolves.toMatchObject({
+      turnId: recoveryTurnId,
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(2);
+  });
+
+  test("clears a buffered Pi retry when the runtime exits", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("retry before exit");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: true,
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "OpenAI API error (503): upstream failed",
+          content: [],
+        },
+      ],
+    });
+    fakeSession.emit({ type: "process_exit", error: "Pi exited" });
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+
+    const { turnId } = await session.startTurn("recover after exit");
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: [] }],
+    });
+    fakeSession.emit({ type: "agent_settled" });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.finishTurn();
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId,
+    });
+  });
+
+  test("ignores late Pi settlement after an interrupted retry", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("retry before interrupt");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: true,
+      messages: [
+        {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "OpenAI API error (503): upstream failed",
+          content: [],
+        },
+      ],
+    });
+
+    await session.interrupt();
+    await expect(events.nextTurnCancellation()).resolves.toMatchObject({ turnId });
+
+    fakeSession.emit({ type: "agent_settled" });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    const { turnId: recoveryTurnId } = await session.startTurn("recover after interrupt");
+    fakeSession.finishTurn();
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
+      turnId: recoveryTurnId,
+    });
+  });
+
+  test("waits for Pi to settle after overflow compaction before completing", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("compact and retry this request");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: false,
+      messages: [
+        {
+          role: "assistant",
+          provider: "openrouter",
+          model: "model-a",
+          stopReason: "error",
+          errorMessage: "Context window exceeded",
+          content: [],
+        },
+      ],
+    });
+    fakeSession.emit({ type: "compaction_start", reason: "overflow" });
+    fakeSession.emit({
+      type: "compaction_end",
+      reason: "overflow",
+      willRetry: true,
+    });
+
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    expect(events.eventTypes()).not.toContain("turn_failed");
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "agent_end",
+      willRetry: false,
+      messages: [{ role: "assistant", content: [] }],
+    });
+    fakeSession.emit({ type: "agent_settled" });
+
+    await expect(events.nextTurnCompletion()).resolves.toMatchObject({
+      type: "turn_completed",
     });
   });
 
