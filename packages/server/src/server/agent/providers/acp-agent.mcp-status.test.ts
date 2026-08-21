@@ -56,8 +56,15 @@ describe("ACP MCP status", () => {
     expect((await session.listMcpServers()).source).toBe("configured");
   });
 
-  test("advertises the capability alongside MCP support", () => {
-    expect(createSession({}).capabilities.supportsMcpStatus).toBe(true);
+  test("advertises the capability only when servers were actually injected", () => {
+    expect(
+      createSession({ mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp" } } })
+        .capabilities.supportsMcpStatus,
+    ).toBe(true);
+
+    // Nothing injected means the panel could only ever open on an empty list, so the
+    // control should not exist. ACP can never report more than the config it was given.
+    expect(createSession({}).capabilities.supportsMcpStatus).toBe(false);
   });
 
   test("drops the capability for an ACP agent that takes no MCP config", async () => {
@@ -72,7 +79,9 @@ describe("ACP MCP status", () => {
     expect(await session.listMcpServers()).toEqual({ servers: [], source: "configured" });
   });
 
-  test("reports an empty list when nothing was injected", async () => {
+  test("still answers with an empty list if asked despite the capability being off", async () => {
+    // Defence in depth: the capability gate is the reason nothing asks, but a stale
+    // snapshot could still send the request and it must not throw.
     expect(await createSession({}).listMcpServers()).toEqual({
       servers: [],
       source: "configured",
