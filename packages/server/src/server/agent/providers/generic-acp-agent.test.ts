@@ -113,4 +113,36 @@ describe("GenericACPAgentClient", () => {
       },
     });
   });
+
+  test("merges configured capabilities into probe capability overrides", () => {
+    const _client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["capable-acp", "serve"],
+      clientCapabilities: {
+        terminal: true,
+      },
+      probeClientCapabilities: {
+        terminal: false,
+      },
+      providerParams: {
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+        },
+      },
+    });
+    void _client;
+
+    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
+      probeClientCapabilities: {
+        fs: {
+          readTextFile: true,
+          writeTextFile: true,
+        },
+        terminal: false,
+      },
+    });
+  });
 });

@@ -78,6 +78,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
       options.clientCapabilities,
       providerParams.clientCapabilities,
     );
+    const probeClientCapabilities = options.probeClientCapabilities
+      ? mergeGenericACPClientCapabilities(clientCapabilities, options.probeClientCapabilities)
+      : undefined;
     super({
       provider: "acp",
       logger: options.logger,
@@ -93,9 +96,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
         ? { initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs }
         : {}),
       ...(clientCapabilities ? { clientCapabilities } : {}),
-      ...(options.probeClientCapabilities
-        ? { probeClientCapabilities: options.probeClientCapabilities }
-        : {}),
+      ...(probeClientCapabilities ? { probeClientCapabilities } : {}),
       ...(options.clientCapabilityMeta
         ? { clientCapabilityMeta: options.clientCapabilityMeta }
         : {}),

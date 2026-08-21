@@ -81,6 +81,7 @@ const GJC_CLIENT_CAPABILITY_META = {
 } satisfies ACPClientCapabilityMeta;
 
 const GJC_ACP_READINESS_TIMEOUT_MS = 60_000;
+const GJC_ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = GJC_ACP_READINESS_TIMEOUT_MS + 10_000;
 const GJC_ACP_RAW_CREATE_TIMEOUT_MS = 130_000;
 const GJC_ACP_RAW_CLOSE_TIMEOUT_MS = 30_000;
 const GJC_ACP_RAW_CREATE_MAX_BUFFER_BYTES = 1024 * 1024;
@@ -109,7 +110,7 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
         terminal: false,
       },
       clientCapabilityMeta: GJC_CLIENT_CAPABILITY_META,
-      diagnosticPhaseTimeoutMs: GJC_ACP_READINESS_TIMEOUT_MS,
+      diagnosticPhaseTimeoutMs: GJC_ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS,
       sessionResponseTransformer: transformGjcSessionResponse,
       configOptionsTransformer: transformGjcConfigOptions,
       modeIdTransformer: transformGjcModeId,

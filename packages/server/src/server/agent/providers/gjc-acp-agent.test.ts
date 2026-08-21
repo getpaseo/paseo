@@ -22,7 +22,7 @@ import {
 } from "./gjc-acp-agent.js";
 
 describe("GjcACPAgentClient", () => {
-  test("keeps GJC probe clients non-terminal while preserving prompt permission metadata", async () => {
+  test("keeps GJC probe clients non-terminal while preserving configured filesystem capabilities", async () => {
     const initialize = vi.fn(async () => ({ agentCapabilities: {} }));
     const loadSession = vi.fn(
       async (): Promise<LoadSessionResponse> => ({
@@ -104,6 +104,12 @@ describe("GjcACPAgentClient", () => {
       label: "Gajae Code",
       providerParams: {
         supportsMcpServers: false,
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+        },
       },
       execFile,
     });
@@ -135,8 +141,8 @@ describe("GjcACPAgentClient", () => {
       expect.objectContaining({
         clientCapabilities: {
           fs: {
-            readTextFile: false,
-            writeTextFile: false,
+            readTextFile: true,
+            writeTextFile: true,
           },
           terminal: false,
           _meta: {
@@ -181,7 +187,7 @@ describe("GjcACPAgentClient", () => {
     );
   });
 
-  test("uses the lifecycle readiness budget for diagnostic session probes", async () => {
+  test("leaves diagnostic headroom above the lifecycle readiness budget", async () => {
     vi.useFakeTimers();
     try {
       let markStarted: () => void = () => undefined;
@@ -258,9 +264,12 @@ describe("GjcACPAgentClient", () => {
       expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(40_000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10_000);
       await expect(diagnostic).resolves.toEqual({
         diagnostic: expect.stringContaining(
-          "ACP session/new: error: ACP session/new timed out after 60000ms",
+          "ACP session/new: error: ACP session/new timed out after 70000ms",
         ),
       });
       expect(execFile).toHaveBeenCalledTimes(1);
