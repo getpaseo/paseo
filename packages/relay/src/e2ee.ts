@@ -2,6 +2,8 @@ export { createClientChannel, createDaemonChannel, EncryptedChannel } from "./en
 export type { Transport, TransportMessage, EncryptedChannelEvents } from "./encrypted-channel.js";
 
 export {
+  InvalidPeerKeyError,
+  CANONICAL_LOW_ORDER_POINTS,
   generateKeyPair,
   exportPublicKey,
   importPublicKey,

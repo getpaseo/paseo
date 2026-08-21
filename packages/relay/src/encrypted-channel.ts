@@ -10,6 +10,7 @@ import {
   generateKeyPair,
   exportPublicKey,
   importPublicKey,
+  InvalidPeerKeyError,
   deriveSharedKey,
   encrypt,
   decrypt,
@@ -503,7 +504,24 @@ export class EncryptedChannel {
   private async handleDaemonRehello(message: E2EEHelloMessage): Promise<void> {
     if (!this.options.daemonKeyPair) return;
     const clientPublicKey = importPublicKey(message.key);
-    const nextSharedKey = deriveSharedKey(this.options.daemonKeyPair.secretKey, clientPublicKey);
+
+    // A key we refuse is a key mismatch, and takes the same exit as any other
+    // unacceptable re-handshake key. Letting InvalidPeerKeyError escape puts it
+    // in the caller's "that was not plaintext handshake traffic" catch, which
+    // then decrypts the hello as ciphertext and closes 1011 for a decrypt
+    // failure -- reporting a rejected key as a corrupt frame.
+    let nextSharedKey: SharedKey;
+    try {
+      nextSharedKey = deriveSharedKey(this.options.daemonKeyPair.secretKey, clientPublicKey);
+    } catch (error) {
+      if (!(error instanceof InvalidPeerKeyError)) throw error;
+      this.state = "closed";
+      this.transport.close(
+        REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE,
+        REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON,
+      );
+      return;
+    }
 
     // If it's the same client key (handshake retry), re-send
     // "ready" but do not re-key. Re-keying here would desync
