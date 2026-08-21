@@ -246,7 +246,7 @@ describe("editor target registry", () => {
       id: "android-studio",
       label: "Android Studio",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: { kind: "image", dataUrl: "data:image/png;base64,android-studio.png" },
     });
 
     await openEditorTarget(

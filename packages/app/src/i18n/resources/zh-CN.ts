@@ -553,7 +553,6 @@ export const zhCN: TranslationResources = {
       loading: "正在加载...",
       modified: "未保存的更改",
       loadingAgentTitle: "正在加载 Agent 标题",
-      emptyPane: "此窗格中没有标签。",
       fallback: {
         newAgent: "新建 Agent",
         setup: "Setup",
@@ -595,6 +594,7 @@ export const zhCN: TranslationResources = {
         newBrowser: "新建浏览器",
         maximizePane: "最大化窗格",
         restorePane: "还原窗格",
+        closePane: "关闭窗格",
         exitFocusMode: "退出专注模式",
         splitRight: "向右拆分窗格",
         splitDown: "向下拆分窗格",
@@ -604,10 +604,10 @@ export const zhCN: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
       },
-      explorer: {
-        open: "打开 explorer",
-        close: "关闭 explorer",
-        toggle: "切换 explorer",
+      sidePanel: {
+        open: "打开侧边面板",
+        close: "关闭侧边面板",
+        toggle: "切换侧边面板",
         changes: "变更",
         files: "文件",
       },
@@ -705,6 +705,10 @@ export const zhCN: TranslationResources = {
         startFailed: "启动 {{scriptName}} 失败",
         stopFailed: "停止 {{scriptName}} 失败",
       },
+    },
+    tree: {
+      showFolderTree: "显示文件夹树",
+      hideFolderTree: "隐藏文件夹树",
     },
     git: {
       actions: {
@@ -847,8 +851,6 @@ export const zhCN: TranslationResources = {
         split: "Side-by-side diff",
         switchToUnified: "切换到统一差异视图",
         switchToSplit: "切换到并排差异视图",
-        showTreeView: "显示文件夹树",
-        hideTreeView: "隐藏文件夹树",
         options: "Diff 选项",
         hideWhitespace: "隐藏空白差异",
         showWhitespace: "显示空白差异",
@@ -975,8 +977,6 @@ export const zhCN: TranslationResources = {
     },
     filter: {
       clear: "清除筛选",
-      noMatchesTitle: "没有匹配的工作区",
-      noMatchesDescription: "更改或清除标签筛选以查看工作区。",
     },
     manage: {
       open: "管理标签…",
@@ -1032,6 +1032,15 @@ export const zhCN: TranslationResources = {
         label: "主机",
         all: "所有主机",
       },
+      projectFilter: {
+        label: "项目",
+        all: "所有项目",
+      },
+    },
+    filterEmpty: {
+      title: "没有匹配的工作区",
+      description: "更改或清除侧边栏筛选以查看工作区。",
+      clear: "清除筛选",
     },
     pinned: {
       title: "已置顶",
@@ -1894,6 +1903,10 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
+      sidePanelRouting: {
+        label: "在侧边面板中打开辅助标签页",
+        description: "文件链接、拉取请求和设置进度会在你的工作旁边打开，而不是在聚焦的窗格中",
+      },
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
@@ -2076,11 +2089,11 @@ export const zhCN: TranslationResources = {
         toggleCommandCenter: "切换命令中心",
         showKeyboardShortcuts: "显示键盘快捷键",
         toggleLeftSidebar: "切换左侧边栏",
-        toggleRightSidebar: "切换右侧边栏",
+        toggleRightSidebar: "切换侧边面板",
         toggleBothSidebars: "切换两侧边栏",
         toggleSettings: "切换设置",
         toggleFocusMode: "切换专注模式",
-        toggleExplorerPaneMaximization: "切换资源管理器窗格最大化",
+        toggleExplorerPaneMaximization: "切换侧边面板最大化",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",

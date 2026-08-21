@@ -4,21 +4,13 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import type { ProjectIcon } from "@getpaseo/protocol/messages";
 import { useHostFeatureAvailabilityMap } from "@/runtime/host-features";
 import { projectIconCache } from "@/projects/icon-cache";
+import type { ProjectIconTarget } from "@/projects/icon-target";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
 } from "@/runtime/host-runtime";
-
-interface ProjectIconTarget {
-  serverId: string;
-  projectViewKey: string;
-  projectId: string;
-  iconWorkingDir: string;
-  customIconRevision?: string | null;
-  iconRevision?: string;
-}
 
 /**
  * Daemons without custom-icon support only answer the legacy cwd lookup, which

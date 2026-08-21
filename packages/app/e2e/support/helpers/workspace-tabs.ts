@@ -17,10 +17,8 @@ function visibleTestId(page: Page, testId: string) {
   return page.getByTestId(testId).filter({ visible: true });
 }
 
-function explorerPaneTabRow(page: Page) {
-  return visibleTestId(page, "workspace-tabs-row")
-    .filter({ has: page.getByTestId("workspace-tab-working_diff") })
-    .first();
+function sidePanel(page: Page) {
+  return visibleTestId(page, "workspace-side-panel").first();
 }
 
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
@@ -32,35 +30,51 @@ async function selectWorkspaceTab(tab: Locator): Promise<void> {
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-export async function ensureExplorerPane(page: Page) {
+/** Reveal the Side panel. It opens empty; the caller decides what goes in it. */
+export async function ensureSidePanel(page: Page): Promise<Locator> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const tabRow = explorerPaneTabRow(page);
-  if ((await tabRow.count()) === 0) {
+  const panel = sidePanel(page);
+  if ((await panel.count()) === 0) {
     await toggle.click();
   }
-  await expect(tabRow).toBeVisible({ timeout: 30_000 });
-  return tabRow;
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  return panel;
+}
+
+/**
+ * Reveals the Side panel and brings one of its views up in it. Goes through the
+ * pane's own `+` menu, which is there whether the pane is empty or already loaded.
+ */
+async function openSidePanelView(
+  page: Page,
+  view: { tabTestId: string; menuTestId: string; contentTestId: string; timeout?: number },
+): Promise<void> {
+  const panel = await ensureSidePanel(page);
+  const tab = panel.getByTestId(view.tabTestId);
+  if ((await tab.count()) === 0) {
+    await panel.getByTestId("workspace-new-tab-menu-trigger").click();
+    await visibleTestId(page, view.menuTestId).first().click();
+  }
+  await selectWorkspaceTab(tab);
+  await expect(visibleTestId(page, view.contentTestId).first()).toBeVisible({
+    timeout: view.timeout ?? 30_000,
+  });
 }
 
 export async function openChangesPanel(page: Page): Promise<void> {
-  const tabRow = await ensureExplorerPane(page);
-  await selectWorkspaceTab(tabRow.getByTestId("workspace-tab-working_diff"));
-  await expect(visibleTestId(page, "working-diff-panel").first()).toBeVisible({
-    timeout: 30_000,
+  await openSidePanelView(page, {
+    tabTestId: "workspace-tab-working_diff",
+    menuTestId: "workspace-new-tab-menu-changes",
+    contentTestId: "working-diff-panel",
   });
 }
 
 export async function openFilesPanel(page: Page): Promise<void> {
-  const tabRow = await ensureExplorerPane(page);
-  const filesTab = tabRow.getByTestId("workspace-tab-files");
-  if ((await filesTab.count()) === 0) {
-    await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
-    await visibleTestId(page, "workspace-new-tab-menu-files").first().click();
-  }
-  await selectWorkspaceTab(filesTab);
-  await expect(visibleTestId(page, "file-explorer-tree-scroll").first()).toBeVisible({
-    timeout: 30_000,
+  await openSidePanelView(page, {
+    tabTestId: "workspace-tab-files",
+    menuTestId: "workspace-new-tab-menu-files",
+    contentTestId: "file-explorer-tree-scroll",
   });
 }
 
@@ -71,14 +85,12 @@ export async function openPullRequestPanel(page: Page): Promise<void> {
     await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
     return;
   }
-  const tabRow = await ensureExplorerPane(page);
-  const pullRequestTab = tabRow.getByTestId("workspace-tab-pull_request");
-  if ((await pullRequestTab.count()) === 0) {
-    await tabRow.getByTestId("workspace-new-tab-menu-trigger").click();
-    await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
-  }
-  await selectWorkspaceTab(pullRequestTab);
-  await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
+  await openSidePanelView(page, {
+    tabTestId: "workspace-tab-pull_request",
+    menuTestId: "workspace-new-tab-menu-pull-request",
+    contentTestId: "pr-pane",
+    timeout: 15_000,
+  });
 }
 
 export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {

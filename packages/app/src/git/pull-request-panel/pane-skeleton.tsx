@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { PrActivitySkeleton, SkeletonPulse, useSkeletonPulse } from "./activity-skeleton";
 
 const CHECK_ROW_KEYS = [0, 1, 2].map((i) => `pr-pane-skeleton-check-${i}`);
@@ -16,10 +17,10 @@ export function PullRequestPaneSkeleton() {
         <SkeletonPulse pulse={pulse} style={styles.subtitle} />
       </View>
 
-      <View style={styles.toolbar}>
+      <PaneContentToolbar style={styles.toolbar}>
         <SkeletonPulse pulse={pulse} style={styles.toolbarButton} />
         <SkeletonPulse pulse={pulse} style={styles.toolbarButton} />
-      </View>
+      </PaneContentToolbar>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t("workspace.git.pr.sections.checks")}</Text>
@@ -68,9 +69,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   toolbarButton: {
     width: 96,
