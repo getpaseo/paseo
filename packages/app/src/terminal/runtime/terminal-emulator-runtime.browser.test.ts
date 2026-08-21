@@ -464,6 +464,33 @@ describe("terminal emulator runtime in a real browser", () => {
     });
   });
 
+  it("does not reapply a consumed pending modifier before the parent bridge acknowledges it", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    mounted.runtime.setPendingModifiers({
+      pendingModifiers: { ctrl: true, shift: false, alt: false },
+    });
+
+    const firstKeyAllowed = dispatchTerminalKey({ host: mounted.host, key: "c" });
+    const secondKeyAllowed = dispatchTerminalKey({ host: mounted.host, key: "c" });
+    await nextFrame();
+
+    expect(firstKeyAllowed).toBe(false);
+    expect(secondKeyAllowed).toBe(true);
+    expect(mounted.terminalKeys).toEqual([
+      {
+        key: "c",
+        ctrl: true,
+        shift: false,
+        alt: false,
+        meta: false,
+      },
+    ]);
+  });
+
   it.each([
     { name: "DA1", bytes: "\x1b[c" },
     { name: "DA1-zero", bytes: "\x1b[0c" },

@@ -33,6 +33,21 @@ function dispatchToolbarKey(input: { key: string; inputMode: TerminalInputModeSt
 }
 
 describe("terminal key dispatch", () => {
+  it("encodes sticky Ctrl+C as SIGINT", () => {
+    const sent: string[] = [];
+
+    dispatchTerminalKeyInput({
+      keyInput: createTerminalKeyInput({
+        key: "c",
+        modifiers: { ctrl: true, shift: false, alt: false },
+      }),
+      inputMode: NORMAL_MODE,
+      sendData: (data) => sent.push(data),
+    });
+
+    expect(sent).toEqual(["\x03"]);
+  });
+
   it("dispatches visible toolbar arrows through mode-aware terminal key encoding", () => {
     expect({
       normalUp: dispatchToolbarKey({

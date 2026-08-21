@@ -447,6 +447,7 @@ export class TerminalEmulatorRuntime {
         return true;
       }
 
+      const pendingModifiers = this.pendingModifiers;
       if (
         !shouldInterceptDomTerminalKey({
           key: normalizedKey,
@@ -454,7 +455,7 @@ export class TerminalEmulatorRuntime {
           shiftKey: event.shiftKey,
           altKey: event.altKey,
           metaKey: event.metaKey,
-          pendingModifiers: this.pendingModifiers,
+          pendingModifiers,
           enhancedInputActive: this.inputModeTracker.supportsModifiedEnter(),
           isAppleHandheld,
         })
@@ -463,18 +464,29 @@ export class TerminalEmulatorRuntime {
       }
 
       const modifiers = mergeTerminalModifiers({
-        pendingModifiers: this.pendingModifiers,
+        pendingModifiers,
         ctrlKey: event.ctrlKey,
         shiftKey: event.shiftKey,
         altKey: event.altKey,
         metaKey: event.metaKey,
       });
+
+      const hasPendingModifiers =
+        pendingModifiers.ctrl || pendingModifiers.shift || pendingModifiers.alt;
+      if (hasPendingModifiers) {
+        this.pendingModifiers = {
+          ctrl: false,
+          shift: false,
+          alt: false,
+        };
+      }
+
       this.callbacks.onTerminalKey?.({
         key: normalizeTerminalTransportKey(normalizedKey),
         ...modifiers,
       });
 
-      if (this.pendingModifiers.ctrl || this.pendingModifiers.shift || this.pendingModifiers.alt) {
+      if (hasPendingModifiers) {
         this.callbacks.onPendingModifiersConsumed?.();
       }
 
