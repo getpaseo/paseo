@@ -250,10 +250,22 @@ export interface SetupFinishNotificationParams {
   childAgentId: string;
   callerAgentId: string;
   requireParentOwnership?: boolean;
+  /**
+   * UI/persistence adapter. It deliberately receives a notification instead of a
+   * prompt so child lifecycle observation cannot become provider dispatch authority.
+   */
+  onNotification?: (notification: FinishNotification) => Promise<void> | void;
   logger: Logger;
 }
 
 type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+
+export interface FinishNotification {
+  callerAgentId: string;
+  childAgentId: string;
+  reason: FinishNotificationReason;
+  body: string;
+}
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 
@@ -305,6 +317,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     childAgentId,
     callerAgentId,
     requireParentOwnership = false,
+    onNotification,
     logger,
   } = params;
   let hasSeenRunning = false;
@@ -342,14 +355,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       permissionRequest,
     });
 
-    await sendPromptToAgent({
-      agentManager,
-      agentStorage,
-      agentId: callerAgentId,
-      prompt: formatSystemNotificationPrompt(body),
-      unarchive: false,
-      logger,
-    });
+    await onNotification?.({ callerAgentId, childAgentId, reason, body });
+    logger.info(
+      { callerAgentId, childAgentId, reason },
+      "Recorded child lifecycle notification without provider continuation",
+    );
   }
 
   function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {

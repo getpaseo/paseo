@@ -1,5 +1,5 @@
 import { expect, it, test, vi } from "vitest";
-import pino, { type Logger } from "pino";
+import type { Logger } from "pino";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
@@ -11,30 +11,6 @@ import {
   setupFinishNotification,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
-
-interface CapturedLogger {
-  logger: Logger;
-  records: Array<Record<string, unknown>>;
-  nextRecord: Promise<void>;
-}
-
-function createCapturedLogger(): CapturedLogger {
-  const records: Array<Record<string, unknown>> = [];
-  let resolveNextRecord!: () => void;
-  const nextRecord = new Promise<void>((resolve) => {
-    resolveNextRecord = resolve;
-  });
-  const logger = pino(
-    { level: "error" },
-    {
-      write(line: string) {
-        records.push(JSON.parse(line) as Record<string, unknown>);
-        resolveNextRecord();
-      },
-    },
-  );
-  return { logger, records, nextRecord };
-}
 
 interface FinishNotificationScenarioOptions {
   childLastAssistantMessage?: string | null;
@@ -54,6 +30,7 @@ interface FinishNotificationScenario {
   finishChildAndReadParentPrompt(): Promise<string>;
   closeChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
+  notifications(): string[];
   wasParentPrompted(): boolean;
 }
 
@@ -64,6 +41,7 @@ function createFinishNotificationScenario(
   let resolveParentPrompt: ((prompt: string) => void) | null = null;
   let parentPrompted = false;
   const parentPrompts: string[] = [];
+  const notifications: string[] = [];
 
   const childAgent: ManagedAgent = Object.create(null);
   Reflect.set(childAgent, "id", "child-agent");
@@ -129,6 +107,10 @@ function createFinishNotificationScenario(
         childAgentId: "child-agent",
         callerAgentId: "caller-agent",
         requireParentOwnership: options?.requireParentOwnership,
+        onNotification: ({ body }) => {
+          notifications.push(body);
+          resolveParentPrompt?.(body);
+        },
         logger: options?.logger ?? createTestLogger(),
       });
     },
@@ -234,6 +216,9 @@ function createFinishNotificationScenario(
     parentPrompts() {
       return parentPrompts;
     },
+    notifications() {
+      return notifications;
+    },
     wasParentPrompted() {
       return parentPrompted;
     },
@@ -290,13 +275,12 @@ test("finish notifications tell the parent the child's last assistant message", 
   });
 
   scenario.startWatchingChild();
-  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+  const notification = await scenario.finishChildAndReadParentPrompt();
 
-  expect(parentPrompt).toEqual(
-    formatSystemNotificationPrompt(
-      "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
-    ),
+  expect(notification).toEqual(
+    "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
   );
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
 test("finish notifications truncate oversized child responses", async () => {
@@ -307,24 +291,24 @@ test("finish notifications truncate oversized child responses", async () => {
   });
 
   scenario.startWatchingChild();
-  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+  const notification = await scenario.finishChildAndReadParentPrompt();
 
-  expect(parentPrompt).toContain(included);
-  expect(parentPrompt).toContain(
+  expect(notification).toContain(included);
+  expect(notification).toContain(
     `[truncated ${omitted.length} chars; use get_agent_activity for the full response]`,
   );
-  expect(parentPrompt).not.toContain("TAIL-MARKER");
+  expect(notification).not.toContain("TAIL-MARKER");
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
 test("closing a watched child notifies the caller", async () => {
   const scenario = createFinishNotificationScenario();
 
   scenario.startWatchingChild();
-  const parentPrompt = await scenario.closeChildAndReadParentPrompt();
+  const notification = await scenario.closeChildAndReadParentPrompt();
 
-  expect(parentPrompt).toEqual(
-    formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
-  );
+  expect(notification).toEqual("Agent child-agent (Child Agent) was closed.");
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
 test("finish notifications survive permission responses", async () => {
@@ -334,11 +318,11 @@ test("finish notifications survive permission responses", async () => {
   scenario.requestChildPermission();
 
   await vi.waitFor(() => {
-    expect(scenario.parentPrompts()).toHaveLength(1);
+    expect(scenario.notifications()).toHaveLength(1);
   });
-  expect(scenario.parentPrompts()[0]).toContain("needs permission.");
+  expect(scenario.notifications()[0]).toContain("needs permission.");
   const permissionPayload = scenario
-    .parentPrompts()[0]
+    .notifications()[0]
     .match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
   expect(permissionPayload).toBeDefined();
   expect(JSON.parse(permissionPayload!)).toEqual({
@@ -361,9 +345,10 @@ test("finish notifications survive permission responses", async () => {
   scenario.finishChild();
 
   await vi.waitFor(() => {
-    expect(scenario.parentPrompts()).toHaveLength(2);
+    expect(scenario.notifications()).toHaveLength(2);
   });
-  expect(scenario.parentPrompts()[1]).toContain("finished.");
+  expect(scenario.notifications()[1]).toContain("finished.");
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
 test("an idle permission resolution waits for the resumed run to finish", async () => {
@@ -371,19 +356,19 @@ test("an idle permission resolution waits for the resumed run to finish", async 
 
   scenario.startWatchingChild();
   scenario.requestChildPermission();
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(1));
 
   scenario.resolveChildPermissionWhileIdle();
   scenario.requestChildPermission("permission-2");
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
-  expect(scenario.parentPrompts().every((prompt) => prompt.includes("needs permission."))).toBe(
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(2));
+  expect(scenario.notifications().every((prompt) => prompt.includes("needs permission."))).toBe(
     true,
   );
 
   scenario.resolveChildPermission("permission-2");
   scenario.finishChild();
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
-  expect(scenario.parentPrompts()[2]).toContain("finished.");
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(3));
+  expect(scenario.notifications()[2]).toContain("finished.");
 });
 
 test("finish notifications report every concurrently pending permission", async () => {
@@ -393,9 +378,9 @@ test("finish notifications report every concurrently pending permission", async 
   scenario.requestChildPermission("permission-1");
   scenario.requestChildPermission("permission-2");
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(2));
   expect(
-    scenario.parentPrompts().map((prompt) => {
+    scenario.notifications().map((prompt) => {
       const payload = prompt.match(/<permission-request>\n([\s\S]+?)\n<\/permission-request>/)?.[1];
       return JSON.parse(payload!).requestId;
     }),
@@ -405,8 +390,8 @@ test("finish notifications report every concurrently pending permission", async 
   scenario.resolveChildPermission("permission-2");
   scenario.finishChild();
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
-  expect(scenario.parentPrompts()[2]).toContain("finished.");
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(3));
+  expect(scenario.notifications()[2]).toContain("finished.");
 });
 
 test("finish notifications survive repeated permission cycles", async () => {
@@ -414,17 +399,17 @@ test("finish notifications survive repeated permission cycles", async () => {
 
   scenario.startWatchingChild();
   scenario.requestChildPermission();
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(1));
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(1));
   scenario.resolveChildPermissionFromState();
 
   scenario.requestChildPermission();
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(2));
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(2));
   scenario.resolveChildPermission();
   scenario.finishChild();
 
-  await vi.waitFor(() => expect(scenario.parentPrompts()).toHaveLength(3));
+  await vi.waitFor(() => expect(scenario.notifications()).toHaveLength(3));
   expect(
-    scenario.parentPrompts().map((prompt) => prompt.match(/(needs permission|finished)\./)?.[1]),
+    scenario.notifications().map((prompt) => prompt.match(/(needs permission|finished)\./)?.[1]),
   ).toEqual(["needs permission", "needs permission", "finished"]);
 });
 
@@ -443,31 +428,20 @@ test("follow-up finish notifications do not require a parent relationship", asyn
   const scenario = createFinishNotificationScenario({ childParentAgentId: "another-agent" });
 
   scenario.startWatchingChild();
-  const parentPrompt = await scenario.finishChildAndReadParentPrompt();
+  const notification = await scenario.finishChildAndReadParentPrompt();
 
-  expect(parentPrompt).toContain("Agent child-agent (Child Agent) finished.");
+  expect(notification).toContain("Agent child-agent (Child Agent) finished.");
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
-test("finish notifications log a rejected parent prompt without an unhandled rejection", async () => {
-  const captured = createCapturedLogger();
+test("finish notifications never attempt a parent provider prompt", async () => {
   const scenario = createFinishNotificationScenario({
     parentPromptError: new Error("parent provider rejected replacement"),
-    logger: captured.logger,
   });
 
   scenario.startWatchingChild();
   await scenario.finishChildAndReadParentPrompt();
-  await captured.nextRecord;
-
-  expect(captured.records).toEqual([
-    expect.objectContaining({
-      msg: "Failed to notify caller agent",
-      childAgentId: "child-agent",
-      callerAgentId: "caller-agent",
-      reason: "finished",
-      err: expect.objectContaining({ message: "parent provider rejected replacement" }),
-    }),
-  ]);
+  expect(scenario.parentPrompts()).toEqual([]);
 });
 
 it("does not notify archived callers", async () => {

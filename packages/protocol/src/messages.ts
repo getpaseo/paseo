@@ -6374,3 +6374,53 @@ export function parseServerInfoStatusPayload(payload: unknown): ServerInfoStatus
   }
   return parsed.data;
 }
+
+// ============================================================================
+// Harness orchestration contracts
+// ============================================================================
+
+/** Explicit groups replace completion-notification-driven parent wakes. */
+export const CreateOrchestrationGroupInputSchema = z
+  .object({
+    continuationPolicy: z.enum(["batch", "none"]),
+    timeoutMs: z.number().int().min(1_000).max(86_400_000),
+    maxSummaryCharsPerChild: z.number().int().min(256).max(4_000),
+  })
+  .strict();
+
+export const AgentGroupFieldsSchema = z
+  .object({
+    groupId: z.string().uuid(),
+    capabilityClass: z.enum(["read_only", "write_capable"]),
+    policyProfileId: z.enum(["operating", "builder", "reviewer"]),
+  })
+  .strict();
+
+export const OrchestrationGroupResultSchema = z
+  .object({
+    groupId: z.string().uuid(),
+    state: z.enum([
+      "open",
+      "sealed",
+      "terminal",
+      "continuation_claimed",
+      "continued",
+      "held",
+      "expired",
+    ]),
+    children: z.array(
+      z.object({
+        agentId: z.string().min(1),
+        terminalState: z.enum(["completed", "failed", "cancelled", "held", "timed_out"]).nullable(),
+        summary: z.string().nullable(),
+        resultPointer: z.string().nullable(),
+      }),
+    ),
+    continuationTurnId: z.string().nullable(),
+    holdReason: z.string().nullable(),
+  })
+  .strict();
+
+export type CreateOrchestrationGroupInput = z.infer<typeof CreateOrchestrationGroupInputSchema>;
+export type AgentGroupFields = z.infer<typeof AgentGroupFieldsSchema>;
+export type OrchestrationGroupResult = z.infer<typeof OrchestrationGroupResultSchema>;

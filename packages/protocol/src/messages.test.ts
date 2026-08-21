@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  AgentGroupFieldsSchema,
+  CreateOrchestrationGroupInputSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -50,6 +52,32 @@ describe("project icon message security", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("harness orchestration contracts", () => {
+  test("accepts only finite explicit group settings and identity", () => {
+    expect(
+      CreateOrchestrationGroupInputSchema.safeParse({
+        continuationPolicy: "batch",
+        timeoutMs: 10_000,
+        maxSummaryCharsPerChild: 256,
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateOrchestrationGroupInputSchema.safeParse({
+        continuationPolicy: "batch",
+        timeoutMs: Infinity,
+        maxSummaryCharsPerChild: 256,
+      }).success,
+    ).toBe(false);
+    expect(
+      AgentGroupFieldsSchema.safeParse({
+        groupId: "not-a-uuid",
+        capabilityClass: "read_only",
+        policyProfileId: "builder",
+      }).success,
+    ).toBe(false);
   });
 });
 
