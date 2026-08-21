@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getIsElectron, isWeb } from "@/constants/platform";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
+import { useHostRuntimeConnectionStatuses } from "@/runtime/host-runtime";
 
 interface BatteryManagerLike {
   level: number;
@@ -28,7 +29,19 @@ export function useKeepAwake(): void {
   const { agents } = useAggregatedAgents();
   const { settings } = useDesktopSettings();
   const keepAwakeEnabled = settings.power.keepAwakeWhileAgentsRunning;
-  const hasRunningAgent = agents.some((agent) => agent.status === "running");
+
+  // A host that has dropped its connection leaves its last-known agent status
+  // (e.g. "running") sitting unchanged in the session store — only a full host
+  // removal clears it. Require the owning host to be currently "online" so a
+  // stale "running" reading from a disconnected host can't hold the block.
+  const serverIds = useMemo(
+    () => Array.from(new Set(agents.map((agent) => agent.serverId))),
+    [agents],
+  );
+  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
+  const hasRunningAgent = agents.some(
+    (agent) => agent.status === "running" && connectionStatuses.get(agent.serverId) === "online",
+  );
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
 
   useEffect(() => {

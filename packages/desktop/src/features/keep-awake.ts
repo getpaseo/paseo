@@ -18,12 +18,16 @@ export interface KeepAwakeState {
   suppressedByLowBattery: boolean;
 }
 
+// A battery level the renderer never resolved, doesn't support, or that
+// rejected must be treated as "possibly below the cutoff", not "safe" — an
+// unknown reading is exactly the stale/buggy-signal case this safety net
+// exists for, so it must fail closed rather than fail open.
 export function computeKeepAwakeState(request: KeepAwakeRequest): KeepAwakeState {
-  const suppressedByLowBattery =
-    request.batteryLevel !== null && request.batteryLevel < LOW_BATTERY_CUTOFF;
+  const batteryKnownSafe =
+    request.batteryLevel !== null && request.batteryLevel >= LOW_BATTERY_CUTOFF;
   return {
-    active: request.enabled && !suppressedByLowBattery,
-    suppressedByLowBattery,
+    active: request.enabled && batteryKnownSafe,
+    suppressedByLowBattery: request.enabled && !batteryKnownSafe,
   };
 }
 
@@ -37,10 +41,39 @@ function parseKeepAwakeRequest(args: Record<string, unknown> | undefined): KeepA
   return { enabled, batteryLevel };
 }
 
+// Desktop supports multiple windows sharing this one command-handler instance
+// (registered once at startup), so state is tracked per sender rather than as
+// a single last-write-wins value: any window reporting a running agent holds
+// the block, and the most conservative (lowest) known battery reading wins.
+// A sender's entry is dropped as soon as its WebContents goes away — closed,
+// reloaded away, or crashed — so a window that disappears can never keep the
+// block held on its own say after nothing is left to report otherwise.
+function aggregateKeepAwakeRequests(requests: Iterable<KeepAwakeRequest>): KeepAwakeRequest {
+  let enabled = false;
+  let batteryLevel: number | null = null;
+  for (const request of requests) {
+    enabled = enabled || request.enabled;
+    if (request.batteryLevel !== null) {
+      batteryLevel =
+        batteryLevel === null ? request.batteryLevel : Math.min(batteryLevel, request.batteryLevel);
+    }
+  }
+  return { enabled, batteryLevel };
+}
+
+interface KeepAwakeSender {
+  id: number;
+  isDestroyed(): boolean;
+  once(event: "destroyed" | "render-process-gone", listener: () => void): unknown;
+}
+
 export function createKeepAwakeCommandHandlers(): Record<string, DesktopCommandHandler> {
   let blockerId: number | null = null;
+  const requestsBySenderId = new Map<number, KeepAwakeRequest>();
+  const trackedSenderIds = new Set<number>();
 
-  function sync(state: KeepAwakeState): KeepAwakeState {
+  function sync(): KeepAwakeState {
+    const state = computeKeepAwakeState(aggregateKeepAwakeRequests(requestsBySenderId.values()));
     if (state.active && blockerId === null) {
       blockerId = powerSaveBlocker.start("prevent-app-suspension");
     } else if (!state.active && blockerId !== null) {
@@ -50,7 +83,28 @@ export function createKeepAwakeCommandHandlers(): Record<string, DesktopCommandH
     return state;
   }
 
+  function trackSender(sender: KeepAwakeSender): void {
+    if (trackedSenderIds.has(sender.id) || sender.isDestroyed()) {
+      return;
+    }
+    trackedSenderIds.add(sender.id);
+    const forget = () => {
+      requestsBySenderId.delete(sender.id);
+      trackedSenderIds.delete(sender.id);
+      sync();
+    };
+    sender.once("destroyed", forget);
+    sender.once("render-process-gone", forget);
+  }
+
   return {
-    desktop_set_keep_awake: (args) => sync(computeKeepAwakeState(parseKeepAwakeRequest(args))),
+    desktop_set_keep_awake: (args, event) => {
+      const sender = event?.sender as KeepAwakeSender | undefined;
+      if (sender) {
+        requestsBySenderId.set(sender.id, parseKeepAwakeRequest(args));
+        trackSender(sender);
+      }
+      return sync();
+    },
   };
 }
