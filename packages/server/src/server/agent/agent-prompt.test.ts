@@ -742,7 +742,9 @@ test("waiting for a run start still gives up at the run start budget", async () 
   try {
     await scenario.startRun();
     const wait = waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId);
-    const rejection = expect(wait).rejects.toThrow("timeout");
+    const rejection = expect(wait).rejects.toThrow(
+      "codex run did not start within 60 seconds (phase: run start)",
+    );
     let settled = false;
     const markSettled = () => {
       settled = true;

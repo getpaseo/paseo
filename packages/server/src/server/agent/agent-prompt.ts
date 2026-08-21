@@ -230,8 +230,17 @@ export async function waitForAgentRunStartWithTimeout(
   agentManager: AgentManager,
   agentId: string,
 ): Promise<void> {
+  const provider = agentManager.getAgent(agentId)?.provider ?? "provider";
   const startAbort = new AbortController();
-  const startTimeout = setTimeout(() => startAbort.abort("timeout"), AGENT_RUN_START_TIMEOUT_MS);
+  const startTimeout = setTimeout(
+    () =>
+      startAbort.abort(
+        new Error(
+          `${provider} run did not start within ${AGENT_RUN_START_TIMEOUT_MS / 1000} seconds (phase: run start)`,
+        ),
+      ),
+    AGENT_RUN_START_TIMEOUT_MS,
+  );
 
   try {
     await agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
