@@ -83,7 +83,7 @@ interface HarnessInput {
   initialAttachments?: UserComposerAttachment[];
   initialCwd?: string;
   initialText?: string;
-onChangeRequestDetected?: () => void;
+  onChangeRequestDetected?: () => void;
   onChangeRequestAdded?: (item: ForgeSearchItem) => void;
   remote?: string | null;
 }
@@ -145,8 +145,8 @@ function useHarness(client: ForgeSearchClient, input: HarnessInput = {}) {
     serverId: "server-1",
     cwd: workingDirectory,
     setAttachments,
-onChangeRequestDetected: input.onChangeRequestDetected,
-    onChangeRequestAdded: input.onChangeRequestAdded
+    onChangeRequestDetected: input.onChangeRequestDetected,
+    onChangeRequestAdded: input.onChangeRequestAdded,
   });
 
   return {
@@ -326,8 +326,8 @@ describe("useComposerForgeAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -342,7 +342,7 @@ describe("useComposerForgeAutoAttach", () => {
       secondLookup.resolve(githubPayload([pr202], "search-202"));
       await Promise.resolve();
     });
-    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(onChangeRequestAdded).not.toHaveBeenCalled();
     expect(result.current.attachments).toEqual([]);
 
     await act(async () => {
@@ -350,7 +350,7 @@ describe("useComposerForgeAutoAttach", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => {
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
       expect(result.current.attachments).toEqual([
         { kind: "forge_change_request", item: pr101 },
         { kind: "forge_change_request", item: pr202 },
@@ -369,8 +369,8 @@ describe("useComposerForgeAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -390,7 +390,7 @@ describe("useComposerForgeAutoAttach", () => {
       secondLookup.resolve(githubPayload([pr202], "search-202"));
       await Promise.resolve();
     });
-    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(onChangeRequestAdded).not.toHaveBeenCalled();
     expect(result.current.attachments).toEqual([]);
     expect(result.current.isResolving).toBe(true);
 
@@ -399,7 +399,7 @@ describe("useComposerForgeAutoAttach", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => {
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr101], [pr202]]);
       expect(result.current.attachments).toEqual([
         { kind: "forge_change_request", item: pr101 },
         { kind: "forge_change_request", item: pr202 },
@@ -413,8 +413,8 @@ describe("useComposerForgeAutoAttach", () => {
   it("uses the latest pull request order when URLs are reordered during debounce", async () => {
     vi.useFakeTimers();
     const client = createSearchClient([pr101, pr202]);
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -430,7 +430,7 @@ describe("useComposerForgeAutoAttach", () => {
     });
     await flushDebounce();
 
-    expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+    expect(onChangeRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
     expect(client.calls).toEqual([
       { cwd, query: "202", limit: 20 },
       { cwd, query: "101", limit: 20 },
@@ -448,8 +448,8 @@ describe("useComposerForgeAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -470,7 +470,7 @@ describe("useComposerForgeAutoAttach", () => {
       firstLookup.resolve(githubPayload([pr101], "search-101"));
       await Promise.resolve();
     });
-    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(onChangeRequestAdded).not.toHaveBeenCalled();
     expect(result.current.attachments).toEqual([]);
     expect(result.current.isResolving).toBe(true);
 
@@ -479,7 +479,7 @@ describe("useComposerForgeAutoAttach", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => {
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr202], [pr101]]);
       expect(result.current.attachments).toEqual([
         { kind: "forge_change_request", item: pr202 },
         { kind: "forge_change_request", item: pr101 },
@@ -500,8 +500,8 @@ describe("useComposerForgeAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -526,7 +526,7 @@ describe("useComposerForgeAutoAttach", () => {
       await Promise.resolve();
     });
     await vi.waitFor(() => {
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr101]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr101]]);
     });
     vi.useRealTimers();
   });
@@ -537,8 +537,8 @@ describe("useComposerForgeAutoAttach", () => {
     const client: ForgeSearchClient = {
       searchForge: vi.fn().mockReturnValue(lookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -566,7 +566,7 @@ describe("useComposerForgeAutoAttach", () => {
     await vi.waitFor(() => {
       expect(result.current.attachments).toEqual([{ kind: "forge_change_request", item: pr101 }]);
       expect(result.current.isResolving).toBe(false);
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr101]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr101]]);
     });
     vi.useRealTimers();
   });
@@ -581,8 +581,8 @@ describe("useComposerForgeAutoAttach", () => {
         .mockReturnValueOnce(firstLookup.promise)
         .mockReturnValueOnce(secondLookup.promise),
     };
-    const onPullRequestAdded = vi.fn();
-    const { result } = renderHook(() => useHarness(client, { onPullRequestAdded }), {
+    const onChangeRequestAdded = vi.fn();
+    const { result } = renderHook(() => useHarness(client, { onChangeRequestAdded }), {
       wrapper: createWrapper(),
     });
 
@@ -597,7 +597,7 @@ describe("useComposerForgeAutoAttach", () => {
       secondLookup.resolve(githubPayload([pr202], "search-202"));
       await Promise.resolve();
     });
-    expect(onPullRequestAdded).not.toHaveBeenCalled();
+    expect(onChangeRequestAdded).not.toHaveBeenCalled();
     expect(result.current.isResolving).toBe(true);
 
     act(() => {
@@ -606,7 +606,7 @@ describe("useComposerForgeAutoAttach", () => {
     await flushDebounce();
 
     await vi.waitFor(() => {
-      expect(onPullRequestAdded.mock.calls).toEqual([[pr202]]);
+      expect(onChangeRequestAdded.mock.calls).toEqual([[pr202]]);
       expect(result.current.isResolving).toBe(false);
     });
 

@@ -66,6 +66,7 @@ import { ChecksSection, getCheckIdentity } from "./checks-section";
 import { getActivityVerb, getStateLabel } from "./data";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import {
   buildPrTimeline,
   type PrReviewEntry,
@@ -74,10 +75,6 @@ import {
 } from "./timeline";
 import {
   Section,
-  SUMMARY_ACTION_REQUIRED_ICON,
-  SUMMARY_DANGER_ICON,
-  SUMMARY_MANUAL_ICON,
-  SUMMARY_SUCCESS_ICON,
   SummaryPill,
   dangerColorMapping,
   foregroundMutedColorMapping,

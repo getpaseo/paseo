@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { ICON_SIZE } from "@/styles/theme";
 import { classifyCheck, type CheckPresentation } from "@/git/check-presentation";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import { ChecksRing } from "./checks-ring";
 import { summarizeChecks, type ChecksGroup } from "./checks-summary";
 import { canAddPullRequestCheckLogsToChat } from "./context-attachment";
 import type { PrPaneCheck } from "./data";
-import { CheckStatusIcon, foregroundMutedColorMapping, sectionKitStyles } from "./section-kit";
+import { foregroundMutedColorMapping, sectionKitStyles } from "./section-kit";
 import { useCheckGroupState } from "./check-group-state";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -197,7 +198,7 @@ function CheckRow({
   );
   return (
     <Pressable onPress={handlePress} style={rowPressableStyle} testID="pr-pane-check-row">
-      <CheckStatusIcon status={check.status} presentation={classifyCheck(check)} />
+      <CheckPresentationIcon presentation={classifyCheck(check)} size={14} />
       <Text style={sectionKitStyles.checkName} numberOfLines={1}>
         {check.name}
       </Text>

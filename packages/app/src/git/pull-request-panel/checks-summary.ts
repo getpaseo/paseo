@@ -117,10 +117,12 @@ function selectOutcome(checks: readonly PrPaneCheck[]): ChecksOutcome {
   if (checks.some((check) => classifyCheck(check) === "actionRequired")) {
     return "actionRequired";
   }
-  if (checks.some((check) => {
-    const presentation = classifyCheck(check);
-    return presentation === "failure" || presentation === "warning";
-  })) {
+  if (
+    checks.some((check) => {
+      const presentation = classifyCheck(check);
+      return presentation === "failure" || presentation === "warning";
+    })
+  ) {
     return "failure";
   }
   if (checks.some((check) => check.status === "pending")) {

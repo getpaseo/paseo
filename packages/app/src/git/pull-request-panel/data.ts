@@ -33,7 +33,6 @@ export interface PrPaneCheck extends PresentableCheck {
    * running one has been going ("running 2m"). Absent when the forge reports neither.
    */
   timing?: string;
-  rawStatus?: string;
   isManual?: boolean;
   requiresAction?: boolean;
   url: string;
@@ -223,9 +222,6 @@ function mapCheck(
     provider: forge,
     name: check.name,
     status,
-    ...(check.rawStatus || check.status === "cancelled"
-      ? { rawStatus: check.rawStatus ?? check.status }
-      : {}),
     ...(check.traits ? { traits: check.traits } : {}),
     url: check.url ?? fallbackUrl,
     ...(check.workflow ? { workflow: check.workflow } : {}),

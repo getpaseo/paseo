@@ -12,7 +12,15 @@ import { Dimensions, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Check, Copy, ExternalLink, Folder, GitBranch, Server } from "lucide-react-native";
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  FileDiff,
+  Folder,
+  GitBranch,
+  Server,
+} from "lucide-react-native";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
@@ -657,7 +665,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.statusSuccess,
   },
   checksStatusTextMuted: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
