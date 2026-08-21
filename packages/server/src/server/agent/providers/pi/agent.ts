@@ -94,6 +94,7 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
+const PASEO_PI_TINTINWEB_SUBAGENT_MARKER = "PASEO_PI_TINTINWEB_SUBAGENT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -650,8 +651,76 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  );
 	}
 
+	function tintinwebSubagentId(payload) {
+	  const value = payload?.id;
+	  if (typeof value !== "string") return undefined;
+	  return value.trim() || undefined;
+	}
+
+	function reportTintinwebSubagent(ctx, event) {
+	  if (!ctx) return;
+	  ctx.ui.notify(
+	    "${PASEO_PI_TINTINWEB_SUBAGENT_MARKER} " + JSON.stringify(event),
+	    "info",
+	  );
+	}
+
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  const activeTintinwebSubagentIds = new Set();
+	  let tintinwebContext;
+	  let unsubscribeTintinwebEvents = [];
+
+	  function stopTintinwebEvents() {
+	    for (const id of activeTintinwebSubagentIds) {
+	      reportTintinwebSubagent(tintinwebContext, { id, status: "canceled" });
+	    }
+	    activeTintinwebSubagentIds.clear();
+	    for (const unsubscribe of unsubscribeTintinwebEvents) unsubscribe();
+	    unsubscribeTintinwebEvents = [];
+	    tintinwebContext = undefined;
+	  }
+
+	  function startTintinwebEvents(ctx) {
+	    stopTintinwebEvents();
+	    tintinwebContext = ctx;
+	    unsubscribeTintinwebEvents = [
+	      pi.events.on("subagents:created", (payload) => {
+	        const id = tintinwebSubagentId(payload);
+	        if (!id || payload?.isBackground !== true || activeTintinwebSubagentIds.has(id)) return;
+	        // Tintinweb uses this event for queued and running work; Paseo has no queued child status.
+	        activeTintinwebSubagentIds.add(id);
+	        const type = typeof payload.type === "string" ? payload.type.trim() : "";
+	        const description =
+	          typeof payload.description === "string" ? payload.description.trim() : "";
+	        reportTintinwebSubagent(tintinwebContext, {
+	          id,
+	          title: type || "Pi subagent",
+	          description: description || undefined,
+	          status: "running",
+	        });
+	      }),
+	      pi.events.on("subagents:completed", (payload) => {
+	        if (payload?.status !== "completed" && payload?.status !== "steered") return;
+	        const id = tintinwebSubagentId(payload);
+	        if (!id || !activeTintinwebSubagentIds.delete(id)) return;
+	        reportTintinwebSubagent(tintinwebContext, { id, status: "completed" });
+	      }),
+	      pi.events.on("subagents:failed", (payload) => {
+	        let status;
+	        if (payload?.status === "stopped") {
+	          status = "canceled";
+	        } else if (payload?.status === "aborted" || payload?.status === "error") {
+	          status = "failed";
+	        } else {
+	          return;
+	        }
+	        const id = tintinwebSubagentId(payload);
+	        if (!id || !activeTintinwebSubagentIds.delete(id)) return;
+	        reportTintinwebSubagent(tintinwebContext, { id, status });
+	      }),
+	    ];
+	  }
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -684,7 +753,12 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
     }
 
 	  pi.on("session_start", async (_event, ctx) => {
+	    startTintinwebEvents(ctx);
 	    emitEntryCapture(ctx, "session_start");
+	  });
+
+	  pi.on("session_shutdown", async () => {
+	    stopTintinwebEvents();
 	  });
 
 	  pi.on("message_end", async (event) => {
@@ -1206,6 +1280,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
+  private readonly activeTintinwebSubagentIds = new Set<string>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
@@ -1541,6 +1616,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.settleActiveTintinwebSubagents("canceled");
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();
@@ -1929,6 +2005,46 @@ export class PiRpcAgentSession implements AgentSession {
     return true;
   }
 
+  private handleTintinwebSubagentMarker(message: string): boolean {
+    const payload = parseExtensionMarkerPayload(message, PASEO_PI_TINTINWEB_SUBAGENT_MARKER);
+    if (!payload) {
+      return false;
+    }
+    if (this.closed) {
+      return true;
+    }
+    const id = optionalString(payload.id)?.trim();
+    const status = optionalString(payload.status);
+    if (
+      !id ||
+      (status !== "running" &&
+        status !== "completed" &&
+        status !== "failed" &&
+        status !== "canceled")
+    ) {
+      return true;
+    }
+    if (status === "running") {
+      this.activeTintinwebSubagentIds.add(id);
+    } else {
+      this.activeTintinwebSubagentIds.delete(id);
+    }
+    const title = optionalString(payload.title)?.trim();
+    const description = optionalString(payload.description)?.trim();
+    this.emit({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id,
+        status,
+        ...(title ? { title } : {}),
+        ...(description ? { description } : {}),
+      },
+    });
+    return true;
+  }
+
   private handleExtensionUiRequest(
     event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
@@ -1937,7 +2053,8 @@ export class PiRpcAgentSession implements AgentSession {
       if (
         this.handleSubmittedUserEntryMarker(message) ||
         this.handleEntryCaptureMarker(message) ||
-        this.handleCommandResultMarker(message)
+        this.handleCommandResultMarker(message) ||
+        this.handleTintinwebSubagentMarker(message)
       ) {
         return;
       }
@@ -2056,8 +2173,20 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
+  private settleActiveTintinwebSubagents(status: "failed" | "canceled"): void {
+    for (const id of this.activeTintinwebSubagentIds) {
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: { type: "upsert", id, status },
+      });
+    }
+    this.activeTintinwebSubagentIds.clear();
+  }
+
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
+    this.settleActiveTintinwebSubagents("failed");
     if (!this.activeTurnId) {
       return;
     }

@@ -95,20 +95,33 @@ function readUtf8File(pathname: string): string {
 }
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
+type PaseoExtensionEventListener = (data: unknown) => void;
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
+  extensionEventListeners = new Map<string, Set<PaseoExtensionEventListener>>(),
 ): Promise<Map<string, PaseoExtensionListener>> {
   const listeners = new Map<string, PaseoExtensionListener>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
       registerCommand: () => void;
+      events: {
+        on: (event: string, listener: PaseoExtensionEventListener) => () => void;
+      };
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
     registerCommand: () => undefined,
+    events: {
+      on: (event, listener) => {
+        const eventListeners = extensionEventListeners.get(event) ?? new Set();
+        eventListeners.add(listener);
+        extensionEventListeners.set(event, eventListeners);
+        return () => eventListeners.delete(listener);
+      },
+    },
   });
   return listeners;
 }
@@ -253,6 +266,13 @@ class SessionEvents {
     );
   }
 
+  providerSubagentEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+        event.type === "provider_subagent",
+    );
+  }
+
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -312,6 +332,115 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("maps Tintinweb lifecycle markers to provider subagents", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-started",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","description":"Trace the change","status":"running"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-completed",
+      method: "notify",
+      message: 'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","status":"completed"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-invalid",
+      method: "notify",
+      message: 'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","status":"queued"}',
+    });
+
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "run-1",
+          title: "Explore",
+          description: "Trace the change",
+          status: "running",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "run-1", status: "completed" },
+      },
+    ]);
+
+    await session.close();
+  });
+
+  test("fails active Tintinweb children when the Pi process exits", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-started",
+      method: "notify",
+      message: 'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","status":"running"}',
+    });
+    fakeSession.emit({ type: "process_exit", error: "Pi exited" });
+
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "run-1",
+          title: "Explore",
+          status: "running",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "run-1", status: "failed" },
+      },
+    ]);
+
+    await session.close();
+  });
+
+  test("cancels active Tintinweb children when the Pi session closes", async () => {
+    const { pi, session, events } = await createSession();
+
+    pi.latestSession().emit({
+      type: "extension_ui_request",
+      id: "subagent-started",
+      method: "notify",
+      message: 'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","status":"running"}',
+    });
+    await session.close();
+
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "run-1",
+          title: "Explore",
+          status: "running",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "run-1", status: "canceled" },
+      },
+    ]);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1178,6 +1307,95 @@ describe("PiRpcAgentSession", () => {
     expect(notifications).toEqual([
       'PASEO_SUBMITTED_USER_ENTRY {"entry":{"id":"entry-new","parentId":"entry-old-assistant","text":"new prompt"}}',
     ]);
+
+    await session.close();
+  });
+
+  test("reports Tintinweb background Agent lifecycle through the Paseo extension", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = await client.createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const extensionEvents = new Map<string, Set<PaseoExtensionEventListener>>();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!, extensionEvents);
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: { getEntries: () => [] },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const emitExtensionEvent = (name: string, payload: unknown) => {
+      extensionEvents.get(name)?.forEach((listener) => listener(payload));
+    };
+
+    await listeners.get("session_start")?.({}, context);
+    notifications.length = 0;
+    emitExtensionEvent("subagents:created", {
+      id: "foreground-1",
+      type: "Explore",
+      description: "Do not add a provider child",
+      isBackground: false,
+    });
+    emitExtensionEvent("subagents:completed", { id: "missing-1", status: "completed" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-1",
+      type: "Explore",
+      description: "Trace the Pi mapper",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:created", {
+      id: "run-1",
+      type: "Explore",
+      description: "Trace the Pi mapper",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:completed", { id: "run-1", status: "steered" });
+    emitExtensionEvent("subagents:completed", { id: "run-1", status: "completed" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-2",
+      type: "Plan",
+      description: "Plan a focused change",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-2", status: "stopped" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-3",
+      type: "general-purpose",
+      description: "Implement the change",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-3", status: "aborted" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-4",
+      type: "general-purpose",
+      description: "Check the change",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-4", status: "error" });
+    emitExtensionEvent("subagents:created", {
+      id: "run-5",
+      type: "Explore",
+      description: "Cancel on shutdown",
+      isBackground: true,
+    });
+    emitExtensionEvent("subagents:failed", { id: "run-5", status: "unknown" });
+    await listeners.get("session_shutdown")?.({}, context);
+
+    expect(notifications).toEqual([
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","description":"Trace the Pi mapper","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","status":"completed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","title":"Plan","description":"Plan a focused change","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","status":"canceled"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-3","title":"general-purpose","description":"Implement the change","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-3","status":"failed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-4","title":"general-purpose","description":"Check the change","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-4","status":"failed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-5","title":"Explore","description":"Cancel on shutdown","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-5","status":"canceled"}',
+    ]);
+    expect([...extensionEvents.values()].every((eventListeners) => eventListeners.size === 0)).toBe(
+      true,
+    );
 
     await session.close();
   });
