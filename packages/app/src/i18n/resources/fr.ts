@@ -1910,6 +1910,12 @@ export const fr: TranslationResources = {
       sentDescription: "Paseo a transmis la notification au système d’exploitation.",
       sendFailedTitle: "Impossible d’envoyer la notification de test",
     },
+    power: {
+      title: "Alimentation",
+      keepAwake: "Empêcher la mise en veille de l’ordinateur pendant que les agents s’exécutent",
+      keepAwakeHint:
+        "Empêche la mise en veille tant qu’un agent est actif. Se désactive automatiquement lorsque la batterie descend sous 10 %.",
+    },
     hostSections: {
       projects: "Projets",
       connections: "Relations",

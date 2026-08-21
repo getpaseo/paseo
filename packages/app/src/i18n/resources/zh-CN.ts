@@ -1839,6 +1839,11 @@ export const zhCN: TranslationResources = {
       sentDescription: "Paseo 已将通知交给操作系统。",
       sendFailedTitle: "无法发送测试通知",
     },
+    power: {
+      title: "电源",
+      keepAwake: "在代理运行时保持计算机唤醒",
+      keepAwakeHint: "在代理正在工作时防止系统休眠。电池电量低于 10% 时会自动关闭。",
+    },
     hostSections: {
       projects: "项目",
       connections: "连接",

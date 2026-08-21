@@ -86,6 +86,9 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
+      power: {
+        keepAwakeWhileAgentsRunning: false,
+      },
     });
   });
 
@@ -107,6 +110,9 @@ describe("desktop-settings", () => {
       daemon: {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
+      },
+      power: {
+        keepAwakeWhileAgentsRunning: false,
       },
     });
     expect(files).toEqual(["desktop-settings.json"]);
@@ -274,6 +280,9 @@ describe("desktop-settings", () => {
       daemon: {
         manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,
+      },
+      power: {
+        keepAwakeWhileAgentsRunning: false,
       },
     });
     expect(ignoredSecondMigration).toEqual(migrated);

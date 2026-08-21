@@ -1869,6 +1869,12 @@ export const ko: TranslationResources = {
       sentDescription: "Paseo가 알림을 운영 체제에 전달했습니다.",
       sendFailedTitle: "테스트 알림을 보낼 수 없음",
     },
+    power: {
+      title: "전원",
+      keepAwake: "에이전트가 실행 중일 때 컴퓨터가 절전 모드로 전환되지 않도록 유지",
+      keepAwakeHint:
+        "에이전트가 작업 중일 때 절전 모드를 방지합니다. 배터리가 10% 미만으로 떨어지면 자동으로 꺼집니다.",
+    },
     hostSections: {
       projects: "프로젝트",
       connections: "연결",

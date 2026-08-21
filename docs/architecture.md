@@ -208,6 +208,8 @@ Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
   `-- guest does not handle ----> stop; never redispatch to the host window
 ```
 
+> **Keep-awake power management.** Electron's main process has no battery-level API and no visibility into agent state — only the renderer knows both (`navigator.getBattery()` and the aggregated agent directory across hosts). The renderer reports enabled state and battery level together on every change via the `desktop_set_keep_awake` command; main re-derives the 10%-battery cutoff from the reported level rather than trusting a boolean, so a stale or buggy renderer signal can never hold the `powerSaveBlocker` below that threshold. See `packages/desktop/src/features/keep-awake.ts` and `packages/app/src/desktop/hooks/use-keep-awake.ts`.
+
 ### `packages/website` — Marketing site
 
 TanStack Router + Cloudflare Workers. Serves paseo.sh.

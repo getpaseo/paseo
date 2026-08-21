@@ -1905,6 +1905,12 @@ export const es: TranslationResources = {
       sentDescription: "Paseo entregó la notificación al sistema operativo.",
       sendFailedTitle: "No se pudo enviar la notificación de prueba",
     },
+    power: {
+      title: "Energía",
+      keepAwake: "Mantener el equipo activo mientras los agentes se ejecutan",
+      keepAwakeHint:
+        "Evita que el equipo entre en reposo mientras un agente esté trabajando. Se desactiva automáticamente cuando la batería cae por debajo del 10%.",
+    },
     hostSections: {
       projects: "Proyectos",
       connections: "Conexiones",

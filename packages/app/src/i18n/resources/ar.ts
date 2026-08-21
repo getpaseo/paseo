@@ -1859,6 +1859,12 @@ export const ar: TranslationResources = {
       sentDescription: "سلّم Paseo الإشعار إلى نظام التشغيل.",
       sendFailedTitle: "تعذر إرسال إشعار الاختبار",
     },
+    power: {
+      title: "الطاقة",
+      keepAwake: "إبقاء الكمبيوتر مستيقظًا أثناء تشغيل الوكلاء",
+      keepAwakeHint:
+        "يمنع النظام من السكون أثناء عمل أي وكيل. يتم تعطيله تلقائيًا عند انخفاض البطارية عن 10%.",
+    },
     hostSections: {
       projects: "المشاريع",
       connections: "اتصالات",

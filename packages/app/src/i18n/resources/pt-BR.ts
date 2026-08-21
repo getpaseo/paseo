@@ -1891,6 +1891,12 @@ export const ptBR: TranslationResources = {
       sentDescription: "O Paseo entregou a notificação ao sistema operacional.",
       sendFailedTitle: "Não foi possível enviar a notificação de teste",
     },
+    power: {
+      title: "Energia",
+      keepAwake: "Manter o computador ativo enquanto os agentes estão em execução",
+      keepAwakeHint:
+        "Evita que o computador entre em suspensão enquanto um agente estiver trabalhando. Desativa automaticamente quando a bateria cai abaixo de 10%.",
+    },
     hostSections: {
       projects: "Projetos",
       connections: "Conexões",

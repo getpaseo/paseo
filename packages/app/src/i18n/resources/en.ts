@@ -1869,6 +1869,12 @@ export const en = {
       sentDescription: "Paseo handed the notification to the operating system.",
       sendFailedTitle: "Unable to send test notification",
     },
+    power: {
+      title: "Power",
+      keepAwake: "Keep computer awake while agents are running",
+      keepAwakeHint:
+        "Prevents sleep while any agent is actively working. Turns off automatically when the battery drops below 10%.",
+    },
     hostSections: {
       projects: "Projects",
       connections: "Connections",

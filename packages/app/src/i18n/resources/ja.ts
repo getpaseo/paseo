@@ -1877,6 +1877,12 @@ export const ja: TranslationResources = {
       sentDescription: "Paseo が通知をオペレーティングシステムに渡しました。",
       sendFailedTitle: "テスト通知を送信できません",
     },
+    power: {
+      title: "電源",
+      keepAwake: "エージェントの実行中はコンピューターのスリープを防止する",
+      keepAwakeHint:
+        "エージェントが作業している間、スリープを防止します。バッテリーが10%を下回ると自動的に無効になります。",
+    },
     hostSections: {
       projects: "プロジェクト",
       connections: "接続",
