@@ -943,6 +943,46 @@ describe("workspace-layout-store actions", () => {
     expect(layout.focusedPaneId).toBe("explorer");
   });
 
+  it("keeps a failed setup tab out of the focused side panel when main was removed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutStore.setState((state) => ({
+      layoutByWorkspace: {
+        ...state.layoutByWorkspace,
+        [workspaceKey]: normalizeLayout({
+          root: {
+            kind: "group",
+            group: {
+              id: "root",
+              direction: "horizontal",
+              sizes: [0.5, 0.5],
+              children: [
+                createPane({ id: "secondary", tabIds: [] }),
+                createPane({ id: "explorer", tabIds: [] }),
+              ],
+            },
+          },
+          focusedPaneId: "explorer",
+        }),
+      },
+      sidePanelPaneIdByWorkspace: {
+        ...state.sidePanelPaneIdByWorkspace,
+        [workspaceKey]: "explorer",
+      },
+    }));
+
+    const setupTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "setup", workspaceId: WORKSPACE_ID },
+      intent: "background",
+      placement: { mode: "prefer", paneId: "main" },
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, setupTabId as string)?.id).toBe("secondary");
+    expect(layout.focusedPaneId).toBe("explorer");
+  });
+
   it("keeps ambient browser opens out of the focused explorer pane", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
