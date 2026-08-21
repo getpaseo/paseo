@@ -70,9 +70,28 @@ test.describe("Settings toggle tab regression", () => {
       await pressSettingsToggleShortcut(page);
       await expect(page).toHaveURL(/\/settings\/general$/);
 
-      await page.getByRole("button", { name: "Queue", exact: true }).click();
+      const defaultSendTrigger = page.getByRole("button", {
+        name: "Default send: Steer",
+        exact: true,
+      });
+      await expect(defaultSendTrigger).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Queue", exact: true })).toHaveCount(0);
+
+      await defaultSendTrigger.click();
+      await expect(page.getByRole("menuitem", { name: "Steer", exact: true })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await page.getByRole("menuitem", { name: "Queue", exact: true }).click();
       await expectSendBehavior(page, "queue");
-      await page.getByRole("button", { name: "Interrupt", exact: true }).click();
+      const queuedDefaultSendTrigger = page.getByRole("button", {
+        name: "Default send: Queue",
+        exact: true,
+      });
+      await expect(queuedDefaultSendTrigger).toBeVisible();
+
+      await queuedDefaultSendTrigger.click();
+      await page.getByRole("menuitem", { name: "Interrupt", exact: true }).click();
       await expectSendBehavior(page, "interrupt");
 
       await pressSettingsToggleShortcut(page);
