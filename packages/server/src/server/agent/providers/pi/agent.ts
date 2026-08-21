@@ -1004,6 +1004,7 @@ function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEv
     case "compaction_end":
     case "agent_end":
     case "agent_settled":
+    case "auto_retry_start":
       return true;
     default:
       return false;
@@ -2146,6 +2147,17 @@ export class PiRpcAgentSession implements AgentSession {
             type: "compaction",
             status: "completed",
             trigger: event.reason === "manual" ? "manual" : "auto",
+          },
+        });
+        return;
+      case "auto_retry_start":
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "error",
+            message: `Provider retry (attempt ${event.attempt}): ${event.errorMessage}`,
           },
         });
         return;

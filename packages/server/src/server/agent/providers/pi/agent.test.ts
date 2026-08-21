@@ -958,7 +958,7 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
-  test("keeps a retryable Pi provider error inside the original foreground turn", async () => {
+  test("shows retry activity while keeping the original Pi turn active through recovery", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     const { turnId } = await session.startTurn("hello");
@@ -982,6 +982,13 @@ describe("PiRpcAgentSession", () => {
       delayMs: 2000,
       errorMessage: "Request timed out.",
     });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message: "Provider retry (attempt 1): Request timed out.",
+    });
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
+
     fakeSession.emit({ type: "turn_start" });
     fakeSession.finishAgentRun(
       {
@@ -1002,11 +1009,30 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
-  test("waits for Pi to settle before failing a terminal provider error", async () => {
+  test("fails an exhausted Pi recovery only after settlement", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     const { turnId } = await session.startTurn("hello");
 
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun(
+      {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "error",
+        errorMessage: "Request timed out.",
+        content: [],
+      },
+      { willRetry: true },
+    );
+    fakeSession.emit({
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 1,
+      delayMs: 2000,
+      errorMessage: "Request timed out.",
+    });
     fakeSession.emit({ type: "turn_start" });
     fakeSession.finishAgentRun(
       {
@@ -1019,8 +1045,18 @@ describe("PiRpcAgentSession", () => {
       },
       { willRetry: false },
     );
+    fakeSession.emit({
+      type: "auto_retry_end",
+      success: false,
+      attempt: 1,
+      finalError: "Insufficient quota.",
+    });
 
     expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message: "Provider retry (attempt 1): Request timed out.",
+    });
 
     fakeSession.settleTurn();
 
