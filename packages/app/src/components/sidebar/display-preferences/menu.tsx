@@ -21,6 +21,8 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Plus,
+  Rows3,
   Server,
   Settings2,
   Tag,
@@ -127,6 +129,8 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
 const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
+const LAYOUT_TOGGLES = ["compactRows", "newWorkspaceRow"] as const;
+type LayoutToggle = (typeof LAYOUT_TOGGLES)[number];
 
 const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
   project: "sidebar.display.grouping.project",
@@ -156,6 +160,16 @@ const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
 const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
   diff: "sidebar.display.show.diff",
   timestamp: "sidebar.display.show.timestamp",
+};
+
+const LAYOUT_TOGGLE_ICONS: Record<LayoutToggle, OptionIcon> = {
+  compactRows: withUnistyles(Rows3),
+  newWorkspaceRow: withUnistyles(Plus),
+};
+
+const LAYOUT_TOGGLE_LABEL_KEYS: Record<LayoutToggle, string> = {
+  compactRows: "sidebar.display.show.compactRows",
+  newWorkspaceRow: "sidebar.display.show.newWorkspaceRow",
 };
 
 /**
@@ -566,6 +580,16 @@ function OptionList<Value extends string>({
  */
 function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
   const { t } = useTranslation();
+  const toggleLayout = useCallback(
+    (item: LayoutToggle) => {
+      if (item === "compactRows") {
+        preferences.toggleCompactRows();
+      } else {
+        preferences.toggleNewWorkspaceRow();
+      }
+    },
+    [preferences],
+  );
   return (
     <>
       {SIDEBAR_ROW_ITEMS.map((item) => (
@@ -592,6 +616,21 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           closeOnSelect={false}
           onSelect={preferences.toggleTrailing}
           testID={`sidebar-workspace-trailing-${choice}`}
+        />
+      ))}
+      <MenuSeparator />
+      {LAYOUT_TOGGLES.map((item) => (
+        <OptionItem
+          key={item}
+          value={item}
+          icon={LAYOUT_TOGGLE_ICONS[item]}
+          label={t(LAYOUT_TOGGLE_LABEL_KEYS[item])}
+          selected={
+            item === "compactRows" ? preferences.compactRows : preferences.showNewWorkspaceRow
+          }
+          closeOnSelect={false}
+          onSelect={toggleLayout}
+          testID={`sidebar-layout-${item}`}
         />
       ))}
     </>
