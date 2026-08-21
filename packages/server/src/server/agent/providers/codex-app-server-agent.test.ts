@@ -660,16 +660,55 @@ describe("Codex app-server provider", () => {
           id: "auto-review",
           label: "Auto-review",
         }),
+        expect.objectContaining({
+          id: "auto-review-full-access",
+          label: "Auto-review + Full Access",
+        }),
       ]),
     );
   });
 
-  test("getAvailableModes excludes auto-review when the Codex version is too old", async () => {
+  test("getAvailableModes excludes auto-review modes when the Codex version is too old", async () => {
     const session = createSession({}, { autoReviewEnabled: false });
 
     await expect(session.getAvailableModes()).resolves.not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "auto-review" })]),
+      expect.arrayContaining([
+        expect.objectContaining({ id: "auto-review" }),
+        expect.objectContaining({ id: "auto-review-full-access" }),
+      ]),
     );
+  });
+
+  test("setMode auto-review-full-access sends unsandboxed auto-review policy", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession(
+      { modeId: "auto", thinkingOptionId: "medium" },
+      { autoReviewEnabled: true },
+    );
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "auto-review-full-access-thread" } };
+        }
+        if (method === "turn/start") {
+          return {};
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.setMode("auto-review-full-access");
+    await session.startTurn("trigger thread creation");
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      approvalPolicy: "on-request",
+      sandbox: "danger-full-access",
+      approvalsReviewer: "auto_review",
+    });
   });
 
   test("setMode auto-review sends approvalsReviewer to thread/start", async () => {
@@ -775,6 +814,31 @@ describe("Codex app-server provider", () => {
       expect.objectContaining({
         approvalPolicy: "on-request",
         approvalsReviewer: "auto_review",
+      }),
+    );
+  });
+
+  test("turn/start forwards the unsandboxed auto-review policy", async () => {
+    const session = createSession(
+      { modeId: "auto-review-full-access" },
+      { autoReviewEnabled: true },
+    );
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("needs approval");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        sandboxPolicy: { type: "dangerFullAccess" },
       }),
     );
   });

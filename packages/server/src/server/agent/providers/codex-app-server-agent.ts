@@ -235,6 +235,12 @@ const CODEX_MODES: AgentMode[] = [
       "Same workspace-write permissions as Default, but eligible `on-request` approvals are routed through the auto-reviewer subagent.",
   },
   {
+    id: "auto-review-full-access",
+    label: "Auto-review + Full Access",
+    description:
+      "Run without a sandbox while routing eligible `on-request` approvals through the auto-reviewer subagent.",
+  },
+  {
     id: "full-access",
     label: "Full Access",
     description: "Edit files, run commands, and access the network without additional prompts.",
@@ -289,11 +295,20 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
     sandbox: "workspace-write",
     approvalsReviewer: "auto_review",
   },
+  "auto-review-full-access": {
+    approvalPolicy: "on-request",
+    sandbox: "danger-full-access",
+    approvalsReviewer: "auto_review",
+  },
   "full-access": {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
   },
 };
+
+function isAutoReviewMode(mode: AgentMode): boolean {
+  return mode.id === "auto-review" || mode.id === "auto-review-full-access";
+}
 
 function isAutoReviewReviewer(value: string | undefined): boolean {
   return value === "auto_review" || value === "guardian_subagent";
@@ -4293,7 +4308,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.autoReviewEnabled) {
       return CODEX_MODES;
     }
-    return CODEX_MODES.filter((mode) => mode.id !== "auto-review");
+    return CODEX_MODES.filter((mode) => !isAutoReviewMode(mode));
   }
 
   async getCurrentMode(): Promise<string | null> {
@@ -6944,7 +6959,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
       modes: autoReviewEnabled
         ? CODEX_MODES
-        : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
+        : CODEX_MODES.filter((mode) => !isAutoReviewMode(mode)),
     };
   }
 
