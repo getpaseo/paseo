@@ -1,188 +1,270 @@
 {
-  "$ref": "#/definitions/PaseoConfigV1",
-  "definitions": {
-    "PaseoConfigV1": {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "daemon": {
       "type": "object",
       "properties": {
-        "$schema": {
+        "listen": {
           "type": "string"
         },
-        "version": {
-          "type": "number",
-          "const": 1
+        "hostnames": {
+          "anyOf": [
+            {
+              "type": "boolean",
+              "const": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
-        "daemon": {
+        "allowedHosts": {
+          "anyOf": [
+            {
+              "type": "boolean",
+              "const": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "trustedProxies": {
+          "description": "Express trusted proxy setting for X-Forwarded-* headers. Defaults to [\"loopback\"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "const": true
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "mcp": {
           "type": "object",
           "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "injectIntoAgents": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "browserTools": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "git": {
+          "type": "object",
+          "properties": {
+            "maxProcessesPerSecond": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maxProcessConcurrency": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "autoArchiveAfterMerge": {
+          "type": "boolean"
+        },
+        "enableTerminalAgentHooks": {
+          "type": "boolean"
+        },
+        "appendSystemPrompt": {
+          "type": "string"
+        },
+        "terminalProfiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "icon": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "name", "command"],
+            "additionalProperties": {}
+          }
+        },
+        "agentProfiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "modeId": {
+                "type": "string"
+              },
+              "thinkingOptionId": {
+                "type": "string"
+              },
+              "featureValues": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "notes": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "name", "provider"],
+            "additionalProperties": {}
+          }
+        },
+        "cors": {
+          "type": "object",
+          "properties": {
+            "allowedOrigins": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "relay": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "publicEndpoint": {
+              "type": "string"
+            },
+            "useTls": {
+              "type": "boolean"
+            },
+            "publicUseTls": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "serviceProxy": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Compatibility shim. false suppresses optional service proxy listen/public layers only; localhost proxying remains enabled.",
+              "type": "boolean"
+            },
             "listen": {
+              "description": "Optional service-only listener address. Presence enables the standalone service proxy listener.",
               "type": "string"
             },
-            "hostnames": {
-              "anyOf": [
-                {
-                  "type": "boolean",
-                  "const": true
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
-            },
-            "allowedHosts": {
-              "anyOf": [
-                {
-                  "type": "boolean",
-                  "const": true
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
-            },
-            "trustedProxies": {
-              "description": "Express trusted proxy setting for X-Forwarded-* headers. Defaults to [\"loopback\"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.",
-              "anyOf": [
-                {
-                  "type": "boolean",
-                  "const": true
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
-            },
-            "mcp": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "injectIntoAgents": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": true
-            },
-            "git": {
-              "type": "object",
-              "properties": {
-                "maxProcessesPerSecond": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "maxProcessConcurrency": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                }
-              },
-              "additionalProperties": false
-            },
-            "autoArchiveAfterMerge": {
-              "type": "boolean"
-            },
-            "enableTerminalAgentHooks": {
-              "type": "boolean"
-            },
-            "appendSystemPrompt": {
-              "type": "string"
-            },
-            "cors": {
-              "type": "object",
-              "properties": {
-                "allowedOrigins": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "additionalProperties": false
-            },
-            "relay": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "endpoint": {
-                  "type": "string"
-                },
-                "publicEndpoint": {
-                  "type": "string"
-                },
-                "useTls": {
-                  "type": "boolean"
-                },
-                "publicUseTls": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": false
-            },
-            "serviceProxy": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "description": "Compatibility shim. false suppresses optional service proxy listen/public layers only; localhost proxying remains enabled.",
-                  "type": "boolean"
-                },
-                "listen": {
-                  "description": "Optional service-only listener address. Presence enables the standalone service proxy listener.",
-                  "type": "string"
-                },
-                "publicBaseUrl": {
-                  "description": "Optional public base URL for service host aliases.",
-                  "type": "string",
-                  "format": "uri"
-                }
-              },
-              "additionalProperties": false
-            },
-            "auth": {
-              "type": "object",
-              "properties": {
-                "password": {
-                  "type": "string",
-                  "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
-                }
-              },
-              "additionalProperties": false
+            "publicBaseUrl": {
+              "description": "Optional public base URL for service host aliases.",
+              "type": "string",
+              "format": "uri"
             }
           },
           "additionalProperties": false
         },
-        "app": {
+        "auth": {
           "type": "object",
           "properties": {
-            "baseUrl": {
-              "type": "string"
+            "password": {
+              "type": "string",
+              "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
             }
           },
           "additionalProperties": false
-        },
-        "worktrees": {
+        }
+      },
+      "additionalProperties": false
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "providers": {
+      "type": "object",
+      "properties": {
+        "openai": {
           "type": "object",
           "properties": {
-            "root": {
+            "apiKey": {
               "type": "string",
               "minLength": 1
-            }
-          },
-          "additionalProperties": false
-        },
-        "providers": {
-          "type": "object",
-          "properties": {
-            "openai": {
+            },
+            "baseUrl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stt": {
               "type": "object",
               "properties": {
                 "apiKey": {
@@ -192,42 +274,18 @@
                 "baseUrl": {
                   "type": "string",
                   "minLength": 1
-                },
-                "stt": {
-                  "type": "object",
-                  "properties": {
-                    "apiKey": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "baseUrl": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "tts": {
-                  "type": "object",
-                  "properties": {
-                    "apiKey": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "baseUrl": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
             },
-            "local": {
+            "tts": {
               "type": "object",
               "properties": {
-                "modelsDir": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "baseUrl": {
                   "type": "string",
                   "minLength": 1
                 }
@@ -237,241 +295,429 @@
           },
           "additionalProperties": false
         },
-        "agents": {
+        "local": {
+          "type": "object",
+          "properties": {
+            "modelsDir": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pluginsEnabled": {
+      "type": "boolean"
+    },
+    "plugins": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "const": "directory"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": ["source", "path"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "worktrees": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "servicePorts": {
+          "type": "object",
+          "properties": {
+            "range": {
+              "type": "string",
+              "pattern": "^(\\d{1,5})-(\\d{1,5})$"
+            },
+            "portScript": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "extends": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "command": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "isDefault": {
+                      "type": "boolean"
+                    },
+                    "thinkingOptions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "isDefault": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": ["id", "label"]
+                      }
+                    }
+                  },
+                  "required": ["id", "label"]
+                }
+              },
+              "additionalModels": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "isDefault": {
+                      "type": "boolean"
+                    },
+                    "thinkingOptions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "isDefault": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": ["id", "label"]
+                      }
+                    }
+                  },
+                  "required": ["id", "label"]
+                }
+              },
+              "disallowedTools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "order": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "catalogRefreshTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 2147483647
+        },
+        "metadataGeneration": {
           "type": "object",
           "properties": {
             "providers": {
-              "type": "object",
-              "additionalProperties": {
+              "type": "array",
+              "items": {
                 "type": "object",
                 "properties": {
-                  "extends": {
-                    "type": "string"
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
                   },
-                  "label": {
-                    "type": "string"
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
                   },
-                  "description": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "minItems": 1
-                  },
-                  "env": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "models": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "label": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "description": {
-                          "type": "string"
-                        },
-                        "isDefault": {
-                          "type": "boolean"
-                        },
-                        "thinkingOptions": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string"
-                              },
-                              "label": {
-                                "type": "string"
-                              },
-                              "description": {
-                                "type": "string"
-                              },
-                              "isDefault": {
-                                "type": "boolean"
-                              }
-                            },
-                            "required": ["id", "label"],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": ["id", "label"],
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalModels": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/agents/properties/providers/additionalProperties/properties/models/items"
-                    }
-                  },
-                  "disallowedTools": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "order": {
-                    "type": "number"
+                  "thinkingOptionId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
+                "required": ["provider"],
                 "additionalProperties": false
               }
-            },
-            "catalogRefreshTimeoutMs": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 2147483647
             }
           },
           "additionalProperties": false
         },
-        "features": {
+        "skills": {
           "type": "object",
           "properties": {
-            "dictation": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "stt": {
+            "selection": {
+              "oneOf": [
+                {
                   "type": "object",
                   "properties": {
-                    "provider": {
-                      "allOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "string",
-                          "enum": ["openai", "local"]
-                        }
-                      ]
-                    },
-                    "model": {
+                    "mode": {
                       "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "confidenceThreshold": {
-                      "type": "number"
+                      "const": "all"
                     }
                   },
+                  "required": ["mode"],
                   "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "const": "custom"
+                    },
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": ["mode", "skills"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "dictation": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "stt": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "confidenceThreshold": {
+                  "type": "number"
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "voiceMode": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
             },
-            "voiceMode": {
+            "llm": {
               "type": "object",
               "properties": {
-                "enabled": {
-                  "type": "boolean"
+                "provider": {
+                  "type": "string"
                 },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "type": "string"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "stt": {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "language": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "turnDetection": {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "tts": {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "voice": {
-                      "type": "string",
-                      "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-                    },
-                    "speakerId": {
-                      "type": "integer"
-                    },
-                    "speed": {
-                      "type": "number"
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            "webUi": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "distDir": {
+                "model": {
                   "type": "string",
                   "minLength": 1
                 }
               },
               "additionalProperties": false
+            },
+            "stt": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "turnDetection": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "tts": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "voice": {
+                  "type": "string",
+                  "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+                },
+                "speakerId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "speed": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
         },
-        "log": {
+        "webUi": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "distDir": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "log": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["trace", "debug", "info", "warn", "error", "fatal"]
+        },
+        "format": {
+          "type": "string",
+          "enum": ["pretty", "json"]
+        },
+        "console": {
           "type": "object",
           "properties": {
             "level": {
@@ -481,42 +727,32 @@
             "format": {
               "type": "string",
               "enum": ["pretty", "json"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "file": {
+          "type": "object",
+          "properties": {
+            "level": {
+              "type": "string",
+              "enum": ["trace", "debug", "info", "warn", "error", "fatal"]
             },
-            "console": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rotate": {
               "type": "object",
               "properties": {
-                "level": {
-                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/level"
-                },
-                "format": {
-                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/format"
-                }
-              },
-              "additionalProperties": false
-            },
-            "file": {
-              "type": "object",
-              "properties": {
-                "level": {
-                  "$ref": "#/definitions/PaseoConfigV1/properties/log/properties/level"
-                },
-                "path": {
+                "maxSize": {
                   "type": "string",
                   "minLength": 1
                 },
-                "rotate": {
-                  "type": "object",
-                  "properties": {
-                    "maxSize": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "maxFiles": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0
-                    }
-                  },
-                  "additionalProperties": false
+                "maxFiles": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 }
               },
               "additionalProperties": false
@@ -528,5 +764,6 @@
       "additionalProperties": false
     }
   },
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "additionalProperties": false,
+  "title": "PaseoConfigV1"
 }

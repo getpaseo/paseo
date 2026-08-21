@@ -1,9 +1,11 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import {
+  buildConfigJsonSchema,
   loadPersistedConfig,
   PersistedConfigSchema,
   savePersistedConfig,
@@ -778,5 +780,21 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("published config JSON schema", () => {
+  test("matches the schema the daemon parses", () => {
+    const repoRoot = path.resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+    const publishedPath = path.join(
+      repoRoot,
+      "packages/website/public/schemas/paseo.config.v1.json",
+    );
+    const published = JSON.parse(readFileSync(publishedPath, "utf8"));
+
+    expect(
+      published,
+      "packages/website/public/schemas/paseo.config.v1.json is stale, run `npm run generate:config-schema`",
+    ).toEqual(buildConfigJsonSchema());
   });
 });
