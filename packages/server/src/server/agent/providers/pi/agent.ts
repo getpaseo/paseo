@@ -1003,6 +1003,7 @@ function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEv
     case "compaction_start":
     case "compaction_end":
     case "agent_end":
+    case "agent_settled":
       return true;
     default:
       return false;
@@ -1204,6 +1205,8 @@ export class PiRpcAgentSession implements AgentSession {
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
+  private activeTurnStartedEmitted = false;
+  private pendingSettledMessages: PiAgentMessage[] | null = null;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
@@ -1297,6 +1300,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
+    this.activeTurnStartedEmitted = false;
+    this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
@@ -1328,6 +1333,8 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnId = null;
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
+        this.activeTurnStartedEmitted = false;
+        this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
@@ -1456,6 +1463,8 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnId = null;
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
+        this.activeTurnStartedEmitted = false;
+        this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
         this.clearNoTurnBuffers();
         this.emit({
@@ -1472,6 +1481,8 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnId = null;
       this.activeClientMessageId = null;
       this.activeTurnStarted = false;
+      this.activeTurnStartedEmitted = false;
+      this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
       this.clearNoTurnBuffers();
       this.emit({
@@ -2047,6 +2058,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeTurnStarted = false;
+    this.activeTurnStartedEmitted = false;
+    this.pendingSettledMessages = null;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2058,6 +2071,10 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleSessionEvent(event: PiAgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
+    if (event.type === "agent_end" || event.type === "agent_settled") {
+      this.handleTurnBoundaryEvent(event, turnId);
+      return;
+    }
 
     switch (event.type) {
       case "agent_start":
@@ -2072,6 +2089,10 @@ export class PiRpcAgentSession implements AgentSession {
       case "turn_start":
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
+        if (this.activeTurnStartedEmitted) {
+          return;
+        }
+        this.activeTurnStartedEmitted = true;
         this.emit({
           type: "turn_started",
           provider: this.provider,
@@ -2128,11 +2149,29 @@ export class PiRpcAgentSession implements AgentSession {
           },
         });
         return;
-      case "agent_end":
-        this.completeTurn(turnId, event.messages ?? []);
-        return;
       default:
         return;
+    }
+  }
+
+  private handleTurnBoundaryEvent(
+    event: Extract<PiAgentSessionEvent, { type: "agent_end" | "agent_settled" }>,
+    turnId: string | undefined,
+  ): void {
+    if (event.type === "agent_end") {
+      // COMPAT(piAgentSettled): added in v0.5.0, remove after 2027-02-21 once the Pi
+      // floor emits agent_settled and willRetry.
+      if (event.willRetry === undefined) {
+        this.completeTurn(turnId, event.messages ?? []);
+        return;
+      }
+      if (this.activeTurnId) {
+        this.pendingSettledMessages = event.messages ?? [];
+      }
+      return;
+    }
+    if (this.activeTurnId) {
+      this.completeTurn(turnId, this.pendingSettledMessages ?? []);
     }
   }
 
@@ -2305,6 +2344,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
+    this.activeTurnStartedEmitted = false;
+    this.pendingSettledMessages = null;
     this.clearNoTurnBuffers();
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
