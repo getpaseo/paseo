@@ -889,6 +889,8 @@ export const ru: TranslationResources = {
         failedRefresh: "Не удалось обновить состояние Git.",
         emptyHiddenWhitespace: "После скрытия пробельных изменений видимых изменений нет",
         emptyUncommitted: "Нет незафиксированных изменений",
+        seeUncommittedChanges: "Показать незафиксированные изменения",
+        seeCommittedChanges: "Показать зафиксированные изменения",
         emptyAgainstBase: "Нет изменений относительно {{baseRef}}",
         checkingRepository: "Проверяем репозиторий...",
         notRepository: "Это не репозиторий Git",

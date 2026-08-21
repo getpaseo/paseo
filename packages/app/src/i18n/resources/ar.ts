@@ -874,6 +874,8 @@ export const ar: TranslationResources = {
         failedRefresh: "فشل تحديث حالة git.",
         emptyHiddenWhitespace: "لا توجد تغييرات مرئية بعد إخفاء المسافة البيضاء",
         emptyUncommitted: "لا توجد تغييرات غير ملتزم بها",
+        seeUncommittedChanges: "عرض التغييرات غير الملتزم بها",
+        seeCommittedChanges: "عرض التغييرات الملتزم بها",
         emptyAgainstBase: "لا توجد تغييرات مقابل{{baseRef}}",
         checkingRepository: "فحص المستودع...",
         notRepository: "ليس مستودع جيت",

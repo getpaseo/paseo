@@ -484,7 +484,7 @@ describe("workspace-layout-store actions", () => {
     ).toEqual(override);
   });
 
-  it("keeps every Changes state field independent across explicit instances", () => {
+  it("keeps every Changes presentation field independent across explicit instances", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
     const first = store.openTab({
@@ -498,8 +498,6 @@ describe("workspace-layout-store actions", () => {
       intent: "new",
     })!;
     const changed: ChangesState = {
-      mode: "base",
-      baseRef: "origin/main",
       layout: "split" as const,
       wrapLines: true,
       hideWhitespace: true,
@@ -811,8 +809,6 @@ describe("workspace-layout-store actions", () => {
       .getState()
       .openTab({ workspaceKey: workspaceKey, target: { kind: "working_diff" }, intent: "new" })!;
     const firstState: ChangesState = {
-      mode: "base" as const,
-      baseRef: "origin/main",
       layout: "split" as const,
       wrapLines: true,
       hideWhitespace: true,
@@ -823,8 +819,6 @@ describe("workspace-layout-store actions", () => {
       commitsCollapsed: false,
     };
     const secondState: ChangesState = {
-      mode: "base" as const,
-      baseRef: "release",
       layout: "unified" as const,
       wrapLines: false,
       hideWhitespace: false,

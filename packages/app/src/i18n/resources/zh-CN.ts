@@ -866,6 +866,8 @@ export const zhCN: TranslationResources = {
         failedRefresh: "刷新 git 状态失败。",
         emptyHiddenWhitespace: "隐藏空白差异后没有可见变更",
         emptyUncommitted: "没有未 commit 的变更",
+        seeUncommittedChanges: "查看未 commit 的变更",
+        seeCommittedChanges: "查看已 commit 的变更",
         emptyAgainstBase: "相对于 {{baseRef}} 没有变更",
         checkingRepository: "正在检查 repository...",
         notRepository: "不是 git repository",
