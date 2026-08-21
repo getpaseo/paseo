@@ -990,15 +990,13 @@ function resolveMaxInputHeight(windowHeight: number): number {
   return Math.max(DEFAULT_MAX_INPUT_HEIGHT, Math.floor(windowHeight * MAX_INPUT_VIEWPORT_RATIO));
 }
 
+// The composer input is uncontrolled on native (PasteInput owns the text), so it
+// no longer re-measures itself as you type the way a controlled RN TextInput did.
+// Drive the height explicitly from the onContentSizeChange measurement on every
+// platform so the box grows instead of scrolling inside a fixed min-height frame.
 function computeTextInputHeightStyle(inputHeight: number, maxInputHeight: number) {
-  if (isWeb) {
-    return {
-      height: inputHeight,
-      minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: maxInputHeight,
-    };
-  }
   return {
+    height: inputHeight,
     minHeight: MIN_INPUT_HEIGHT,
     maxHeight: maxInputHeight,
   };
@@ -1838,7 +1836,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
-              scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
+              scrollEnabled={inputHeight >= maxInputHeight}
               autoFocus={false}
               onContentSizeChange={handleContentSizeChange}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
