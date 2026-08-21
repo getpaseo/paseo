@@ -201,8 +201,13 @@ export const ptBR: TranslationResources = {
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
     completedResponse: {
-      showWork: "Mostrar trabalho",
-      hideWork: "Ocultar trabalho",
+      messages: {
+        one: "{{count}} mensagem",
+        other: "{{count}} mensagens",
+      },
+      workDetails: "Detalhes do trabalho",
+      showSummary: "Mostrar {{summary}}",
+      hideSummary: "Ocultar {{summary}}",
     },
     permission: {
       plan: "Plano",
@@ -1791,6 +1796,12 @@ export const ptBR: TranslationResources = {
     output: "Saída",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} chamada de ferramenta",
+      other: "{{count}} chamadas de ferramentas",
+    },
+    showSummary: "Mostrar {{summary}}",
+    hideSummary: "Ocultar {{summary}}",
     editedFiles: {
       one: "editou {{count}} arquivo",
       other: "editou {{count}} arquivos",

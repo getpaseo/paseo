@@ -201,8 +201,13 @@ export const zhCN: TranslationResources = {
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
     completedResponse: {
-      showWork: "显示工作过程",
-      hideWork: "隐藏工作过程",
+      messages: {
+        one: "{{count}} 条消息",
+        other: "{{count}} 条消息",
+      },
+      workDetails: "工作详情",
+      showSummary: "显示{{summary}}",
+      hideSummary: "隐藏{{summary}}",
     },
     permission: {
       plan: "Plan",
@@ -1739,6 +1744,12 @@ export const zhCN: TranslationResources = {
     output: "输出",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} 次工具调用",
+      other: "{{count}} 次工具调用",
+    },
+    showSummary: "显示{{summary}}",
+    hideSummary: "隐藏{{summary}}",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",

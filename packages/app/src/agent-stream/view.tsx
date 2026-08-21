@@ -564,6 +564,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           isTurnActive,
           expandedResponseIds: expandedCompletedResponseIds,
           preserveLeadingResponse: hasOlder,
+          toolCallGroupsByHostId: projectedToolCalls.groupsByHostId,
         }),
       [
         expandedCompletedResponseIds,
@@ -572,6 +573,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isTurnActive,
         mountedToolCallTail,
         projectedToolCalls.head,
+        projectedToolCalls.groupsByHostId,
       ],
     );
 

@@ -203,8 +203,13 @@ export const fr: TranslationResources = {
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
     completedResponse: {
-      showWork: "Afficher le travail",
-      hideWork: "Masquer le travail",
+      messages: {
+        one: "{{count}} message",
+        other: "{{count}} messages",
+      },
+      workDetails: "Détails du travail",
+      showSummary: "Afficher {{summary}}",
+      hideSummary: "Masquer {{summary}}",
     },
     permission: {
       plan: "Plan",
@@ -1810,6 +1815,12 @@ export const fr: TranslationResources = {
     output: "Sortir",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} appel d’outil",
+      other: "{{count}} appels d’outils",
+    },
+    showSummary: "Afficher {{summary}}",
+    hideSummary: "Masquer {{summary}}",
     editedFiles: {
       one: "a modifié {{count}} fichier",
       other: "a modifié {{count}} fichiers",

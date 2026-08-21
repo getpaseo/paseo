@@ -201,8 +201,13 @@ export const es: TranslationResources = {
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
     completedResponse: {
-      showWork: "Mostrar trabajo",
-      hideWork: "Ocultar trabajo",
+      messages: {
+        one: "{{count}} mensaje",
+        other: "{{count}} mensajes",
+      },
+      workDetails: "Detalles del trabajo",
+      showSummary: "Mostrar {{summary}}",
+      hideSummary: "Ocultar {{summary}}",
     },
     permission: {
       plan: "Plan",
@@ -1805,6 +1810,12 @@ export const es: TranslationResources = {
     output: "Producción",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} llamada a herramienta",
+      other: "{{count}} llamadas a herramientas",
+    },
+    showSummary: "Mostrar {{summary}}",
+    hideSummary: "Ocultar {{summary}}",
     editedFiles: {
       one: "editó {{count}} archivo",
       other: "editó {{count}} archivos",

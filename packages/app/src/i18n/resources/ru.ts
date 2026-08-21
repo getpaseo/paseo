@@ -201,8 +201,13 @@ export const ru: TranslationResources = {
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
     completedResponse: {
-      showWork: "Показать ход работы",
-      hideWork: "Скрыть ход работы",
+      messages: {
+        one: "{{count}} сообщение",
+        other: "сообщений: {{count}}",
+      },
+      workDetails: "Подробности работы",
+      showSummary: "Показать: {{summary}}",
+      hideSummary: "Скрыть: {{summary}}",
     },
     permission: {
       plan: "План",
@@ -1790,6 +1795,12 @@ export const ru: TranslationResources = {
     output: "Выходные данные",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} вызов инструмента",
+      other: "вызовов инструментов: {{count}}",
+    },
+    showSummary: "Показать: {{summary}}",
+    hideSummary: "Скрыть: {{summary}}",
     editedFiles: {
       one: "изменён {{count}} файл",
       other: "изменены файлы ({{count}})",

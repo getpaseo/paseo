@@ -201,8 +201,13 @@ export const ja: TranslationResources = {
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     completedResponse: {
-      showWork: "作業内容を表示",
-      hideWork: "作業内容を非表示",
+      messages: {
+        one: "{{count}}件のメッセージ",
+        other: "{{count}}件のメッセージ",
+      },
+      workDetails: "作業の詳細",
+      showSummary: "{{summary}}を表示",
+      hideSummary: "{{summary}}を非表示",
     },
     permission: {
       plan: "プラン",
@@ -1777,6 +1782,12 @@ export const ja: TranslationResources = {
     output: "出力",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}}件のツール呼び出し",
+      other: "{{count}}件のツール呼び出し",
+    },
+    showSummary: "{{summary}}を表示",
+    hideSummary: "{{summary}}を非表示",
     editedFiles: {
       one: "{{count}}個のファイルを編集",
       other: "{{count}}個のファイルを編集",

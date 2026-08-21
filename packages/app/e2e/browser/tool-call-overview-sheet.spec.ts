@@ -221,6 +221,8 @@ test.describe("compact overview tool calls", () => {
 
       const group = page.getByTestId("tool-call-group").first();
       await expect(group).toBeVisible();
+      await expect(group).toContainText(/\d+ tool calls?/);
+      await expect(group.getByTestId("tool-call-activity-icons")).toBeVisible();
       await group.click();
 
       const sheet = page.getByTestId("tool-call-group-sheet");
@@ -270,6 +272,8 @@ test("keeps overview tool calls inline on desktop", async ({ page }) => {
     await agent.client.sendAgentMessage(agent.agentId, "Exercise desktop overview tool calls.");
     const group = page.getByTestId("tool-call-group").first();
     await expect(group).toBeVisible();
+    await expect(group).toContainText(/\d+ tool calls?/);
+    await expect(group.getByTestId("tool-call-activity-icons")).toBeVisible();
 
     await group.click();
     await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);

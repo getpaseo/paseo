@@ -1,9 +1,18 @@
 import type { StreamItem } from "@/types/stream";
+import {
+  summarizeToolCallActivity,
+  type ToolCallActivitySummary,
+} from "@/tool-calls/activity-summary";
 import { continuesResponse } from "./turn-membership";
+
+export interface CompletedResponseSummary extends ToolCallActivitySummary {
+  messageCount: number;
+}
 
 export interface CompletedResponseFold {
   responseId: string;
   expanded: boolean;
+  summary: CompletedResponseSummary;
 }
 
 export interface CompletedResponseFoldProjection {
@@ -17,17 +26,21 @@ type CachedActiveTailProjection = Pick<
   "tail" | "foldsByAnchorItemId"
 >;
 
+interface ToolCallGroupSummaryLookup {
+  get(itemId: string): { summary: ToolCallActivitySummary } | undefined;
+}
+
+interface CachedLeadingPolicyProjections {
+  foldedLeading?: CachedActiveTailProjection;
+  preservedLeading?: CachedActiveTailProjection;
+}
+
 const activeTailProjectionCache = new WeakMap<
   StreamItem[],
-  WeakMap<
-    object,
-    {
-      foldedLeading?: CachedActiveTailProjection;
-      preservedLeading?: CachedActiveTailProjection;
-    }
-  >
+  WeakMap<object, WeakMap<object, CachedLeadingPolicyProjections>>
 >();
 const EMPTY_COMPLETED_RESPONSE_FOLDS = new Map<string, CompletedResponseFold>();
+const EMPTY_TOOL_CALL_GROUP_SUMMARIES = new Map<string, { summary: ToolCallActivitySummary }>();
 
 function isToolCallRunning(item: Extract<StreamItem, { kind: "tool_call" }>): boolean {
   return item.payload.data.status === "running" || item.payload.data.status === "executing";
@@ -115,6 +128,32 @@ function partitionVisibleResponses(items: StreamItem[]): StreamItem[][] {
   return responses;
 }
 
+function summarizeFoldableToolCalls(
+  calls: readonly Extract<StreamItem, { kind: "tool_call" }>[],
+  groupsByHostId: ToolCallGroupSummaryLookup,
+): ToolCallActivitySummary {
+  let toolCallCount = 0;
+  const iconNames = new Set<ToolCallActivitySummary["iconNames"][number]>();
+  for (const call of calls) {
+    const summary = groupsByHostId.get(call.id)?.summary ?? summarizeToolCallActivity([call]);
+    toolCallCount += summary.toolCallCount;
+    for (const iconName of summary.iconNames) {
+      iconNames.add(iconName);
+    }
+  }
+  return { toolCallCount, iconNames: [...iconNames] };
+}
+
+function countAssistantMessages(items: readonly StreamItem[]): number {
+  const messageIds = new Set<string>();
+  for (const item of items) {
+    if (item.kind === "assistant_message") {
+      messageIds.add(item.blockGroupId ?? item.id);
+    }
+  }
+  return messageIds.size;
+}
+
 /**
  * Builds a reversible presentation-only projection for settled responses.
  * Canonical stream rows are never mutated or discarded from the session store.
@@ -125,6 +164,7 @@ function projectResponseRows(input: {
   isTurnActive: boolean;
   expandedResponseIds: ReadonlySet<string>;
   preserveLeadingResponse: boolean;
+  toolCallGroupsByHostId: ToolCallGroupSummaryLookup;
 }): CompletedResponseFoldProjection {
   const responses = partitionVisibleResponses([...input.tail, ...input.head]);
   const removedItemIds = new Set<string>();
@@ -150,9 +190,16 @@ function projectResponseRows(input: {
     if (foldableItems.length === 0) continue;
 
     const expanded = input.expandedResponseIds.has(terminalAssistantGroup.anchorItemId);
+    const toolCalls = foldableItems.filter(
+      (item): item is Extract<StreamItem, { kind: "tool_call" }> => item.kind === "tool_call",
+    );
     foldsByAnchorItemId.set(terminalAssistantGroup.anchorItemId, {
       responseId: terminalAssistantGroup.anchorItemId,
       expanded,
+      summary: {
+        ...summarizeFoldableToolCalls(toolCalls, input.toolCallGroupsByHostId),
+        messageCount: countAssistantMessages(foldableItems),
+      },
     });
 
     if (!expanded) {
@@ -181,6 +228,7 @@ function getActiveTailProjection(
   tail: StreamItem[],
   expandedResponseIds: ReadonlySet<string>,
   preserveLeadingResponse: boolean,
+  toolCallGroupsByHostId: ToolCallGroupSummaryLookup,
 ): CachedActiveTailProjection {
   let cacheByExpansion = activeTailProjectionCache.get(tail);
   if (!cacheByExpansion) {
@@ -189,7 +237,13 @@ function getActiveTailProjection(
   }
 
   const expansionKey = expandedResponseIds as object;
-  const cachedByLeadingPolicy = cacheByExpansion.get(expansionKey);
+  let cacheByToolCallGroups = cacheByExpansion.get(expansionKey);
+  if (!cacheByToolCallGroups) {
+    cacheByToolCallGroups = new WeakMap();
+    cacheByExpansion.set(expansionKey, cacheByToolCallGroups);
+  }
+  const toolCallGroupsKey = toolCallGroupsByHostId as object;
+  const cachedByLeadingPolicy = cacheByToolCallGroups.get(toolCallGroupsKey);
   const cacheKey = preserveLeadingResponse ? "preservedLeading" : "foldedLeading";
   const cached = cachedByLeadingPolicy?.[cacheKey];
   if (cached) return cached;
@@ -200,12 +254,13 @@ function getActiveTailProjection(
     isTurnActive: true,
     expandedResponseIds,
     preserveLeadingResponse,
+    toolCallGroupsByHostId,
   });
   const activeTailProjection = {
     tail: projected.tail,
     foldsByAnchorItemId: projected.foldsByAnchorItemId,
   };
-  cacheByExpansion.set(expansionKey, {
+  cacheByToolCallGroups.set(toolCallGroupsKey, {
     ...cachedByLeadingPolicy,
     [cacheKey]: activeTailProjection,
   });
@@ -219,6 +274,7 @@ export function projectCompletedResponseFolds(input: {
   isTurnActive: boolean;
   expandedResponseIds: ReadonlySet<string>;
   preserveLeadingResponse?: boolean;
+  toolCallGroupsByHostId?: ToolCallGroupSummaryLookup;
 }): CompletedResponseFoldProjection {
   if (!input.enabled) {
     return {
@@ -235,6 +291,7 @@ export function projectCompletedResponseFolds(input: {
       input.tail,
       input.expandedResponseIds,
       input.preserveLeadingResponse ?? false,
+      input.toolCallGroupsByHostId ?? EMPTY_TOOL_CALL_GROUP_SUMMARIES,
     );
     return {
       tail: projectedTail.tail,
@@ -246,5 +303,6 @@ export function projectCompletedResponseFolds(input: {
   return projectResponseRows({
     ...input,
     preserveLeadingResponse: input.preserveLeadingResponse ?? false,
+    toolCallGroupsByHostId: input.toolCallGroupsByHostId ?? EMPTY_TOOL_CALL_GROUP_SUMMARIES,
   });
 }

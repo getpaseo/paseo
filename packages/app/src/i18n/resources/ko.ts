@@ -201,8 +201,13 @@ export const ko: TranslationResources = {
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     completedResponse: {
-      showWork: "작업 내용 보기",
-      hideWork: "작업 내용 숨기기",
+      messages: {
+        one: "메시지 {{count}}개",
+        other: "메시지 {{count}}개",
+      },
+      workDetails: "작업 세부 정보",
+      showSummary: "{{summary}} 보기",
+      hideSummary: "{{summary}} 숨기기",
     },
     permission: {
       plan: "계획",
@@ -1769,6 +1774,12 @@ export const ko: TranslationResources = {
     output: "출력",
   },
   toolCallGroup: {
+    calls: {
+      one: "도구 호출 {{count}}회",
+      other: "도구 호출 {{count}}회",
+    },
+    showSummary: "{{summary}} 보기",
+    hideSummary: "{{summary}} 숨기기",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",

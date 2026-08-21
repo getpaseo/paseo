@@ -2322,7 +2322,9 @@ export const TodoListCard = memo(function TodoListCard({
 
 interface ExpandableBadgeProps {
   label: string;
+  accessibilityLabel?: string;
   secondaryLabel?: string;
+  trailingContent?: ReactNode;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
   style?: StyleProp<ViewStyle>;
@@ -2335,6 +2337,7 @@ interface ExpandableBadgeProps {
   isLastInSequence?: boolean;
   disableOuterSpacing?: boolean;
   borderlessWhenExpanded?: boolean;
+  alwaysShowChevron?: boolean;
   testID?: string;
 }
 
@@ -2406,6 +2409,7 @@ interface ExpandableBadgeLabelRowProps {
   label: string;
   labelStyle: StyleProp<TextStyle>;
   secondaryLabel?: string;
+  trailingContent?: ReactNode;
   secondaryLabelStyle: StyleProp<TextStyle>;
   shouldMeasureWebShimmer: boolean;
   shouldMeasureNativeShimmer: boolean;
@@ -2432,6 +2436,7 @@ function ExpandableBadgeLabelRow({
   label,
   labelStyle,
   secondaryLabel,
+  trailingContent,
   secondaryLabelStyle,
   shouldMeasureWebShimmer,
   shouldMeasureNativeShimmer,
@@ -2472,6 +2477,7 @@ function ExpandableBadgeLabelRow({
         shouldMeasureWebShimmer={shouldMeasureWebShimmer}
         onSecondaryLayout={onSecondaryLayout}
       />
+      {trailingContent}
       {showOpenFileButton ? (
         <Pressable
           onPress={onOpenFilePress}
@@ -2685,8 +2691,10 @@ function buildShimmerTextStyle(input: {
 
 export const ExpandableBadge = memo(function ExpandableBadge({
   label,
+  accessibilityLabel,
   style,
   secondaryLabel,
+  trailingContent,
   icon,
   isExpanded,
   onToggle,
@@ -2698,6 +2706,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isLastInSequence = false,
   disableOuterSpacing,
   borderlessWhenExpanded = false,
+  alwaysShowChevron = false,
   testID,
 }: ExpandableBadgeProps) {
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
@@ -2938,7 +2947,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const ThemedIcon = useMemo(() => (icon ? withUnistyles(icon) : null), [icon]);
   const iconNode = renderExpandableBadgeIcon({ isError, isActive, ThemedIcon });
   const iconSlotNode = renderExpandableBadgeIconSlot({
-    showChevron: isInteractive && (isHovered || isExpanded),
+    showChevron: isInteractive && (alwaysShowChevron || isHovered || isExpanded),
     chevronStyle,
     iconNode,
   });
@@ -2962,6 +2971,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       <Pressable
         {...pressHandlers}
         disabled={!isInteractive}
+        accessibilityLabel={accessibilityLabel}
         accessibilityState={accessibilityState}
         style={pressableStyle}
       >
@@ -2971,6 +2981,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
             label={label}
             labelStyle={labelStyle}
             secondaryLabel={secondaryLabel}
+            trailingContent={trailingContent}
             secondaryLabelStyle={secondaryLabelStyle}
             shouldMeasureWebShimmer={shouldMeasureWebShimmer}
             shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
@@ -3010,7 +3021,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 
 function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: ExpandableBadgeProps) {
   if (previous.label !== next.label) return false;
+  if (previous.accessibilityLabel !== next.accessibilityLabel) return false;
   if (previous.secondaryLabel !== next.secondaryLabel) return false;
+  if (previous.trailingContent !== next.trailingContent) return false;
   if (previous.icon !== next.icon) return false;
   if (previous.isExpanded !== next.isExpanded) return false;
   if (previous.style !== next.style) return false;
@@ -3019,6 +3032,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.borderlessWhenExpanded !== next.borderlessWhenExpanded) return false;
+  if (previous.alwaysShowChevron !== next.alwaysShowChevron) return false;
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;

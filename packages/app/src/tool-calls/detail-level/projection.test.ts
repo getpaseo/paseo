@@ -233,6 +233,8 @@ describe("tool call detail-level projection", () => {
       run: expect.any(Object),
       isLoading: false,
       summary: {
+        toolCallCount: 4,
+        iconNames: ["eye", "square_terminal", "pencil"],
         editedFileCount: 1,
         commandCount: 1,
         readFileCount: 2,

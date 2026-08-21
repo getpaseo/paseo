@@ -201,8 +201,13 @@ export const ar: TranslationResources = {
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
     completedResponse: {
-      showWork: "إظهار خطوات العمل",
-      hideWork: "إخفاء خطوات العمل",
+      messages: {
+        one: "{{count}} رسالة",
+        other: "{{count}} رسائل",
+      },
+      workDetails: "تفاصيل العمل",
+      showSummary: "إظهار {{summary}}",
+      hideSummary: "إخفاء {{summary}}",
     },
     permission: {
       plan: "يخطط",
@@ -1759,6 +1764,12 @@ export const ar: TranslationResources = {
     output: "الإخراج",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} استدعاء أداة",
+      other: "{{count}} استدعاءات أدوات",
+    },
+    showSummary: "إظهار {{summary}}",
+    hideSummary: "إخفاء {{summary}}",
     editedFiles: {
       one: "حرّر {{count}} ملفًا",
       other: "حرّر {{count}} ملفات",

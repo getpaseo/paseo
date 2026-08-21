@@ -191,7 +191,9 @@ fork positions retain the canonical `turnId` boundaries.
 Completed-response folding is an app-only projection over those visible response boundaries. It keeps
 the canonical tail and live head intact for sync, persistence, and provider context. A settled response
 folds only when tool work is followed by a final assistant message; the active response, errors, and
-still-running tools remain visible. Expansion state is local to the open agent view.
+still-running tools remain visible. The opt-in appearance setting replaces folded work with deterministic
+tool-call and intermediate-message counts plus the tool categories used; it does not generate another
+model summary. Expansion state is local to the open agent view.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app

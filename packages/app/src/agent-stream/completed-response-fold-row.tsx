@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
+import { ToolCallActivityIcons } from "@/tool-calls/activity-summary-icons";
 import type { CompletedResponseFold } from "./completed-response-fold";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -30,15 +31,34 @@ export const CompletedResponseFoldRow = memo(function CompletedResponseFoldRow({
 }) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => onToggle(fold.responseId), [fold.responseId, onToggle]);
-  const label = fold.expanded
-    ? t("agentStream.completedResponse.hideWork")
-    : t("agentStream.completedResponse.showWork");
+  const summary = useMemo(() => {
+    const parts: string[] = [];
+    if (fold.summary.toolCallCount > 0) {
+      parts.push(
+        t(`toolCallGroup.calls.${fold.summary.toolCallCount === 1 ? "one" : "other"}`, {
+          count: fold.summary.toolCallCount,
+        }),
+      );
+    }
+    if (fold.summary.messageCount > 0) {
+      parts.push(
+        t(
+          `agentStream.completedResponse.messages.${fold.summary.messageCount === 1 ? "one" : "other"}`,
+          { count: fold.summary.messageCount },
+        ),
+      );
+    }
+    return parts.join(", ") || t("agentStream.completedResponse.workDetails");
+  }, [fold.summary.messageCount, fold.summary.toolCallCount, t]);
+  const accessibilityLabel = fold.expanded
+    ? t("agentStream.completedResponse.hideSummary", { summary })
+    : t("agentStream.completedResponse.showSummary", { summary });
   const accessibilityState = useMemo(() => ({ expanded: fold.expanded }), [fold.expanded]);
   return (
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel}
         accessibilityState={accessibilityState}
         onPress={handlePress}
         style={foldButtonStyle}
@@ -49,7 +69,8 @@ export const CompletedResponseFoldRow = memo(function CompletedResponseFoldRow({
         ) : (
           <ThemedChevronRight size={14} strokeWidth={2} uniProps={iconColorMapping} />
         )}
-        <Text style={stylesheet.label}>{label}</Text>
+        <Text style={stylesheet.label}>{summary}</Text>
+        <ToolCallActivityIcons iconNames={fold.summary.iconNames} />
       </Pressable>
       {children}
     </>
@@ -76,5 +97,6 @@ const stylesheet = StyleSheet.create((theme) => ({
   label: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    fontVariant: ["tabular-nums"],
   },
 }));

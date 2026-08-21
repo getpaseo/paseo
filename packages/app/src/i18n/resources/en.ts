@@ -198,8 +198,13 @@ export const en = {
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
     completedResponse: {
-      showWork: "Show work",
-      hideWork: "Hide work",
+      messages: {
+        one: "{{count}} message",
+        other: "{{count}} messages",
+      },
+      workDetails: "Work details",
+      showSummary: "Show {{summary}}",
+      hideSummary: "Hide {{summary}}",
     },
     permission: {
       plan: "Plan",
@@ -1769,6 +1774,12 @@ export const en = {
     output: "Output",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} tool call",
+      other: "{{count}} tool calls",
+    },
+    showSummary: "Show {{summary}}",
+    hideSummary: "Hide {{summary}}",
     editedFiles: {
       one: "edited {{count}} file",
       other: "edited {{count}} files",

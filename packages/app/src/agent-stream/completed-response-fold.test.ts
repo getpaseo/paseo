@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
+import type { ToolCallActivitySummary } from "@/tool-calls/activity-summary";
 import { projectCompletedResponseFolds } from "./completed-response-fold";
 
 function at(second: number): Date {
@@ -70,6 +71,7 @@ function project(input: {
   isTurnActive?: boolean;
   expandedResponseIds?: ReadonlySet<string>;
   preserveLeadingResponse?: boolean;
+  toolCallGroupsByHostId?: ReadonlyMap<string, { summary: ToolCallActivitySummary }>;
 }) {
   return projectCompletedResponseFolds({
     enabled: input.enabled ?? true,
@@ -78,6 +80,7 @@ function project(input: {
     isTurnActive: input.isTurnActive ?? false,
     expandedResponseIds: input.expandedResponseIds ?? new Set(),
     preserveLeadingResponse: input.preserveLeadingResponse ?? false,
+    toolCallGroupsByHostId: input.toolCallGroupsByHostId,
   });
 }
 
@@ -106,6 +109,11 @@ describe("projectCompletedResponseFolds", () => {
     expect(result.foldsByAnchorItemId.get("final")).toEqual({
       responseId: "final",
       expanded: false,
+      summary: {
+        toolCallCount: 1,
+        messageCount: 1,
+        iconNames: ["wrench"],
+      },
     });
   });
 
@@ -124,8 +132,51 @@ describe("projectCompletedResponseFolds", () => {
     expect(result.foldsByAnchorItemId.get("final-0")).toEqual({
       responseId: "final-0",
       expanded: false,
+      summary: {
+        toolCallCount: 1,
+        messageCount: 0,
+        iconNames: ["wrench"],
+      },
     });
     expect(result.foldsByAnchorItemId.has("final-1")).toBe(false);
+  });
+
+  it("counts streamed blocks from one intermediate assistant message once", () => {
+    const result = project({
+      tail: [
+        user("user", 1, "turn-1"),
+        assistant("progress-0", 2, "turn-1", "progress"),
+        assistant("progress-1", 3, "turn-1", "progress"),
+        tool("tool", 4, "completed", "turn-1"),
+        assistant("final", 5, "turn-1"),
+      ],
+    });
+
+    expect(result.foldsByAnchorItemId.get("final")?.summary.messageCount).toBe(1);
+  });
+
+  it("counts every call represented by an overview tool-call host", () => {
+    const groupedHost = tool("group", 2, "completed", "turn-1");
+    const result = project({
+      tail: [user("user", 1, "turn-1"), groupedHost, assistant("final", 3, "turn-1")],
+      toolCallGroupsByHostId: new Map([
+        [
+          groupedHost.id,
+          {
+            summary: {
+              toolCallCount: 3,
+              iconNames: ["square_terminal", "eye"],
+            },
+          },
+        ],
+      ]),
+    });
+
+    expect(result.foldsByAnchorItemId.get("final")?.summary).toEqual({
+      toolCallCount: 3,
+      messageCount: 0,
+      iconNames: ["square_terminal", "eye"],
+    });
   });
 
   it("restores every original item when the response is expanded", () => {
