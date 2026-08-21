@@ -6,6 +6,12 @@ export interface McpServersControlProps {
   serverId: string;
   agentId: string;
   glyphSize: number;
+  /**
+   * False for a background tab. Retained panes stay mounted and the menu is portalled
+   * out of the hidden subtree, so without this a panel opened in one tab would keep
+   * rendering — and keep fetching — after you switched away from it.
+   */
+  isPaneFocused: boolean;
 }
 
 /**
@@ -22,9 +28,11 @@ export function McpServersControl({
   serverId,
   agentId,
   glyphSize,
+  isPaneFocused,
 }: McpServersControlProps): ReactElement | null {
   const [isOpen, setIsOpen] = useState(false);
-  const { view, refresh, canFetch } = useAgentMcpServers(serverId, agentId, { enabled: isOpen });
+  const open = isOpen && isPaneFocused;
+  const { view, refresh, canFetch } = useAgentMcpServers(serverId, agentId, { enabled: open });
   const handleRefresh = useCallback(() => {
     void refresh().catch(() => {});
   }, [refresh]);
@@ -37,6 +45,12 @@ export function McpServersControl({
     setIsOpen(false);
   }, [serverId, agentId]);
 
+  // Losing focus closes it for real rather than only hiding it, so returning to the tab
+  // does not reopen a panel the user never asked for again.
+  useEffect(() => {
+    if (!isPaneFocused) setIsOpen(false);
+  }, [isPaneFocused]);
+
   // The panel hides itself for an unsupported view; this only skips the agents whose
   // capabilities rule it out before a request is worth making.
   if (!canFetch) {
@@ -45,7 +59,7 @@ export function McpServersControl({
 
   return (
     <McpServersPanel
-      open={isOpen}
+      open={open}
       onOpenChange={setIsOpen}
       view={view}
       onRefresh={handleRefresh}

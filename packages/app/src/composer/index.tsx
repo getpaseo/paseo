@@ -1140,13 +1140,19 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   return (
     <ComposerKeyboardScopeProvider isActiveComposer={isPaneFocused}>
       <RenderProfile id="ComposerContent">
-        <ComposerContent {...props} />
+        {/*
+          `isPaneFocused` reaches the content too, not just the keyboard scope. An
+          unfocused tab stays mounted behind `RetainedPanel`, and a menu surface is
+          portalled out of that hidden subtree — so a panel left open in a background
+          tab would keep drawing and keep fetching.
+        */}
+        <ComposerContent {...props} isPaneFocused={isPaneFocused} />
       </RenderProfile>
     </ComposerKeyboardScopeProvider>
   );
 }
 
-type ComposerContentProps = Omit<ComposerProps, "isPaneFocused">;
+type ComposerContentProps = ComposerProps;
 
 const ComposerContent = memo(ComposerContentImpl);
 
@@ -1155,6 +1161,7 @@ function ComposerContentImpl({
   agentId,
   serverId,
   workspaceId,
+  isPaneFocused,
   onSubmitMessage,
   onClientSlashCommand,
   hasExternalContent = false,
@@ -1990,8 +1997,15 @@ function ComposerContentImpl({
     ],
   );
   const mcpServersControl = useMemo(
-    () => <McpServersControl serverId={serverId} agentId={agentId} glyphSize={buttonIconSize} />,
-    [agentId, buttonIconSize, serverId],
+    () => (
+      <McpServersControl
+        serverId={serverId}
+        agentId={agentId}
+        glyphSize={buttonIconSize}
+        isPaneFocused={isPaneFocused}
+      />
+    ),
+    [agentId, buttonIconSize, isPaneFocused, serverId],
   );
   const beforeVoiceContent = useMemo(
     () => resolveContextWindowPlacement(contextWindowMeter, mcpServersControl, hasAgent),

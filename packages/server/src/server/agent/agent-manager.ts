@@ -70,6 +70,7 @@ import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import { McpStatusCache } from "./mcp-status-cache.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
@@ -685,6 +686,15 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  /**
+   * MCP status reports, cached across every connected client rather than per session.
+   *
+   * A per-session cache only coalesces one client's own panels; two devices, or a
+   * reconnect, would each pay the provider call again — and for Codex that call is
+   * ~3.5s and 1.1MB over the same app-server connection the agent runs turns on.
+   * The manager owns the agents, so it is the right scope for facts about them.
+   */
+  readonly mcpStatusCache = new McpStatusCache();
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
@@ -3102,6 +3112,9 @@ export class AgentManager {
       owner?: AgentOwner;
     },
   ): Promise<ManagedAgent> {
+    // A new runtime for this agent may have a different set of MCP servers, so any
+    // report cached against the old one is stale the moment this session takes over.
+    this.mcpStatusCache.invalidate(agentId);
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();

@@ -260,6 +260,8 @@ export const ko: TranslationResources = {
       older: "이전",
     },
     status: {
+      connected: "연결됨",
+      configuredRow: "구성됨; 연결 상태 미보고",
       initializing: "시작 중",
       idle: "대기 중",
       running: "실행 중",

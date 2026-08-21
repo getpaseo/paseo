@@ -262,6 +262,8 @@ export const ptBR: TranslationResources = {
       older: "Mais antigas",
     },
     status: {
+      connected: "Conectado",
+      configuredRow: "Configurado; conexão não informada",
       initializing: "Iniciando",
       idle: "Ocioso",
       running: "Em execução",
@@ -1825,7 +1827,7 @@ export const ptBR: TranslationResources = {
     agentNotRunning: "O agente não está em execução",
     source: {
       configured:
-        "Servidores configurados. O provedor deste agente não informa se eles conectaram.",
+        "Servidores configurados. O provedor deste agente não informa se eles estão conectados.",
       startup: "Informado no início da sessão; as conexões podem ter mudado desde então.",
     },
     title: "Servidores MCP",

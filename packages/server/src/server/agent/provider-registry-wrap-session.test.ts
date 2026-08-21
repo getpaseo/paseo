@@ -64,7 +64,11 @@ describe("wrapSessionProvider", () => {
     expect(wrapped.listMcpServers).toBeUndefined();
   });
 
-  test("carries every optional session method the inner session defines", () => {
+  test("carries every method the inner session defines", () => {
+    // Derived from the inner session rather than a hardcoded list. The first version of
+    // this test enumerated the optional methods by hand, which made it exactly as
+    // incomplete as the wrapper it was guarding — both of them had forgotten
+    // `steerActiveTurn`. Comparing against the real object cannot drift that way.
     const optional = [
       "listCommands",
       "listMcpServers",
@@ -74,18 +78,19 @@ describe("wrapSessionProvider", () => {
       "revertConversation",
       "revertFiles",
       "revertBoth",
+      "steerActiveTurn",
       "tryHandleOutOfBand",
     ] as const;
-
     const inner = createInnerSession(
       Object.fromEntries(optional.map((name) => [name, vi.fn()])) as Partial<AgentSession>,
     );
     const wrapped = wrapSessionProvider("cursor-acp", inner);
 
-    // A blanket check so a method added to the session interface but not to the wrapper
-    // fails here rather than in whichever feature depended on it.
-    for (const name of optional) {
-      expect(wrapped[name], `${name} was dropped by wrapSessionProvider`).toBeDefined();
-    }
+    const dropped = Object.keys(inner).filter(
+      (key) =>
+        typeof (inner as Record<string, unknown>)[key] === "function" &&
+        (wrapped as Record<string, unknown>)[key] === undefined,
+    );
+    expect(dropped, "wrapSessionProvider dropped methods the inner session defines").toEqual([]);
   });
 });

@@ -152,10 +152,14 @@ export interface AgentCapabilityFlags {
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
   /**
-   * The provider can report which MCP servers its runtime actually connected to.
-   * Distinct from `supportsMcpServers`, which only says Paseo may inject config.
-   * Absent on daemons older than the MCP servers panel, which is what lets the
-   * app tell "this host cannot report" from "this agent has no servers".
+   * The provider can produce an MCP report for this agent — a list of servers, each
+   * carrying whatever state it can vouch for. It does not promise live connection
+   * status: read `AgentMcpSource` on the report for that, since ACP and Pi can only
+   * list the config they were handed. Distinct from `supportsMcpServers`, which only
+   * says Paseo may inject config in the first place.
+   *
+   * Absent on daemons older than the MCP servers panel, which is what lets the app
+   * tell "this host cannot report" from "this agent has no servers".
    */
   supportsMcpStatus?: boolean;
 }
@@ -174,7 +178,10 @@ export type AgentMcpServerStatus =
   | "failed"
   | "needs_auth"
   | "disabled"
-  /** The runtime reported a state this version does not recognise. */
+  /**
+   * No usable state. Either the runtime reported something this version does not
+   * recognise, or the report is `configured` and carries no per-server state at all.
+   */
   | "unknown";
 
 /**

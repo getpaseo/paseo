@@ -4916,6 +4916,13 @@ class OpenCodeAgentSession implements AgentSession {
     // so make sure that has happened before asking what is connected.
     await this.ensureMcpServersConfigured();
     const response = await this.client.mcp.status({ directory: this.config.cwd });
+    // The SDK reports failures through `error` rather than rejecting, so ignoring it
+    // would turn any HTTP or API failure into a confident "No MCP servers".
+    if (response.error) {
+      throw new Error(
+        `Failed to read OpenCode MCP status: ${toDiagnosticErrorMessage(response.error)}`,
+      );
+    }
     const servers: AgentMcpServer[] = [];
     for (const [name, entry] of Object.entries(response.data ?? {})) {
       const server: AgentMcpServer = { name, status: normalizeOpenCodeMcpStatus(entry.status) };

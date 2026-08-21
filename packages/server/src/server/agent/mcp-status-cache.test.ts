@@ -21,9 +21,26 @@ describe("McpStatusCache", () => {
     const load = vi.fn(async () => report("a"));
     const cache = new McpStatusCache();
 
-    expect(await cache.read("agent-1", false, load)).toEqual(report("a"));
-    expect(await cache.read("agent-1", false, load)).toEqual(report("a"));
+    expect((await cache.read("agent-1", false, load)).report).toEqual(report("a"));
+    expect((await cache.read("agent-1", false, load)).report).toEqual(report("a"));
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  test("a cache hit keeps the original fetch time rather than claiming it is current", async () => {
+    let now = 1_000_000;
+    const cache = new McpStatusCache(30_000, () => now);
+
+    const first = await cache.read("agent-1", false, async () => report("a"));
+    now += 29_000;
+    const hit = await cache.read("agent-1", false, async () => report("a"));
+
+    // A 29-second-old report that stamped itself with the current time would tell the
+    // user it was fetched just now.
+    expect(hit.fetchedAt).toBe(first.fetchedAt);
+
+    now += 2_000;
+    const refetched = await cache.read("agent-1", false, async () => report("a"));
+    expect(refetched.fetchedAt).not.toBe(first.fetchedAt);
   });
 
   test("coalesces concurrent reads into one provider call", async () => {
@@ -38,7 +55,7 @@ describe("McpStatusCache", () => {
     ]);
     gate.resolve(report("a"));
 
-    expect(await both).toEqual([report("a"), report("a")]);
+    expect((await both).map((r) => r.report)).toEqual([report("a"), report("a")]);
     expect(load).toHaveBeenCalledTimes(1);
   });
 
@@ -99,7 +116,9 @@ describe("McpStatusCache", () => {
     await expect(cache.read("agent-1", false, failing)).rejects.toThrow("provider exploded");
     // The in-flight entry has to be cleared or every later read would await a rejected
     // promise forever.
-    expect(await cache.read("agent-1", false, async () => report("a"))).toEqual(report("a"));
+    expect((await cache.read("agent-1", false, async () => report("a"))).report).toEqual(
+      report("a"),
+    );
   });
 
   test("invalidate drops the entry so a restarted runtime is re-read", async () => {

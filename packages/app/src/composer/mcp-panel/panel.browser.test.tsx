@@ -168,6 +168,34 @@ describe("MCP servers panel", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it("speaks a status for every row, including the ones that show none", () => {
+    mountPanel(readyView(MIXED));
+
+    // The tick is decorative, so a connected row would otherwise be announced as a bare
+    // name and be indistinguishable from a configured or unrecognised one.
+    const connected = document.querySelector('[aria-label^="codex,"]');
+    expect(connected?.getAttribute("aria-label")).toContain("Connected");
+
+    const needsAuth = document.querySelector('[aria-label^="claude.ai Stripe,"]');
+    expect(needsAuth?.getAttribute("aria-label")).toContain("Needs auth");
+  });
+
+  it("announces a configured row as unverified rather than connected", () => {
+    mountPanel(readyView([{ name: "paseo", status: "unknown" }], false, "configured"));
+
+    const configuredRow = document.querySelector('[aria-label^="paseo,"]');
+    expect(configuredRow?.getAttribute("aria-label")).toContain("connection not reported");
+  });
+
+  it("puts the source caveat above the rows so it cannot fall below the fold", () => {
+    mountPanel(readyView([{ name: "paseo", status: "unknown" }], false, "configured"));
+
+    const text = byTestId("mcp-panel")?.textContent ?? "";
+    expect(text.indexOf("does not report whether they connected")).toBeLessThan(
+      text.indexOf("paseo"),
+    );
+  });
+
   it("does not imply health for a live server whose state was not recognised", () => {
     mountPanel(readyView([{ name: "paseo", status: "unknown" }]));
 

@@ -118,11 +118,20 @@ function McpServerRow({
   const { labelKey } =
     source === "configured" ? NEUTRAL_PRESENTATION : getMcpStatusPresentation(server.status);
   const statusLabel = labelKey ? t(`mcpServers.status.${labelKey}`) : null;
+  // A connected row deliberately shows no trailing text — the tick carries it — but the
+  // tick is decorative, so without this a screen reader would read healthy, configured
+  // and unrecognised rows as nothing but a name.
+  const spokenStatus =
+    statusLabel ??
+    (source === "configured"
+      ? t("mcpServers.status.configuredRow")
+      : t("mcpServers.status.connected"));
 
   return (
     <View
       style={styles.row}
-      accessibilityLabel={statusLabel ? `${server.name}, ${statusLabel}` : server.name}
+      accessibilityRole="text"
+      accessibilityLabel={`${server.name}, ${spokenStatus}`}
       testID={`mcp-server-row-${server.name}`}
     >
       <McpStatusIcon server={server} source={source} />
@@ -207,12 +216,17 @@ function McpPanelBody({
   }
   return (
     <>
+      {/*
+        Above the rows, not below them. A host with twenty servers pushes anything
+        trailing past the panel's max height, so the caveat that these rows are
+        unverified would only be seen by someone who scrolled to the end.
+      */}
+      {view.source === "live" ? null : (
+        <Text style={styles.sourceNote}>{t(`mcpServers.source.${view.source}`)}</Text>
+      )}
       {view.servers.map((server) => (
         <McpServerRow key={server.name} server={server} source={view.source} />
       ))}
-      {view.source === "live" ? null : (
-        <Text style={styles.footnote}>{t(`mcpServers.source.${view.source}`)}</Text>
-      )}
     </>
   );
 }
@@ -347,13 +361,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
   },
-  footnote: {
+  sourceNote: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.4,
     marginHorizontal: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
   },
   rowText: {
     flexShrink: 1,

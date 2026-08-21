@@ -124,7 +124,6 @@ import {
   type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
-import { McpStatusCache } from "./agent/mcp-status-cache.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
@@ -713,12 +712,6 @@ export class Session {
     appVisibilityChangedAt: Date;
   } | null = null;
   private registeredPushToken: string | null = null;
-  /**
-   * Shared across this session's clients so two panels, or a reconnect, do not each pay
-   * for a provider call. Session-scoped rather than daemon-wide only because that is the
-   * lifetime the handler already has; the win is coalescing, not global reuse.
-   */
-  private readonly mcpStatusCache = new McpStatusCache();
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
@@ -4076,6 +4069,8 @@ export class Session {
       source?: AgentMcpSource;
       error: string | null;
       unavailable?: "unsupported" | "agent_not_running";
+      /** The provider's own fetch time; a cache hit keeps the original. */
+      fetchedAt?: string;
     }): void => {
       this.emit({
         type: "agent.mcp.list.response",
@@ -4084,7 +4079,7 @@ export class Session {
           servers: payload.servers,
           ...(payload.source ? { source: payload.source } : {}),
           ...(payload.unavailable ? { unavailable: payload.unavailable } : {}),
-          fetchedAt: new Date().toISOString(),
+          fetchedAt: payload.fetchedAt ?? new Date().toISOString(),
           error: payload.error,
           requestId,
         },
@@ -4120,10 +4115,12 @@ export class Session {
         return;
       }
 
-      const report = await this.mcpStatusCache.read(agentId, msg.force === true, () =>
-        session.listMcpServers!(),
+      const { report, fetchedAt } = await this.agentManager.mcpStatusCache.read(
+        agentId,
+        msg.force === true,
+        () => session.listMcpServers!(),
       );
-      emit({ servers: report.servers, source: report.source, error: null });
+      emit({ servers: report.servers, source: report.source, error: null, fetchedAt });
     } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, "Failed to list MCP servers");
       emit({ servers: [], error: getErrorMessage(error) });

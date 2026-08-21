@@ -263,6 +263,8 @@ export const fr: TranslationResources = {
       older: "Plus vieux",
     },
     status: {
+      connected: "Connecté",
+      configuredRow: "Configuré ; connexion non signalée",
       initializing: "Départ",
       idle: "Inactif",
       running: "En cours d'exécution",

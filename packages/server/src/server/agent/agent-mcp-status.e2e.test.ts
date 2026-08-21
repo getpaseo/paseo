@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import {
+  createDaemonTestContext,
+  DaemonClient,
+  type DaemonTestContext,
+} from "../test-utils/index.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentMcpServer } from "./agent-sdk-types.js";
 
@@ -77,7 +81,7 @@ test("an unknown agent id is reported as an error rather than an empty list", as
   expect(payload.unavailable).toBeUndefined();
 });
 
-test("two clients asking at once produce a single provider call", async () => {
+test("two separate clients share one provider call", async () => {
   let calls = 0;
   ctx = await createDaemonTestContext({
     agentClients: createTestAgentClients({
@@ -89,15 +93,48 @@ test("two clients asking at once produce a single provider call", async () => {
   });
   const agent = await ctx.client.createAgent({ provider: "codex", cwd });
 
-  const [a, b] = await Promise.all([
-    ctx.client.listMcpServers(agent.id, { requestId: "a" }),
-    ctx.client.listMcpServers(agent.id, { requestId: "b" }),
-  ]);
+  // A second socket, which the daemon gives its own Session. Reusing `ctx.client` here
+  // would only prove one session dedupes against itself, which a per-session cache did
+  // too — the point of hoisting the cache is that a second device does not pay again.
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${ctx.daemon.port}/ws` });
+  await second.connect();
+  try {
+    const [a, b] = await Promise.all([
+      ctx.client.listMcpServers(agent.id, { requestId: "a" }),
+      second.listMcpServers(agent.id, { requestId: "b" }),
+    ]);
 
-  expect(a.servers).toEqual(REPORTED_SERVERS);
-  expect(b.servers).toEqual(REPORTED_SERVERS);
-  // Codex answers this in ~3.5s and 1.1MB; two panels open must not cost two of those.
+    expect(a.servers).toEqual(REPORTED_SERVERS);
+    expect(b.servers).toEqual(REPORTED_SERVERS);
+    // Codex answers this in ~3.5s and 1.1MB; two open panels must not cost two of those.
+    expect(calls).toBe(1);
+    // And a cache hit keeps the original fetch time rather than claiming it is current.
+    expect(new Date(b.fetchedAt).getTime()).toBeLessThanOrEqual(Date.now());
+  } finally {
+    await second.close();
+  }
+});
+
+test("a new runtime for the same agent invalidates the cached report", async () => {
+  let calls = 0;
+  ctx = await createDaemonTestContext({
+    agentClients: createTestAgentClients({
+      mcpServerStatus: REPORTED_SERVERS,
+      onListMcpServers: () => {
+        calls += 1;
+      },
+    }),
+  });
+  const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+
+  await ctx.client.listMcpServers(agent.id);
   expect(calls).toBe(1);
+
+  // Restarting the agent can change which servers it has, so the cache must not answer
+  // for the runtime it outlived.
+  const restarted = await ctx.client.createAgent({ provider: "codex", cwd });
+  await ctx.client.listMcpServers(restarted.id);
+  expect(calls).toBe(2);
 });
 
 test("refresh forces past the cache", async () => {

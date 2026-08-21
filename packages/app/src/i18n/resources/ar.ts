@@ -259,6 +259,8 @@ export const ar: TranslationResources = {
       older: "أقدم",
     },
     status: {
+      connected: "متّصل",
+      configuredRow: "مهيّأ; لم يُبلّغ عن الاتّصال",
       initializing: "البدء",
       idle: "عاطل",
       running: "جري",

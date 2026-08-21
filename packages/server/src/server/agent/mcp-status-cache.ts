@@ -17,11 +17,18 @@ const DEFAULT_TTL_MS = 30_000;
 interface CacheEntry {
   report: AgentMcpReport;
   storedAtMs: number;
+  fetchedAt: string;
+}
+
+/** A report plus when the provider actually produced it, which a cache hit preserves. */
+export interface CachedMcpReport {
+  report: AgentMcpReport;
+  fetchedAt: string;
 }
 
 export class McpStatusCache {
   private readonly entries = new Map<string, CacheEntry>();
-  private readonly inFlight = new Map<string, Promise<AgentMcpReport>>();
+  private readonly inFlight = new Map<string, Promise<CachedMcpReport>>();
 
   constructor(
     private readonly ttlMs: number = DEFAULT_TTL_MS,
@@ -37,21 +44,25 @@ export class McpStatusCache {
     agentId: string,
     force: boolean,
     load: () => Promise<AgentMcpReport>,
-  ): Promise<AgentMcpReport> {
+  ): Promise<CachedMcpReport> {
     const pending = this.inFlight.get(agentId);
     if (pending) return pending;
 
     if (!force) {
       const entry = this.entries.get(agentId);
       if (entry && this.now() - entry.storedAtMs < this.ttlMs) {
-        return entry.report;
+        // The stored timestamp, not the current one: a half-minute-old cache hit that
+        // claimed it was fetched just now would misrepresent how current it is.
+        return { report: entry.report, fetchedAt: entry.fetchedAt };
       }
     }
 
     const request = load()
       .then((report) => {
-        this.entries.set(agentId, { report, storedAtMs: this.now() });
-        return report;
+        const storedAtMs = this.now();
+        const fetchedAt = new Date(storedAtMs).toISOString();
+        this.entries.set(agentId, { report, storedAtMs, fetchedAt });
+        return { report, fetchedAt };
       })
       .finally(() => {
         this.inFlight.delete(agentId);

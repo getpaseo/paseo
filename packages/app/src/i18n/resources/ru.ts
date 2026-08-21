@@ -261,6 +261,8 @@ export const ru: TranslationResources = {
       older: "Более ранние",
     },
     status: {
+      connected: "Подключено",
+      configuredRow: "Настроено; подключение не сообщается",
       initializing: "Запускается",
       idle: "Ожидает",
       running: "Работает",
@@ -1823,7 +1825,7 @@ export const ru: TranslationResources = {
     agentNotRunning: "Агент не запущен",
     source: {
       configured: "Настроенные серверы. Провайдер этого агента не сообщает, подключились ли они.",
-      startup: "Данные на момент запуска сессии; с тех пор связи могли измениться.",
+      startup: "Данные на момент запуска сессии; с тех пор подключения могли измениться.",
     },
     title: "Серверы MCP",
     open: "Серверы MCP",

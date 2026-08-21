@@ -257,6 +257,8 @@ export const en = {
       older: "Older",
     },
     status: {
+      connected: "Connected",
+      configuredRow: "Configured; connection not reported",
       initializing: "Starting",
       idle: "Idle",
       running: "Running",

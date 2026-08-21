@@ -262,6 +262,8 @@ export const ja: TranslationResources = {
       older: "以前",
     },
     status: {
+      connected: "接続済み",
+      configuredRow: "設定済み；接続状態は未報告",
       initializing: "起動中",
       idle: "アイドル",
       running: "実行中",

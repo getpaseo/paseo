@@ -20,7 +20,7 @@ function tmpCwd(): string {
 }
 
 async function withSession(
-  statusResponse: Record<string, unknown>,
+  statusResponse: Record<string, unknown> | { __error: unknown },
   assertions: (input: {
     session: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
     openCodeClient: TestOpenCodeClient;
@@ -29,7 +29,10 @@ async function withSession(
 ): Promise<void> {
   const runtime = new TestOpenCodeHarness();
   const openCodeClient = new TestOpenCodeClient();
-  openCodeClient.mcpStatusResponse = { data: statusResponse };
+  openCodeClient.mcpStatusResponse =
+    "__error" in statusResponse
+      ? { error: (statusResponse as { __error: unknown }).__error }
+      : { data: statusResponse };
   runtime.enqueueClient(openCodeClient);
   const cwd = tmpCwd();
   const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
@@ -97,5 +100,16 @@ describe("OpenCode MCP status", () => {
     await withSession({}, async ({ session }) => {
       expect(await session.listMcpServers?.()).toEqual({ servers: [], source: "live" });
     });
+  });
+
+  test("raises an API failure instead of reporting zero servers", async () => {
+    await withSession(
+      { __error: { message: "connect ECONNREFUSED 127.0.0.1:4096" } },
+      async ({ session }) => {
+        // The SDK returns failures through `error` rather than rejecting. Reading only
+        // `data` would turn any transport failure into a confident "No MCP servers".
+        await expect(session.listMcpServers?.()).rejects.toThrow(/ECONNREFUSED/);
+      },
+    );
   });
 });
