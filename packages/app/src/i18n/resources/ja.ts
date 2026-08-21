@@ -885,6 +885,8 @@ export const ja: TranslationResources = {
         failedRefresh: "gitの状態の更新に失敗しました。",
         emptyHiddenWhitespace: "空白を非表示にすると変更は表示されません",
         emptyUncommitted: "未コミットの変更なし",
+        seeUncommittedChanges: "未コミットの変更を表示",
+        seeCommittedChanges: "コミット済みの変更を表示",
         emptyAgainstBase: "{{baseRef}}との差分なし",
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",

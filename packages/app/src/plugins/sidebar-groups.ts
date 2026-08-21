@@ -1,7 +1,5 @@
 import type { InstalledPlugin, PluginSidebarContribution } from "./types";
 
-const preferredHosts = new Map<string, string>();
-
 export interface PluginSidebarTarget {
   plugin: InstalledPlugin;
   item: PluginSidebarContribution;
@@ -37,12 +35,4 @@ export function groupPluginSidebarContributions(plugins: InstalledPlugin[]): Plu
     }
   }
   return [...groups.values()];
-}
-
-export function getPreferredPluginContributionHost(groupKey: string): string | null {
-  return preferredHosts.get(groupKey) ?? null;
-}
-
-export function rememberPluginContributionHost(groupKey: string, serverId: string): void {
-  preferredHosts.set(groupKey, serverId);
 }

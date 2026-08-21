@@ -34,6 +34,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "junie",
   "kilo",
   "kimi",
+  "minimax-code",
   "minion-code",
   "mistral-vibe",
   "nova",

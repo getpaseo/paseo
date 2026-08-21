@@ -896,6 +896,8 @@ export const ptBR: TranslationResources = {
         failedRefresh: "Falha ao atualizar estado do git.",
         emptyHiddenWhitespace: "Nenhuma alteração visível após ocultar espaços em branco",
         emptyUncommitted: "Nenhuma alteração sem commit",
+        seeUncommittedChanges: "Ver alterações sem commit",
+        seeCommittedChanges: "Ver alterações com commit",
         emptyAgainstBase: "Nenhuma alteração vs {{baseRef}}",
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",

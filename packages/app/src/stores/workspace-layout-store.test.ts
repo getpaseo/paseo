@@ -484,7 +484,7 @@ describe("workspace-layout-store actions", () => {
     ).toEqual(override);
   });
 
-  it("keeps every Changes state field independent across explicit instances", () => {
+  it("keeps every Changes presentation field independent across explicit instances", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
     const first = store.openTab({
@@ -498,8 +498,6 @@ describe("workspace-layout-store actions", () => {
       intent: "new",
     })!;
     const changed: ChangesState = {
-      mode: "base",
-      baseRef: "origin/main",
       layout: "split" as const,
       wrapLines: true,
       hideWhitespace: true,
@@ -811,8 +809,6 @@ describe("workspace-layout-store actions", () => {
       .getState()
       .openTab({ workspaceKey: workspaceKey, target: { kind: "working_diff" }, intent: "new" })!;
     const firstState: ChangesState = {
-      mode: "base" as const,
-      baseRef: "origin/main",
       layout: "split" as const,
       wrapLines: true,
       hideWhitespace: true,
@@ -823,8 +819,6 @@ describe("workspace-layout-store actions", () => {
       commitsCollapsed: false,
     };
     const secondState: ChangesState = {
-      mode: "base" as const,
-      baseRef: "release",
       layout: "unified" as const,
       wrapLines: false,
       hideWhitespace: false,
@@ -918,6 +912,68 @@ describe("workspace-layout-store actions", () => {
 
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(findPaneContainingTab(layout.root, terminalTabId as string)?.id).toBe("main");
+    expect(layout.focusedPaneId).toBe("explorer");
+  });
+
+  it("places a background setup tab in the main pane without moving focus", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    store.focusPane(workspaceKey, "explorer");
+
+    const setupTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "setup", workspaceId: WORKSPACE_ID },
+      intent: "background",
+      placement: { mode: "prefer", paneId: "main" },
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, setupTabId as string)?.id).toBe("main");
+    expect(layout.focusedPaneId).toBe("explorer");
+  });
+
+  it("keeps a failed setup tab out of the focused side panel when main was removed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutStore.setState((state) => ({
+      layoutByWorkspace: {
+        ...state.layoutByWorkspace,
+        [workspaceKey]: normalizeLayout({
+          root: {
+            kind: "group",
+            group: {
+              id: "root",
+              direction: "horizontal",
+              sizes: [0.5, 0.5],
+              children: [
+                createPane({ id: "secondary", tabIds: [] }),
+                createPane({ id: "explorer", tabIds: [] }),
+              ],
+            },
+          },
+          focusedPaneId: "explorer",
+        }),
+      },
+      sidePanelPaneIdByWorkspace: {
+        ...state.sidePanelPaneIdByWorkspace,
+        [workspaceKey]: "explorer",
+      },
+    }));
+
+    const setupTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "setup", workspaceId: WORKSPACE_ID },
+      intent: "background",
+      placement: { mode: "prefer", paneId: "main" },
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneContainingTab(layout.root, setupTabId as string)?.id).toBe("secondary");
     expect(layout.focusedPaneId).toBe("explorer");
   });
 

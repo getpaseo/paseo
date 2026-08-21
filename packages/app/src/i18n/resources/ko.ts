@@ -881,6 +881,8 @@ export const ko: TranslationResources = {
         failedRefresh: "Git 상태를 새로고침하지 못했습니다.",
         emptyHiddenWhitespace: "공백을 숨긴 후 표시할 변경 사항이 없습니다",
         emptyUncommitted: "커밋되지 않은 변경 사항이 없습니다",
+        seeUncommittedChanges: "커밋되지 않은 변경 사항 보기",
+        seeCommittedChanges: "커밋된 변경 사항 보기",
         emptyAgainstBase: "{{baseRef}} 대비 변경 사항이 없습니다",
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",

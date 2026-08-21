@@ -11,8 +11,8 @@ import {
 } from "../support/helpers/settings";
 
 const ACP_PROVIDER = {
-  id: "hermes",
-  name: "Hermes",
+  id: "minimax-code",
+  name: "MiniMax Code",
 };
 
 interface ProviderCatalogDaemonClient {
@@ -22,7 +22,7 @@ interface ProviderCatalogDaemonClient {
 }
 
 test.describe("ACP provider catalog", () => {
-  test("adds a catalog provider from settings", async ({ page }) => {
+  test("adds MiniMax Code from settings", async ({ page }) => {
     const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
       clientIdPrefix: "provider-catalog-e2e",
     });
