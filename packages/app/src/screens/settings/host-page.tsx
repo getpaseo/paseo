@@ -1091,6 +1091,8 @@ function BranchPrefixCard({ serverId }: { serverId: string }) {
     if (draft === persistedPrefix) return;
     void patchConfig({ branchPrefix: draft }).catch((error) => {
       console.error("[HostPage] Failed to update branch prefix", error);
+      setDraft(persistedPrefix);
+      inputRef.current?.replaceText(persistedPrefix);
       Alert.alert(
         t("settings.host.workspaces.branchPrefix.updateFailedTitle"),
         t("settings.host.workspaces.branchPrefix.updateFailedMessage"),
