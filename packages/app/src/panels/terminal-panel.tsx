@@ -116,6 +116,7 @@ function TerminalPanel() {
 
 export const terminalPanelRegistration: PanelRegistration<"terminal"> = {
   kind: "terminal",
+  resourceKey: (target) => target.terminalId,
   component: TerminalPanel,
   useDescriptor: useTerminalPanelDescriptor,
 };

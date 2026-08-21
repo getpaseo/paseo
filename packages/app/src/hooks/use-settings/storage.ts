@@ -89,6 +89,8 @@ export interface AppSettings {
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
+  /** Route implicitly opened supporting tabs into the Side panel. Desktop only. */
+  openSupportingTabsInSidePanel: boolean;
 }
 
 export interface Settings extends AppSettings {
@@ -137,6 +139,7 @@ const StoredAppSettingsSchema = z.strictObject({
   compactToolCalls: z.boolean().optional(),
   chatOutlineEnabled: z.boolean().optional(),
   vimKeybindings: z.boolean().optional(),
+  openSupportingTabsInSidePanel: z.boolean().optional(),
   // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
   manageBuiltInDaemon: z.boolean().optional(),
   releaseChannel: z.enum(["stable", "beta"]).optional(),
@@ -167,6 +170,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
+  openSupportingTabsInSidePanel: true,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -328,6 +332,9 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
   }
   if (typeof stored.chatOutlineEnabled === "boolean") {
     result.chatOutlineEnabled = stored.chatOutlineEnabled;
+  }
+  if (typeof stored.openSupportingTabsInSidePanel === "boolean") {
+    result.openSupportingTabsInSidePanel = stored.openSupportingTabsInSidePanel;
   }
   return result;
 }

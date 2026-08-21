@@ -22,12 +22,12 @@ function launchArgs(input: EditorTargetLaunchInput): string[] {
 
 export const androidStudioTarget: EditorTarget = {
   id: "android-studio",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "Android Studio",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("android-studio.png"),
     };
   },
   async isInstalled(runtime) {

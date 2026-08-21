@@ -23,7 +23,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
-    openTabFocused: (workspaceKey, target) => {
+    openTab: ({ workspaceKey, target }) => {
       openedTabs.push({ workspaceKey, target });
       return target.kind === "agent" ? target.agentId : null;
     },

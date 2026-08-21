@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -13,29 +13,24 @@ import {
 } from "@/git/pull-request-panel";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
 import { getPullRequestIdentity, resolvePullRequestContentState } from "./state";
 
-export function usePullRequestAutoAdd(input: {
-  workspaceKey: string | null;
+/**
+ * Whether this workspace's branch has a pull request. Detection only offers the
+ * pull request as something the user can open; it never opens a tab on its own.
+ */
+export function useHasPullRequest(input: {
   serverId: string;
   cwd: string | null;
   enabled: boolean;
-}): void {
+}): boolean {
   const status = useCheckoutPrStatusQuery({
     serverId: input.serverId,
     cwd: input.cwd || "",
     enabled: input.enabled,
   }).status;
-  const observePullRequest = useWorkspaceLayoutStore((state) => state.observePullRequest);
-  const identity = getPullRequestIdentity(status);
-
-  useEffect(() => {
-    if (input.workspaceKey) {
-      observePullRequest(input.workspaceKey, identity);
-    }
-  }, [identity, input.workspaceKey, observePullRequest]);
+  return getPullRequestIdentity(status) !== null;
 }
 
 export function PullRequestContent(input: {

@@ -3778,23 +3778,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     options: { allowArchivedHistory?: boolean } = {},
   ): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
+    const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    const developerInstructions = composeSystemPromptParts(
+      this.config.systemPrompt,
+      this.config.daemonAppendSystemPrompt,
+    );
+    if (developerInstructions) {
+      params.developerInstructions = developerInstructions;
+    }
+    const codexConfig = this.buildCodexInnerConfig();
+    if (codexConfig) {
+      params.config = codexConfig;
+    }
     try {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
       if (ids.includes(this.currentThreadId)) {
         return;
-      }
-      const params: Record<string, unknown> = { threadId: this.currentThreadId };
-      const developerInstructions = composeSystemPromptParts(
-        this.config.systemPrompt,
-        this.config.daemonAppendSystemPrompt,
-      );
-      if (developerInstructions) {
-        params.developerInstructions = developerInstructions;
-      }
-      const codexConfig = this.buildCodexInnerConfig();
-      if (codexConfig) {
-        params.config = codexConfig;
       }
       const response = await this.client.request("thread/resume", params);
       this.rememberResolvedSandboxPolicy(response);
@@ -3809,6 +3809,19 @@ export class CodexAppServerAgentSession implements AgentSession {
           { threadId },
           "Loading archived Codex thread history without resuming the native session",
         );
+        return;
+      }
+      if (isArchivedCodexThreadResumeError(error, threadId)) {
+        try {
+          await this.client.request("thread/unarchive", { threadId });
+        } catch (unarchiveError) {
+          if (!isCodexAlreadyUnarchivedError(unarchiveError, threadId)) {
+            throw unarchiveError;
+          }
+        }
+        const response = await this.client.request("thread/resume", params);
+        this.rememberResolvedSandboxPolicy(response);
+        this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
         return;
       }
       this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
