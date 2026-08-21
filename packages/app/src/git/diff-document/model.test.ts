@@ -1,4 +1,4 @@
-import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
+import type { CheckoutDiffSubmodule, ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 import {
   buildDiffDocumentModel,
@@ -6,9 +6,12 @@ import {
   FILE_HEADER_HEIGHT,
   graphemeBoundaries,
   measureFragments,
+  resolveFocusedSubmoduleExpansion,
   resolveScrollAnchor,
   resolveRelayoutScrollTop,
   shouldApplyRelayoutScroll,
+  SUBMODULE_HEADER_HEIGHT,
+  SUBMODULE_STATUS_HEIGHT,
 } from "./model";
 import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
 
@@ -34,6 +37,16 @@ function file(path = "src/a.ts"): ParsedDiffFile {
         ],
       },
     ],
+  };
+}
+
+function submodule(path = "modules/demo"): CheckoutDiffSubmodule {
+  return {
+    path,
+    branch: "main",
+    currentSha: "1234567890abcdef",
+    checkoutState: "checked_out",
+    changeState: "worktree_modified",
   };
 }
 
@@ -186,6 +199,72 @@ describe("diff document model", () => {
     expect(collapsed.files[0]?.bodyHeight).toBe(0);
     expect(collapsed.files[1]?.bodyHeight).toBeGreaterThan(0);
     expect(collapsed.height).toBeLessThan(expanded.height);
+  });
+
+  it("groups canonical child files after their submodule section", () => {
+    const repositoryFile = file("README.md");
+    const childFile = { ...file("modules/demo/src/a.ts"), submodulePath: "modules/demo" };
+    const model = buildDiffDocumentModel(
+      input({
+        files: [childFile, repositoryFile],
+        submodules: [submodule()],
+        collapsedSubmodulePaths: new Set(),
+      }),
+    );
+
+    expect(
+      model.sections.map((section) =>
+        section.kind === "file"
+          ? `file:${section.file.path}`
+          : `submodule:${section.submodule.path}`,
+      ),
+    ).toEqual(["file:README.md", "submodule:modules/demo", "file:modules/demo/src/a.ts"]);
+    expect(model.submodules[0]).toMatchObject({
+      path: "modules/demo",
+      isCollapsed: false,
+      statusHeight: 0,
+    });
+  });
+
+  it("collapses a submodule to one header row without changing file collapse state", () => {
+    const childFile = { ...file("modules/demo/src/a.ts"), submodulePath: "modules/demo" };
+    const expanded = buildDiffDocumentModel(
+      input({
+        files: [childFile],
+        submodules: [submodule()],
+        collapsedSubmodulePaths: new Set(),
+      }),
+    );
+    const collapsed = buildDiffDocumentModel(
+      input({
+        files: [childFile],
+        submodules: [submodule()],
+        collapsedFilePaths: new Set([childFile.path]),
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+        reuseFrom: [expanded],
+      }),
+    );
+
+    expect(collapsed.sections).toHaveLength(1);
+    expect(collapsed.files).toHaveLength(0);
+    expect(collapsed.height).toBe(SUBMODULE_HEADER_HEIGHT);
+    expect(collapsed.submodules[0]).toMatchObject({
+      path: "modules/demo",
+      isCollapsed: true,
+      statusHeight: 0,
+      bottom: SUBMODULE_HEADER_HEIGHT,
+    });
+  });
+
+  it("places an added-submodule status row before its child files", () => {
+    const childFile = { ...file("modules/demo/src/a.ts"), submodulePath: "modules/demo" };
+    const added = { ...submodule(), changeState: "added" };
+    const model = buildDiffDocumentModel(
+      input({ files: [childFile], submodules: [added], collapsedSubmodulePaths: new Set() }),
+    );
+
+    expect(model.submodules[0]?.statusHeight).toBe(SUBMODULE_STATUS_HEIGHT);
+    expect(model.files[0]?.top).toBe(SUBMODULE_HEADER_HEIGHT + SUBMODULE_STATUS_HEIGHT);
   });
 
   it("reuses unchanged file measurements when collapse state changes", () => {
@@ -431,6 +510,79 @@ describe("diff document model", () => {
 
     expect(model.files[0]?.contentWidth).toBe(344);
     expect(model.files[0]!.contentWidth - model.viewportWidth).toBe(104);
+  });
+
+  describe("focused submodule auto-expansion", () => {
+    const childFiles = [{ path: "modules/demo/src/a.ts", submodulePath: "modules/demo" }];
+
+    it("expands the submodule when a new focus lands on a collapsed child file", () => {
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "1:modules/demo/src/a.ts",
+        focusPath: "modules/demo/src/a.ts",
+        previousFocusKey: null,
+        files: childFiles,
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+      });
+      expect(result).toEqual({ consumed: true, expandSubmodulePath: "modules/demo" });
+    });
+
+    it("does not re-expand when the collapse state changes but focus is unchanged", () => {
+      // The user collapsed the submodule that still holds the focused file; the
+      // effect re-runs because collapsedSubmodulePaths changed, but the focusKey
+      // is the same one already consumed, so nothing expands.
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "1:modules/demo/src/a.ts",
+        focusPath: "modules/demo/src/a.ts",
+        previousFocusKey: "1:modules/demo/src/a.ts",
+        files: childFiles,
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+      });
+      expect(result).toEqual({ consumed: false, expandSubmodulePath: null });
+    });
+
+    it("leaves a focus unconsumed until its file has loaded", () => {
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "1:modules/demo/src/a.ts",
+        focusPath: "modules/demo/src/a.ts",
+        previousFocusKey: null,
+        files: [],
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+      });
+      expect(result).toEqual({ consumed: false, expandSubmodulePath: null });
+    });
+
+    it("re-expands when the same path is focused again with a new request id", () => {
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "2:modules/demo/src/a.ts",
+        focusPath: "modules/demo/src/a.ts",
+        previousFocusKey: "1:modules/demo/src/a.ts",
+        files: childFiles,
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+      });
+      expect(result).toEqual({ consumed: true, expandSubmodulePath: "modules/demo" });
+    });
+
+    it("consumes a focus on an already-expanded submodule without expanding", () => {
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "1:modules/demo/src/a.ts",
+        focusPath: "modules/demo/src/a.ts",
+        previousFocusKey: null,
+        files: childFiles,
+        collapsedSubmodulePaths: new Set(),
+      });
+      expect(result).toEqual({ consumed: true, expandSubmodulePath: null });
+    });
+
+    it("consumes a focus on a file outside any submodule", () => {
+      const result = resolveFocusedSubmoduleExpansion({
+        focusKey: "1:README.md",
+        focusPath: "README.md",
+        previousFocusKey: null,
+        files: [{ path: "README.md" }, ...childFiles],
+        collapsedSubmodulePaths: new Set(["modules/demo"]),
+      });
+      expect(result).toEqual({ consumed: true, expandSubmodulePath: null });
+    });
   });
 
   it("uses the widest split-column overflow once for the shared file offset", () => {

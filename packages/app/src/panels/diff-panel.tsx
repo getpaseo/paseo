@@ -92,7 +92,6 @@ function WorkingDiffPanel() {
   if (!cwd) {
     return <PanelState message={t("panels.diff.directoryMissing")} />;
   }
-
   return (
     <View style={styles.container} testID="working-diff-panel">
       <ChangesSurface

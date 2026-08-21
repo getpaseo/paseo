@@ -2514,6 +2514,8 @@ const DiffHunkSchema = z.object({
 
 const ParsedDiffFileSchema = z.object({
   path: z.string(),
+  // COMPAT(diffSubmodules): added in v0.5.0; keep optional because superproject files have no group.
+  submodulePath: z.string().optional(),
   // COMPAT(diffOldPath): added in v0.3.0, remove gate after 2027-02-09.
   oldPath: z.string().optional(),
   isNew: z.boolean(),
@@ -3410,6 +3412,8 @@ export const ServerInfoStatusPayloadSchema = z
         fsEntryDuplicate: z.boolean().optional(),
         // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
         checkoutDiscardChanges: z.boolean().optional(),
+        // COMPAT(diffSubmodules): added in v0.5.0, remove gate after 2027-08-19.
+        diffSubmodules: z.boolean().optional(),
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         // An older daemon parses its persisted config strictly, so writing
         // agentProfiles to one is silently dropped. The client hides the feature
@@ -4901,10 +4905,23 @@ export const CheckoutStatusUpdateSchema = z.object({
     .and(CheckoutStatusUpdateMetadataSchema),
 });
 
+export const CheckoutDiffSubmoduleSchema = z.object({
+  path: z.string(),
+  branch: z.string().nullable(),
+  currentSha: z.string().nullable(),
+  basePinnedSha: z.string().nullable().optional(),
+  headPinnedSha: z.string().nullable().optional(),
+  // Strings keep new daemon states forward-compatible with older clients.
+  checkoutState: z.string(),
+  changeState: z.string(),
+});
+
 const CheckoutDiffSubscriptionPayloadSchema = z.object({
   subscriptionId: z.string(),
   cwd: z.string(),
   files: z.array(ParsedDiffFileSchema),
+  // COMPAT(diffSubmodules): added in v0.5.0, remove optional parsing after 2027-08-19.
+  submodules: z.array(CheckoutDiffSubmoduleSchema).optional(),
   error: CheckoutErrorSchema.nullable(),
   // COMPAT(diffTooLarge): added in v0.2.4, keep optional until the daemon floor is v0.2.4.
   diffTooLarge: z.boolean().optional(),
@@ -6614,6 +6631,7 @@ export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema
 export type CheckoutStatusUpdate = z.infer<typeof CheckoutStatusUpdateSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<typeof SubscribeCheckoutDiffRequestSchema>;
 export type UnsubscribeCheckoutDiffRequest = z.infer<typeof UnsubscribeCheckoutDiffRequestSchema>;
+export type CheckoutDiffSubmodule = z.infer<typeof CheckoutDiffSubmoduleSchema>;
 export type SubscribeCheckoutDiffResponse = z.infer<typeof SubscribeCheckoutDiffResponseSchema>;
 export type CheckoutDiffUpdate = z.infer<typeof CheckoutDiffUpdateSchema>;
 export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;

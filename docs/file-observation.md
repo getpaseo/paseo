@@ -18,4 +18,6 @@ Git owns Git-ignore evaluation. The observer accepts absolute excluded roots and
 
 Workspace Git verifies each repository metadata subscription with a one-shot canary inside the Git directory. If the event does not round-trip through the subscription callback, treat the watcher as unavailable and enter degraded polling. Refresh working-tree Git-ignore exclusions from ignore-file events and watcher recovery, never from a healthy-watcher timer.
 
+Repository metadata observation must also exclude `objects`, `logs`, and `hooks` beneath every discovered submodule gitdir in `.git/modules`. Reconcile those absolute roots when the modules tree changes and await `updateIgnore()`; recursively inventorying submodule object databases can exhaust watcher and inventory limits.
+
 The real-filesystem contracts and daemon auto-archive lifecycle run in the normal server test suite. Use the scripts only for manual performance and soak work: `npm run measure:file-observer --workspace=@getpaseo/server` measures burst and sustained-create behavior, and `npm run repro:file-observer-teardown --workspace=@getpaseo/server` runs the teardown soak.

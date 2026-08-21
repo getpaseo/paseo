@@ -1,10 +1,15 @@
 import path from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { FileObserver } from "./file-observer/index.js";
-import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import {
+  discoverSubmoduleGitMetadataPrunedPaths,
+  WorkspaceGitServiceImpl,
+} from "./workspace-git-service.js";
 
 const REPO_CWD = path.resolve("/tmp/paseo-observation-repo");
 const GIT_DIR = path.join(REPO_CWD, ".git");
@@ -207,6 +212,41 @@ async function flushPromises(): Promise<void> {
   }
 }
 
+test("discovers exact prune roots for namespaced and nested submodule gitdirs", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-submodule-metadata-"));
+  const gitDir = path.join(root, ".git");
+  try {
+    const gitDirs = [
+      path.join(gitDir, "modules", "vendor", "sdk"),
+      path.join(gitDir, "modules", "objects"),
+      path.join(gitDir, "modules", "parent"),
+      path.join(gitDir, "modules", "parent", "modules", "child"),
+      path.join(gitDir, "modules", "vendor", "config"),
+    ];
+    await Promise.all(gitDirs.map((directory) => mkdir(directory, { recursive: true })));
+    await writeFile(path.join(gitDirs[0], "config"), "");
+    await writeFile(path.join(gitDirs[1], "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(path.join(gitDirs[2], "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(path.join(gitDirs[3], "commondir"), "../..\n");
+    await writeFile(path.join(gitDirs[4], "HEAD"), "ref: refs/heads/main\n");
+
+    const prunedPaths = await discoverSubmoduleGitMetadataPrunedPaths(gitDir);
+    expect(prunedPaths).toEqual(
+      gitDirs
+        .flatMap((directory) =>
+          ["hooks", "logs", "objects"].map((name) => path.join(directory, name)),
+        )
+        .sort(),
+    );
+    expect(prunedPaths).not.toContain(path.join(gitDir, "modules", "vendor", "objects"));
+    expect(
+      await discoverSubmoduleGitMetadataPrunedPaths(path.join(root, "missing", ".git")),
+    ).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 describe("WorkspaceGitService checkout observation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -323,6 +363,207 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("repository metadata observation reconciles submodule gitdir prune roots", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-submodule-observation-"));
+    const gitDir = path.join(root, ".git");
+    const existingGitDir = path.join(gitDir, "modules", "vendor", "sdk");
+    const addedGitDir = path.join(gitDir, "modules", "new-sdk");
+    await mkdir(existingGitDir, { recursive: true });
+    await writeFile(path.join(existingGitDir, "config"), "");
+
+    const watcher = createWatcherHarness();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutFacts(cwd),
+      worktreeRoot: root,
+      absoluteGitDir: gitDir,
+      gitCommonDir: gitDir,
+    }));
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${root}\n` : "",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService(watcher, { getCheckoutSnapshotFacts, runGitCommand });
+    const subscription = service.registerWorkspace({ cwd: root }, vi.fn());
+
+    try {
+      await vi.waitFor(() => {
+        expect(getWatcherRecordsForDirectory(watcher, gitDir)).toHaveLength(1);
+        expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      });
+      const repoWatcher = watcher.records.find((record) => record.directory === gitDir);
+      expect(repoWatcher?.ignore).toEqual(
+        expect.arrayContaining([
+          path.join(existingGitDir, "hooks"),
+          path.join(existingGitDir, "logs"),
+          path.join(existingGitDir, "objects"),
+        ]),
+      );
+
+      await mkdir(addedGitDir, { recursive: true });
+      await writeFile(path.join(addedGitDir, "config"), "");
+      repoWatcher?.callback(null, [{ path: path.join(addedGitDir, "config"), type: "create" }]);
+      await vi.waitFor(() => {
+        expect(repoWatcher?.updateIgnore).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            path.join(addedGitDir, "hooks"),
+            path.join(addedGitDir, "logs"),
+            path.join(addedGitDir, "objects"),
+          ]),
+        );
+      });
+
+      await rm(addedGitDir, { recursive: true, force: true });
+      repoWatcher?.callback(null, [{ path: path.join(addedGitDir, "config"), type: "delete" }]);
+      await vi.waitFor(() => {
+        expect(repoWatcher?.updateIgnore).toHaveBeenCalledTimes(2);
+      });
+      const lastIgnore = repoWatcher?.updateIgnore.mock.calls.at(-1)?.[0] as string[];
+      expect(lastIgnore).not.toContain(path.join(addedGitDir, "objects"));
+      expect(lastIgnore).toContain(path.join(existingGitDir, "objects"));
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("closing metadata observation during prune rediscovery skips the ignore update", async () => {
+    const watcher = createWatcherHarness();
+    const rediscovery = createDeferred<string[]>();
+    const discoverPrunedPaths = vi
+      .fn<() => Promise<string[]>>()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => rediscovery.promise);
+    const service = createService(watcher, {
+      discoverSubmoduleGitMetadataPrunedPaths: discoverPrunedPaths,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+    });
+    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+    repoWatcher?.callback(null, [
+      { path: path.join(GIT_DIR, "modules", "sdk", "config"), type: "create" },
+    ]);
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(2);
+    });
+
+    subscription.unsubscribe();
+    rediscovery.resolve([
+      path.join(GIT_DIR, "modules", "sdk", "hooks"),
+      path.join(GIT_DIR, "modules", "sdk", "logs"),
+      path.join(GIT_DIR, "modules", "sdk", "objects"),
+    ]);
+    await flushPromises();
+
+    expect(repoWatcher?.updateIgnore).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
+  test("re-drives a metadata ignore refresh requested while the previous update settles", async () => {
+    const watcher = createWatcherHarness();
+    const sub1 = path.join(GIT_DIR, "modules", "sdk");
+    const sub2 = path.join(GIT_DIR, "modules", "app");
+    const pruned1 = [path.join(sub1, "hooks"), path.join(sub1, "logs"), path.join(sub1, "objects")];
+    const pruned2 = [
+      ...pruned1,
+      path.join(sub2, "hooks"),
+      path.join(sub2, "logs"),
+      path.join(sub2, "objects"),
+    ];
+    const discovery = createDeferred<string[]>();
+    const discoverPrunedPaths = vi
+      .fn<() => Promise<string[]>>()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => discovery.promise)
+      .mockResolvedValue(pruned2);
+    const service = createService(watcher, {
+      discoverSubmoduleGitMetadataPrunedPaths: discoverPrunedPaths,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(1);
+    });
+    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+    if (!repoWatcher) throw new Error("expected a repository metadata watcher");
+
+    // A submodule topology event starts the ignore-refresh loop, which parks on discovery.
+    repoWatcher.callback(null, [{ path: path.join(sub1, "config"), type: "create" }]);
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(2);
+    });
+
+    // Hold the loop's updateIgnore so we can drive a second request into the window
+    // between the loop reading `requested === false` and the promise being cleared.
+    const update = createDeferred<void>();
+    repoWatcher.updateIgnore.mockReturnValueOnce(update.promise);
+    discovery.resolve(pruned1);
+    await flushPromises();
+    expect(repoWatcher.updateIgnore).toHaveBeenCalledTimes(1);
+
+    // Registered after the loop's own await, so the second event fires only once the
+    // loop has already exited but before `.finally` nulls the update promise.
+    void (async () => {
+      await update.promise;
+      repoWatcher.callback(null, [{ path: path.join(sub2, "config"), type: "create" }]);
+    })();
+    update.resolve();
+
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(3);
+      expect(repoWatcher.updateIgnore).toHaveBeenCalledTimes(2);
+    });
+    const lastIgnore = repoWatcher.updateIgnore.mock.calls.at(-1)?.[0] as string[];
+    expect(lastIgnore).toEqual(expect.arrayContaining(pruned2));
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("metadata prune discovery failure polls and recovers the repository observer", async () => {
+    const watcher = createWatcherHarness();
+    const discoveryError = Object.assign(new Error("metadata scan denied"), { code: "EACCES" });
+    const discoverPrunedPaths = vi
+      .fn<() => Promise<string[]>>()
+      .mockRejectedValueOnce(discoveryError)
+      .mockResolvedValueOnce([]);
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService(watcher, {
+      discoverSubmoduleGitMetadataPrunedPaths: discoverPrunedPaths,
+      getCheckoutStatus,
+      getWorkspaceGitSelfHealPhaseMs: () => 1_000_000,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+    expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(0);
+
+    const statusCallsBeforePolling = getCheckoutStatus.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsBeforePolling);
+    });
+
+    await vi.advanceTimersByTimeAsync(25_000);
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledTimes(2);
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
   test("an observer abandoned during async setup is closed", async () => {
     const watcher = createWatcherHarness();
     const openedSubscription = createDeferred<{ unsubscribe: () => Promise<void> }>();
@@ -346,6 +587,26 @@ describe("WorkspaceGitService checkout observation", () => {
     });
 
     service.dispose();
+  });
+
+  test("closing a workspace during metadata prune discovery does not open its observer", async () => {
+    const watcher = createWatcherHarness();
+    const discovery = createDeferred<string[]>();
+    const discoverPrunedPaths = vi.fn(() => discovery.promise);
+    const service = createService(watcher, {
+      discoverSubmoduleGitMetadataPrunedPaths: discoverPrunedPaths,
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(discoverPrunedPaths).toHaveBeenCalledWith(GIT_DIR);
+    });
+    subscription.unsubscribe();
+    discovery.resolve([]);
+    await flushPromises();
+
+    expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(0);
+    await service.dispose();
   });
 
   test("a tracked edit refreshes summary and active uncommitted diff without structural or forge work", async () => {
@@ -421,6 +682,137 @@ describe("WorkspaceGitService checkout observation", () => {
     summarySubscription.unsubscribe();
     diffManager.dispose();
     service.dispose();
+  });
+
+  test("a submodule HEAD event refreshes active uncommitted submodule metadata", async () => {
+    const watcher = createWatcherHarness();
+    let submodule = {
+      path: "modules/sdk",
+      branch: "feature/old",
+      currentSha: "1111111",
+      headPinnedSha: "0000000",
+      checkoutState: "checked_out",
+      changeState: "head_differs",
+    };
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: "",
+      structured: [],
+      submodules: [submodule],
+    }));
+    const service = createService(watcher, { getCheckoutDiff });
+    const diffManager = new CheckoutDiffManager({
+      logger: createLogger(),
+      paseoHome: "/tmp/paseo-home",
+      workspaceGitService: service,
+    });
+    const listener = vi.fn();
+
+    const subscription = await diffManager.subscribe(
+      { cwd: REPO_CWD, compare: { mode: "uncommitted" } },
+      listener,
+    );
+    expect(subscription.initial.submodules).toEqual([submodule]);
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    });
+
+    submodule = {
+      ...submodule,
+      branch: "feature/new",
+      currentSha: "2222222",
+    };
+    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+    repoWatcher?.callback(null, [
+      { path: path.join(GIT_DIR, "modules", "sdk", "HEAD"), type: "update" },
+    ]);
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith({
+        cwd: REPO_CWD,
+        files: [],
+        submodules: [submodule],
+        error: null,
+      });
+    });
+    expect(getCheckoutDiff).toHaveBeenCalledTimes(2);
+
+    subscription.unsubscribe();
+    diffManager.dispose();
+    await service.dispose();
+  });
+
+  test("a submodule commit refreshes the uncommitted diff when the superproject transitions clean to dirty", async () => {
+    const watcher = createWatcherHarness();
+    let dirty = false;
+    let shortstat: { additions: number; deletions: number } | null = null;
+    let submodule = {
+      path: "modules/sdk",
+      branch: "feature/old",
+      currentSha: "1111111",
+      headPinnedSha: "1111111",
+      checkoutState: "checked_out",
+      changeState: "clean",
+    };
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { isDirty: dirty }),
+    );
+    const getCheckoutShortstat = vi.fn(async () => shortstat);
+    const getCheckoutDiff = vi.fn(async () => ({
+      diff: "",
+      structured: [],
+      submodules: [submodule],
+    }));
+    const service = createService(watcher, {
+      getCheckoutStatus,
+      getCheckoutShortstat,
+      getCheckoutDiff,
+    });
+    const diffManager = new CheckoutDiffManager({
+      logger: createLogger(),
+      paseoHome: "/tmp/paseo-home",
+      workspaceGitService: service,
+    });
+    const listener = vi.fn();
+
+    const subscription = await diffManager.subscribe(
+      { cwd: REPO_CWD, compare: { mode: "uncommitted" } },
+      listener,
+    );
+    expect(subscription.initial.submodules).toEqual([submodule]);
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+
+    // A commit inside the submodule moves modules/sdk/HEAD (invisible to the
+    // superproject working-tree watcher) and flips the superproject clean -> dirty.
+    dirty = true;
+    shortstat = { additions: 0, deletions: 0 };
+    submodule = {
+      ...submodule,
+      branch: "feature/new",
+      currentSha: "2222222",
+      changeState: "head_differs",
+    };
+    const repoWatcher = watcher.records.find((record) => record.directory === GIT_DIR);
+    repoWatcher?.callback(null, [
+      { path: path.join(GIT_DIR, "modules", "sdk", "HEAD"), type: "update" },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith({
+        cwd: REPO_CWD,
+        files: [],
+        submodules: [submodule],
+        error: null,
+      });
+    });
+
+    subscription.unsubscribe();
+    diffManager.dispose();
+    await service.dispose();
   });
 
   test("worktree events invalidate uncommitted diffs and metadata events invalidate both", async () => {

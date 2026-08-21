@@ -1,8 +1,12 @@
-import { resolve, dirname, basename } from "path";
+import { resolve, dirname, basename, posix as posixPath } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
-import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
+import type {
+  CheckoutCommit,
+  CheckoutCommitFile,
+  CheckoutDiffSubmodule,
+} from "@getpaseo/protocol/messages";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { maxBase64EncryptedPlaintextByteLength } from "@getpaseo/relay";
 import type { Logger } from "pino";
@@ -201,6 +205,76 @@ interface CheckoutDiffRefs {
   baseRef: string;
   targetRef?: string;
   includeUntracked: boolean;
+}
+
+interface RawCheckoutDiffEntry {
+  path: string;
+  oldMode: string;
+  newMode: string;
+  oldSha: string | null;
+  newSha: string | null;
+}
+
+export type CheckoutStructuredDiffFile = ParsedDiffFile & {
+  oldPath?: string;
+  submodulePath?: string;
+};
+
+const GITLINK_MODE = "160000";
+
+function parseRawCheckoutDiff(output: string): RawCheckoutDiffEntry[] {
+  const fields = output.split("\0");
+  const entries: RawCheckoutDiffEntry[] = [];
+  let index = 0;
+
+  while (index < fields.length) {
+    const header = fields[index++];
+    if (!header) {
+      continue;
+    }
+    const match = header.match(/^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z][0-9]*)$/);
+    if (!match) {
+      continue;
+    }
+    const [, oldMode, newMode, rawOldSha, rawNewSha, status] = match;
+    const firstPath = fields[index++] ?? "";
+    const path =
+      status?.startsWith("R") || status?.startsWith("C") ? (fields[index++] ?? "") : firstPath;
+    if (!path) {
+      continue;
+    }
+    entries.push({
+      path,
+      oldMode: oldMode ?? "000000",
+      newMode: newMode ?? "000000",
+      oldSha: rawOldSha && !/^0+$/.test(rawOldSha) ? rawOldSha : null,
+      newSha: rawNewSha && !/^0+$/.test(rawNewSha) ? rawNewSha : null,
+    });
+  }
+
+  return entries;
+}
+
+async function listRawCheckoutDiffEntries(
+  cwd: string,
+  refs: CheckoutDiffRefs,
+  ignoreWhitespace: boolean,
+): Promise<RawCheckoutDiffEntry[]> {
+  const { stdout } = await runGitCommand(
+    buildGitDiffArgs({
+      ignoreWhitespace,
+      extra: [
+        "--raw",
+        "--no-abbrev",
+        "--no-renames",
+        "--ignore-submodules=none",
+        "-z",
+        ...getCheckoutDiffRefArgs(refs),
+      ],
+    }),
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  return parseRawCheckoutDiff(stdout);
 }
 
 function getCheckoutDiffRefArgs(refs: CheckoutDiffRefs): string[] {
@@ -821,8 +895,13 @@ export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPas
 export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
 export type CheckoutDiffResult =
-  | { diff: string; structured?: ParsedDiffFile[]; diffTooLarge?: false }
-  | { diff: ""; structured: []; diffTooLarge: true };
+  | {
+      diff: string;
+      structured?: CheckoutStructuredDiffFile[];
+      submodules?: CheckoutDiffSubmodule[];
+      diffTooLarge?: false;
+    }
+  | { diff: ""; structured: []; submodules?: CheckoutDiffSubmodule[]; diffTooLarge: true };
 
 export interface CheckoutDiffCompare {
   mode: "uncommitted" | "base";
@@ -3201,6 +3280,359 @@ async function processTrackedChanges(
   };
 }
 
+async function collectStructuredFilesForRefs(input: {
+  cwd: string;
+  refsForDiff: CheckoutDiffRefs;
+  ignoreWhitespace: boolean;
+  budgetBaselineBytes: number;
+}): Promise<{ files: CheckoutStructuredDiffFile[]; diffTooLarge: boolean }> {
+  const changes = await listCheckoutFileChanges(
+    input.cwd,
+    input.refsForDiff,
+    input.ignoreWhitespace,
+  );
+  changes.sort((a, b) => {
+    if (a.path === b.path) return 0;
+    return a.path < b.path ? -1 : 1;
+  });
+  const trackedChanges = changes.filter((change) => !change.isUntracked);
+  const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+  const structured = createStructuredDiffAccumulator();
+  // Seed the byte counter from the caller's shared accumulator so this submodule's
+  // structured files draw from the one global relay budget instead of a fresh full
+  // budget. The prefixed re-append into the shared accumulator stays the authoritative
+  // cap; this only stops collecting early once the global budget is already spent.
+  structured.serializedBytes = input.budgetBaselineBytes;
+  const trackedDiff = await processTrackedChanges({
+    cwd: input.cwd,
+    refsForDiff: input.refsForDiff,
+    trackedChanges,
+    ignoreWhitespace: input.ignoreWhitespace,
+    appendDiff: () => {},
+  });
+  const didAppendTrackedDiffs = await appendStructuredTrackedDiffs({
+    cwd: input.cwd,
+    trackedChanges,
+    trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
+    trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
+    trackedDiffText: trackedDiff.trackedDiffText,
+    refsForDiff: input.refsForDiff,
+    ignoreWhitespace: input.ignoreWhitespace,
+    structured,
+    appendTrackedPlaceholderComment: () => {},
+  });
+  if (!didAppendTrackedDiffs) {
+    return { files: [], diffTooLarge: true };
+  }
+
+  for (const change of untrackedChanges) {
+    const didAppend = await processUntrackedChange({
+      cwd: input.cwd,
+      change,
+      ignoreWhitespace: input.ignoreWhitespace,
+      includeStructured: true,
+      structured,
+      appendDiff: () => {},
+    });
+    if (!didAppend) {
+      return { files: [], diffTooLarge: true };
+    }
+  }
+  return { files: structured.files, diffTooLarge: false };
+}
+
+async function hasCommitObject(cwd: string, sha: string): Promise<boolean> {
+  try {
+    await runGitCommand(["cat-file", "-e", `${sha}^{commit}`], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isGitlinkEntry(entry: RawCheckoutDiffEntry): boolean {
+  return entry.oldMode === GITLINK_MODE || entry.newMode === GITLINK_MODE;
+}
+
+function isDeletedGitlink(entry: RawCheckoutDiffEntry): boolean {
+  return entry.oldMode === GITLINK_MODE && entry.newMode !== GITLINK_MODE;
+}
+
+function isAddedGitlink(entry: RawCheckoutDiffEntry): boolean {
+  return entry.oldMode !== GITLINK_MODE && entry.newMode === GITLINK_MODE;
+}
+
+function getOldGitlinkSha(entry: RawCheckoutDiffEntry): string | null {
+  return entry.oldMode === GITLINK_MODE ? entry.oldSha : null;
+}
+
+function getNewGitlinkSha(entry: RawCheckoutDiffEntry): string | null {
+  return entry.newMode === GITLINK_MODE ? entry.newSha : null;
+}
+
+function getGitlinkOrdinarySideChange(entry: RawCheckoutDiffEntry): CheckoutFileChange | null {
+  if (!isGitlinkEntry(entry)) {
+    return null;
+  }
+  if (entry.oldMode !== GITLINK_MODE && entry.oldMode !== "000000") {
+    return {
+      path: entry.path,
+      status: "T",
+      isNew: false,
+      isDeleted: true,
+    };
+  }
+  if (entry.newMode !== GITLINK_MODE && entry.newMode !== "000000") {
+    return {
+      path: entry.path,
+      status: "T",
+      isNew: true,
+      isDeleted: false,
+    };
+  }
+  return null;
+}
+
+async function appendStructuredGitlinkOrdinarySides(input: {
+  cwd: string;
+  entries: RawCheckoutDiffEntry[];
+  trackedNumstatByPath: Map<string, FileStat>;
+  trackedPlaceholderByPath: Map<string, { status: "binary" | "too_large"; stat: FileStat }>;
+  trackedDiffText: string;
+  refsForDiff: CheckoutDiffRefs;
+  structured: StructuredDiffAccumulator;
+  appendTrackedPlaceholderComment: (
+    change: CheckoutFileChange,
+    status: "binary" | "too_large",
+  ) => void;
+}): Promise<boolean> {
+  const parsedFiles = input.trackedDiffText.length > 0 ? parseDiff(input.trackedDiffText) : [];
+  for (const entry of input.entries) {
+    const change = getGitlinkOrdinarySideChange(entry);
+    if (!change) {
+      continue;
+    }
+    const placeholder = input.trackedPlaceholderByPath.get(change.path);
+    if (placeholder) {
+      const file = buildPlaceholderParsedDiffFile(change, placeholder);
+      if (!appendStructuredFile(input.structured, file)) {
+        return false;
+      }
+      input.appendTrackedPlaceholderComment(change, placeholder.status);
+      continue;
+    }
+
+    const parsedFile = parsedFiles.find(
+      (candidate) =>
+        candidate.path === change.path &&
+        (change.isDeleted ? candidate.isDeleted : candidate.isNew),
+    );
+    const file = parsedFile
+      ? await buildHighlightedTrackedDiffFile({
+          cwd: input.cwd,
+          change,
+          parsedFile,
+          refsForDiff: input.refsForDiff,
+        })
+      : {
+          path: change.path,
+          isNew: change.isNew,
+          isDeleted: change.isDeleted,
+          additions: input.trackedNumstatByPath.get(change.path)?.additions ?? 0,
+          deletions: input.trackedNumstatByPath.get(change.path)?.deletions ?? 0,
+          hunks: [],
+          status: "ok" as const,
+        };
+    if (!appendStructuredFile(input.structured, file)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function createSubmoduleMetadata(
+  entry: RawCheckoutDiffEntry,
+  compare: CheckoutDiffCompare,
+): CheckoutDiffSubmodule {
+  const deleted = isDeletedGitlink(entry);
+  let changeState = "clean";
+  if (deleted) {
+    changeState = "deleted";
+  } else if (isAddedGitlink(entry)) {
+    changeState = "added";
+  }
+  return {
+    path: entry.path,
+    branch: null,
+    currentSha: null,
+    ...(compare.mode === "base" ? { basePinnedSha: getOldGitlinkSha(entry) } : {}),
+    headPinnedSha: compare.mode === "base" ? getNewGitlinkSha(entry) : getOldGitlinkSha(entry),
+    checkoutState: deleted ? "unavailable" : "uninitialized",
+    changeState,
+  };
+}
+
+async function resolveSubmoduleDiffRefs(input: {
+  cwd: string;
+  compare: CheckoutDiffCompare;
+  entry: RawCheckoutDiffEntry;
+}): Promise<CheckoutDiffRefs | null> {
+  if (input.compare.mode === "uncommitted") {
+    return { baseRef: "HEAD", includeUntracked: true };
+  }
+  const baseSha =
+    getOldGitlinkSha(input.entry) ?? (isAddedGitlink(input.entry) ? EMPTY_TREE_OBJECT_ID : null);
+  const headSha = getNewGitlinkSha(input.entry);
+  if (!baseSha || !headSha || !(await hasCommitObject(input.cwd, headSha))) {
+    return null;
+  }
+  if (baseSha !== EMPTY_TREE_OBJECT_ID && !(await hasCommitObject(input.cwd, baseSha))) {
+    return null;
+  }
+  return { baseRef: baseSha, targetRef: headSha, includeUntracked: false };
+}
+
+function prefixSubmoduleFile(
+  submodulePath: string,
+  file: CheckoutStructuredDiffFile,
+): CheckoutStructuredDiffFile {
+  return {
+    ...file,
+    path: posixPath.join(submodulePath, file.path),
+    ...(file.oldPath ? { oldPath: posixPath.join(submodulePath, file.oldPath) } : {}),
+    submodulePath,
+  };
+}
+
+async function collectSubmoduleEntry(input: {
+  repoRoot: string;
+  compare: CheckoutDiffCompare;
+  entry: RawCheckoutDiffEntry;
+  ignoreWhitespace: boolean;
+  sharedStructuredBytes: number;
+}): Promise<{
+  metadata: CheckoutDiffSubmodule;
+  files: CheckoutStructuredDiffFile[];
+  diffTooLarge: boolean;
+}> {
+  const metadata = createSubmoduleMetadata(input.entry, input.compare);
+  if (isDeletedGitlink(input.entry)) {
+    return { metadata, files: [], diffTooLarge: false };
+  }
+
+  const submoduleCwd = resolve(input.repoRoot, input.entry.path);
+  if (!existsSync(resolve(submoduleCwd, ".git"))) {
+    if (!isAddedGitlink(input.entry)) {
+      metadata.changeState = "history_unavailable";
+    }
+    return { metadata, files: [], diffTooLarge: false };
+  }
+
+  const currentSha = await getCurrentHeadSha(submoduleCwd);
+  if (!currentSha) {
+    metadata.checkoutState = "unavailable";
+    metadata.changeState = "history_unavailable";
+    return { metadata, files: [], diffTooLarge: false };
+  }
+  metadata.checkoutState = "checked_out";
+  metadata.currentSha = currentSha;
+  metadata.branch = await getCurrentBranch(submoduleCwd);
+
+  const innerRefs = await resolveSubmoduleDiffRefs({
+    cwd: submoduleCwd,
+    compare: input.compare,
+    entry: input.entry,
+  });
+  if (!innerRefs) {
+    metadata.changeState = "history_unavailable";
+    return { metadata, files: [], diffTooLarge: false };
+  }
+
+  let innerResult: Awaited<ReturnType<typeof collectStructuredFilesForRefs>>;
+  try {
+    innerResult = await collectStructuredFilesForRefs({
+      cwd: submoduleCwd,
+      refsForDiff: innerRefs,
+      ignoreWhitespace: input.ignoreWhitespace,
+      budgetBaselineBytes: input.sharedStructuredBytes,
+    });
+  } catch {
+    metadata.changeState = "history_unavailable";
+    return { metadata, files: [], diffTooLarge: false };
+  }
+
+  if (isAddedGitlink(input.entry)) {
+    metadata.changeState = "added";
+  } else if (input.compare.mode === "base") {
+    metadata.changeState = "recorded_change";
+  } else if (innerResult.files.length > 0 || innerResult.diffTooLarge) {
+    // A budget overflow drops the child rows but the worktree is genuinely modified —
+    // keep the truthful state so the degraded submodule still reads as changed.
+    metadata.changeState = "worktree_modified";
+  } else if (metadata.headPinnedSha && currentSha !== metadata.headPinnedSha) {
+    metadata.changeState = "head_differs";
+  } else {
+    metadata.changeState = "clean";
+  }
+  return { metadata, files: innerResult.files, diffTooLarge: innerResult.diffTooLarge };
+}
+
+async function appendSubmoduleStructuredDiffs(input: {
+  repoRoot: string;
+  compare: CheckoutDiffCompare;
+  entries: RawCheckoutDiffEntry[];
+  ignoreWhitespace: boolean;
+  structured: StructuredDiffAccumulator;
+  appendDiff: (text: string) => void;
+}): Promise<{ submodules: CheckoutDiffSubmodule[] }> {
+  const submodules: CheckoutDiffSubmodule[] = [];
+
+  for (const entry of input.entries) {
+    if (!isGitlinkEntry(entry)) {
+      continue;
+    }
+    const result = await collectSubmoduleEntry({
+      repoRoot: input.repoRoot,
+      compare: input.compare,
+      entry,
+      ignoreWhitespace: input.ignoreWhitespace,
+      sharedStructuredBytes: input.structured.serializedBytes,
+    });
+    submodules.push(result.metadata);
+    // Degrade gracefully: a submodule that overflowed the shared budget keeps its
+    // header metadata but contributes no child rows, so the superproject diff and the
+    // submodules that already fit stay intact. Only the superproject's own diff blanks
+    // the whole payload (handled in getCheckoutDiff).
+    if (result.diffTooLarge) {
+      input.appendDiff(`# ${entry.path}: diff too large omitted\n`);
+      continue;
+    }
+
+    // Append this submodule's child rows atomically: if any row overflows the shared
+    // budget, roll back every row already added for this submodule so the panel never
+    // shows a half-expanded submodule, then emit the placeholder and move on.
+    const snapshotFileCount = input.structured.files.length;
+    const snapshotBytes = input.structured.serializedBytes;
+    let overflowed = false;
+    for (const file of result.files) {
+      if (!appendStructuredFile(input.structured, prefixSubmoduleFile(entry.path, file))) {
+        overflowed = true;
+        break;
+      }
+    }
+    if (overflowed) {
+      input.structured.files.length = snapshotFileCount;
+      input.structured.serializedBytes = snapshotBytes;
+      input.appendDiff(`# ${entry.path}: diff too large omitted\n`);
+    }
+  }
+
+  return { submodules };
+}
+
 async function resolveCheckoutDiffRefs(
   cwd: string,
   compare: CheckoutDiffCompare,
@@ -3232,8 +3664,9 @@ export async function getCheckoutDiff(
   context?: CheckoutContext,
 ): Promise<CheckoutDiffResult> {
   await requireGitRepo(cwd);
+  const repoRoot = await requireGitWorktreeRoot(cwd);
 
-  const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);
+  const refsForDiff = await resolveCheckoutDiffRefs(repoRoot, compare, context);
   if (!refsForDiff) {
     return { diff: "" };
   }
@@ -3242,13 +3675,13 @@ export async function getCheckoutDiff(
   let effectiveRefsForDiff = refsForDiff;
   let changes: CheckoutFileChange[];
   try {
-    changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
+    changes = await listCheckoutFileChanges(repoRoot, effectiveRefsForDiff, ignoreWhitespace);
   } catch (error) {
     if (!isUnbornHeadDiffError(error)) {
       throw error;
     }
     effectiveRefsForDiff = { ...refsForDiff, baseRef: EMPTY_TREE_OBJECT_ID };
-    changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
+    changes = await listCheckoutFileChanges(repoRoot, effectiveRefsForDiff, ignoreWhitespace);
   }
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
@@ -3256,6 +3689,14 @@ export async function getCheckoutDiff(
   });
 
   const structured = createStructuredDiffAccumulator();
+  const rawEntries = compare.includeStructured
+    ? await listRawCheckoutDiffEntries(repoRoot, effectiveRefsForDiff, ignoreWhitespace)
+    : [];
+  const gitlinkPaths = new Set(
+    rawEntries
+      .filter((entry) => entry.oldMode === GITLINK_MODE || entry.newMode === GITLINK_MODE)
+      .map((entry) => entry.path),
+  );
   let diffText = "";
   let diffBytes = 0;
   const appendDiff = (text: string) => {
@@ -3275,9 +3716,12 @@ export async function getCheckoutDiff(
   };
 
   const trackedChanges = changes.filter((change) => !change.isUntracked);
+  const structuredTrackedChanges = trackedChanges.filter(
+    (change) => !gitlinkPaths.has(change.path),
+  );
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
   const trackedDiff = await processTrackedChanges({
-    cwd,
+    cwd: repoRoot,
     refsForDiff: effectiveRefsForDiff,
     trackedChanges,
     ignoreWhitespace,
@@ -3297,8 +3741,8 @@ export async function getCheckoutDiff(
 
   if (compare.includeStructured) {
     const didAppendTrackedDiffs = await appendStructuredTrackedDiffs({
-      cwd,
-      trackedChanges,
+      cwd: repoRoot,
+      trackedChanges: structuredTrackedChanges,
       trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
       trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
       trackedDiffText: trackedDiff.trackedDiffText,
@@ -3308,6 +3752,19 @@ export async function getCheckoutDiff(
       appendTrackedPlaceholderComment,
     });
     if (!didAppendTrackedDiffs) {
+      return { diff: "", structured: [], diffTooLarge: true };
+    }
+    const didAppendGitlinkOrdinarySides = await appendStructuredGitlinkOrdinarySides({
+      cwd: repoRoot,
+      entries: rawEntries,
+      trackedNumstatByPath: trackedDiff.trackedNumstatByPath,
+      trackedPlaceholderByPath: trackedDiff.trackedPlaceholderByPath,
+      trackedDiffText: trackedDiff.trackedDiffText,
+      refsForDiff: effectiveRefsForDiff,
+      structured,
+      appendTrackedPlaceholderComment,
+    });
+    if (!didAppendGitlinkOrdinarySides) {
       return { diff: "", structured: [], diffTooLarge: true };
     }
   } else {
@@ -3324,7 +3781,7 @@ export async function getCheckoutDiff(
       break;
     }
     const didAppendUntrackedDiff = await processUntrackedChange({
-      cwd,
+      cwd: repoRoot,
       change,
       ignoreWhitespace,
       includeStructured: compare.includeStructured === true,
@@ -3337,7 +3794,19 @@ export async function getCheckoutDiff(
   }
 
   if (compare.includeStructured) {
-    return { diff: diffText, structured: structured.files };
+    const submoduleResult = await appendSubmoduleStructuredDiffs({
+      repoRoot,
+      compare,
+      entries: rawEntries,
+      ignoreWhitespace,
+      structured,
+      appendDiff,
+    });
+    return {
+      diff: diffText,
+      structured: structured.files,
+      submodules: submoduleResult.submodules,
+    };
   }
   return { diff: diffText };
 }

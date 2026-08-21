@@ -445,6 +445,9 @@ function applyCheckoutDiffUpdate(input: {
     payload: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
+      ...(input.message.payload.submodules !== undefined
+        ? { submodules: input.message.payload.submodules }
+        : {}),
       error: input.message.payload.error,
       ...(input.message.payload.diffTooLarge !== undefined
         ? { diffTooLarge: input.message.payload.diffTooLarge }
@@ -468,6 +471,9 @@ function applyCheckoutDiffSubscribeResponse(input: {
     payload: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
+      ...(input.message.payload.submodules !== undefined
+        ? { submodules: input.message.payload.submodules }
+        : {}),
       error: input.message.payload.error,
       ...(input.message.payload.diffTooLarge !== undefined
         ? { diffTooLarge: input.message.payload.diffTooLarge }

@@ -124,6 +124,27 @@ describe("panel-store migration", () => {
     ).toEqual({ ws: ["src/app.ts"] });
   });
 
+  it("initializes and preserves collapsed diff submodules by workspace", () => {
+    expect(migratePanelState({}, 15).diffCollapsedSubmodulesByWorkspace).toEqual({});
+    expect(
+      migratePanelState({ diffCollapsedSubmodulesByWorkspace: { ws: ["modules/demo"] } }, 15)
+        .diffCollapsedSubmodulesByWorkspace,
+    ).toEqual({ ws: ["modules/demo"] });
+  });
+
+  it("keeps collapsed submodules and collapsed folders as separate maps", () => {
+    const state = migratePanelState(
+      {
+        diffCollapsedFoldersByWorkspace: { ws: ["src/app"] },
+        diffCollapsedSubmodulesByWorkspace: { ws: ["modules/demo"] },
+      },
+      15,
+    );
+
+    expect(state.diffCollapsedFoldersByWorkspace).toEqual({ ws: ["src/app"] });
+    expect(state.diffCollapsedSubmodulesByWorkspace).toEqual({ ws: ["modules/demo"] });
+  });
+
   it("drops the retired per-file diff expansion state", () => {
     const state = migratePanelState({ diffExpandedPathsByWorkspace: { ws: ["src/app.ts"] } }, 13);
 

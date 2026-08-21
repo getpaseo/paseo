@@ -301,6 +301,9 @@ describe("translation resources", () => {
     expect(en.workspace.scripts.actions.run).toBe("Run");
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
+    expect(en.workspace.git.diff.submodule.headDiffers).toBe(
+      "HEAD {{currentSha}} differs from pinned {{pinnedSha}}",
+    );
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
     expect(en.workspace.git.pr.sections.pipeline).toBe("Pipeline");
     expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");

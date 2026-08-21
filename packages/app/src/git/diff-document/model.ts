@@ -12,6 +12,7 @@ import { advancesFor } from "./text-measurement";
 import type {
   BuildDiffDocumentModelInput,
   DiffCell,
+  DiffDocumentSection,
   DiffDocumentModel,
   DiffFileSection,
   DiffFragment,
@@ -25,6 +26,8 @@ import type {
 } from "./types";
 
 export const FILE_HEADER_HEIGHT = 30;
+export const SUBMODULE_HEADER_HEIGHT = 30;
+export const SUBMODULE_STATUS_HEIGHT = 33;
 export const DIFF_BODY_BORDER_HEIGHT = 1;
 const CODE_HORIZONTAL_PADDING = 16;
 
@@ -40,9 +43,12 @@ interface CellSource {
 export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): DiffDocumentModel {
   const rows: DiffRow[] = [];
   const files: DiffFileSection[] = [];
+  const submodules: DiffDocumentModel["submodules"] = [];
+  const sections: DiffDocumentSection[] = [];
   let documentTop = 0;
 
-  for (const [fileIndex, file] of input.files.entries()) {
+  const appendFile = (file: BuildDiffDocumentModelInput["files"][number]): void => {
+    const fileIndex = files.length;
     const fileTop = documentTop;
     const isCollapsed = input.collapsedFilePaths.has(file.path);
     documentTop += FILE_HEADER_HEIGHT;
@@ -143,7 +149,7 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
       documentTop += DIFF_BODY_BORDER_HEIGHT;
     }
 
-    files.push({
+    const section: DiffFileSection = {
       file,
       fileIndex,
       path: file.path,
@@ -159,11 +165,50 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
       rowStart,
       rowEnd: rows.length,
       isCollapsed,
-    });
+    };
+    files.push(section);
+    sections.push({ kind: "file", file: section });
+  };
+
+  const configuredSubmodules = input.submodules ?? [];
+  const submodulePaths = new Set(configuredSubmodules.map((submodule) => submodule.path));
+  for (const file of input.files) {
+    if (!file.submodulePath || !submodulePaths.has(file.submodulePath)) {
+      appendFile(file);
+    }
+  }
+
+  for (const submodule of configuredSubmodules) {
+    const groupFiles = input.files.filter((file) => file.submodulePath === submodule.path);
+    const isCollapsed = input.collapsedSubmodulePaths?.has(submodule.path) === true;
+    const section = {
+      submodule,
+      path: submodule.path,
+      top: documentTop,
+      headerHeight: SUBMODULE_HEADER_HEIGHT,
+      statusTop: documentTop + SUBMODULE_HEADER_HEIGHT,
+      statusHeight:
+        !isCollapsed && (submodule.changeState === "added" || groupFiles.length === 0)
+          ? SUBMODULE_STATUS_HEIGHT
+          : 0,
+      bottom: 0,
+      isCollapsed,
+    };
+    documentTop += section.headerHeight + section.statusHeight;
+    submodules.push(section);
+    sections.push({ kind: "submodule", submodule: section });
+    if (!isCollapsed) {
+      for (const file of groupFiles) {
+        appendFile(file);
+      }
+    }
+    section.bottom = documentTop;
   }
 
   return {
     files,
+    submodules,
+    sections,
     rows,
     height: documentTop,
     lineHeight: input.typography.lineHeight,
@@ -171,6 +216,50 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
     wrapLines: input.wrapLines,
     viewportWidth: input.viewportWidth,
   };
+}
+
+export interface FocusedSubmoduleExpansionInput {
+  /** Stable identity of the current focus (path + request id), or null when nothing is focused. */
+  focusKey: string | null;
+  focusPath: string | null;
+  /** The focusKey the effect last acted on. */
+  previousFocusKey: string | null;
+  files: readonly { path: string; submodulePath?: string | null }[];
+  collapsedSubmodulePaths: ReadonlySet<string>;
+}
+
+export interface FocusedSubmoduleExpansionResult {
+  /** Whether the caller should stamp `previousFocusKey = focusKey`. */
+  consumed: boolean;
+  /** Submodule to expand, or null when nothing should expand. */
+  expandSubmodulePath: string | null;
+}
+
+/**
+ * Decide whether focusing a file should auto-expand the submodule that contains it.
+ *
+ * Only a *new* focus (focusKey changed) can expand a submodule, so collapse-state
+ * churn never re-fires the expansion — that is what lets a user collapse a submodule
+ * whose file is focused and have it stay collapsed. A focus whose file has not loaded
+ * yet is left unconsumed so it still expands once the files arrive.
+ */
+export function resolveFocusedSubmoduleExpansion(
+  input: FocusedSubmoduleExpansionInput,
+): FocusedSubmoduleExpansionResult {
+  if (input.focusKey === input.previousFocusKey) {
+    return { consumed: false, expandSubmodulePath: null };
+  }
+  if (!input.focusPath) {
+    return { consumed: true, expandSubmodulePath: null };
+  }
+  const file = input.files.find((candidate) => candidate.path === input.focusPath);
+  if (!file) {
+    return { consumed: false, expandSubmodulePath: null };
+  }
+  const submodulePath = file.submodulePath ?? null;
+  const expandSubmodulePath =
+    submodulePath && input.collapsedSubmodulePaths.has(submodulePath) ? submodulePath : null;
+  return { consumed: true, expandSubmodulePath };
 }
 
 export function expandedBodyBorderTop(file: DiffFileSection): number | null {

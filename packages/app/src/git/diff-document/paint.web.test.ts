@@ -297,6 +297,8 @@ function createSelectionModel(layout: "unified" | "split"): DiffDocumentModel {
         isCollapsed: false,
       },
     ],
+    submodules: [],
+    sections: [],
     rows: [
       {
         kind: "line",
@@ -384,6 +386,8 @@ const model: DiffDocumentModel = {
       isCollapsed: false,
     },
   ],
+  submodules: [],
+  sections: [],
   rows: [
     {
       kind: "line",

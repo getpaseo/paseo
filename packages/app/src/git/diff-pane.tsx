@@ -28,9 +28,11 @@ import {
   RotateCw,
   WrapText,
 } from "lucide-react-native";
-import { type ParsedDiffFile } from "@/git/use-diff-query";
+import { type CheckoutDiffSubmodule, type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
+import { usePanelStore } from "@/stores/panel-store";
+import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
 import { FileHeader } from "@/git/file-header";
 import {
@@ -106,6 +108,27 @@ function computeSelectedDiffStat(
     }),
     { additions: 0, deletions: 0 },
   );
+}
+
+function hasDiffContent(files: ParsedDiffFile[], submodules: CheckoutDiffSubmodule[]): boolean {
+  return files.length > 0 || submodules.length > 0;
+}
+
+function areAllDiffSectionsCollapsed(input: {
+  files: ParsedDiffFile[];
+  submodules: CheckoutDiffSubmodule[];
+  submodulePathSet: ReadonlySet<string>;
+  collapsedFilePaths: readonly string[];
+  collapsedSubmodulePaths: readonly string[];
+}): boolean {
+  if (!hasDiffContent(input.files, input.submodules)) return false;
+  const repositoryFilesCollapsed = input.files
+    .filter((file) => !file.submodulePath || !input.submodulePathSet.has(file.submodulePath))
+    .every((file) => input.collapsedFilePaths.includes(file.path));
+  const submodulesCollapsed = input.submodules.every((submodule) =>
+    input.collapsedSubmodulePaths.includes(submodule.path),
+  );
+  return repositoryFilesCollapsed && submodulesCollapsed;
 }
 
 function useDiscardChangesAction({
@@ -776,6 +799,47 @@ function buildToggleButtonStyle(
   return (state) => [baseStyles, paneContentToolbarIconButtonStyle(state, selected, isMobile)];
 }
 
+// Stable empty-array reference so the collapsed-submodules selector doesn't
+// return a fresh `[]` on every render (which would re-render/loop).
+const EMPTY_PATH_LIST: string[] = [];
+
+function useCollapsedDiffSubmodules({
+  workspaceId,
+  cwd,
+}: {
+  workspaceId?: string | null;
+  cwd: string;
+}) {
+  const workspaceStateKey = useMemo(
+    () =>
+      buildWorkspaceExplorerStateKey({
+        workspaceId,
+        workspaceRoot: cwd.trim(),
+      }),
+    [cwd, workspaceId],
+  );
+  const collapsedSubmodules = usePanelStore((state) =>
+    workspaceStateKey ? state.diffCollapsedSubmodulesByWorkspace[workspaceStateKey] : undefined,
+  );
+  const setCollapsedSubmodules = usePanelStore(
+    (state) => state.setDiffCollapsedSubmodulesForWorkspace,
+  );
+  const stableCollapsedSubmodules = collapsedSubmodules ?? EMPTY_PATH_LIST;
+  const updateCollapsedSubmodules = useCallback(
+    (paths: string[]) => {
+      if (workspaceStateKey) {
+        setCollapsedSubmodules(workspaceStateKey, paths);
+      }
+    },
+    [setCollapsedSubmodules, workspaceStateKey],
+  );
+
+  return {
+    collapsedSubmodules: stableCollapsedSubmodules,
+    updateCollapsedSubmodules,
+  };
+}
+
 function ChangedFilesTree({
   files,
   mode,
@@ -1041,6 +1105,17 @@ export function ChangesSurface({
     () => ({ paths: collapsedFilePaths, onChange: updateCollapsedFilePaths }),
     [collapsedFilePaths, updateCollapsedFilePaths],
   );
+  const {
+    collapsedSubmodules: collapsedSubmodulePaths,
+    updateCollapsedSubmodules: updateCollapsedSubmodulePaths,
+  } = useCollapsedDiffSubmodules({ workspaceId, cwd });
+  const submoduleCollapseState = useMemo(
+    () => ({
+      paths: collapsedSubmodulePaths,
+      onChange: updateCollapsedSubmodulePaths,
+    }),
+    [collapsedSubmodulePaths, updateCollapsedSubmodulePaths],
+  );
 
   const handleToggleWrapLines = useCallback(() => {
     updateState({ ...instanceState, wrapLines: !wrapLines });
@@ -1116,6 +1191,7 @@ export function ChangesSurface({
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
     files,
+    submodules,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,
@@ -1297,21 +1373,45 @@ export function ChangesSurface({
     ],
   );
 
-  const hasChanges = files.length > 0;
+  const hasChanges = hasDiffContent(files, submodules);
   const selectedDiffStat = useMemo(
     () => computeSelectedDiffStat(files, isDiffLoading),
     [files, isDiffLoading],
   );
-  const allFilesCollapsed =
-    hasChanges && files.every((file) => collapsedFilePaths.includes(file.path));
-  const handleCollapseAllFiles = useCallback(
-    () => updateCollapsedFilePaths(files.map((file) => file.path)),
-    [files, updateCollapsedFilePaths],
+  const submodulePathSet = useMemo(
+    () => new Set(submodules.map((submodule) => submodule.path)),
+    [submodules],
   );
-  const handleExpandAllFiles = useCallback(
-    () => updateCollapsedFilePaths([]),
-    [updateCollapsedFilePaths],
-  );
+  const allFilesCollapsed = areAllDiffSectionsCollapsed({
+    files,
+    submodules,
+    submodulePathSet,
+    collapsedFilePaths,
+    collapsedSubmodulePaths,
+  });
+  const handleCollapseAllFiles = useCallback(() => {
+    updateCollapsedFilePaths(files.map((file) => file.path));
+    updateCollapsedSubmodulePaths([
+      ...new Set([...collapsedSubmodulePaths, ...submodules.map((submodule) => submodule.path)]),
+    ]);
+  }, [
+    collapsedSubmodulePaths,
+    files,
+    submodules,
+    updateCollapsedFilePaths,
+    updateCollapsedSubmodulePaths,
+  ]);
+  const handleExpandAllFiles = useCallback(() => {
+    updateCollapsedFilePaths([]);
+    updateCollapsedSubmodulePaths(
+      collapsedSubmodulePaths.filter((path) => !submodulePathSet.has(path)),
+    );
+  }, [
+    collapsedSubmodulePaths,
+    submodulePathSet,
+    updateCollapsedFilePaths,
+    updateCollapsedSubmodulePaths,
+  ]);
   const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
   const baseRefLabel = useMemo(
@@ -1348,6 +1448,9 @@ export function ChangesSurface({
     >
       <DiffDocument
         files={files}
+        submodules={submodules}
+        submoduleDiffMode={diffMode}
+        submoduleCollapseState={submoduleCollapseState}
         collapseState={collapseState}
         displayPreferences={sharedDisplayPreferences}
         mode={workingMode}

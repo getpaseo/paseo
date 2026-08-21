@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ViewStyle } from "react-native";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
 import { InlineReviewAddButton, InlineReviewThread } from "@/review";
+import { DiffSubmoduleHeader, DiffSubmoduleStatus } from "@/git/diff-submodule-row";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
 import { hitTestDiffDocument, selectedSourceText } from "./hit-testing";
@@ -97,6 +98,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     }
     const dependencies = [
       props.files,
+      props.submodules,
       props.displayPreferences.layout,
       props.displayPreferences.wrapLines,
       viewport.width,
@@ -112,7 +114,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
     const reuseFrom = canReuse ? previous?.models : undefined;
     const next = buildDiffDocumentModel({
       files: props.files,
+      submodules: props.submodules,
       collapsedFilePaths: props.collapsedFilePaths,
+      collapsedSubmodulePaths: props.collapsedSubmodulePaths,
       layout: props.displayPreferences.layout,
       wrapLines: props.displayPreferences.wrapLines,
       viewportWidth: viewport.width,
@@ -137,6 +141,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
     props.displayPreferences.layout,
     props.displayPreferences.wrapLines,
     props.files,
+    props.submodules,
+    props.collapsedSubmodulePaths,
     props.palette,
     reviewActions,
     t,
@@ -561,17 +567,26 @@ export function DiffSurface(props: DiffSurfaceProps) {
       >
         <div style={contentStyle} onMouseDown={preventDocumentMouseSelection}>
           <canvas ref={canvasRef} data-testid="git-diff-canvas" style={canvasStyle} />
-          {model.files.map((file) => (
-            <WebFileHeaderSection key={file.path} file={file}>
-              <DocumentFileHeader
-                file={file}
-                selectedPath={props.selectedPath}
-                mode={props.mode}
-                onToggleFile={props.onToggleFile}
-                onSelectPath={props.onSelectPath}
+          {model.sections.map((section) =>
+            section.kind === "file" ? (
+              <WebFileHeaderSection key={`file:${section.file.path}`} file={section.file}>
+                <DocumentFileHeader
+                  file={section.file}
+                  selectedPath={props.selectedPath}
+                  mode={props.mode}
+                  onToggleFile={props.onToggleFile}
+                  onSelectPath={props.onSelectPath}
+                />
+              </WebFileHeaderSection>
+            ) : (
+              <WebSubmoduleSection
+                key={`submodule:${section.submodule.path}`}
+                section={section.submodule}
+                diffMode={props.submoduleDiffMode ?? "uncommitted"}
+                onToggle={props.onToggleSubmodule}
               />
-            </WebFileHeaderSection>
-          ))}
+            ),
+          )}
           {model.files
             .filter((file) => !file.isCollapsed && !model.wrapLines)
             .map((file) => (
@@ -616,6 +631,47 @@ export function DiffSurface(props: DiffSurfaceProps) {
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
     </div>
+  );
+}
+
+function WebSubmoduleSection({
+  section,
+  diffMode,
+  onToggle,
+}: {
+  section: ReturnType<typeof buildDiffDocumentModel>["submodules"][number];
+  diffMode: "uncommitted" | "base";
+  onToggle: (path: string) => void;
+}) {
+  const headerStyle = useMemo<React.CSSProperties>(
+    () => ({ ...SUBMODULE_SECTION_STYLE, top: section.top, height: section.headerHeight }),
+    [section.headerHeight, section.top],
+  );
+  const statusStyle = useMemo<React.CSSProperties>(
+    () => ({ ...SUBMODULE_SECTION_STYLE, top: section.statusTop, height: section.statusHeight }),
+    [section.statusHeight, section.statusTop],
+  );
+  return (
+    <>
+      <div data-diff-header="true" style={headerStyle}>
+        <DiffSubmoduleHeader
+          submodule={section.submodule}
+          bodyVisible={!section.isCollapsed}
+          onToggle={onToggle}
+          testID={`diff-submodule-${section.path}`}
+        />
+      </div>
+      {section.statusHeight > 0 ? (
+        <div style={statusStyle}>
+          <DiffSubmoduleStatus
+            submodule={section.submodule}
+            depth={1}
+            diffMode={diffMode}
+            testID={`diff-submodule-${section.path}-status`}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -769,6 +825,17 @@ const FILE_SECTION_STYLE: React.CSSProperties = {
   zIndex: 3,
   pointerEvents: "none",
 };
+const SUBMODULE_SECTION_STYLE: React.CSSProperties = {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  // Above canvas rows (z1), below the sticky file headers inside FILE_SECTION_STYLE
+  // (z3). The submodule header is fixed at its document top, not sticky, so a
+  // sticky file header scrolling over it must render in front.
+  zIndex: 2,
+  pointerEvents: "auto",
+  userSelect: "none",
+};
 const STICKY_HEADER_STYLE: React.CSSProperties = {
   position: "sticky",
   top: 0,
@@ -804,6 +871,8 @@ function emptyDiffDocumentModel(input: {
 }): ReturnType<typeof buildDiffDocumentModel> {
   return {
     files: [],
+    submodules: [],
+    sections: [],
     rows: [],
     height: 0,
     lineHeight: input.lineHeight,

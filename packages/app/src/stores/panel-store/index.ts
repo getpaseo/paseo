@@ -71,6 +71,11 @@ export interface PanelState {
   // by full uncompressed dir path, so folders default to expanded and new
   // folders stay expanded as the diff changes.
   diffCollapsedFoldersByWorkspace: Record<string, string[]>;
+  // Changes-view submodule groups in the canvas diff. Stores COLLAPSED submodule
+  // paths, keyed like the folder map above. Kept separate from
+  // diffCollapsedFoldersByWorkspace so collapsing a submodule group never marks
+  // the same path collapsed in the tree-view folder list, and vice versa.
+  diffCollapsedSubmodulesByWorkspace: Record<string, string[]>;
   collapsedFilePathsByWorkspace: Record<string, string[]>;
   sidebarWidth: number;
   explorerSortOption: SortOption;
@@ -100,6 +105,7 @@ export interface PanelState {
   setExplorerTabForCheckout: (params: ExplorerCheckoutContext & { tab: ExplorerTab }) => void;
   setExpandedPathsForWorkspace: (workspaceKey: string, paths: ExpandedPathsUpdate) => void;
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
+  setDiffCollapsedSubmodulesForWorkspace: (workspaceKey: string, submodulePaths: string[]) => void;
   setCollapsedFilePathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   activateExplorerTabForCheckout: (checkout: ExplorerCheckoutContext) => void;
   setSidebarWidth: (width: number) => void;
@@ -136,6 +142,7 @@ export const usePanelStore = create<PanelState>()(
       explorerTabByCheckout: {},
       expandedPathsByWorkspace: {},
       diffCollapsedFoldersByWorkspace: {},
+      diffCollapsedSubmodulesByWorkspace: {},
       collapsedFilePathsByWorkspace: {},
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerSortOption: "name",
@@ -262,6 +269,13 @@ export const usePanelStore = create<PanelState>()(
             [workspaceKey]: dirPaths,
           },
         })),
+      setDiffCollapsedSubmodulesForWorkspace: (workspaceKey, submodulePaths) =>
+        set((state) => ({
+          diffCollapsedSubmodulesByWorkspace: {
+            ...state.diffCollapsedSubmodulesByWorkspace,
+            [workspaceKey]: submodulePaths,
+          },
+        })),
       setCollapsedFilePathsForWorkspace: (workspaceKey, paths) =>
         set((state) => ({
           collapsedFilePathsByWorkspace: {
@@ -296,6 +310,7 @@ export const usePanelStore = create<PanelState>()(
         explorerTabByCheckout: state.explorerTabByCheckout,
         expandedPathsByWorkspace: state.expandedPathsByWorkspace,
         diffCollapsedFoldersByWorkspace: state.diffCollapsedFoldersByWorkspace,
+        diffCollapsedSubmodulesByWorkspace: state.diffCollapsedSubmodulesByWorkspace,
         collapsedFilePathsByWorkspace: state.collapsedFilePathsByWorkspace,
         sidebarWidth: state.sidebarWidth,
         explorerSortOption: state.explorerSortOption,

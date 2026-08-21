@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -139,6 +139,123 @@ test("pushes updates when subscribed from a subdirectory and files change outsid
   }
 }, 60000);
 
+test("pushes submodule worktree and commit-only HEAD updates", async () => {
+  const tempDir = tmpCwd();
+  const sourceDir = path.join(tempDir, "submodule-source");
+  const repoDir = path.join(tempDir, "superproject");
+  mkdirSync(sourceDir);
+  mkdirSync(repoDir);
+
+  try {
+    initGitRepo(sourceDir);
+    commitFile(sourceDir, "service.ts", "export const value = 1;\n");
+
+    initGitRepo(repoDir);
+    commitFile(repoDir, "README.md", "root\n");
+    execFileSync(
+      "git",
+      ["-c", "protocol.file.allow=always", "submodule", "add", sourceDir, "modules/service"],
+      { cwd: repoDir, stdio: "pipe" },
+    );
+    execFileSync("git", ["add", "-A"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "Add service submodule"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const submoduleDir = path.join(repoDir, "modules/service");
+    const pinnedSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: submoduleDir,
+      encoding: "utf8",
+    }).trim();
+    const subscriptionId = "checkout-diff-submodule-e2e-subscription";
+    const initial = await ctx.client.subscribeCheckoutDiff(
+      repoDir,
+      { mode: "uncommitted" },
+      { subscriptionId },
+    );
+
+    expect(initial.error).toBeNull();
+    expect(initial.files).toEqual([]);
+    expect(initial.submodules).toEqual([]);
+
+    const dirtyUpdatePromise = waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) => {
+      const file = payload.files.find(
+        (candidate) => candidate.path === "modules/service/service.ts",
+      );
+      const submodule = payload.submodules?.find(
+        (candidate) => candidate.path === "modules/service",
+      );
+      return (
+        file?.submodulePath === "modules/service" && submodule?.changeState === "worktree_modified"
+      );
+    });
+    writeFileSync(path.join(submoduleDir, "service.ts"), "export const value = 2;\n");
+    const dirtyUpdate = await dirtyUpdatePromise;
+
+    expect(dirtyUpdate.error).toBeNull();
+    expect(
+      dirtyUpdate.files.map((file) => ({
+        path: file.path,
+        submodulePath: file.submodulePath,
+      })),
+    ).toEqual([
+      {
+        path: "modules/service/service.ts",
+        submodulePath: "modules/service",
+      },
+    ]);
+    expect(dirtyUpdate.submodules).toEqual([
+      {
+        path: "modules/service",
+        branch: "main",
+        currentSha: pinnedSha,
+        headPinnedSha: pinnedSha,
+        checkoutState: "checked_out",
+        changeState: "worktree_modified",
+      },
+    ]);
+
+    const committedUpdatePromise = waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) => {
+      const submodule = payload.submodules?.find(
+        (candidate) => candidate.path === "modules/service",
+      );
+      return (
+        payload.files.length === 0 &&
+        submodule?.changeState === "head_differs" &&
+        submodule.currentSha !== pinnedSha
+      );
+    });
+    execFileSync("git", ["add", "service.ts"], { cwd: submoduleDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "Update service"], {
+      cwd: submoduleDir,
+      stdio: "pipe",
+    });
+    const currentSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: submoduleDir,
+      encoding: "utf8",
+    }).trim();
+    const committedUpdate = await committedUpdatePromise;
+
+    expect(committedUpdate.error).toBeNull();
+    expect(committedUpdate.files).toEqual([]);
+    expect(committedUpdate.submodules).toEqual([
+      {
+        path: "modules/service",
+        branch: "main",
+        currentSha,
+        headPinnedSha: pinnedSha,
+        checkoutState: "checked_out",
+        changeState: "head_differs",
+      },
+    ]);
+
+    ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}, 60000);
+
 test("keeps the socket usable after rejecting an oversized structured diff", async () => {
   const cwd = tmpCwd();
 
@@ -146,9 +263,14 @@ test("keeps the socket usable after rejecting an oversized structured diff", asy
     initGitRepo(cwd);
     commitFile(cwd, "large-a.js", "const value = 0;\n");
     commitFile(cwd, "large-b.js", "const value = 0;\n");
-    const denseExpression = `const value = ${"a+".repeat(450_000)}a;\n`;
-    writeFileSync(path.join(cwd, "large-a.js"), denseExpression);
-    writeFileSync(path.join(cwd, "large-b.js"), denseExpression);
+    // Keep each line under the 10k-char syntax-highlight cap (MAX_DIFF_HIGHLIGHT_LINE_CHARS)
+    // so highlighting is actually applied; the dense `a+` tokens then expand the structured
+    // diff past the relay frame budget (CHECKOUT_DIFF_MAX_STRUCTURED_BYTES) and get rejected.
+    // A single 10M+-char line would instead skip highlighting and stay small.
+    const denseLine = `const v = ${"a+".repeat(2_000)}a;`;
+    const denseContent = `${Array.from({ length: 235 }, () => denseLine).join("\n")}\n`;
+    writeFileSync(path.join(cwd, "large-a.js"), denseContent);
+    writeFileSync(path.join(cwd, "large-b.js"), denseContent);
 
     const initial = await ctx.client.subscribeCheckoutDiff(
       cwd,

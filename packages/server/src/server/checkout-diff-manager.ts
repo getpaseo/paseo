@@ -276,9 +276,15 @@ export class CheckoutDiffManager {
         if (a.path === b.path) return 0;
         return a.path < b.path ? -1 : 1;
       });
+      const submodules = diffResult.submodules ? [...diffResult.submodules] : undefined;
+      submodules?.sort((a, b) => {
+        if (a.path === b.path) return 0;
+        return a.path < b.path ? -1 : 1;
+      });
       return {
         cwd,
         files,
+        ...(submodules ? { submodules } : {}),
         error: null,
       };
     } catch (error) {
@@ -389,5 +395,22 @@ export class CheckoutDiffManager {
       return;
     }
     target.workingTreeWatchUnsubscribe = unsubscribe;
+
+    const snapshot =
+      this.workspaceGitService.peekSnapshot(target.cwd) ??
+      (await this.workspaceGitService.getSnapshot(target.cwd, { includeForge: false }));
+    if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
+      return;
+    }
+    this.rememberWorkspaceSnapshot(target, snapshot);
+    const workspaceSubscription = this.workspaceGitService.registerWorkspace(
+      { cwd: target.cwd },
+      (nextSnapshot) => this.rememberWorkspaceSnapshot(target, nextSnapshot),
+    );
+    if (this.targets.get(target.key) !== target || target.listeners.size === 0) {
+      workspaceSubscription.unsubscribe();
+      return;
+    }
+    target.workspaceGitUnsubscribe = workspaceSubscription.unsubscribe;
   }
 }
