@@ -32,12 +32,6 @@ export interface AgentTimelineWindow {
   nextSeq: number;
 }
 
-/** A committed canonical transcript and whether provider history is fully represented. */
-export interface AgentTimelineSnapshot {
-  rows: AgentTimelineRow[];
-  historyComplete: boolean;
-}
-
 export interface AgentTimelineFetchResult {
   epoch: string;
   direction: AgentTimelineFetchDirection;
@@ -62,11 +56,9 @@ export interface AgentTimelineStore {
   ): Promise<AgentTimelineFetchResult>;
   getLatestCommittedSeq(agentId: string): Promise<number>;
   getCommittedRows(agentId: string): Promise<AgentTimelineRow[]>;
-  getCommittedSnapshot(agentId: string): Promise<AgentTimelineSnapshot>;
   getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
   getLastAssistantMessage(agentId: string): Promise<string | null>;
   deleteAgent(agentId: string): Promise<void>;
   bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
-  replaceCommittedSnapshot(agentId: string, snapshot: AgentTimelineSnapshot): Promise<void>;
   updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
 }

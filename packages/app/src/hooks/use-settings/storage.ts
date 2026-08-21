@@ -15,7 +15,12 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
-import { FONT_SIZE, THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import {
+  FONT_SIZE,
+  PLUGIN_THEME_PREFERENCE,
+  THEME_OPTIONS,
+  type ThemePreference,
+} from "@/styles/theme";
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
@@ -32,8 +37,13 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
-const VALID_THEMES = new Set<string>(THEME_OPTIONS.map((option) => option.name));
-const ThemePreferenceSchema = z.enum(THEME_OPTIONS.map((option) => option.name));
+const ThemePreferenceSchema = z.enum([
+  ...THEME_OPTIONS.map((option) => option.name),
+  PLUGIN_THEME_PREFERENCE,
+]);
+const VALID_THEMES = new Set<string>(ThemePreferenceSchema.options);
+/** Where the theme picker lands when the persisted preference cannot be honoured. */
+export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
 const VALID_WORKSPACE_TITLE_SOURCES = new Set<WorkspaceTitleSource>(["title", "branch"]);
 const VALID_SIDEBAR_WORKSPACE_TRAILINGS = new Set<SidebarWorkspaceTrailing>([
@@ -52,6 +62,13 @@ export function defaultUiBaseFontSize(native: boolean): number {
 export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
+export function defaultContentFontSize(native: boolean): number {
+  return native ? 15 : FONT_SIZE.content;
+}
+
+export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
+export const MIN_CONTENT_FONT_SIZE = 10;
+export const MAX_CONTENT_FONT_SIZE = 21;
 export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
@@ -59,6 +76,8 @@ export const MAX_FONT_FAMILY_LENGTH = 200;
 
 export interface AppSettings {
   theme: ThemePreference;
+  /** Which contributed theme `theme: "plugin"` selects. */
+  pluginThemeId: string | null;
   language: AppLanguage;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
@@ -67,6 +86,7 @@ export interface AppSettings {
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiBaseFontSize: number; // clamped px, platform default 14 or 15
+  contentFontSize: number; // clamped px, default 15
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
@@ -103,6 +123,7 @@ const SidebarRowItemsSchema = z.strictObject({
 
 const StoredAppSettingsSchema = z.strictObject({
   theme: ThemePreferenceSchema.optional(),
+  pluginThemeId: z.string().nullish(),
   language: z
     .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
     .optional(),
@@ -113,6 +134,7 @@ const StoredAppSettingsSchema = z.strictObject({
   uiFontFamily: z.string().optional(),
   monoFontFamily: z.string().optional(),
   uiBaseFontSize: z.union([z.number(), z.string()]).optional(),
+  contentFontSize: z.union([z.number(), z.string()]).optional(),
   // COMPAT(uiFontSizeScale): replaced by the literal base size in v0.4, remove after 2027-08-17.
   uiFontSize: z.union([z.number(), z.string()]).optional(),
   codeFontSize: z.union([z.number(), z.string()]).optional(),
@@ -137,7 +159,8 @@ const LegacyRendererSettingsSchema = StoredAppSettingsSchema;
 type StoredAppSettings = z.infer<typeof StoredAppSettingsSchema>;
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
-  theme: "auto",
+  theme: DEFAULT_THEME_PREFERENCE,
+  pluginThemeId: null,
   language: "system",
   sendBehavior: "steer",
   serviceUrlBehavior: "ask",
@@ -146,6 +169,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   uiFontFamily: "",
   monoFontFamily: "",
   uiBaseFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+  contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
@@ -224,7 +248,9 @@ async function readAppSettings(
     return {
       settings: normalizeAppSettings(stored),
       // COMPAT(uiFontSizeScale): persist the converted base size, remove after 2027-08-17.
-      needsWrite: stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined,
+      needsWrite:
+        (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
+        stored.contentFontSize === undefined,
     };
   }
 
@@ -369,6 +395,9 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
 function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   Object.assign(result, pickEnumAppSettings(stored));
+  if (typeof stored.pluginThemeId === "string") {
+    result.pluginThemeId = stored.pluginThemeId;
+  }
   if (stored.sidebarRowItems !== undefined) {
     result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);
   }
@@ -407,6 +436,17 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
       result.uiBaseFontSize = Math.round((FONT_SIZE.base * legacyUiFontSize) / 16);
     }
   }
+  const contentFontSize = parseClampedFontSize(stored.contentFontSize, {
+    min: MIN_CONTENT_FONT_SIZE,
+    max: MAX_CONTENT_FONT_SIZE,
+  });
+  if (contentFontSize !== null) {
+    result.contentFontSize = contentFontSize;
+  } else if (stored.contentFontSize === undefined) {
+    // Existing content followed the interface ramp. Preserve that rendered size
+    // once, then persist the independent setting during the read migration.
+    result.contentFontSize = result.uiBaseFontSize ?? DEFAULT_UI_BASE_FONT_SIZE;
+  }
   const codeFontSize = parseClampedFontSize(stored.codeFontSize, {
     min: MIN_CODE_FONT_SIZE,
     max: MAX_CODE_FONT_SIZE,
@@ -432,6 +472,13 @@ function pickAppSettingsFromLegacy(
   if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
     result.theme = legacy.theme;
   }
+  const legacyInterfaceSize = pickAppSettings(legacy).uiBaseFontSize;
+  if (legacyInterfaceSize !== undefined) {
+    result.uiBaseFontSize = legacyInterfaceSize;
+  }
+  // The legacy key rendered content on the interface ramp. Freeze that
+  // rendered value into the new independent preference during migration.
+  result.contentFontSize = legacyInterfaceSize ?? DEFAULT_UI_BASE_FONT_SIZE;
   return result;
 }
 

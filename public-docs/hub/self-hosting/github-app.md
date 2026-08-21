@@ -29,6 +29,10 @@ GitHub uses these Hub URLs:
 
 Keep GitHub's SSL verification enabled.
 
+## Subscribe to GitHub events
+
+Under **Subscribe to events**, select **Issue comment**, **Issues**, **Pull requests**, **Pull request review**, **Pull request review comment**, and **Push**. **Pull requests** is required for `github.pull_request_created` and `github.pull_request_label_added`.
+
 ## Connect repositories
 
 After Hub verifies the App, choose **Install on GitHub**. Select the account or organization and repositories the App may access.
