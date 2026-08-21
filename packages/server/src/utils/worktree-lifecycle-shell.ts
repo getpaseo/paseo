@@ -43,10 +43,14 @@ export interface WorktreeLifecycleShellInvocation {
   args: string[];
 }
 
-export function buildWorktreeLifecycleShellInvocation(input: {
+export interface BuildWorktreeLifecycleShellInvocationOptions {
   shell: string;
   script: string;
-}): WorktreeLifecycleShellInvocation {
+}
+
+export function buildWorktreeLifecycleShellInvocation(
+  input: BuildWorktreeLifecycleShellInvocationOptions,
+): WorktreeLifecycleShellInvocation {
   // -i sources .bashrc/.zshrc (oh-my-zsh only loads under an interactive
   // shell); -l sources .bash_profile/.zprofile (e.g. Homebrew's shellenv).
   // fish reads config.fish either way, but its own plugins/activation
@@ -166,11 +170,15 @@ function buildFishLifecycleScript(input: WorktreeLifecycleScriptBodyInput): stri
  * control-flow/PATH syntax varies, isolated in the per-dialect builders
  * above.
  */
-export function buildWorktreeLifecycleScript(input: {
+export interface BuildWorktreeLifecycleScriptOptions {
   commands: string[];
   originalPath: string | undefined;
   dialect: WorktreeLifecycleShellDialect;
-}): WorktreeLifecycleScript {
+}
+
+export function buildWorktreeLifecycleScript(
+  input: BuildWorktreeLifecycleScriptOptions,
+): WorktreeLifecycleScript {
   const markerToken = `__paseo_lifecycle_${randomUUID().replace(/-/g, "")}__`;
   const bodyInput: WorktreeLifecycleScriptBodyInput = {
     commands: input.commands,
@@ -232,11 +240,15 @@ export interface WorktreeLifecycleOutputParser {
  * legacy one-process-per-entry loop produced, so callers (live timeline
  * emission, final result arrays) don't need to know execution was merged.
  */
-export function createWorktreeLifecycleOutputParser(input: {
+export interface CreateWorktreeLifecycleOutputParserOptions {
   markerToken: string;
   commands: string[];
   cwd: string;
-}): WorktreeLifecycleOutputParser {
+}
+
+export function createWorktreeLifecycleOutputParser(
+  input: CreateWorktreeLifecycleOutputParserOptions,
+): WorktreeLifecycleOutputParser {
   const total = input.commands.length;
   const segments = new Map<number, LifecycleSegmentState>();
   const order: number[] = [];
@@ -258,6 +270,15 @@ export function createWorktreeLifecycleOutputParser(input: {
   // gets flushed first, in order.
   let pendingBlankStdout = false;
   let pendingBlankStderr = false;
+  // stdout and stderr are independent pipes with no delivery-order guarantee
+  // relative to each other, so stdout can deliver command N+1's START marker
+  // before stderr delivers command N's END marker (both were written to the
+  // script back-to-back, but arrive at different times). Emitting
+  // command_started for N+1 immediately in that case would show two commands
+  // "running" at once in the live timeline. Hold it back until command N has
+  // fully closed on both streams.
+  let lastCompletedIndex = 0;
+  let pendingStartIndex: number | null = null;
 
   function getOrCreateSegment(index: number): LifecycleSegmentState {
     let segment = segments.get(index);
@@ -354,13 +375,17 @@ export function createWorktreeLifecycleOutputParser(input: {
         const segment = getOrCreateSegment(marker.index);
         if (stream === "stdout") {
           activeStdoutIndex = marker.index;
-          events.push({
-            type: "command_started",
-            index: segment.index,
-            total,
-            command: segment.command,
-            cwd: segment.cwd,
-          });
+          if (marker.index === lastCompletedIndex + 1) {
+            events.push({
+              type: "command_started",
+              index: segment.index,
+              total,
+              command: segment.command,
+              cwd: segment.cwd,
+            });
+          } else {
+            pendingStartIndex = marker.index;
+          }
         } else {
           activeStderrIndex = marker.index;
         }
@@ -387,6 +412,18 @@ export function createWorktreeLifecycleOutputParser(input: {
       const completed = maybeCompleted(marker.index);
       if (completed) {
         events.push(completed);
+        lastCompletedIndex = marker.index;
+        if (pendingStartIndex === marker.index + 1) {
+          const pendingSegment = getOrCreateSegment(pendingStartIndex);
+          events.push({
+            type: "command_started",
+            index: pendingSegment.index,
+            total,
+            command: pendingSegment.command,
+            cwd: pendingSegment.cwd,
+          });
+          pendingStartIndex = null;
+        }
       }
       return;
     }

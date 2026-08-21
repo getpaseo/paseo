@@ -300,6 +300,34 @@ describe("createWorktreeLifecycleOutputParser", () => {
     );
   }
 
+  it("defers command_started until the previous command's stderr also closes", () => {
+    // stdout and stderr are independent pipes: stdout can deliver command 2's
+    // START marker before stderr delivers command 1's END marker, even
+    // though the script writes them in that order. The live timeline must
+    // not show both commands "running" at once in that case.
+    const parser = createWorktreeLifecycleOutputParser({
+      markerToken: "MARK",
+      commands: ["cmd1", "cmd2"],
+      cwd: "/worktree",
+    });
+
+    const stdoutEvents = [
+      ...parser.feed("stdout", "MARK|START|1\n"),
+      ...parser.feed("stdout", "line-one\n"),
+      ...parser.feed("stdout", "MARK|END|1|0\n"),
+      ...parser.feed("stdout", "MARK|START|2\n"),
+    ];
+    expect(stdoutEvents.map((event) => event.type)).toEqual(["command_started", "output"]);
+
+    const stderrEvents = parser.feed("stderr", "MARK|END|1|0\n");
+    expect(stderrEvents.map((event) => event.type)).toEqual([
+      "command_completed",
+      "command_started",
+    ]);
+    expect(stderrEvents[0]).toMatchObject({ index: 1, exitCode: 0 });
+    expect(stderrEvents[1]).toMatchObject({ index: 2, command: "cmd2" });
+  });
+
   it("surfaces a shell that never reaches the first marker as command 1 failing", () => {
     const parser = createWorktreeLifecycleOutputParser({
       markerToken: "__paseo_lifecycle_test__",
