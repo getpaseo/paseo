@@ -1060,19 +1060,28 @@ function BranchPrefixCard({ serverId }: { serverId: string }) {
   const enabled = config?.branchPrefixEnabled === true;
   const persistedPrefix = config?.branchPrefix ?? "";
   const [draft, setDraft] = useState(persistedPrefix);
+  const draftRef = useRef(draft);
   const inputRef = useRef<EditingTextInputHandle>(null);
 
-  useEffect(() => {
-    setDraft(persistedPrefix);
-  }, [persistedPrefix]);
-
-  const handleChangeText = useCallback((text: string) => {
-    const sanitized = sanitizeBranchPrefixInput(text);
-    setDraft(sanitized);
-    if (sanitized !== text) {
-      inputRef.current?.replaceText(sanitized);
-    }
+  const updateDraft = useCallback((next: string) => {
+    draftRef.current = next;
+    setDraft(next);
   }, []);
+
+  useEffect(() => {
+    updateDraft(persistedPrefix);
+  }, [persistedPrefix, updateDraft]);
+
+  const handleChangeText = useCallback(
+    (text: string) => {
+      const sanitized = sanitizeBranchPrefixInput(text);
+      updateDraft(sanitized);
+      if (sanitized !== text) {
+        inputRef.current?.replaceText(sanitized);
+      }
+    },
+    [updateDraft],
+  );
 
   const handleToggle = useCallback(
     (next: boolean) => {
@@ -1089,16 +1098,21 @@ function BranchPrefixCard({ serverId }: { serverId: string }) {
 
   const commitPrefix = useCallback(() => {
     if (draft === persistedPrefix) return;
-    void patchConfig({ branchPrefix: draft }).catch((error) => {
+    const attemptedPrefix = draft;
+    void patchConfig({ branchPrefix: attemptedPrefix }).catch((error) => {
       console.error("[HostPage] Failed to update branch prefix", error);
-      setDraft(persistedPrefix);
-      inputRef.current?.replaceText(persistedPrefix);
+      // Only revert if the user hasn't already moved on to a newer edit —
+      // otherwise this stale failure would clobber that newer draft.
+      if (draftRef.current === attemptedPrefix) {
+        updateDraft(persistedPrefix);
+        inputRef.current?.replaceText(persistedPrefix);
+      }
       Alert.alert(
         t("settings.host.workspaces.branchPrefix.updateFailedTitle"),
         t("settings.host.workspaces.branchPrefix.updateFailedMessage"),
       );
     });
-  }, [draft, persistedPrefix, patchConfig, t]);
+  }, [draft, persistedPrefix, patchConfig, t, updateDraft]);
 
   const previewHint = draft.trim()
     ? t("settings.host.workspaces.branchPrefix.fieldHint", {
