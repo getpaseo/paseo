@@ -32,16 +32,24 @@ export function useKeepAwake(): void {
 
   // A host that has dropped its connection leaves its last-known agent status
   // (e.g. "running") sitting unchanged in the session store — only a full host
-  // removal clears it. Require the owning host to be currently "online" so a
-  // stale "running" reading from a disconnected host can't hold the block.
+  // removal clears it. Distrust that reading once the host is confirmed
+  // "offline" or "error", since those persist indefinitely without another
+  // signal. "connecting" (an in-flight reconnect after a blip) and "idle"
+  // (not yet attempted) are left trusted — the agent was running moments ago
+  // and is very likely still running; requiring "online" specifically would
+  // drop the block during exactly the reconnect window where it matters most.
   const serverIds = useMemo(
     () => Array.from(new Set(agents.map((agent) => agent.serverId))),
     [agents],
   );
   const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
-  const hasRunningAgent = agents.some(
-    (agent) => agent.status === "running" && connectionStatuses.get(agent.serverId) === "online",
-  );
+  const hasRunningAgent = agents.some((agent) => {
+    if (agent.status !== "running") {
+      return false;
+    }
+    const connectionStatus = connectionStatuses.get(agent.serverId);
+    return connectionStatus !== "offline" && connectionStatus !== "error";
+  });
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
 
   useEffect(() => {
