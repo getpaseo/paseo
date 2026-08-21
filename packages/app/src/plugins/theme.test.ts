@@ -2,13 +2,8 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import {
-  buildPluginTheme,
-  collectPluginThemes,
-  findPluginTheme,
-  rememberPluginThemeHost,
-  toPluginTheme,
-} from "./theme";
+import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
+import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
 const MOCHA: PluginThemeContribution = {
@@ -20,8 +15,8 @@ const MOCHA: PluginThemeContribution = {
     foreground: "#cdd6f4",
     raised: "#313244",
     control: "#45475a",
-    accent: "#45475a",
-    highlight: "#cba6f7",
+    border: "#45475a",
+    accent: "#cba6f7",
     mutedForeground: "#a6adc8",
     ring: "#6c7086",
   },
@@ -29,7 +24,23 @@ const MOCHA: PluginThemeContribution = {
 
 const MOCHA_FORK: PluginThemeContribution = {
   ...MOCHA,
-  colors: { ...MOCHA.colors, background: "#11111b", highlight: "#f5c2e7" },
+  colors: { ...MOCHA.colors, background: "#11111b", accent: "#f5c2e7" },
+};
+
+const LATTE: PluginThemeContribution = {
+  id: "latte",
+  name: "Catppuccin Latte",
+  appearance: "light",
+  colors: {
+    background: "#eff1f5",
+    foreground: "#4c4f69",
+    raised: "#e6e9ef",
+    control: "#dce0e8",
+    border: "#ccd0da",
+    accent: "#8839ef",
+    mutedForeground: "#6c6f85",
+    ring: "#9ca0b0",
+  },
 };
 
 function installed(serverId: string, themes: PluginThemeContribution[]): InstalledPlugin {
@@ -63,9 +74,10 @@ describe("toPluginTheme", () => {
   });
 });
 
-describe("buildPluginTheme", () => {
+describe("plugin theme palettes", () => {
   it("expands a contributed palette onto the semantic and terminal tokens", () => {
-    const theme = buildPluginTheme(MOCHA);
+    const option = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0];
+    const theme = option.theme;
 
     expect(theme.colorScheme).toBe("dark");
     expect(theme.colors).toMatchObject({
@@ -91,19 +103,44 @@ describe("buildPluginTheme", () => {
     });
   });
 
-  it("carries the accent on the foreground when no highlight is given", () => {
-    const { highlight: _highlight, ...colors } = MOCHA.colors;
-    const theme = buildPluginTheme({ ...MOCHA, colors });
+  it("carries the accent on the foreground when no accent is given", () => {
+    const { accent: _accent, ...colors } = MOCHA.colors;
+    const contribution = { ...MOCHA, colors };
+    const theme = collectPluginThemes([installed("host-a", [contribution])], new Set(["host-a"]))[0]
+      .theme;
 
     expect(theme.colors.accent).toBe("#cdd6f4");
     expect(theme.colors.accentBright).toBe("#cdd6f4");
   });
 
   it("keeps the status and syntax tokens the built-in dark themes use", () => {
-    const theme = buildPluginTheme(MOCHA);
+    const theme = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0].theme;
 
     expect(theme.colors.statusDanger).toBe(darkTheme.colors.statusDanger);
     expect(theme.colors.syntax).toEqual(darkTheme.colors.syntax);
+  });
+
+  it("derives a complete light theme from the same palette contract", () => {
+    const theme = collectPluginThemes([installed("host-a", [LATTE])], new Set(["host-a"]))[0].theme;
+
+    expect(theme.colorScheme).toBe("light");
+    expect(theme.colors).toMatchObject({
+      surface0: "#eff1f5",
+      surface1: "#e6e9ef",
+      surface2: "#dce0e8",
+      surfaceSidebar: "#dce0e8",
+      foreground: "#4c4f69",
+      border: "#ccd0da",
+      accent: "#8839ef",
+      ring: "#9ca0b0",
+      terminal: {
+        background: "#eff1f5",
+        foreground: "#4c4f69",
+        black: "#4c4f69",
+      },
+    });
+    expect(theme.colors.statusDanger).toBe(lightTheme.colors.statusDanger);
+    expect(theme.colors.syntax).toEqual(lightTheme.colors.syntax);
   });
 });
 
@@ -147,7 +184,7 @@ describe("collectPluginThemes", () => {
     const beforePick = bothHosts();
     expect(beforePick).toHaveLength(1);
     expect(beforePick[0]?.serverId).toBe("host-a");
-    expect(beforePick[0]?.contribution).toBe(MOCHA);
+    expect(beforePick[0]?.theme.colors.surface0).toBe("#1e1e2e");
 
     const onlyHostZ = collectPluginThemes([installed("host-z", [MOCHA_FORK])], SUPPORTED);
     expect(onlyHostZ[0]).toBeDefined();
@@ -156,35 +193,10 @@ describe("collectPluginThemes", () => {
     const afterPick = bothHosts();
     expect(afterPick).toHaveLength(1);
     expect(afterPick[0]?.serverId).toBe("host-z");
-    expect(afterPick[0]?.contribution).toBe(MOCHA_FORK);
+    expect(afterPick[0]?.theme.colors.surface0).toBe("#11111b");
 
     const withoutHostZ = collectPluginThemes([installed("host-a", [MOCHA])], SUPPORTED);
     expect(withoutHostZ[0]?.serverId).toBe("host-a");
-    expect(withoutHostZ[0]?.contribution).toBe(MOCHA);
-  });
-});
-
-describe("findPluginTheme", () => {
-  const supported = new Set(["host-a", "old-host"]);
-
-  it("resolves the persisted selection", () => {
-    const options = collectPluginThemes([installed("host-a", [MOCHA])], supported);
-    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBe(MOCHA);
-  });
-
-  it("returns null when the plugin is gone so the app falls back to the default theme", () => {
-    expect(
-      findPluginTheme(collectPluginThemes([], supported), "catppuccin/theme/mocha"),
-    ).toBeNull();
-  });
-
-  it("returns null when the plugin no longer contributes that theme", () => {
-    const options = collectPluginThemes([installed("host-a", [])], supported);
-    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBeNull();
-  });
-
-  it("returns null when only an old daemon offers the persisted theme", () => {
-    const options = collectPluginThemes([installed("old-host", [MOCHA])], new Set());
-    expect(findPluginTheme(options, "catppuccin/theme/mocha")).toBeNull();
+    expect(withoutHostZ[0]?.theme.colors.surface0).toBe("#1e1e2e");
   });
 });

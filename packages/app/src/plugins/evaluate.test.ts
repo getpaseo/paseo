@@ -152,8 +152,8 @@ describe("evaluatePluginClientBundle", () => {
             foreground: "#cdd6f4",
             raised: "#313244",
             control: "#45475a",
-            accent: "#45475a",
-            highlight: "#cba6f7",
+            border: "#45475a",
+            accent: "#cba6f7",
             mutedForeground: "#a6adc8",
             ring: "#6c7086",
           },
@@ -164,7 +164,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.themes.map((theme) => [theme.id, theme.name])).toEqual([
       ["mocha", "Catppuccin Mocha"],
     ]);
-    expect(plugin.themes[0]?.colors.highlight).toBe("#cba6f7");
+    expect(plugin.themes[0]?.colors.accent).toBe("#cba6f7");
   });
 
   it("rejects a theme with a color that is not a hex value", () => {
@@ -181,7 +181,7 @@ describe("evaluatePluginClientBundle", () => {
               foreground: "#cdd6f4",
               raised: "#313244",
               control: "#45475a",
-              accent: "#45475a",
+              border: "#45475a",
               mutedForeground: "#a6adc8",
               ring: "#6c7086",
             },
@@ -205,7 +205,7 @@ describe("evaluatePluginClientBundle", () => {
               foreground: "#cdd6f4",
               raised: "#313244",
               control: "#45475a",
-              accent: "#45475a",
+              border: "#45475a",
               mutedForeground: "#a6adc8",
               ring: "#6c7086",
             },

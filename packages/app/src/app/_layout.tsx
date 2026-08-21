@@ -20,7 +20,8 @@ import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { AppearanceProvider } from "@/appearance/provider";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
@@ -88,7 +89,7 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
-import { DEFAULT_THEME_PREFERENCE, useAppSettings } from "@/hooks/use-settings";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
@@ -110,10 +111,9 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { getNextThemePreference, PLUGIN_THEME_SLOT, THEME_TO_UNISTYLES } from "@/styles/theme";
+import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
@@ -131,7 +131,6 @@ import {
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { PluginCatalogSync } from "@/plugins";
-import { buildPluginTheme, findPluginTheme, usePluginThemes } from "@/plugins/theme";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -647,80 +646,29 @@ function MobileGestureWrapper({
 }
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
-  const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
-  const pluginThemes = usePluginThemes();
-  // Null while the catalog is still loading, and once the selected contribution is gone.
-  const pluginTheme = useMemo(
-    () =>
-      settings.theme === PLUGIN_THEME_SLOT
-        ? findPluginTheme(pluginThemes, settings.pluginThemeId)
-        : null,
-    [pluginThemes, settings.theme, settings.pluginThemeId],
-  );
-
-  // Apply theme setting on mount and when it changes
-  useEffect(() => {
-    if (settingsLoading) return;
-    if (pluginTheme) {
-      UnistylesRuntime.updateTheme(PLUGIN_THEME_SLOT, () => buildPluginTheme(pluginTheme));
-      UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(PLUGIN_THEME_SLOT);
-      return;
-    }
-    // A selected plugin theme that no longer exists falls back to the default preference
-    // instead of painting the reserved slot's placeholder colors.
-    const preference =
-      settings.theme === PLUGIN_THEME_SLOT ? DEFAULT_THEME_PREFERENCE : settings.theme;
-    if (preference === "auto") {
-      UnistylesRuntime.setAdaptiveThemes(true);
-    } else {
-      UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[preference]);
-    }
-  }, [settingsLoading, settings.theme, pluginTheme]);
-
-  // Apply font / size / syntax appearance settings on mount and when they change.
-  // Runs after the theme effect: a contributed theme is rebuilt from its palette, so it needs
-  // these patches re-applied. The built-in keys are patched all at once, so their order with
-  // `setTheme`/`setAdaptiveThemes` stays irrelevant.
-  useEffect(() => {
-    if (settingsLoading) return;
-    applyAppearance({
-      uiFontFamily: settings.uiFontFamily,
-      monoFontFamily: settings.monoFontFamily,
-      uiBaseFontSize: settings.uiBaseFontSize,
-      codeFontSize: settings.codeFontSize,
-      syntaxTheme: settings.syntaxTheme,
-    });
-  }, [
-    settingsLoading,
-    pluginTheme,
-    settings.uiFontFamily,
-    settings.monoFontFamily,
-    settings.uiBaseFontSize,
-    settings.codeFontSize,
-    settings.syntaxTheme,
-  ]);
 
   return (
-    <VoiceProvider>
-      <DesktopWindowControlsSync enabled={!settingsLoading} />
-      <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
-      <HostSessionManager />
-      <FaviconStatusSync />
-      <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
-    </VoiceProvider>
+    <AppearanceProvider>
+      <VoiceProvider>
+        <DesktopWindowControlsSync />
+        <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
+        <HostSessionManager />
+        <FaviconStatusSync />
+        <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+      </VoiceProvider>
+    </AppearanceProvider>
   );
 }
 
-function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
+function DesktopWindowControlsSync() {
+  const { isLoading } = useAppSettings();
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
 
   useEffect(() => {
-    if (!enabled || isNative) return;
+    if (isLoading || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
@@ -728,7 +676,7 @@ function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground]);
+  }, [isLoading, surface0, foreground]);
 
   return null;
 }

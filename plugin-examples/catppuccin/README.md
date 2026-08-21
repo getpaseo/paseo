@@ -23,5 +23,5 @@ Then run `paseo reload` and pick **Catppuccin Mocha** in Settings → Appearance
 
 The colors come straight from the [Catppuccin Mocha](https://catppuccin.com/palette/) palette:
 `base`, `text`, `surface0`, `surface1`, `mauve`, `subtext0`, and `overlay0`. Paseo expands them
-into the full token set, so `highlight` (`mauve`) drives buttons and selection while `accent`
+into the full token set, so `accent` (`mauve`) drives buttons and selection while `border`
 (`surface1`, shared with `control`) stays the border and raised-surface tint.

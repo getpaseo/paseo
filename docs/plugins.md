@@ -196,17 +196,16 @@ drops the optional presentation fields.
 
 ## Contribute a theme
 
-`addTheme` takes an eight-color dark palette and a display name. Unistyles needs every theme at
-`StyleSheet.configure` time, so `packages/app/src/styles/theme.ts` reserves one `plugin` slot in
-`REGISTERED_THEMES`; selecting a contributed theme expands its palette through the same
-`buildDarkSemanticColors`/`buildDarkTheme` pair the built-in dark variants use and rewrites that
-slot with `UnistylesRuntime.updateTheme`. One slot covers any number of contributed themes because
-only one theme is active at a time. See [unistyles.md](unistyles.md) for the runtime-patching rules
-the appearance settings share.
+`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
+same semantic builders as the built-in themes, so plugins do not depend on the complete app token
+contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
+`packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance
+provider rewrites the matching slot when the selection changes. See [unistyles.md](unistyles.md)
+for the runtime-patching rules the appearance settings share.
 
 `addTheme` is a client registration, so the compiler strips it from the backend bundle. A daemon
 that predates it does not, and the plugin fails to start there. Daemons advertise
-`features.pluginThemes` in `server_info`; `usePluginThemes` is the one place the app reads it, and
+`features.pluginThemes` in `server_info`; the plugin theme catalog is the one place the app reads it, and
 a host without it contributes no themes.
 
 The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,

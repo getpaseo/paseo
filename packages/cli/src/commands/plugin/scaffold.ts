@@ -159,8 +159,8 @@ declare module "@getpaseo/plugin" {
     foreground: string;
     raised: string;
     control: string;
-    accent: string;
-    highlight?: string;
+    border: string;
+    accent?: string;
     mutedForeground: string;
     ring: string;
   }
@@ -168,7 +168,7 @@ declare module "@getpaseo/plugin" {
   export interface PluginThemeContribution {
     id: string;
     name: string;
-    appearance: "dark";
+    appearance: "light" | "dark";
     colors: PluginThemeColors;
   }
 

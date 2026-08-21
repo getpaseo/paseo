@@ -18,10 +18,25 @@ const PLUGIN_SOURCE = `export default function contribute(plugin) {
       foreground: "#cdd6f4",
       raised: "#313244",
       control: "#45475a",
-      accent: "#45475a",
-      highlight: "#cba6f7",
+      border: "#45475a",
+      accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+    },
+  });
+  plugin.addTheme({
+    id: "latte",
+    name: "Catppuccin Latte",
+    appearance: "light",
+    colors: {
+      background: "#eff1f5",
+      foreground: "#4c4f69",
+      raised: "#e6e9ef",
+      control: "#dce0e8",
+      border: "#ccd0da",
+      accent: "#8839ef",
+      mutedForeground: "#6c6f85",
+      ring: "#9ca0b0",
     },
   });
   return () => {};
@@ -30,6 +45,7 @@ const PLUGIN_SOURCE = `export default function contribute(plugin) {
 // settingsStyles.sectionHeaderTitle paints from foregroundMuted, so the section heading proves the
 // contributed palette reached the semantic tokens rather than just the swatch.
 const MOCHA_MUTED_FOREGROUND = "rgb(166, 173, 200)";
+const LATTE_MUTED_FOREGROUND = "rgb(108, 111, 133)";
 
 test("applies a contributed theme and falls back when its plugin is gone", async ({
   page,
@@ -55,6 +71,13 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       path: testInfo.outputPath("plugin-theme-picker.png"),
       animations: "disabled",
       fullPage: true,
+    });
+
+    await test.step("a contributed light theme uses the light palette", async () => {
+      await page.getByText("Catppuccin Latte", { exact: true }).click();
+      await expect(page.getByLabel("Theme: Catppuccin Latte", { exact: true })).toBeVisible();
+      await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
+      await page.getByLabel("Theme: Catppuccin Latte", { exact: true }).click();
     });
 
     await mochaItem.click();

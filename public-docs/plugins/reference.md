@@ -170,7 +170,7 @@ Client code can import `react`, `react-native`, `@tanstack/react-query`, `zod`, 
 
 ## Contribute a theme
 
-`addTheme` adds a dark theme to Settings → Appearance, listed under the built-ins by its `name`. A
+`addTheme` adds a light or dark theme to Settings → Appearance, listed under the built-ins by its `name`. A
 theme is data, so it needs no client file:
 
 ```ts
@@ -186,8 +186,8 @@ export default function contribute(plugin: PluginContext) {
       foreground: "#cdd6f4",
       raised: "#313244",
       control: "#45475a",
-      accent: "#45475a",
-      highlight: "#cba6f7",
+      border: "#45475a",
+      accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
     },
@@ -202,16 +202,17 @@ colors, and the terminal without listing them.
 
 | Color             | Becomes                                                           |
 | ----------------- | ----------------------------------------------------------------- |
-| `background`      | App and sidebar background, terminal background                   |
+| `background`      | App, workspace, and terminal background                           |
 | `foreground`      | Primary text, terminal foreground and cursor                      |
 | `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and terminal black                       |
-| `accent`          | Borders and the raised surface tint — not the vivid accent        |
-| `highlight`       | Buttons, selection, and focus. Optional; `foreground` if omitted. |
+| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
+| `border`          | Borders and the highest raised-surface tint                       |
+| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
 | `mutedForeground` | Secondary text                                                    |
 | `ring`            | Focus rings, scrollbars, and terminal bright black                |
 
-`appearance` is `"dark"`. Light themes are not derived yet.
+`appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
+diff, syntax, terminal, and shadow derivation.
 
 Only one contributed theme is active at a time. Selecting one persists the choice; if the plugin is
 later disabled or removed, Paseo falls back to the default theme rather than leaving the app

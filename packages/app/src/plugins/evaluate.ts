@@ -23,7 +23,7 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
-import { pluginThemeSchema } from "./theme";
+import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 
@@ -151,7 +151,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     addTheme(contribution: PluginThemeContribution) {
       const normalizedId = requireId(contribution.id, "theme id");
       if (themeIds.has(normalizedId)) throw new Error(`Duplicate theme: ${normalizedId}`);
-      const theme = pluginThemeSchema.parse({ ...contribution, id: normalizedId });
+      const theme = parsePluginThemeContribution({ ...contribution, id: normalizedId });
       themeIds.add(normalizedId);
       collector.themes.push(theme);
     },

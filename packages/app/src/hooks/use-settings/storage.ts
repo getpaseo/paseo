@@ -15,7 +15,12 @@ import {
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
-import { FONT_SIZE, PLUGIN_THEME_SLOT, THEME_OPTIONS, type ThemePreference } from "@/styles/theme";
+import {
+  FONT_SIZE,
+  PLUGIN_THEME_PREFERENCE,
+  THEME_OPTIONS,
+  type ThemePreference,
+} from "@/styles/theme";
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
@@ -34,7 +39,7 @@ export type ToolCallDetailLevel = "overview" | "detailed";
 
 const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
-  PLUGIN_THEME_SLOT,
+  PLUGIN_THEME_PREFERENCE,
 ]);
 const VALID_THEMES = new Set<string>(ThemePreferenceSchema.options);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
@@ -64,7 +69,7 @@ export const MAX_FONT_FAMILY_LENGTH = 200;
 
 export interface AppSettings {
   theme: ThemePreference;
-  /** Which contributed theme `theme: "plugin"` selects. Null once nothing contributes it. */
+  /** Which contributed theme `theme: "plugin"` selects. */
   pluginThemeId: string | null;
   language: AppLanguage;
   sendBehavior: SendBehavior;

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
   MAX_CODE_FONT_SIZE,
@@ -34,13 +35,13 @@ import {
   DEFAULT_MONO_FONT_STACK,
   DEFAULT_UI_FONT_STACK,
   ICON_SIZE,
-  PLUGIN_THEME_SLOT,
+  PLUGIN_THEME_PREFERENCE,
   THEME_OPTIONS,
   THEME_SWATCHES,
   type Theme,
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
-import { rememberPluginThemeHost, usePluginThemes, type PluginThemeOption } from "@/plugins/theme";
+import type { PluginThemeOption } from "@/plugins/themes";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
 
@@ -57,7 +58,7 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-type BuiltInThemePreference = Exclude<AppSettings["theme"], typeof PLUGIN_THEME_SLOT>;
+type BuiltInThemePreference = Exclude<AppSettings["theme"], typeof PLUGIN_THEME_PREFERENCE>;
 
 function getThemeLabel(t: TFunction, value: BuiltInThemePreference): string {
   return t(`settings.appearance.theme.options.${value}`);
@@ -142,13 +143,10 @@ function PluginThemeMenuItem({ option, selected, onSelect }: PluginThemeMenuItem
   const handleSelect = useCallback(() => {
     onSelect(option);
   }, [onSelect, option]);
-  const leading = useMemo(
-    () => <ThemeSwatch color={option.contribution.colors.background} />,
-    [option.contribution.colors.background],
-  );
+  const leading = useMemo(() => <ThemeSwatch color={option.swatch} />, [option.swatch]);
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
-      {option.contribution.name}
+      {option.name}
     </DropdownMenuItem>
   );
 }
@@ -170,9 +168,9 @@ function ThemeRow({
 }: ThemeRowProps) {
   const { t } = useTranslation();
   // A selected contribution that is no longer installed shows the fallback the app renders.
-  const builtInValue = value === PLUGIN_THEME_SLOT ? DEFAULT_THEME_PREFERENCE : value;
+  const builtInValue = value === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : value;
   const selectedLabel = selectedPluginTheme
-    ? selectedPluginTheme.contribution.name
+    ? selectedPluginTheme.name
     : getThemeLabel(t, builtInValue);
   return (
     <View style={settingsStyles.row}>
@@ -187,7 +185,7 @@ function ThemeRow({
           })}
         >
           {selectedPluginTheme ? (
-            <ThemeSwatch color={selectedPluginTheme.contribution.colors.background} />
+            <ThemeSwatch color={selectedPluginTheme.swatch} />
           ) : (
             <ThemeLeading themeValue={builtInValue} />
           )}
@@ -517,11 +515,11 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
-  const pluginThemes = usePluginThemes();
-  const selectedPluginTheme =
-    settings.theme === PLUGIN_THEME_SLOT
-      ? (pluginThemes.find((option) => option.id === settings.pluginThemeId) ?? null)
-      : null;
+  const {
+    options: pluginThemes,
+    selected: selectedPluginTheme,
+    select: selectPluginTheme,
+  } = useContributedThemes();
   const showInterfaceFontFamilyRow = !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
@@ -548,10 +546,9 @@ export function AppearanceSection() {
 
   const handlePluginThemeChange = useCallback(
     (option: PluginThemeOption) => {
-      rememberPluginThemeHost(option);
-      void updateSettings({ theme: PLUGIN_THEME_SLOT, pluginThemeId: option.id });
+      selectPluginTheme(option);
     },
-    [updateSettings],
+    [selectPluginTheme],
   );
 
   const handleSyntaxThemeChange = useCallback(
