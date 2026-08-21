@@ -2084,13 +2084,18 @@ export const ru: TranslationResources = {
         interfaceFontHint:
           "Используется во всём приложении. Оставьте поле пустым, чтобы использовать системный шрифт.",
         interfaceFontAccessibility: "Семейство интерфейсных шрифтов",
-        baseSize: "Базовый размер",
-        baseSizeAccessibility: "Базовый размер шрифта",
+        interfaceSize: "Размер интерфейса",
+        interfaceSizeHint: "Используется для навигации, элементов управления и подписей",
+        interfaceSizeAccessibility: "Размер шрифта интерфейса",
+        contentSize: "Размер содержимого",
+        contentSizeHint: "Используется для текста чата и отображаемого Markdown",
+        contentSizeAccessibility: "Размер шрифта содержимого",
         codeFont: "Шрифт кода",
         codeFontHint:
           "Используется для кода, диффов и вывода терминала. Оставьте поле пустым, чтобы использовать системный шрифт.",
         codeFontAccessibility: "Семейство шрифтов кода",
         codeSize: "Размер кода",
+        codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
       },
       syntax: {
@@ -2099,7 +2104,8 @@ export const ru: TranslationResources = {
         highlightThemeHint: "Цвета кода, не зависящие от темы приложения",
         highlightThemeAccessibility: "Тема подсветки: {{value}}",
         previewAccessibility:
-          "Предварительный просмотр темы синтаксиса и шрифта кода в реальном времени.",
+          "Предварительный просмотр типографики содержимого, темы синтаксиса и шрифта кода в реальном времени.",
+        previewContent: "Предварительный просмотр содержимого и кода",
       },
     },
     shortcuts: {

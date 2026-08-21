@@ -2047,13 +2047,18 @@ export const ar: TranslationResources = {
         interfaceFont: "خط الواجهة",
         interfaceFontHint: "تستخدم عبر التطبيق. اتركه فارغًا للإعداد الافتراضي للنظام",
         interfaceFontAccessibility: "عائلة خطوط الواجهة",
-        baseSize: "الحجم الأساسي",
-        baseSizeAccessibility: "حجم الخط الأساسي",
+        interfaceSize: "حجم الواجهة",
+        interfaceSizeHint: "يُستخدم للتنقل وعناصر التحكم والتسميات",
+        interfaceSizeAccessibility: "حجم خط الواجهة",
+        contentSize: "حجم المحتوى",
+        contentSizeHint: "يُستخدم لنص الدردشة وملفات Markdown المعروضة",
+        contentSizeAccessibility: "حجم خط المحتوى",
         codeFont: "خط الكود",
         codeFontHint:
           "تستخدم في الكود والاختلافات والمخرجات الطرفية. اتركه فارغًا للإعداد الافتراضي للنظام",
         codeFontAccessibility: "عائلة خطوط الكود",
         codeSize: "حجم الكود",
+        codeSizeHint: "يُستخدم للكود والفروقات ومخرجات الطرفية",
         codeSizeAccessibility: "حجم خط الكود",
       },
       syntax: {
@@ -2061,7 +2066,9 @@ export const ar: TranslationResources = {
         highlightTheme: "تسليط الضوء على الموضوع",
         highlightThemeHint: "ألوان التعليمات البرمجية، مستقلة عن سمة التطبيق",
         highlightThemeAccessibility: "تسليط الضوء على الموضوع:{{value}}",
-        previewAccessibility: "معاينة مباشرة لموضوع بناء الجملة وخط التعليمات البرمجية",
+        previewAccessibility:
+          "معاينة مباشرة لطباعة المحتوى وموضوع بناء الجملة وخط التعليمات البرمجية",
+        previewContent: "معاينة المحتوى والرمز",
       },
     },
     shortcuts: {

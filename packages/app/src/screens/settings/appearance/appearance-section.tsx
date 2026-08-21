@@ -22,8 +22,10 @@ import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
   MAX_CODE_FONT_SIZE,
+  MAX_CONTENT_FONT_SIZE,
   MAX_UI_BASE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_CONTENT_FONT_SIZE,
   MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   sanitizeFontFamily,
@@ -401,6 +403,7 @@ function FontFamilyRow({
 
 interface FontSizeRowProps {
   title: string;
+  hint: string;
   accessibilityLabel: string;
   draft: string;
   withBorder?: boolean;
@@ -410,6 +413,7 @@ interface FontSizeRowProps {
 
 function FontSizeRow({
   title,
+  hint,
   accessibilityLabel,
   draft,
   withBorder = true,
@@ -420,6 +424,7 @@ function FontSizeRow({
     <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{title}</Text>
+        <Text style={settingsStyles.rowHint}>{hint}</Text>
       </View>
       <View style={styles.sizeField}>
         <TextInput
@@ -527,12 +532,16 @@ export function AppearanceSection() {
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
   const [uiBaseSizeDraft, setUiBaseSizeDraft] = useState(String(settings.uiBaseFontSize));
+  const [contentSizeDraft, setContentSizeDraft] = useState(String(settings.contentFontSize));
   const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
 
   // Resync numeric drafts when the committed value changes elsewhere.
   useEffect(() => {
     setUiBaseSizeDraft(String(settings.uiBaseFontSize));
   }, [settings.uiBaseFontSize]);
+  useEffect(() => {
+    setContentSizeDraft(String(settings.contentFontSize));
+  }, [settings.contentFontSize]);
   useEffect(() => {
     setCodeSizeDraft(String(settings.codeFontSize));
   }, [settings.codeFontSize]);
@@ -617,6 +626,10 @@ export function AppearanceSection() {
     setCodeSizeDraft(value.replace(/[^\d]/g, ""));
   }, []);
 
+  const handleContentSizeChange = useCallback((value: string) => {
+    setContentSizeDraft(value.replace(/[^\d]/g, ""));
+  }, []);
+
   const commitUiBaseSize = useCallback(() => {
     const parsed = parseClampedFontSize(uiBaseSizeDraft, {
       min: MIN_UI_BASE_FONT_SIZE,
@@ -641,15 +654,28 @@ export function AppearanceSection() {
     }
   }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
 
+  const commitContentSize = useCallback(() => {
+    const parsed = parseClampedFontSize(contentSizeDraft, {
+      min: MIN_CONTENT_FONT_SIZE,
+      max: MAX_CONTENT_FONT_SIZE,
+    });
+    const next = parsed ?? settings.contentFontSize;
+    setContentSizeDraft(String(next));
+    if (next !== settings.contentFontSize) {
+      void updateSettings({ contentFontSize: next });
+    }
+  }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
+
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
+      contentFontSize: sizeDraftToOverride(contentSizeDraft),
       monoFontFamily: monoFontDraft,
       codeFontSize: sizeDraftToOverride(codeSizeDraft),
     }),
-    [codeSizeDraft, monoFontDraft],
+    [codeSizeDraft, contentSizeDraft, monoFontDraft],
   );
 
   return (
@@ -699,12 +725,21 @@ export function AppearanceSection() {
             />
           ) : null}
           <FontSizeRow
-            title={t("settings.appearance.fonts.baseSize")}
-            accessibilityLabel={t("settings.appearance.fonts.baseSizeAccessibility")}
+            title={t("settings.appearance.fonts.interfaceSize")}
+            hint={t("settings.appearance.fonts.interfaceSizeHint")}
+            accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
             draft={uiBaseSizeDraft}
             withBorder={showInterfaceFontFamilyRow}
             onChangeDraft={handleUiBaseSizeChange}
             onCommit={commitUiBaseSize}
+          />
+          <FontSizeRow
+            title={t("settings.appearance.fonts.contentSize")}
+            hint={t("settings.appearance.fonts.contentSizeHint")}
+            accessibilityLabel={t("settings.appearance.fonts.contentSizeAccessibility")}
+            draft={contentSizeDraft}
+            onChangeDraft={handleContentSizeChange}
+            onCommit={commitContentSize}
           />
           <FontFamilyRow
             title={t("settings.appearance.fonts.codeFont")}
@@ -719,6 +754,7 @@ export function AppearanceSection() {
           />
           <FontSizeRow
             title={t("settings.appearance.fonts.codeSize")}
+            hint={t("settings.appearance.fonts.codeSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
             draft={codeSizeDraft}
             onChangeDraft={handleCodeSizeChange}

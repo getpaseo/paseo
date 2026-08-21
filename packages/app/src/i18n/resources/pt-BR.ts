@@ -2081,13 +2081,18 @@ export const ptBR: TranslationResources = {
         interfaceFont: "Fonte da interface",
         interfaceFontHint: "Usada em todo o app. Deixe vazio para usar o padrão do sistema",
         interfaceFontAccessibility: "Família da fonte da interface",
-        baseSize: "Tamanho base",
-        baseSizeAccessibility: "Tamanho base da fonte",
+        interfaceSize: "Tamanho da interface",
+        interfaceSizeHint: "Usado na navegação, nos controles e nos rótulos",
+        interfaceSizeAccessibility: "Tamanho da fonte da interface",
+        contentSize: "Tamanho do conteúdo",
+        contentSizeHint: "Usado no texto do chat e no Markdown renderizado",
+        contentSizeAccessibility: "Tamanho da fonte do conteúdo",
         codeFont: "Fonte de código",
         codeFontHint:
           "Usada em código, diffs e saída do terminal. Deixe vazio para usar o padrão do sistema",
         codeFontAccessibility: "Família da fonte de código",
         codeSize: "Tamanho do código",
+        codeSizeHint: "Usado em código, diffs e saída do terminal",
         codeSizeAccessibility: "Tamanho da fonte de código",
       },
       syntax: {
@@ -2095,7 +2100,9 @@ export const ptBR: TranslationResources = {
         highlightTheme: "Tema de destaque",
         highlightThemeHint: "Cores para código, independentes do tema do app",
         highlightThemeAccessibility: "Tema de destaque: {{value}}",
-        previewAccessibility: "Prévia ao vivo do tema de sintaxe e da fonte de código",
+        previewAccessibility:
+          "Prévia ao vivo da tipografia de conteúdo, do tema de sintaxe e da fonte de código",
+        previewContent: "Prévia de conteúdo e código",
       },
     },
     shortcuts: {
