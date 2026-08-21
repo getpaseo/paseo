@@ -994,8 +994,6 @@ export const en = {
     },
     filter: {
       clear: "Clear filter",
-      noMatchesTitle: "No workspaces match",
-      noMatchesDescription: "Change or clear the label filter to see workspaces.",
     },
     manage: {
       open: "Manage labels…",
@@ -1051,6 +1049,15 @@ export const en = {
         label: "Host",
         all: "All hosts",
       },
+      projectFilter: {
+        label: "Project",
+        all: "All projects",
+      },
+    },
+    filterEmpty: {
+      title: "No workspaces match",
+      description: "Change or clear the sidebar filters to see workspaces.",
+      clear: "Clear filters",
     },
     pinned: {
       title: "Pinned",

@@ -266,7 +266,7 @@ test.describe("Workspace labels", () => {
 
         // Clear restores the complete sidebar without leaving the filter page.
         await page.getByTestId("sidebar-label-filter-clear").click();
-        await expect(page.getByTestId("sidebar-label-filter-empty-state")).toBeHidden();
+        await expect(page.getByTestId("sidebar-filter-empty-state")).toBeHidden();
         await expect(page.getByTestId("sidebar-label-filter-clear")).toBeHidden();
         await expect(labelledRow).toBeVisible();
         await expect(unlabelledRow).toBeVisible();

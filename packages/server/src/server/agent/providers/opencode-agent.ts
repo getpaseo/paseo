@@ -77,6 +77,7 @@ import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
+  OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
   type OpenCodeServerAcquisition,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
@@ -3649,7 +3650,14 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     try {
-      await withTimeout(this.events.ready(), 10_000, "OpenCode event stream first record");
+      // The stream cannot deliver its first record before OpenCode finished booting, so
+      // this wait gets the same budget as server startup instead of a shorter one that
+      // fails turns on slow (plugin-heavy or cold) starts.
+      await withTimeout(
+        this.events.ready(),
+        OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
+        "OpenCode event stream first record",
+      );
     } catch (error) {
       if (this.abortController === turnAbortController) {
         this.abortController = null;

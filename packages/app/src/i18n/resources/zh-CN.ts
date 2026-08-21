@@ -977,8 +977,6 @@ export const zhCN: TranslationResources = {
     },
     filter: {
       clear: "清除筛选",
-      noMatchesTitle: "没有匹配的工作区",
-      noMatchesDescription: "更改或清除标签筛选以查看工作区。",
     },
     manage: {
       open: "管理标签…",
@@ -1034,6 +1032,15 @@ export const zhCN: TranslationResources = {
         label: "主机",
         all: "所有主机",
       },
+      projectFilter: {
+        label: "项目",
+        all: "所有项目",
+      },
+    },
+    filterEmpty: {
+      title: "没有匹配的工作区",
+      description: "更改或清除侧边栏筛选以查看工作区。",
+      clear: "清除筛选",
     },
     pinned: {
       title: "已置顶",

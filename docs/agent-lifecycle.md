@@ -103,7 +103,9 @@ recoverable from History. Opening one pins its tab and renders the archived-agen
 timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
 leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
 the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow.
+(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow. A
+provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
+resume repairs that drift through the provider's native unarchive hook; history resume does not.
 
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
