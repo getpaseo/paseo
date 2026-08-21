@@ -236,6 +236,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       groupMode: "project",
+      sortMode: "manual",
       hostFilters: ["host-a"],
       projectFilters: ["project-a", "project-b"],
       labelFilter: { labels: [] },
@@ -245,6 +246,7 @@ describe("sidebar view store", () => {
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
       groupMode: "project",
+      sortMode: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: { labels: [] },
@@ -261,6 +263,8 @@ describe("sidebar view store", () => {
       groupMode: "project",
       sortMode: "manual",
       hostFilters: [],
+      projectFilters: [],
+      labelFilter: { labels: [] },
     });
   });
 
