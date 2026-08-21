@@ -27,6 +27,13 @@ export interface OpenCodeEventConsumerOptions {
 }
 
 const WATCHDOG_MS = 30_000;
+/**
+ * Deadline for the request itself to produce a response. OpenCode can accept the socket
+ * and then never send headers, which leaves the stream neither open nor failed, so the
+ * reconnect loop below never runs. A connect-phase deadline turns that into a normal
+ * failed connection the loop can retry.
+ */
+const CONNECT_WATCHDOG_MS = 10_000;
 const MAX_BACKOFF_MS = 5_000;
 
 const systemTiming: OpenCodeEventConsumerTiming = {
@@ -115,15 +122,17 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
     signal.addEventListener("abort", abortRequest, { once: true });
     let cancelWatchdog: () => void = () => undefined;
     let delivered = false;
+    const armWatchdog = (delayMs: number = WATCHDOG_MS) => {
+      cancelWatchdog();
+      cancelWatchdog = this.timing.arm(delayMs, () => requestAbort.abort());
+    };
     try {
+      // Armed before the request so a response that never arrives is bounded too.
+      armWatchdog(CONNECT_WATCHDOG_MS);
       const result = await this.client.global.event({
         signal: requestAbort.signal,
         sseMaxRetryAttempts: 0,
       });
-      const armWatchdog = () => {
-        cancelWatchdog();
-        cancelWatchdog = this.timing.arm(WATCHDOG_MS, () => requestAbort.abort());
-      };
       armWatchdog();
       for await (const event of result.stream) {
         if (this.closed) return delivered;

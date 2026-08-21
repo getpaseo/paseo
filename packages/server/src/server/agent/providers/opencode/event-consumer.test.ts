@@ -8,6 +8,12 @@ import {
   type OpenCodeEventSourceInput,
 } from "./event-consumer.js";
 
+// Deliberately independent literals rather than the production constants these tests
+// guard: deriving them from CONNECT_WATCHDOG_MS/WATCHDOG_MS would keep the tests green if
+// those constants were changed.
+const EXPECTED_CONNECT_WATCHDOG_MS = 10_000;
+const EXPECTED_STREAM_WATCHDOG_MS = 30_000;
+
 describe("OpenCodeEventConsumer", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -101,7 +107,13 @@ describe("OpenCodeEventConsumer", () => {
     await consumer.ready();
 
     timing.expireWatchdog();
-    expect(timing.watchdogDelays).toEqual([30_000, 30_000]);
+    // Connect deadline first, then the stream watchdog re-armed on the response and again
+    // on the delivered record.
+    expect(timing.watchdogDelays).toEqual([
+      EXPECTED_CONNECT_WATCHDOG_MS,
+      EXPECTED_STREAM_WATCHDOG_MS,
+      EXPECTED_STREAM_WATCHDOG_MS,
+    ]);
     await timing.waiting();
     timing.advanceWait();
     await upstream.connected(2);
@@ -227,6 +239,60 @@ describe("OpenCodeEventConsumer", () => {
     upstream.send(0, connectedRecord("/ready"));
     await consumer.ready();
     expect(timing.waitDelays).toEqual([100, 200]);
+  });
+
+  test("abandons a connect that never responds and recovers on the retry", async () => {
+    const upstream = await createSseUpstream();
+    const timing = new ControlledTiming();
+    const realClient = createOpencodeClient({ baseUrl: upstream.url });
+    let attempts = 0;
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: upstream.url,
+      processExit: new Promise<Error>(() => undefined),
+      timing,
+      createClient: () =>
+        ({
+          ...realClient,
+          global: {
+            ...realClient.global,
+            event: (options: { signal: AbortSignal }) => {
+              attempts += 1;
+              if (attempts > 1) return realClient.global.event(options as never);
+              // OpenCode can accept the socket and then never send a response, so this
+              // request only ever settles by being aborted.
+              return new Promise((_resolve, reject) => {
+                options.signal.addEventListener(
+                  "abort",
+                  () => reject(options.signal.reason ?? new Error("aborted")),
+                  { once: true },
+                );
+              });
+            },
+          },
+        }) as OpencodeClient,
+    });
+    cleanups.push(async () => {
+      await consumer.close();
+      await upstream.close();
+    });
+
+    // The connect deadline is armed without any response having arrived.
+    await eventually(() => expect(timing.watchdogDelays).toEqual([EXPECTED_CONNECT_WATCHDOG_MS]));
+    expect(attempts).toBe(1);
+    expect(upstream.requests).toHaveLength(0);
+    expect(await promiseState(consumer.ready())).toBe("pending");
+
+    timing.expireWatchdog();
+
+    await timing.waiting();
+    expect(timing.waitDelays).toEqual([100]);
+    expect(await promiseState(consumer.ready())).toBe("pending");
+    timing.advanceWait();
+
+    await upstream.connected(1);
+    expect(attempts).toBe(2);
+    upstream.send(0, connectedRecord("/recovered"));
+    await expect(consumer.ready()).resolves.toBeUndefined();
   });
 
   test("disables SDK SSE retries at the real request seam", async () => {
