@@ -940,6 +940,16 @@ export const ko: TranslationResources = {
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          checkStatus: {
+            passed: "통과",
+            failed: "실패",
+            warning: "경고",
+            actionRequired: "조치 필요",
+            manual: "수동",
+            pending: "대기 중",
+            skipped: "건너뜀",
+            cancelled: "취소됨",
+          },
         },
         states: {
           draft: "초안",
@@ -1129,6 +1139,14 @@ export const ko: TranslationResources = {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
+      },
+      checks: {
+        passed: "통과: {{count}}개",
+        failed: "실패: {{count}}개",
+        warning: "경고: {{count}}개",
+        actionRequired: "조치 필요: {{count}}개",
+        manual: "수동: {{count}}개",
+        pending: "대기 중: {{count}}개",
       },
       actions: {
         menu: "워크스페이스 작업",
