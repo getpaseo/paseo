@@ -2351,6 +2351,14 @@ export const en = {
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
+        branchPrefix: {
+          title: "Branch name prefix",
+          hint: "Prefix for new workspace branch names",
+          accessibilityLabel: "Branch name prefix",
+          fieldLabel: "Prefix",
+          fieldHint: "Preview: {{branch}}",
+          placeholder: "e.g. feature/ or myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",

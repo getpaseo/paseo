@@ -507,6 +507,15 @@ function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedCo
   return persisted.daemon?.browserTools?.enabled ?? false;
 }
 
+function resolveBranchPrefixConfig(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): Pick<PaseoDaemonConfig, "branchPrefixEnabled" | "branchPrefix"> {
+  return {
+    branchPrefixEnabled: persisted.daemon?.branchPrefixEnabled ?? false,
+    branchPrefix: persisted.daemon?.branchPrefix ?? "",
+  };
+}
+
 /**
  * Both profile lists stay `undefined` when absent rather than defaulting to an
  * empty array: for terminal profiles that is what selects the built-in
@@ -611,6 +620,7 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
+    ...resolveBranchPrefixConfig(persisted),
     terminalProfiles,
     agentProfiles,
     skillSelection: persisted.agents?.skills?.selection,

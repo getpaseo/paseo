@@ -2304,6 +2304,14 @@ export const ja: TranslationResources = {
       },
       workspaces: {
         unavailable: "ワークスペースを管理するにはこのホストに接続してください",
+        branchPrefix: {
+          title: "ブランチ名のプレフィックス",
+          hint: "新しいワークスペースのブランチ名に付けるプレフィックス",
+          accessibilityLabel: "ブランチ名のプレフィックス",
+          fieldLabel: "プレフィックス",
+          fieldHint: "プレビュー: {{branch}}",
+          placeholder: "例: feature/ または myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "ターミナルプロファイルを管理するにはこのホストに接続してください",

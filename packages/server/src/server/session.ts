@@ -5036,6 +5036,7 @@ export class Session {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
     },
   ): Promise<CreatePaseoWorktreeResult> {
+    const daemonConfig = this.daemonConfigStore.get();
     const result = await createPaseoWorktree(input, {
       github: this.github,
       ...(options?.resolveDefaultBranch
@@ -5043,6 +5044,9 @@ export class Session {
         : {}),
       workspaceGitService: this.workspaceGitService,
       workspaceProvisioning: this.workspaceProvisioning,
+      ...(daemonConfig.branchPrefixEnabled && daemonConfig.branchPrefix
+        ? { branchPrefix: daemonConfig.branchPrefix }
+        : {}),
     });
     void Promise.all([
       this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),

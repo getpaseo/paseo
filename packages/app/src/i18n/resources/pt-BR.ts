@@ -2320,6 +2320,14 @@ export const ptBR: TranslationResources = {
       },
       workspaces: {
         unavailable: "Conecte-se a este host para gerenciar workspaces",
+        branchPrefix: {
+          title: "Prefixo do nome da branch",
+          hint: "Prefixo para os nomes de branch dos novos workspaces",
+          accessibilityLabel: "Prefixo do nome da branch",
+          fieldLabel: "Prefixo",
+          fieldHint: "Prévia: {{branch}}",
+          placeholder: "ex.: feature/ ou myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Conecte-se a este host para gerenciar perfis de terminal",

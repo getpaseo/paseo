@@ -312,6 +312,8 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",
+    branchPrefixEnabled: false,
+    branchPrefix: "",
   };
 }
 

@@ -2283,6 +2283,14 @@ export const ar: TranslationResources = {
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
+        branchPrefix: {
+          title: "بادئة اسم الفرع",
+          hint: "بادئة لأسماء فروع مساحات العمل الجديدة",
+          accessibilityLabel: "بادئة اسم الفرع",
+          fieldLabel: "البادئة",
+          fieldHint: "معاينة: {{branch}}",
+          placeholder: "مثال: feature/ أو myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",

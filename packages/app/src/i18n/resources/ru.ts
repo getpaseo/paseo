@@ -2326,6 +2326,14 @@ export const ru: TranslationResources = {
       },
       workspaces: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
+        branchPrefix: {
+          title: "Префикс имени ветки",
+          hint: "Префикс для имён веток новых рабочих пространств",
+          accessibilityLabel: "Префикс имени ветки",
+          fieldLabel: "Префикс",
+          fieldHint: "Предпросмотр: {{branch}}",
+          placeholder: "например, feature/ или myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями терминала",

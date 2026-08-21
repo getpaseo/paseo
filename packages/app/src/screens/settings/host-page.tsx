@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { applyBranchPrefix } from "@getpaseo/protocol/branch-slug";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
@@ -29,6 +30,8 @@ import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
+import { Field, FormTextInput } from "@/components/ui/form-field";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import {
   ProfileDraft,
   TerminalProfileEditModal,
@@ -296,6 +299,7 @@ export function HostWorkspacesPage({ serverId }: { serverId: string }) {
       {isConnected ? (
         <SettingsSection title={t("settings.hostSections.workspaces")}>
           <AutoArchiveMergedWorkspacesCard serverId={serverId} />
+          <BranchPrefixCard serverId={serverId} />
         </SettingsSection>
       ) : (
         <View style={[settingsStyles.card, styles.emptyCard]}>
@@ -1036,6 +1040,113 @@ function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
           testID="host-page-auto-archive-merged-workspaces-switch"
         />
       </View>
+    </View>
+  );
+}
+
+const EXAMPLE_BRANCH_NAME = "auto-branch-name";
+
+function sanitizeBranchPrefixInput(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9_/-]/g, "")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^[/-]+/, "");
+}
+
+function BranchPrefixCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const enabled = config?.branchPrefixEnabled === true;
+  const persistedPrefix = config?.branchPrefix ?? "";
+  const [draft, setDraft] = useState(persistedPrefix);
+  const inputRef = useRef<EditingTextInputHandle>(null);
+
+  useEffect(() => {
+    setDraft(persistedPrefix);
+  }, [persistedPrefix]);
+
+  const handleChangeText = useCallback((text: string) => {
+    const sanitized = sanitizeBranchPrefixInput(text);
+    setDraft(sanitized);
+    if (sanitized !== text) {
+      inputRef.current?.replaceText(sanitized);
+    }
+  }, []);
+
+  const handleToggle = useCallback(
+    (next: boolean) => {
+      void patchConfig({ branchPrefixEnabled: next }).catch((error) => {
+        console.error("[HostPage] Failed to update branch prefix enabled", error);
+        Alert.alert(
+          "Unable to update branch name prefix",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig],
+  );
+
+  const commitPrefix = useCallback(() => {
+    if (draft === persistedPrefix) return;
+    void patchConfig({ branchPrefix: draft }).catch((error) => {
+      console.error("[HostPage] Failed to update branch prefix", error);
+      Alert.alert(
+        "Unable to update branch name prefix",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  }, [draft, persistedPrefix, patchConfig]);
+
+  const previewHint = draft.trim()
+    ? t("settings.host.workspaces.branchPrefix.fieldHint", {
+        branch: applyBranchPrefix(EXAMPLE_BRANCH_NAME, draft),
+      })
+    : undefined;
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-branch-prefix-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("settings.host.workspaces.branchPrefix.title")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("settings.host.workspaces.branchPrefix.hint")}
+          </Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={handleToggle}
+          accessibilityLabel={t("settings.host.workspaces.branchPrefix.accessibilityLabel")}
+          testID="host-page-branch-prefix-switch"
+        />
+      </View>
+      {enabled ? (
+        <View style={[styles.branchPrefixFieldRow, settingsStyles.rowBorder]}>
+          <Field
+            label={t("settings.host.workspaces.branchPrefix.fieldLabel")}
+            hint={previewHint}
+            testID="host-page-branch-prefix-field"
+          >
+            <FormTextInput
+              ref={inputRef}
+              initialValue={persistedPrefix}
+              resetKey={persistedPrefix}
+              onChangeText={handleChangeText}
+              onBlur={commitPrefix}
+              placeholder={t("settings.host.workspaces.branchPrefix.placeholder")}
+              autoCapitalize="none"
+              autoCorrect={false}
+              nativeID="host-page-branch-prefix-input"
+              accessibilityLabel={t("settings.host.workspaces.branchPrefix.fieldLabel")}
+              testID="host-page-branch-prefix-input"
+            />
+          </Field>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1870,6 +1981,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
+  },
+  branchPrefixFieldRow: {
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
   },
   emptyCard: {
     padding: theme.spacing[4],

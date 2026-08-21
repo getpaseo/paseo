@@ -2336,6 +2336,14 @@ export const es: TranslationResources = {
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
+        branchPrefix: {
+          title: "Prefijo del nombre de rama",
+          hint: "Prefijo para los nombres de rama de los nuevos espacios de trabajo",
+          accessibilityLabel: "Prefijo del nombre de rama",
+          fieldLabel: "Prefijo",
+          fieldHint: "Vista previa: {{branch}}",
+          placeholder: "p. ej. feature/ o myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",

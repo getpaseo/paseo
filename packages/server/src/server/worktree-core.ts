@@ -38,6 +38,8 @@ export interface CreateWorktreeCoreDeps {
     "resolveRepoRoot" | "resolveDefaultBranch" | "resolveForge"
   >;
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
+  /** Prefix applied to freshly created branch-off branch names, e.g. "alice". */
+  branchPrefix?: string;
 }
 
 export interface CreateWorktreeCoreResult {
@@ -95,6 +97,7 @@ async function createWorktreeCoreWithPriority(
     forge: forge.forge,
     forgeService: forge.service,
     resolveDefaultBranch: (root) => resolveDefaultBranch(root, deps),
+    branchPrefix: deps.branchPrefix,
   });
   let normalizedSlug: string;
 

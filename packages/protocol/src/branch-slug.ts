@@ -59,3 +59,33 @@ export function slugify(input: string): string {
   }
   return truncated.replace(/-+$/, "");
 }
+
+/**
+ * Normalize a user-supplied branch prefix into a safe path segment: lowercase,
+ * `[a-z0-9_/-]` only, no leading slash/hyphen, no duplicate/trailing slashes.
+ * A trailing hyphen or underscore is preserved: it doubles as the separator
+ * in `applyBranchPrefix` (e.g. `foobar-` stays `foobar-`, not `foobar`).
+ */
+export function normalizeBranchPrefix(prefix: string): string {
+  return prefix
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_/-]+/g, "-")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .replace(/^-+/, "");
+}
+
+/**
+ * Join a normalized branch prefix to a branch name. Prefixes ending in `-` or
+ * `_` attach directly (`foobar-` + `tokyo` -> `foobar-tokyo`); everything else
+ * gets a `/` separator (`alice` + `tokyo` -> `alice/tokyo`). Returns
+ * `branchName` unchanged when the prefix is empty.
+ */
+export function applyBranchPrefix(branchName: string, prefix: string | undefined): string {
+  const normalized = prefix ? normalizeBranchPrefix(prefix) : "";
+  if (!normalized) return branchName;
+  const separator = /[-_]$/.test(normalized) ? "" : "/";
+  return `${normalized}${separator}${branchName}`;
+}

@@ -2258,6 +2258,14 @@ export const zhCN: TranslationResources = {
       },
       workspaces: {
         unavailable: "连接到这个 Host 以管理 Workspace",
+        branchPrefix: {
+          title: "分支名称前缀",
+          hint: "为新 Workspace 的分支名称添加前缀",
+          accessibilityLabel: "分支名称前缀",
+          fieldLabel: "前缀",
+          fieldHint: "预览：{{branch}}",
+          placeholder: "例如 feature/ 或 myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",

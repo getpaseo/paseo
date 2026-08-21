@@ -2295,6 +2295,14 @@ export const ko: TranslationResources = {
       },
       workspaces: {
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",
+        branchPrefix: {
+          title: "브랜치 이름 접두사",
+          hint: "새 워크스페이스 브랜치 이름에 붙일 접두사",
+          accessibilityLabel: "브랜치 이름 접두사",
+          fieldLabel: "접두사",
+          fieldHint: "미리보기: {{branch}}",
+          placeholder: "예: feature/ 또는 myname-",
+        },
       },
       terminalProfiles: {
         unavailable: "터미널 프로필을 관리하려면 이 호스트에 연결하세요",
