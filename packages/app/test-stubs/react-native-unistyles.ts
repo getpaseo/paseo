@@ -52,6 +52,9 @@ const testTheme = {
     full: 9999,
   },
   iconSize: { sm: 16, md: 20 },
+  // The authored default. `applyAppearance` patches this at runtime from the
+  // Content width setting, so surfaces read it off the theme rather than a constant.
+  layout: { maxContentWidth: 820 },
   opacity: { 50: 0.5 },
   shadow: {
     sm: {

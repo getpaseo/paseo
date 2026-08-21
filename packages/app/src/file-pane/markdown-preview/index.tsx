@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { parseMarkdownPreviewDocument } from "./document";
 
 export function FileMarkdownPreview({ source }: { source: string }) {
@@ -49,7 +48,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   readingFrame: {
     width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
+    maxWidth: theme.layout.maxContentWidth,
     alignSelf: "center",
     paddingHorizontal: theme.spacing[2],
   },

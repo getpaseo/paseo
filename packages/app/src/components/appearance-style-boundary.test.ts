@@ -13,4 +13,15 @@ describe("appearanceStyleBoundaryKey", () => {
       appearanceStyleBoundaryKey(darkTheme),
     );
   });
+
+  it("changes when the content measure changes without any other appearance token changing", () => {
+    const widthOnlyChange = {
+      ...darkTheme,
+      layout: { ...darkTheme.layout, maxContentWidth: darkTheme.layout.maxContentWidth + 100 },
+    };
+
+    expect(appearanceStyleBoundaryKey(widthOnlyChange)).not.toBe(
+      appearanceStyleBoundaryKey(darkTheme),
+    );
+  });
 });

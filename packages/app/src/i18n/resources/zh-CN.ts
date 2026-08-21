@@ -2118,6 +2118,12 @@ export const zhCN: TranslationResources = {
         codeSizeHint: "用于代码、差异和终端输出",
         codeSizeAccessibility: "代码字号",
       },
+      layout: {
+        title: "布局",
+        contentWidth: "内容宽度",
+        contentWidthHint: "聊天文本和渲染后 Markdown 的最大宽度。{{min}} 到 {{max}} 像素。",
+        contentWidthAccessibility: "内容宽度（像素）",
+      },
       syntax: {
         title: "语法",
         highlightTheme: "高亮主题",

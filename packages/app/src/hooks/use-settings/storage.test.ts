@@ -7,6 +7,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_CONTENT_FONT_SIZE,
+  DEFAULT_CONTENT_WIDTH,
   DEFAULT_UI_BASE_FONT_SIZE,
   defaultUiBaseFontSize,
   defaultContentFontSize,
@@ -780,6 +781,52 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(bogus)).contentFontSize).toBe(
       DEFAULT_CONTENT_FONT_SIZE,
     );
+  });
+
+  it("clamps the content width into range and rejects non-numeric values", async () => {
+    const high = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentWidth: 9999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(high)).contentWidth).toBe(1600);
+
+    const low = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentWidth: 100 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(low)).contentWidth).toBe(600);
+
+    const bogus = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentWidth: "abc" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(bogus)).contentWidth).toBe(DEFAULT_CONTENT_WIDTH);
+  });
+
+  it("reads a stored content width committed as text by the settings input", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentWidth: "1040" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).contentWidth).toBe(1040);
+  });
+
+  it("defaults the content width for settings written before the measure was adjustable", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentFontSize: 16 }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.contentFontSize).toBe(16);
+    expect(result.contentWidth).toBe(DEFAULT_CONTENT_WIDTH);
   });
 
   it.each([

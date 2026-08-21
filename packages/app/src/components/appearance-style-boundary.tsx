@@ -25,6 +25,7 @@ export function appearanceStyleBoundaryKey(theme: Theme): string {
     theme.fontSize.content,
     theme.fontSize.code,
     theme.lineHeight.diff,
+    theme.layout.maxContentWidth,
     theme.colors.foreground,
     theme.colors.foregroundMuted,
     theme.colors.mutedForeground,

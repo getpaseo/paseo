@@ -1,9 +1,9 @@
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { estimateAssistantMessageHeightFromCache as estimateAssistantImageMessageHeightFromCache } from "@/utils/assistant-image-metadata";
+import { getContentEstimateWidth } from "@/utils/content-estimate-width";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 
 const ASSISTANT_MARKDOWN_BLOCK_HEIGHT_CACHE_LIMIT = 1000;
-const ASSISTANT_MARKDOWN_BLOCK_ESTIMATE_WIDTH = MAX_CONTENT_WIDTH - 16;
+const ASSISTANT_MARKDOWN_BLOCK_HORIZONTAL_PADDING = 16;
 const ASSISTANT_MESSAGE_VERTICAL_PADDING = 24;
 const ASSISTANT_MARKDOWN_BLOCK_GAP = 12;
 
@@ -88,7 +88,7 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
   for (const block of blocks) {
     const key = createMarkdownBlockHeightKey({
       block,
-      width: ASSISTANT_MARKDOWN_BLOCK_ESTIMATE_WIDTH,
+      width: getContentEstimateWidth() - ASSISTANT_MARKDOWN_BLOCK_HORIZONTAL_PADDING,
     });
     const cachedHeight = key ? assistantMarkdownBlockHeightCache.get(key) : undefined;
     if (cachedHeight === undefined) {

@@ -2195,6 +2195,13 @@ export const es: TranslationResources = {
         codeSizeHint: "Se usa en código, diferencias y la salida del terminal",
         codeSizeAccessibility: "Tamaño de fuente del código",
       },
+      layout: {
+        title: "Diseño",
+        contentWidth: "Ancho del contenido",
+        contentWidthHint:
+          "Ancho máximo del texto del chat y del Markdown renderizado. Entre {{min}} y {{max}} px.",
+        contentWidthAccessibility: "Ancho del contenido en píxeles",
+      },
       syntax: {
         title: "Sintaxis",
         highlightTheme: "Tema destacado",

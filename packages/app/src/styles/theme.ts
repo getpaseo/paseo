@@ -574,6 +574,15 @@ export const LINE_HEIGHT = {
   diff: 22,
 } as const;
 
+// Authored layout ramp. `maxContentWidth` is the reading measure chat, composer,
+// and rendered-Markdown surfaces center themselves in. The appearance setting
+// patches the live value onto every theme; `applyAppearance` derives from this
+// authored default rather than the live (possibly already-patched) theme so
+// repeated applies never compound.
+export const LAYOUT = {
+  maxContentWidth: 820,
+} as const;
+
 export const ICON_SIZE = {
   xs: 12,
   sm: 14,
@@ -626,15 +635,16 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
   web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 });
 
-// `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain
-// `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
-// them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
-// literal types.
+// `fontSize`, `fontFamily`, `lineHeight`, and `layout` are deliberately widened to
+// plain `number`/`string` (not narrowed by `as const`) so the appearance updater can
+// patch them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep
+// their literal types.
 interface CommonTheme {
   spacing: typeof SPACING;
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
+  layout: Record<keyof typeof LAYOUT, number>;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
   borderRadius: typeof BORDER_RADIUS;
@@ -647,6 +657,7 @@ const commonTheme: CommonTheme = {
   fontSize: FONT_SIZE,
   fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
   lineHeight: LINE_HEIGHT,
+  layout: LAYOUT,
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,
