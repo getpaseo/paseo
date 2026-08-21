@@ -2524,7 +2524,7 @@ export const zhCN: TranslationResources = {
         title: "元数据生成",
         info: "注入到 Paseo 用来生成元数据的 AI prompts 中的 Project 专属指令，可用于强制执行团队约定，例如分支命名、提交风格或 PR 格式",
         branchName: "分支名称",
-        branchNamePlaceholder: "分支以 feat/ 或 fix/ 开头，个人分支使用 mb/",
+        branchNamePlaceholder: "用于将你的消息转换为分支名称的说明",
         commitMessage: "提交消息",
         commitMessagePlaceholder: "使用带 scope 的 Conventional Commits",
         pullRequest: "Pull requests",

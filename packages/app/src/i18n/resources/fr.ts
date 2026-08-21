@@ -2621,8 +2621,7 @@ export const fr: TranslationResources = {
         title: "Génération de métadonnées",
         info: "Instructions spécifiques au projet injectées dans les invites de l'IA quePaseoutilise pour générer des métadonnées: utilisez-les pour appliquer les conventions de votre équipe telles que la dénomination des branches, le style de validation ou le formatPR.",
         branchName: "Noms des succursales",
-        branchNamePlaceholder:
-          "Préfixez les branches avec feat/ ou fix/, mb/ pour les branches personnelles",
+        branchNamePlaceholder: "Instructions pour transformer vos messages en noms de branche",
         commitMessage: "Valider les messages",
         commitMessagePlaceholder: "Utiliser des commits conventionnels avec une portée",
         pullRequest: "Demandes de tirage",

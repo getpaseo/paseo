@@ -2582,7 +2582,7 @@ export const ja: TranslationResources = {
         title: "メタデータ生成",
         info: "Paseoがメタデータ生成に使うAIプロンプトへ追加する、プロジェクト固有の指示です。ブランチ名、コミット形式、PR形式など、チームの規約を反映するために使います。",
         branchName: "ブランチ名",
-        branchNamePlaceholder: "ブランチ名は feat/ または fix/ で始め、個人ブランチは mb/ にする",
+        branchNamePlaceholder: "メッセージからブランチ名を生成するための指示",
         commitMessage: "コミットメッセージ",
         commitMessagePlaceholder: "スコープ付きのConventional Commitsを使用",
         pullRequest: "プルリクエスト",

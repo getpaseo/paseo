@@ -2555,7 +2555,7 @@ export const ar: TranslationResources = {
         title: "توليد البيانات الوصفية",
         info: "تعليمات خاصة بالمشروع يتم إدخالها في الذكاء الاصطناعي الذي يستخدمه Paseo لإنشاء بيانات التعريف - استخدمها لفرض اصطلاحات فريقك مثل تسمية الفرع أو نمط الالتزام أو تنسيق PR",
         branchName: "اسماء الفروع",
-        branchNamePlaceholder: "بادئة الفروع بـ fet/ أو Fix/, mb/ للفروع الشخصية",
+        branchNamePlaceholder: "تعليمات لتحويل رسائلك إلى أسماء فروع",
         commitMessage: "ارتكاب الرسائل",
         commitMessagePlaceholder: "استخدم الالتزامات التقليدية مع النطاق",
         pullRequest: "سحب الطلبات",

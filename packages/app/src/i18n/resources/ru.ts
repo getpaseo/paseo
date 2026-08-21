@@ -2605,8 +2605,7 @@ export const ru: TranslationResources = {
         title: "Генерация метаданных",
         info: "Инструкции для этого проекта, добавляемые в промпты ИИ, с помощью которых Paseo генерирует метаданные. Используйте их, чтобы соблюдать принятые в команде правила именования веток, оформления коммитов и формата PR.",
         branchName: "Названия веток",
-        branchNamePlaceholder:
-          "Добавляйте к веткам префиксы feat/ или fix/, а к личным веткам — mb/",
+        branchNamePlaceholder: "Инструкции по превращению ваших сообщений в имена веток",
         commitMessage: "Сообщения коммитов",
         commitMessagePlaceholder: "Используйте формат Conventional Commits с областью",
         pullRequest: "PR",

@@ -2613,7 +2613,7 @@ export const es: TranslationResources = {
         title: "Generación de metadatos",
         info: "Instrucciones específicas del proyecto inyectadas en los mensajes de IA quePaseoutiliza para generar metadatos; úselas para hacer cumplir las convenciones de su equipo, como la denominación de ramas, el estilo de confirmación o el formatoPR.",
         branchName: "Nombres de sucursales",
-        branchNamePlaceholder: "Prefijo ramas con feat/ o fix/, mb/ para ramas personales",
+        branchNamePlaceholder: "Instrucciones para convertir tus mensajes en nombres de rama",
         commitMessage: "Confirmar mensajes",
         commitMessagePlaceholder: "Utilice confirmaciones convencionales con un alcance",
         pullRequest: "Solicitudes de extracción",
