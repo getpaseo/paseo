@@ -376,6 +376,8 @@ export const ko: TranslationResources = {
     },
     actions: {
       refresh: "세션 새로고침",
+      resumeOriginal: "원본 재개",
+      continueHere: "여기에서 계속",
     },
     preview: {
       untitledSession: "제목 없는 세션",
@@ -388,6 +390,9 @@ export const ko: TranslationResources = {
     },
     row: {
       importing: "가져오는 중...",
+      continuing: "계속하는 중...",
+      continueHint:
+        "여기에 새 대화를 만듭니다. 소스 파일과 변경 사항은 원본 워크트리에 그대로 유지됩니다.",
     },
   },
   workspace: {

@@ -704,7 +704,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     lineHeight: 16,
   },
   rowAction: {
