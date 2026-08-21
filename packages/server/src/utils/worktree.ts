@@ -17,6 +17,13 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
 } from "./string-command-shell.js";
+import {
+  buildWorktreeLifecycleScript,
+  buildWorktreeLifecycleShellInvocation,
+  createWorktreeLifecycleOutputParser,
+  resolveWorktreeLifecycleShell,
+  type WorktreeLifecycleShellChoice,
+} from "./worktree-lifecycle-shell.js";
 import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file.js";
 export {
   PaseoConfigRawSchema,
@@ -631,6 +638,128 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
   }
 }
 
+/**
+ * Runs `commands` sequentially, one process per entry, with no shared shell
+ * state between entries. Used on win32 (no login-shell equivalent needed
+ * there) and for any POSIX `$SHELL` we don't recognize as bash/zsh/fish,
+ * where the marker-based script in `worktree-lifecycle-shell.ts` isn't
+ * verified.
+ */
+async function runWorktreeLifecycleCommandsLegacy(options: {
+  commands: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+}): Promise<WorktreeSetupCommandResult[]> {
+  const { commands, cwd, env, signal, onEvent } = options;
+  const results: WorktreeSetupCommandResult[] = [];
+  for (const [index, cmd] of commands.entries()) {
+    const result = onEvent
+      ? await execSetupCommandStreamed({
+          command: cmd,
+          cwd,
+          env,
+          index: index + 1,
+          total: commands.length,
+          signal,
+          onEvent,
+        })
+      : await execSetupCommand(cmd, { cwd, env });
+    results.push(result);
+    if (result.exitCode !== 0) {
+      break;
+    }
+  }
+  return results;
+}
+
+/**
+ * Runs every `commands` entry inside a single login+interactive shell
+ * session (see `buildWorktreeLifecycleScript`), so shell functions/aliases
+ * and tool activation (nvm, mise, oh-my-zsh) sourced from the user's profile
+ * are available, and state one entry sets (exported vars, `cd`) is visible to
+ * the next. Reconstructs the same per-entry progress events/results the
+ * legacy per-process loop produced from the single process's output.
+ */
+async function runPosixWorktreeLifecycleCommands(options: {
+  commands: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  shellChoice: WorktreeLifecycleShellChoice;
+  signal?: AbortSignal;
+  onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
+}): Promise<WorktreeSetupCommandResult[]> {
+  const { commands, cwd, env, shellChoice, signal, onEvent } = options;
+  const { script, markerToken } = buildWorktreeLifecycleScript({
+    commands,
+    originalPath: env.PATH,
+    dialect: shellChoice.dialect,
+  });
+  const invocation = buildWorktreeLifecycleShellInvocation({ shell: shellChoice.shell, script });
+  const parser = createWorktreeLifecycleOutputParser({ markerToken, commands, cwd });
+
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    let termination: Promise<unknown> | null = null;
+
+    const emit = (events: WorktreeSetupCommandProgressEvent[]) => {
+      if (!onEvent) {
+        return;
+      }
+      for (const event of events) {
+        onEvent(event);
+      }
+    };
+
+    const child = spawnProcess(invocation.shell, invocation.args, {
+      cwd,
+      env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const abort = () => {
+      termination ??= terminateWithTreeKill(child, {
+        gracefulTimeoutMs: 1000,
+        forceTimeoutMs: 1000,
+      });
+    };
+    if (signal?.aborted) {
+      abort();
+    } else {
+      signal?.addEventListener("abort", abort, { once: true });
+    }
+
+    const finish = async (exitCode: number | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      await termination;
+      resolvePromise(parser.finalize(exitCode));
+    };
+
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      emit(parser.feed("stdout", stripAnsi(chunk.toString())));
+    });
+
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      emit(parser.feed("stderr", stripAnsi(chunk.toString())));
+    });
+
+    child.on("error", (error) => {
+      emit(parser.feed("stderr", `${error instanceof Error ? error.message : String(error)}\n`));
+      void finish(null);
+    });
+
+    child.on("close", (code) => {
+      void finish(typeof code === "number" ? code : null);
+    });
+  });
+}
+
 export async function runWorktreeSetupCommands(options: {
   worktreePath: string;
   branchName: string;
@@ -655,40 +784,40 @@ export async function runWorktreeSetupCommands(options: {
     }));
   const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
 
-  const results: WorktreeSetupCommandResult[] = [];
-  for (const [index, cmd] of setupCommands.entries()) {
-    const result = options.onEvent
-      ? await execSetupCommandStreamed({
-          command: cmd,
-          cwd: options.worktreePath,
-          env: setupEnv,
-          index: index + 1,
-          total: setupCommands.length,
-          signal: options.signal,
-          onEvent: options.onEvent,
-        })
-      : await execSetupCommand(cmd, {
-          cwd: options.worktreePath,
-          env: setupEnv,
-        });
-    results.push(result);
+  const shellChoice = process.platform !== "win32" ? resolveWorktreeLifecycleShell(setupEnv) : null;
+  const results = shellChoice
+    ? await runPosixWorktreeLifecycleCommands({
+        commands: setupCommands,
+        cwd: options.worktreePath,
+        env: setupEnv,
+        shellChoice,
+        signal: options.signal,
+        onEvent: options.onEvent,
+      })
+    : await runWorktreeLifecycleCommandsLegacy({
+        commands: setupCommands,
+        cwd: options.worktreePath,
+        env: setupEnv,
+        signal: options.signal,
+        onEvent: options.onEvent,
+      });
 
-    if (result.exitCode !== 0) {
-      if (options.cleanupOnFailure) {
-        try {
-          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
-            cwd: options.worktreePath,
-            timeout: 120_000,
-          });
-        } catch {
-          rmSync(options.worktreePath, { recursive: true, force: true });
-        }
+  const failed = results.find((result) => result.exitCode !== 0);
+  if (failed) {
+    if (options.cleanupOnFailure) {
+      try {
+        await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
+          cwd: options.worktreePath,
+          timeout: 120_000,
+        });
+      } catch {
+        rmSync(options.worktreePath, { recursive: true, force: true });
       }
-      throw new WorktreeSetupError(
-        `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
-        results,
-      );
     }
+    throw new WorktreeSetupError(
+      `Worktree setup command failed: ${failed.command}\n${failed.stderr}`.trim(),
+      results,
+    );
   }
 
   return results;
@@ -780,20 +909,27 @@ export async function runWorktreeTeardownCommands(options: {
     }),
   );
 
-  const results: WorktreeTeardownCommandResult[] = [];
-  for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
-      cwd: teardownCwd,
-      env: teardownEnv,
-    });
-    results.push(result);
+  const shellChoice =
+    process.platform !== "win32" ? resolveWorktreeLifecycleShell(teardownEnv) : null;
+  const results = shellChoice
+    ? await runPosixWorktreeLifecycleCommands({
+        commands: teardownCommands,
+        cwd: teardownCwd,
+        env: teardownEnv,
+        shellChoice,
+      })
+    : await runWorktreeLifecycleCommandsLegacy({
+        commands: teardownCommands,
+        cwd: teardownCwd,
+        env: teardownEnv,
+      });
 
-    if (result.exitCode !== 0) {
-      throw new WorktreeTeardownError(
-        `Worktree teardown command failed: ${cmd}\n${result.stderr}`.trim(),
-        results,
-      );
-    }
+  const failed = results.find((result) => result.exitCode !== 0);
+  if (failed) {
+    throw new WorktreeTeardownError(
+      `Worktree teardown command failed: ${failed.command}\n${failed.stderr}`.trim(),
+      results,
+    );
   }
 
   return results;

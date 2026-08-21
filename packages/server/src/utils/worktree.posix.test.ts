@@ -17,6 +17,7 @@ import {
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
+  WorktreeSetupError,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -51,6 +52,45 @@ import net from "node:net";
 function loadConfigForTest(repoRoot: string): PaseoConfig | null {
   const result = readPaseoConfig(repoRoot);
   return result.ok ? result.config : null;
+}
+
+function hasZshOnPath(): boolean {
+  try {
+    execFileSync("zsh", ["-c", "true"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const zshAvailable = hasZshOnPath();
+
+async function withEnvOverrides<T>(
+  overrides: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const originals = new Map<string, string | undefined>();
+  for (const key of Object.keys(overrides)) {
+    originals.set(key, process.env[key]);
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of originals) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 interface LegacyCreateWorktreeTestOptions {
@@ -812,67 +852,170 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       );
     });
 
-    it("runs setup commands with the daemon PATH instead of login profile PATH", async () => {
-      const home = join(tempDir, "host-home");
-      const binDir = join(tempDir, "daemon-bin");
-      mkdirSync(home);
-      mkdirSync(binDir);
+    it.skipIf(!zshAvailable)(
+      "sources the login/interactive shell profile so tool activation is available to setup commands",
+      async () => {
+        // Regression test for #3629: oh-my-zsh (and nvm/mise-style activation
+        // commonly placed alongside it) only loads under an interactive
+        // shell, so a function defined in .zshrc must be callable from a
+        // setup command.
+        const zdotdir = join(tempDir, "zdotdir-activation");
+        mkdirSync(zdotdir);
+        writeFileSync(join(zdotdir, ".zshrc"), 'activate_tool() { printf "tool-activated"; }\n');
+        writeFileSync(
+          join(repoDir, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: ["activate_tool > activation.log"],
+            },
+          }),
+        );
 
-      const shimPath = join(binDir, "paseo-shim");
-      writeFileSync(shimPath, "#!/bin/sh\nprintf 'shim:%s\\n' \"$1\"\n");
-      chmodSync(shimPath, 0o755);
-      writeFileSync(join(home, ".bash_profile"), "export PATH=/usr/bin:/bin\n");
-      const bashEnvPath = join(home, "bash-env");
-      writeFileSync(bashEnvPath, "export PATH=/usr/bin:/bin\n");
-      writeFileSync(
-        join(repoDir, "paseo.json"),
-        JSON.stringify({
-          worktree: {
-            setup: "command -v paseo-shim >/dev/null && paseo-shim ok > setup-path.log",
+        await withEnvOverrides({ SHELL: "/bin/zsh", ZDOTDIR: zdotdir }, () =>
+          runWorktreeSetupCommands({
+            worktreePath: repoDir,
+            branchName: "main",
+            cleanupOnFailure: false,
+            runtimeEnv: {
+              PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+              PASEO_ROOT_PATH: repoDir,
+              PASEO_WORKTREE_PATH: repoDir,
+              PASEO_BRANCH_NAME: "main",
+              PASEO_WORKTREE_PORT: "12345",
+            },
+          }),
+        );
+
+        expect(readFileSync(join(repoDir, "activation.log"), "utf8")).toBe("tool-activated");
+      },
+    );
+
+    it.skipIf(!zshAvailable)(
+      "keeps the daemon's own PATH resolvable even when the shell profile replaces PATH outright",
+      async () => {
+        // Mirrors the #1908 incident shape (a profile that replaces PATH
+        // wholesale rather than prepending to it) to confirm the fallback
+        // append in buildWorktreeLifecycleScript still finds daemon-provided
+        // binaries even though the profile now runs.
+        const zdotdir = join(tempDir, "zdotdir-path-clobber");
+        const binDir = join(tempDir, "daemon-bin");
+        mkdirSync(zdotdir);
+        mkdirSync(binDir);
+
+        const shimPath = join(binDir, "paseo-shim");
+        writeFileSync(shimPath, "#!/bin/sh\nprintf 'shim:%s\\n' \"$1\"\n");
+        chmodSync(shimPath, 0o755);
+        writeFileSync(join(zdotdir, ".zshrc"), "export PATH=/usr/bin:/bin\n");
+        writeFileSync(
+          join(repoDir, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: "command -v paseo-shim >/dev/null && paseo-shim ok > setup-path.log",
+            },
+          }),
+        );
+
+        const originalPath = process.env.PATH;
+        await withEnvOverrides(
+          {
+            SHELL: "/bin/zsh",
+            ZDOTDIR: zdotdir,
+            PATH: `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`,
           },
-        }),
-      );
+          () =>
+            runWorktreeSetupCommands({
+              worktreePath: repoDir,
+              branchName: "main",
+              cleanupOnFailure: false,
+              runtimeEnv: {
+                PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+                PASEO_ROOT_PATH: repoDir,
+                PASEO_WORKTREE_PATH: repoDir,
+                PASEO_BRANCH_NAME: "main",
+                PASEO_WORKTREE_PORT: "12345",
+              },
+            }),
+        );
 
-      const originalHome = process.env.HOME;
-      const originalPath = process.env.PATH;
-      const originalBashEnv = process.env.BASH_ENV;
-      process.env.HOME = home;
-      process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
-      process.env.BASH_ENV = bashEnvPath;
+        expect(readFileSync(join(repoDir, "setup-path.log"), "utf8").trim()).toBe("shim:ok");
+      },
+    );
 
-      try {
-        await runWorktreeSetupCommands({
-          worktreePath: repoDir,
-          branchName: "main",
-          cleanupOnFailure: false,
-          runtimeEnv: {
-            PASEO_SOURCE_CHECKOUT_PATH: repoDir,
-            PASEO_ROOT_PATH: repoDir,
-            PASEO_WORKTREE_PATH: repoDir,
-            PASEO_BRANCH_NAME: "main",
-            PASEO_WORKTREE_PORT: "12345",
-          },
+    it.skipIf(!zshAvailable)(
+      "shares shell state across array entries within a single setup run",
+      async () => {
+        writeFileSync(
+          join(repoDir, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: [
+                'export SETUP_TOKEN="from-entry-one"',
+                'printf "%s" "$SETUP_TOKEN" > shared-state.log',
+              ],
+            },
+          }),
+        );
+
+        await withEnvOverrides({ SHELL: "/bin/zsh" }, () =>
+          runWorktreeSetupCommands({
+            worktreePath: repoDir,
+            branchName: "main",
+            cleanupOnFailure: false,
+            runtimeEnv: {
+              PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+              PASEO_ROOT_PATH: repoDir,
+              PASEO_WORKTREE_PATH: repoDir,
+              PASEO_BRANCH_NAME: "main",
+              PASEO_WORKTREE_PORT: "12345",
+            },
+          }),
+        );
+
+        expect(readFileSync(join(repoDir, "shared-state.log"), "utf8")).toBe("from-entry-one");
+      },
+    );
+
+    it.skipIf(!zshAvailable)(
+      "reports one result per array entry and stops at the first failure",
+      async () => {
+        writeFileSync(
+          join(repoDir, "paseo.json"),
+          JSON.stringify({
+            worktree: {
+              setup: ['echo "one" > one.log', "exit 3", 'echo "three" > three.log'],
+            },
+          }),
+        );
+
+        let caught: unknown;
+        await withEnvOverrides({ SHELL: "/bin/zsh" }, async () => {
+          try {
+            await runWorktreeSetupCommands({
+              worktreePath: repoDir,
+              branchName: "main",
+              cleanupOnFailure: false,
+              runtimeEnv: {
+                PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+                PASEO_ROOT_PATH: repoDir,
+                PASEO_WORKTREE_PATH: repoDir,
+                PASEO_BRANCH_NAME: "main",
+                PASEO_WORKTREE_PORT: "12345",
+              },
+            });
+          } catch (error) {
+            caught = error;
+          }
         });
-      } finally {
-        if (originalHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = originalHome;
-        }
-        if (originalPath === undefined) {
-          delete process.env.PATH;
-        } else {
-          process.env.PATH = originalPath;
-        }
-        if (originalBashEnv === undefined) {
-          delete process.env.BASH_ENV;
-        } else {
-          process.env.BASH_ENV = originalBashEnv;
-        }
-      }
 
-      expect(readFileSync(join(repoDir, "setup-path.log"), "utf8").trim()).toBe("shim:ok");
-    });
+        expect(caught).toBeInstanceOf(WorktreeSetupError);
+        const results = (caught as WorktreeSetupError).results;
+        expect(results).toHaveLength(2);
+        expect(results[0]?.exitCode).toBe(0);
+        expect(results[1]).toMatchObject({ command: "exit 3", exitCode: 3 });
+        expect(existsSync(join(repoDir, "one.log"))).toBe(true);
+        expect(existsSync(join(repoDir, "three.log"))).toBe(false);
+      },
+    );
 
     it("treats blank lifecycle strings as empty", () => {
       writeFileSync(

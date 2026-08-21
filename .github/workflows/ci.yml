@@ -160,6 +160,16 @@ jobs:
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
 
+      # fish is exercised by the worktree.setup/teardown lifecycle-shell tests
+      # (packages/server/src/utils/worktree-lifecycle-shell.test.ts); without
+      # it those cases skip instead of running. Linux-only: this job's steps
+      # are shared with server-tests-windows via the *server_test_steps
+      # anchor, and fish isn't part of the lifecycle-shell dialect support on
+      # win32 (that platform always uses the legacy per-entry loop).
+      - name: Install fish
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+        run: sudo apt-get update && sudo apt-get install -y fish
+
       - name: Build server dependencies
         run: npm run build:server-deps
 
