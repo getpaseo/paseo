@@ -328,6 +328,44 @@ describe("createWorktreeLifecycleOutputParser", () => {
     expect(stderrEvents[1]).toMatchObject({ index: 2, command: "cmd2" });
   });
 
+  it("defers multiple stacked starts without losing any when stdout races far ahead of stderr", () => {
+    // stdout can race arbitrarily far ahead, not just by one command: by the
+    // time stderr reports command 1's END, stdout may have already delivered
+    // START *and* END for commands 2 and 3 too. A single scalar "pending
+    // start" slot would let command 3's deferred start silently overwrite
+    // command 2's, causing command 2 to complete without ever having
+    // reported its start.
+    const parser = createWorktreeLifecycleOutputParser({
+      markerToken: "MARK",
+      commands: ["cmd1", "cmd2", "cmd3"],
+      cwd: "/worktree",
+    });
+
+    const stdoutEvents = [
+      ...parser.feed("stdout", "MARK|START|1\n"),
+      ...parser.feed("stdout", "MARK|END|1|0\n"),
+      ...parser.feed("stdout", "MARK|START|2\n"),
+      ...parser.feed("stdout", "MARK|END|2|0\n"),
+      ...parser.feed("stdout", "MARK|START|3\n"),
+    ];
+    // Only command 1's start fires immediately; 2 and 3 are both deferred,
+    // and stdout closing 2 doesn't complete it since stderr hasn't closed it.
+    expect(stdoutEvents.map((event) => event.type)).toEqual(["command_started"]);
+    expect(stdoutEvents[0]).toMatchObject({ index: 1 });
+
+    const firstStderrEvents = parser.feed("stderr", "MARK|END|1|0\n");
+    expect(firstStderrEvents.map((event) => `${event.type}:${event.index}`)).toEqual([
+      "command_completed:1",
+      "command_started:2",
+    ]);
+
+    const secondStderrEvents = parser.feed("stderr", "MARK|END|2|0\n");
+    expect(secondStderrEvents.map((event) => `${event.type}:${event.index}`)).toEqual([
+      "command_completed:2",
+      "command_started:3",
+    ]);
+  });
+
   it("surfaces a shell that never reaches the first marker as command 1 failing", () => {
     const parser = createWorktreeLifecycleOutputParser({
       markerToken: "__paseo_lifecycle_test__",

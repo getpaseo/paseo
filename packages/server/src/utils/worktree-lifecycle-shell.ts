@@ -271,14 +271,16 @@ export function createWorktreeLifecycleOutputParser(
   let pendingBlankStdout = false;
   let pendingBlankStderr = false;
   // stdout and stderr are independent pipes with no delivery-order guarantee
-  // relative to each other, so stdout can deliver command N+1's START marker
-  // before stderr delivers command N's END marker (both were written to the
-  // script back-to-back, but arrive at different times). Emitting
-  // command_started for N+1 immediately in that case would show two commands
-  // "running" at once in the live timeline. Hold it back until command N has
-  // fully closed on both streams.
+  // relative to each other, so stdout can race arbitrarily far ahead of
+  // stderr — not just by one command. By the time stderr finally reports
+  // command N's END marker, stdout may have already delivered START (and
+  // even END) for N+1, N+2, and beyond. Emitting command_started for any of
+  // those immediately would show multiple commands "running" at once in the
+  // live timeline, so each is held back in this set until its immediate
+  // predecessor has fully closed on both streams. A single scalar slot here
+  // would let a later deferred index silently overwrite an earlier one.
   let lastCompletedIndex = 0;
-  let pendingStartIndex: number | null = null;
+  const pendingStartIndices = new Set<number>();
 
   function getOrCreateSegment(index: number): LifecycleSegmentState {
     let segment = segments.get(index);
@@ -384,7 +386,7 @@ export function createWorktreeLifecycleOutputParser(
               cwd: segment.cwd,
             });
           } else {
-            pendingStartIndex = marker.index;
+            pendingStartIndices.add(marker.index);
           }
         } else {
           activeStderrIndex = marker.index;
@@ -413,8 +415,10 @@ export function createWorktreeLifecycleOutputParser(
       if (completed) {
         events.push(completed);
         lastCompletedIndex = marker.index;
-        if (pendingStartIndex === marker.index + 1) {
-          const pendingSegment = getOrCreateSegment(pendingStartIndex);
+        const nextIndex = marker.index + 1;
+        if (pendingStartIndices.has(nextIndex)) {
+          pendingStartIndices.delete(nextIndex);
+          const pendingSegment = getOrCreateSegment(nextIndex);
           events.push({
             type: "command_started",
             index: pendingSegment.index,
@@ -422,7 +426,6 @@ export function createWorktreeLifecycleOutputParser(
             command: pendingSegment.command,
             cwd: pendingSegment.cwd,
           });
-          pendingStartIndex = null;
         }
       }
       return;
