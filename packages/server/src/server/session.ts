@@ -2373,14 +2373,30 @@ export class Session {
     return undefined;
   }
 
+  private dispatchProviderSessionMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "fetch_recent_provider_sessions_request":
+        return this.handleFetchRecentProviderSessions(msg);
+      case "import_agent_request":
+        return this.handleImportAgentRequest(msg);
+      case "provider.session.continue.request":
+        return this.handleProviderSessionContinueRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    const providerSessionRequest = this.dispatchProviderSessionMessage(msg);
+    if (providerSessionRequest) {
+      return providerSessionRequest;
+    }
+
     switch (msg.type) {
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
       case "fetch_agent_history_request":
         return this.handleFetchAgentHistory(msg);
-      case "fetch_recent_provider_sessions_request":
-        return this.handleFetchRecentProviderSessions(msg);
       case "fetch_agent_request":
         return this.handleFetchAgent(msg.agentId, msg.requestId);
       case "delete_agent_request":
@@ -2403,10 +2419,6 @@ export class Session {
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
         return this.handleResumeAgentRequest(msg);
-      case "import_agent_request":
-        return this.handleImportAgentRequest(msg);
-      case "provider.session.continue.request":
-        return this.handleProviderSessionContinueRequest(msg);
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
