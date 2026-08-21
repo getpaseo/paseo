@@ -42,6 +42,7 @@ const mockState = vi.hoisted(() => {
         command: string[];
         env?: Record<string, string>;
         providerParams?: unknown;
+        managedProcesses?: unknown;
       }>,
       trae: [] as Array<{
         command: string[];
@@ -379,6 +380,7 @@ vi.mock("./providers/gjc-acp-agent.js", () => ({
       command: string[];
       env?: Record<string, string>;
       providerParams?: unknown;
+      managedProcesses?: unknown;
     }) {
       this.runtimeSettings = {
         command: {
@@ -391,6 +393,7 @@ vi.mock("./providers/gjc-acp-agent.js", () => ({
         command: options.command,
         env: options.env,
         providerParams: options.providerParams,
+        ...(options.managedProcesses ? { managedProcesses: options.managedProcesses } : {}),
       });
     }
 
@@ -885,7 +888,14 @@ test("ACP provider params can disable MCP support", () => {
 });
 
 test("gjc provider extending acp uses GjcACPAgentClient", () => {
+  const managedProcesses = {
+    record: vi.fn(),
+    remove: vi.fn(),
+    list: vi.fn(),
+    reapStale: vi.fn(),
+  } as never;
   const registry = buildProviderRegistry(logger, {
+    managedProcesses,
     providerOverrides: {
       gjc: {
         extends: "acp",
@@ -906,6 +916,7 @@ test("gjc provider extending acp uses GjcACPAgentClient", () => {
         GJC_LOG: "debug",
       },
       providerParams: undefined,
+      managedProcesses,
     },
     {
       command: ["gjc", "acp"],
@@ -913,6 +924,7 @@ test("gjc provider extending acp uses GjcACPAgentClient", () => {
         GJC_LOG: "debug",
       },
       providerParams: undefined,
+      managedProcesses,
     },
   ]);
   expect(mockState.constructorArgs.genericAcp).toEqual([]);

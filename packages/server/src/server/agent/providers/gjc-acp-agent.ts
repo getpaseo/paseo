@@ -21,6 +21,10 @@ import type {
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { createProviderEnv } from "../provider-launch-config.js";
+import type {
+  ManagedProcessRecord,
+  ManagedProcessRegistry,
+} from "../../managed-processes/managed-processes.js";
 
 interface GjcACPAgentClientOptions {
   logger: Logger;
@@ -30,6 +34,7 @@ interface GjcACPAgentClientOptions {
   label?: string;
   providerParams?: unknown;
   execFile?: GjcExecFile;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 interface GjcLifecycleCommand {
@@ -46,6 +51,9 @@ interface GjcLifecycleCreateInput {
 
 interface GjcSessionCreateResult {
   sessionId: string;
+  pid?: number;
+  endpointGeneration?: number;
+  endpointMtimeMs?: number;
 }
 
 type GjcExecFile = (
@@ -68,6 +76,64 @@ type GjcJsonInputFileCleanup = { ok: true } | { ok: false; error: unknown };
 interface GjcJsonInputFileResult<T> {
   value: T;
   cleanup: GjcJsonInputFileCleanup;
+}
+
+export class GjcLifecycleProcessTracker {
+  private readonly managedProcesses?: ManagedProcessRegistry;
+  private readonly providerId: string;
+  private readonly command: [string, ...string[]];
+  private readonly records = new Map<string, ManagedProcessRecord>();
+
+  constructor(options: {
+    managedProcesses?: ManagedProcessRegistry;
+    providerId: string;
+    command: [string, ...string[]];
+  }) {
+    this.managedProcesses = options.managedProcesses;
+    this.providerId = options.providerId;
+    this.command = options.command;
+  }
+
+  async recordCreatedSession(input: {
+    result: GjcSessionCreateResult;
+    cwd: string;
+  }): Promise<void> {
+    if (!this.managedProcesses || input.result.pid === undefined) {
+      return;
+    }
+    if (this.records.has(input.result.sessionId)) {
+      return;
+    }
+    const record = await this.managedProcesses.record({
+      owner: {
+        provider: this.providerId,
+        kind: "gjc-lifecycle-session",
+      },
+      pid: input.result.pid,
+      command: this.command[0],
+      args: this.command.slice(1),
+      metadata: {
+        sessionId: input.result.sessionId,
+        cwd: input.cwd,
+        ...(input.result.endpointGeneration !== undefined
+          ? { endpointGeneration: input.result.endpointGeneration }
+          : {}),
+        ...(input.result.endpointMtimeMs !== undefined
+          ? { endpointMtimeMs: input.result.endpointMtimeMs }
+          : {}),
+      },
+    });
+    this.records.set(input.result.sessionId, record);
+  }
+
+  async removeClosedSession(sessionId: string): Promise<void> {
+    const record = this.records.get(sessionId);
+    if (!record || !this.managedProcesses) {
+      return;
+    }
+    await this.managedProcesses.remove(record.id);
+    this.records.delete(sessionId);
+  }
 }
 
 const GJC_CLIENT_CAPABILITIES = {
@@ -98,6 +164,11 @@ const execFile = promisify(execFileCallback) as GjcExecFile;
 
 export class GjcACPAgentClient extends GenericACPAgentClient {
   constructor(options: GjcACPAgentClientOptions) {
+    const lifecycleProcesses = new GjcLifecycleProcessTracker({
+      managedProcesses: options.managedProcesses,
+      providerId: options.providerId ?? "gjc",
+      command: options.command,
+    });
     super({
       logger: options.logger,
       command: options.command,
@@ -118,21 +189,25 @@ export class GjcACPAgentClient extends GenericACPAgentClient {
         command: options.command,
         env: options.env,
         execFile: options.execFile,
+        lifecycleProcesses,
       }),
       newSessionFailureCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,
         execFile: options.execFile,
+        lifecycleProcesses,
       }),
       sessionCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,
         execFile: options.execFile,
+        lifecycleProcesses,
       }),
       probeSessionCloser: createGjcACPProbeSessionCloser({
         command: options.command,
         env: options.env,
         execFile: options.execFile,
+        lifecycleProcesses,
       }),
     });
   }
@@ -184,6 +259,7 @@ export function createGjcACPNewSessionStarter(options: {
   env?: Record<string, string>;
   execFile?: GjcExecFile;
   removeInputDirectory?: GjcInputDirectoryRemover;
+  lifecycleProcesses?: GjcLifecycleProcessTracker;
 }): ACPNewSessionStarter {
   const runExecFile = options.execFile ?? execFile;
 
@@ -205,6 +281,7 @@ export function createGjcACPNewSessionStarter(options: {
       ...(mcpServers.length > 0 ? { mcpServers } : {}),
     };
 
+    const idempotencyKey = randomUUID();
     const runCreateCommand = async () =>
       await withGjcJsonInputFile(
         lifecycleInput,
@@ -213,7 +290,7 @@ export function createGjcACPNewSessionStarter(options: {
             options.command,
             config.cwd,
             lifecycleInput,
-            { inputFilePath },
+            { inputFilePath, idempotencyKey },
           );
           return await runExecFile(lifecycleCommand.command, lifecycleCommand.args, {
             cwd: config.cwd,
@@ -237,13 +314,14 @@ export function createGjcACPNewSessionStarter(options: {
 
       let closeError: unknown;
       try {
-        await closeGjcLifecycleSession({
+        await closeTrackedGjcLifecycleSession({
           command: options.command,
           env: options.env,
           launchEnv,
           execFile: runExecFile,
           cwd: config.cwd,
           sessionId,
+          lifecycleProcesses: options.lifecycleProcesses,
         });
       } catch (error) {
         closeError = error;
@@ -262,17 +340,44 @@ export function createGjcACPNewSessionStarter(options: {
     let createResult: GjcSessionCreateResult;
     let createCleanup: GjcJsonInputFileCleanup = { ok: true };
     try {
-      const createCommandResult = await runCreateCommand();
-      createCleanup = createCommandResult.cleanup;
-      createResult = extractGjcSessionCreateResult(
-        parseGjcJsonOutput(createCommandResult.value.stdout),
-      );
+      const readCreateResult = async (): Promise<{
+        createResult: GjcSessionCreateResult;
+        cleanup: GjcJsonInputFileCleanup;
+      }> => {
+        const createCommandResult = await runCreateCommand();
+        return {
+          cleanup: createCommandResult.cleanup,
+          createResult: extractGjcSessionCreateResult(
+            parseGjcJsonOutput(createCommandResult.value.stdout),
+          ),
+        };
+      };
+      try {
+        const create = await readCreateResult();
+        createCleanup = create.cleanup;
+        createResult = create.createResult;
+      } catch (error) {
+        if (isGjcLifecycleInputCleanupFailure(error)) {
+          throw error;
+        }
+        const recovered = await recoverGjcLifecycleCreateResult({
+          createError: error,
+          readCreateResult,
+        });
+        createCleanup = recovered.cleanup;
+        createResult = recovered.createResult;
+      }
     } catch (error) {
       throw new Error(`GJC lifecycle session.create failed: ${formatGjcExecError(error)}`, {
         cause: error,
       });
     }
-    if (!createCleanup.ok) {
+    try {
+      await options.lifecycleProcesses?.recordCreatedSession({
+        result: createResult,
+        cwd: config.cwd,
+      });
+    } catch (error) {
       let closeError: unknown;
       try {
         await closeGjcLifecycleSession({
@@ -282,6 +387,36 @@ export function createGjcACPNewSessionStarter(options: {
           execFile: runExecFile,
           cwd: config.cwd,
           sessionId: createResult.sessionId,
+        });
+      } catch (cleanupError) {
+        closeError = cleanupError;
+      }
+      if (closeError) {
+        const ownershipAndCloseError = new AggregateError(
+          [error, closeError],
+          `GJC lifecycle process ownership failed after session.create, and session.close failed: ${formatGjcExecError(
+            error,
+          )}; cleanup: ${formatGjcExecError(closeError)}`,
+          { cause: error },
+        );
+        throw ownershipAndCloseError;
+      }
+      throw new Error(
+        `GJC lifecycle process ownership failed after session.create: ${formatGjcExecError(error)}`,
+        { cause: error },
+      );
+    }
+    if (!createCleanup.ok) {
+      let closeError: unknown;
+      try {
+        await closeTrackedGjcLifecycleSession({
+          command: options.command,
+          env: options.env,
+          launchEnv,
+          execFile: runExecFile,
+          cwd: config.cwd,
+          sessionId: createResult.sessionId,
+          lifecycleProcesses: options.lifecycleProcesses,
         });
       } catch (error) {
         closeError = error;
@@ -327,13 +462,14 @@ export function createGjcACPNewSessionStarter(options: {
       }
       let closeError: unknown;
       try {
-        await closeGjcLifecycleSession({
+        await closeTrackedGjcLifecycleSession({
           command: options.command,
           env: options.env,
           launchEnv,
           execFile: runExecFile,
           cwd: config.cwd,
           sessionId: createResult.sessionId,
+          lifecycleProcesses: options.lifecycleProcesses,
         });
       } catch (cleanupError) {
         closeError = cleanupError;
@@ -361,6 +497,7 @@ export function createGjcACPProbeSessionCloser(options: {
   command: [string, ...string[]];
   env?: Record<string, string>;
   execFile?: GjcExecFile;
+  lifecycleProcesses?: GjcLifecycleProcessTracker;
 }): ACPProbeSessionCloser {
   const runExecFile = options.execFile ?? execFile;
 
@@ -369,13 +506,14 @@ export function createGjcACPProbeSessionCloser(options: {
     if (!sessionId) {
       throw new Error("GJC probe session did not expose a session id");
     }
-    await closeGjcLifecycleSession({
+    await closeTrackedGjcLifecycleSession({
       command: options.command,
       env: options.env,
       launchEnv,
       execFile: runExecFile,
       cwd: config.cwd,
       sessionId,
+      lifecycleProcesses: options.lifecycleProcesses,
     });
   };
 }
@@ -384,11 +522,12 @@ export function buildGjcLifecycleCreateCommand(
   acpCommand: [string, ...string[]],
   cwd: string,
   input: GjcLifecycleCreateInput,
-  options: { inputFilePath?: string } = {},
+  options: { inputFilePath?: string; idempotencyKey?: string } = {},
 ): GjcLifecycleCommand {
   const jsonInputArgs = options.inputFilePath
     ? ["--json-input-file", options.inputFilePath]
     : ["--json-input", JSON.stringify(input)];
+  const idempotencyKey = options.idempotencyKey ?? randomUUID();
 
   return buildGjcLifecycleCommand(acpCommand, [
     "sdk",
@@ -399,7 +538,7 @@ export function buildGjcLifecycleCreateCommand(
     "session.create",
     ...jsonInputArgs,
     "--idempotency-key",
-    randomUUID(),
+    idempotencyKey,
     "--json",
     "--repo",
     cwd,
@@ -496,6 +635,50 @@ async function closeGjcLifecycleSession(options: {
   }
 }
 
+async function closeTrackedGjcLifecycleSession(options: {
+  command: [string, ...string[]];
+  env?: Record<string, string>;
+  launchEnv?: Record<string, string>;
+  execFile: GjcExecFile;
+  cwd: string;
+  sessionId: string;
+  lifecycleProcesses?: GjcLifecycleProcessTracker;
+}): Promise<void> {
+  await closeGjcLifecycleSession(options);
+  try {
+    await options.lifecycleProcesses?.removeClosedSession(options.sessionId);
+  } catch (error) {
+    throw new Error(
+      `GJC lifecycle managed process record removal failed: ${formatGjcExecError(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+async function recoverGjcLifecycleCreateResult(options: {
+  createError: unknown;
+  readCreateResult: () => Promise<{
+    createResult: GjcSessionCreateResult;
+    cleanup: GjcJsonInputFileCleanup;
+  }>;
+}): Promise<{
+  createResult: GjcSessionCreateResult;
+  cleanup: GjcJsonInputFileCleanup;
+}> {
+  try {
+    return await options.readCreateResult();
+  } catch (recoveryError) {
+    const createAndRecoveryError = new AggregateError(
+      [options.createError, recoveryError],
+      `GJC lifecycle session.create failed and idempotent recovery failed: ${formatGjcExecError(
+        options.createError,
+      )}; recovery: ${formatGjcExecError(recoveryError)}`,
+      { cause: options.createError },
+    );
+    throw createAndRecoveryError;
+  }
+}
+
 function buildGjcLifecycleEnv(
   providerEnv: Record<string, string> | undefined,
   launchEnv: Record<string, string> | undefined,
@@ -587,7 +770,16 @@ function extractGjcSessionCreateResult(value: unknown): GjcSessionCreateResult {
 
   const nestedResult = isRecord(result) && isRecord(result.result) ? result.result : result;
   if (isRecord(nestedResult) && typeof nestedResult.sessionId === "string") {
-    return { sessionId: nestedResult.sessionId };
+    return {
+      sessionId: nestedResult.sessionId,
+      ...(isPositiveInteger(nestedResult.pid) ? { pid: nestedResult.pid } : {}),
+      ...(isPositiveInteger(nestedResult.endpointGeneration)
+        ? { endpointGeneration: nestedResult.endpointGeneration }
+        : {}),
+      ...(typeof nestedResult.endpointMtimeMs === "number"
+        ? { endpointMtimeMs: nestedResult.endpointMtimeMs }
+        : {}),
+    };
   }
 
   throw new Error("missing session id");
@@ -672,4 +864,15 @@ function sanitizeGjcDiagnostic(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isGjcLifecycleInputCleanupFailure(error: unknown): boolean {
+  return (
+    error instanceof AggregateError &&
+    error.message.startsWith("GJC lifecycle request failed and input cleanup failed:")
+  );
 }

@@ -790,6 +790,7 @@ function addDerivedProviders(
             providerId,
             label: override.label ?? providerId,
             providerParams: override.params,
+            managedProcesses: options.managedProcesses,
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);

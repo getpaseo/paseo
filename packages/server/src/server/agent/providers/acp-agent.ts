@@ -1098,6 +1098,22 @@ export class ACPAgentClient implements AgentClient {
         cleanupError = error;
       }
     }
+    if (operationFailed && cleanupFailed) {
+      throw new AggregateError(
+        [operationError, cleanupError],
+        `${this.provider} ACP catalog probe failed and cleanup failed: ${toDiagnosticErrorMessage(
+          operationError,
+        )}; cleanup: ${toDiagnosticErrorMessage(cleanupError)}`,
+      );
+    }
+    if (operationFailed && cleanupFailed) {
+      throw new AggregateError(
+        [operationError, cleanupError],
+        `${this.provider} ACP feature probe failed and cleanup failed: ${toDiagnosticErrorMessage(
+          operationError,
+        )}; cleanup: ${toDiagnosticErrorMessage(cleanupError)}`,
+      );
+    }
     if (operationFailed) {
       throw operationError;
     }
@@ -1473,7 +1489,14 @@ export class ACPAgentClient implements AgentClient {
         pushACPStderrRow(rows, activeTransport.stderrChunks);
         return rows;
       } finally {
-        await probeSession?.close();
+        try {
+          await probeSession?.close();
+        } catch (error) {
+          rows.push({
+            label: "ACP session cleanup",
+            value: `error: ${toDiagnosticErrorMessage(error)}`,
+          });
+        }
       }
 
       pushACPStderrRow(rows, activeTransport.stderrChunks);
@@ -1586,7 +1609,16 @@ export class ACPAgentClient implements AgentClient {
         resolveTrackedResponse(sessionResponse);
       }
       if (closeRequested && this.probeSessionCloser) {
-        void closeResponse(sessionResponse).catch(() => undefined);
+        void closeResponse(sessionResponse).catch((error) => {
+          this.logger.warn(
+            {
+              err: error,
+              sessionId: getACPResponseSessionId(sessionResponse) ?? undefined,
+              cwd: context.config.cwd,
+            },
+            "Late ACP probe session cleanup failed",
+          );
+        });
       }
     };
 
@@ -1612,10 +1644,16 @@ export class ACPAgentClient implements AgentClient {
           return;
         }
         startupAbortController.abort(new Error(`${this.provider} ACP probe startup cancelled`));
-        void trackedResponse
-          .then((sessionResponse) => closeResponse(sessionResponse))
-          .catch(() => undefined);
-        void promise.catch(() => undefined);
+        const sessionResponse = await Promise.race([
+          trackedResponse,
+          promise.then(
+            () => response,
+            () => null,
+          ),
+        ]);
+        if (sessionResponse) {
+          await closeResponse(sessionResponse);
+        }
       },
     };
   }

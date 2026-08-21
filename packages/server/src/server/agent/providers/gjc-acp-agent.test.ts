@@ -7,6 +7,7 @@ import type {
   LoadSessionResponse,
   McpServer,
 } from "@agentclientprotocol/sdk";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
@@ -54,6 +55,9 @@ describe("GjcACPAgentClient", () => {
             ok: true,
             result: {
               sessionId: "gjc-session-1",
+              pid: 12_345,
+              endpointGeneration: 7,
+              endpointMtimeMs: 42,
             },
           }),
           stderr: "",
@@ -94,6 +98,29 @@ describe("GjcACPAgentClient", () => {
       protected override async closeProbe(): Promise<void> {}
     }
 
+    const managedProcesses = {
+      record: vi.fn(async (input) => ({
+        id: "managed-gjc-session-1",
+        ...input,
+        metadata: input.metadata ?? {},
+        identity: {
+          commandLine: "gjc session-host-internal",
+          startedAt: "Fri Aug 21 10:00:00 2026",
+        },
+        createdAt: "2026-08-21T10:00:00.000Z",
+      })),
+      remove: vi.fn(async () => undefined),
+      list: vi.fn(async () => []),
+      reapStale: vi.fn(async () => ({
+        checked: 0,
+        dead: 0,
+        mismatched: 0,
+        removed: 0,
+        terminated: 0,
+        errors: [],
+      })),
+    } satisfies ManagedProcessRegistry;
+
     const client = new TestGjcACPAgentClient({
       logger: createTestLogger(),
       command: ["gjc", "acp"],
@@ -102,6 +129,7 @@ describe("GjcACPAgentClient", () => {
       },
       providerId: "gjc",
       label: "Gajae Code",
+      managedProcesses,
       providerParams: {
         supportsMcpServers: false,
         clientCapabilities: {
@@ -185,6 +213,22 @@ describe("GjcACPAgentClient", () => {
         }),
       }),
     );
+    expect(managedProcesses.record).toHaveBeenCalledWith({
+      owner: {
+        provider: "gjc",
+        kind: "gjc-lifecycle-session",
+      },
+      pid: 12_345,
+      command: "gjc",
+      args: ["acp"],
+      metadata: {
+        sessionId: "gjc-session-1",
+        cwd: "/repo",
+        endpointGeneration: 7,
+        endpointMtimeMs: 42,
+      },
+    });
+    expect(managedProcesses.remove).toHaveBeenCalledWith("managed-gjc-session-1");
   });
 
   test("leaves diagnostic headroom above the lifecycle readiness budget", async () => {
@@ -267,11 +311,7 @@ describe("GjcACPAgentClient", () => {
       expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(10_000);
-      await expect(diagnostic).resolves.toEqual({
-        diagnostic: expect.stringContaining(
-          "ACP session/new: error: ACP session/new timed out after 70000ms",
-        ),
-      });
+      expect(settled).toBe(false);
       expect(execFile).toHaveBeenCalledTimes(1);
 
       resolveCreate({
@@ -283,7 +323,12 @@ describe("GjcACPAgentClient", () => {
         }),
         stderr: "",
       });
-      await vi.waitFor(() => expect(execFile).toHaveBeenCalledTimes(2));
+      await expect(diagnostic).resolves.toEqual({
+        diagnostic: expect.stringContaining(
+          "ACP session/new: error: ACP session/new timed out after 70000ms",
+        ),
+      });
+      expect(execFile).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -511,6 +556,103 @@ describe("GjcACPAgentClient", () => {
       sessionId: "gjc-session-1",
     });
     expect(runRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test("recovers an ambiguous lifecycle create with the same idempotency key", async () => {
+    const createError = new Error("create timed out");
+    const execFile = vi
+      .fn()
+      .mockRejectedValueOnce(createError)
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            sessionId: "gjc-session-1",
+          },
+        }),
+        stderr: "",
+      });
+    const loadSession = vi.fn(async () => ({ sessionId: "loaded-session" }));
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+    });
+
+    await expect(
+      starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+      }),
+    ).resolves.toEqual({
+      sessionId: "gjc-session-1",
+    });
+
+    expect(execFile).toHaveBeenCalledTimes(2);
+    const firstIdempotencyKey =
+      execFile.mock.calls[0]![1][execFile.mock.calls[0]![1].indexOf("--idempotency-key") + 1];
+    const secondIdempotencyKey =
+      execFile.mock.calls[1]![1][execFile.mock.calls[1]![1].indexOf("--idempotency-key") + 1];
+    expect(firstIdempotencyKey).toBeTruthy();
+    expect(secondIdempotencyKey).toBe(firstIdempotencyKey);
+    expect(loadSession).toHaveBeenCalledWith({
+      sessionId: "gjc-session-1",
+      cwd: "/repo",
+      mcpServers: [],
+    });
+  });
+
+  test("recovers an unparseable lifecycle create response with the same idempotency key", async () => {
+    const execFile = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: "session created but stdout was truncated",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          result: {
+            sessionId: "gjc-session-1",
+          },
+        }),
+        stderr: "",
+      });
+    const loadSession = vi.fn(async () => ({ sessionId: "loaded-session" }));
+    const runRequest = vi.fn(async <T>(request: () => Promise<T>) => await request());
+    const starter = createGjcACPNewSessionStarter({
+      command: ["gjc", "acp"],
+      execFile,
+    });
+
+    await expect(
+      starter({
+        connection: {
+          loadSession,
+        } as unknown as ClientSideConnection,
+        config: {
+          provider: "gjc",
+          cwd: "/repo",
+        },
+        mcpServers: [],
+        runRequest,
+      }),
+    ).resolves.toEqual({
+      sessionId: "gjc-session-1",
+    });
+
+    const firstIdempotencyKey =
+      execFile.mock.calls[0]![1][execFile.mock.calls[0]![1].indexOf("--idempotency-key") + 1];
+    const secondIdempotencyKey =
+      execFile.mock.calls[1]![1][execFile.mock.calls[1]![1].indexOf("--idempotency-key") + 1];
+    expect(secondIdempotencyKey).toBe(firstIdempotencyKey);
   });
 
   test("closes a gjc lifecycle session when the ACP load step fails", async () => {

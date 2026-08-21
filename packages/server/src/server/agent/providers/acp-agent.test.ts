@@ -2436,6 +2436,61 @@ describe("ACPAgentClient fetchCatalog", () => {
     });
   });
 
+  test("reports catalog operation and cleanup failures together", async () => {
+    const operationError = new Error("catalog failed");
+    const cleanupError = new Error("probe close failed");
+    const newSessionStarter = vi.fn(async () => ({
+      sessionId: "probe-session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    }));
+    const probeSessionCloser = vi.fn(async () => {
+      throw cleanupError;
+    });
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {} as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+      catalogModelResolver: async () => {
+        throw operationError;
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/acp-catalog-cwd",
+        force: false,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe(
+      "gjc ACP catalog probe failed and cleanup failed: catalog failed; cleanup: probe close failed",
+    );
+    expect((thrown as AggregateError).errors).toEqual([operationError, cleanupError]);
+  });
+
   test("closes registered catalog probe sessions without waiting for load completion", async () => {
     const started = createDeferred<void>();
     const loadSession = createDeferred<SessionStateResponse>();
@@ -2498,7 +2553,7 @@ describe("ACPAgentClient fetchCatalog", () => {
     });
   });
 
-  test("does not wait for unregistered catalog probe sessions after refresh abort", async () => {
+  test("waits for late unregistered catalog probe cleanup after refresh abort", async () => {
     const started = createDeferred<void>();
     const session = createDeferred<SessionStateResponse>();
     let startupSignal: AbortSignal | undefined;
@@ -2550,14 +2605,99 @@ describe("ACPAgentClient fetchCatalog", () => {
     await started.promise;
 
     controller.abort(new Error("refresh aborted"));
-    await expect(refresh).rejects.toThrow("refresh aborted");
+    let settled = false;
+    void refresh.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.waitFor(() => expect(startupSignal?.aborted).toBe(true));
 
-    expect(startupSignal?.aborted).toBe(true);
+    expect(settled).toBe(false);
     expect(probeSessionCloser).not.toHaveBeenCalled();
     session.resolve(lateResponse);
-    await Promise.resolve();
-    await Promise.resolve();
+    await expect(refresh).rejects.toThrow("refresh aborted");
 
+    expect(probeSessionCloser).toHaveBeenCalledWith({
+      response: lateResponse,
+      config: {
+        provider: "gjc",
+        cwd: "/tmp/acp-catalog-cwd",
+      },
+      mcpServers: [],
+    });
+  });
+
+  test("rejects refresh aborts with late unregistered cleanup failures", async () => {
+    const started = createDeferred<void>();
+    const session = createDeferred<SessionStateResponse>();
+    const lateResponse: SessionStateResponse = {
+      sessionId: "late-probe-session",
+      modes: null,
+      models: null,
+      configOptions: [],
+    };
+    const newSessionStarter = vi.fn((_context: { signal?: AbortSignal }) => {
+      started.resolve(undefined);
+      return session.promise;
+    });
+    const probeSessionCloser = vi.fn(async () => {
+      throw new Error("late close failed");
+    });
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockRejectedValue(new Error("newSession should not be called")),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "gjc",
+      logger: createTestLogger(),
+      defaultCommand: ["gjc", "acp"],
+      defaultModes: [],
+      newSessionStarter,
+      probeSessionCloser,
+    });
+    const controller = new AbortController();
+    const refreshContext: ProviderRefreshContext = {
+      signal: controller.signal,
+      runActivity: async (_name, operation) => await operation(),
+    };
+
+    const refresh = client.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/acp-catalog-cwd", force: false },
+      refreshContext,
+    );
+    await started.promise;
+
+    controller.abort(new Error("refresh aborted"));
+    session.resolve(lateResponse);
+
+    let thrown: unknown;
+    try {
+      await refresh;
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe(
+      "gjc ACP catalog probe failed and cleanup failed: refresh aborted; cleanup: late close failed",
+    );
     expect(probeSessionCloser).toHaveBeenCalledWith({
       response: lateResponse,
       config: {
