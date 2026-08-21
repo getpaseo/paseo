@@ -3,10 +3,13 @@ import { expect, test, type Page } from "../support/fixtures";
 import { expectAgentIdle, expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import {
   cancelAgent,
+  fillComposerDraft,
   expectComposerDraft,
   expectComposerVisible,
   submitMessage,
 } from "../support/helpers/composer";
+import { expectNearBottom, scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
+import { holdRewindCompletion } from "../support/helpers/agent-timeline-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 async function completeSubmittedTurn(
@@ -42,9 +45,13 @@ async function expectTurnCompletesNormally(
 }
 
 test.describe("Agent message rewind", () => {
-  test("rewinds a submitted prompt and restores it to the composer", async ({ page }) => {
+  test("rewinds a submitted prompt without replaying history and preserves a human draft", async ({
+    page,
+  }) => {
     test.setTimeout(90_000);
-    const prompt = "Restore this submitted prompt after rewind.";
+    const retainedPrompt = "Keep this completed turn after rewind.";
+    const rewoundPrompt = "Remove this completed turn after rewind.";
+    const preservedDraft = "Keep this human draft after rewind.";
     const agent = await seedMockAgentWorkspace({
       repoPrefix: "message-rewind-roundtrip-",
       title: "Message rewind roundtrip",
@@ -52,14 +59,30 @@ test.describe("Agent message rewind", () => {
     });
 
     try {
+      const rewindCompletion = await holdRewindCompletion(page, agent.agentId);
       await openAgentRoute(page, agent);
       await expectComposerVisible(page);
-      const userMessage = await completeSubmittedTurn(page, agent, prompt);
+      await completeSubmittedTurn(page, agent, retainedPrompt);
+      const userMessage = await completeSubmittedTurn(page, agent, rewoundPrompt);
+      await scrollChatAwayFromBottom(page, {
+        deltaY: -900,
+        minDistanceFromBottom: 300,
+      });
+      await fillComposerDraft(page, preservedDraft);
+      rewindCompletion.clearTimelineStreamCount();
 
-      await rewindConversation(page, userMessage, prompt);
+      const rewind = rewindConversation(page, userMessage, rewoundPrompt);
+      await rewindCompletion.waitForDelayedResponse();
+      await expect(page.getByTestId("rewind-menu-conversation")).toBeDisabled();
+      expect(rewindCompletion.timelineStreamCount()).toBe(0);
+      rewindCompletion.release();
+      await rewind;
 
-      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toHaveCount(0);
-      await expectComposerDraft(page, prompt);
+      await expect(page.getByTestId("user-message").filter({ hasText: rewoundPrompt })).toHaveCount(
+        0,
+      );
+      await expectComposerDraft(page, preservedDraft);
+      await expectNearBottom(page);
     } finally {
       await agent.cleanup();
     }
