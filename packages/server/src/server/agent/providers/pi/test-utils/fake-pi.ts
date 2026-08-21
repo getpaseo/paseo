@@ -354,12 +354,12 @@ export class FakePiSession implements PiRuntimeSession {
     }
   }
 
-  finishAgentRun(message: PiAgentMessage, options: { willRetry: boolean }): void {
+  finishAgentRun({ message, willRetry }: { message: PiAgentMessage; willRetry: boolean }): void {
     this.messages = [...this.messages, message];
     this.emit({
       type: "agent_end",
       messages: this.messages,
-      willRetry: options.willRetry,
+      willRetry,
     });
   }
 
@@ -368,7 +368,7 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   finishTurn(message: PiAgentMessage = { role: "assistant", content: [] }): void {
-    this.finishAgentRun(message, { willRetry: false });
+    this.finishAgentRun({ message, willRetry: false });
     this.settleTurn();
   }
 

@@ -2073,7 +2073,7 @@ export class PiRpcAgentSession implements AgentSession {
   private handleSessionEvent(event: PiAgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
     if (event.type === "agent_end" || event.type === "agent_settled") {
-      this.handleTurnBoundaryEvent(event, turnId);
+      this.handleTurnBoundaryEvent({ event, turnId });
       return;
     }
 
@@ -2166,10 +2166,13 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private handleTurnBoundaryEvent(
-    event: Extract<PiAgentSessionEvent, { type: "agent_end" | "agent_settled" }>,
-    turnId: string | undefined,
-  ): void {
+  private handleTurnBoundaryEvent({
+    event,
+    turnId,
+  }: {
+    event: Extract<PiAgentSessionEvent, { type: "agent_end" | "agent_settled" }>;
+    turnId: string | undefined;
+  }): void {
     if (event.type === "agent_end") {
       // COMPAT(piAgentSettled): added in v0.5.0, remove after 2027-02-21 once the Pi
       // floor emits agent_settled and willRetry.

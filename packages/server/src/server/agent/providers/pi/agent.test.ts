@@ -964,8 +964,8 @@ describe("PiRpcAgentSession", () => {
     const { turnId } = await session.startTurn("hello");
 
     fakeSession.emit({ type: "turn_start" });
-    fakeSession.finishAgentRun(
-      {
+    fakeSession.finishAgentRun({
+      message: {
         role: "assistant",
         provider: "test-provider",
         model: "test-model",
@@ -973,8 +973,8 @@ describe("PiRpcAgentSession", () => {
         errorMessage: "Request timed out.",
         content: [],
       },
-      { willRetry: true },
-    );
+      willRetry: true,
+    });
     fakeSession.emit({
       type: "auto_retry_start",
       attempt: 1,
@@ -990,16 +990,16 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
 
     fakeSession.emit({ type: "turn_start" });
-    fakeSession.finishAgentRun(
-      {
+    fakeSession.finishAgentRun({
+      message: {
         role: "assistant",
         provider: "test-provider",
         model: "test-model",
         stopReason: "stop",
         content: [{ type: "text", text: "Recovered response" }],
       },
-      { willRetry: false },
-    );
+      willRetry: false,
+    });
     fakeSession.emit({ type: "auto_retry_end", success: true, attempt: 1 });
     fakeSession.settleTurn();
 
@@ -1015,8 +1015,8 @@ describe("PiRpcAgentSession", () => {
     const { turnId } = await session.startTurn("hello");
 
     fakeSession.emit({ type: "turn_start" });
-    fakeSession.finishAgentRun(
-      {
+    fakeSession.finishAgentRun({
+      message: {
         role: "assistant",
         provider: "test-provider",
         model: "test-model",
@@ -1024,8 +1024,8 @@ describe("PiRpcAgentSession", () => {
         errorMessage: "Request timed out.",
         content: [],
       },
-      { willRetry: true },
-    );
+      willRetry: true,
+    });
     fakeSession.emit({
       type: "auto_retry_start",
       attempt: 1,
@@ -1034,8 +1034,8 @@ describe("PiRpcAgentSession", () => {
       errorMessage: "Request timed out.",
     });
     fakeSession.emit({ type: "turn_start" });
-    fakeSession.finishAgentRun(
-      {
+    fakeSession.finishAgentRun({
+      message: {
         role: "assistant",
         provider: "test-provider",
         model: "test-model",
@@ -1043,8 +1043,8 @@ describe("PiRpcAgentSession", () => {
         errorMessage: "Insufficient quota.",
         content: [],
       },
-      { willRetry: false },
-    );
+      willRetry: false,
+    });
     fakeSession.emit({
       type: "auto_retry_end",
       success: false,
