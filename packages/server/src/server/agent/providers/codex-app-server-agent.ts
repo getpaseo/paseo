@@ -4099,11 +4099,20 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async waitForForegroundTurnClear(timeoutMs: number): Promise<void> {
     if (!this.activeForegroundTurnId) return;
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      this.foregroundTurnClearWaiters.push(() => {
+      const waiter = () => {
         clearTimeout(timer);
         resolve();
-      });
+      };
+      // A timed-out waiter drops itself: a turn that never clears would
+      // otherwise retain one dead closure per retrying prompt until the
+      // session closes.
+      const timer = setTimeout(() => {
+        this.foregroundTurnClearWaiters = this.foregroundTurnClearWaiters.filter(
+          (entry) => entry !== waiter,
+        );
+        resolve();
+      }, timeoutMs);
+      this.foregroundTurnClearWaiters.push(waiter);
     });
   }
 

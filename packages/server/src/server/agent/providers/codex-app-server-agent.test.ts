@@ -674,16 +674,22 @@ describe("Codex foreground teardown wait (replace path)", () => {
     await expect(attempt).rejects.toThrow("Codex client not initialized");
   });
 
-  it("refuses only when the teardown never completes", async () => {
+  it("refuses only when the teardown never completes, retaining no waiter", async () => {
     vi.useFakeTimers();
     try {
       const session = createSession();
+      const internals = castInternals<{ foregroundTurnClearWaiters: Array<() => void> }>(
+        session,
+      );
       const attempt = session.startTurn("never clears");
       const expectation = expect(attempt).rejects.toThrow(
         "A foreground turn is already active",
       );
+      expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(10_000);
       await expectation;
+      // A stuck turn plus retrying prompts must not accumulate dead closures.
+      expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
