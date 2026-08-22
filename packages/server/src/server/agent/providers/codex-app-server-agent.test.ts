@@ -650,6 +650,22 @@ process.stdin.on("data", (chunk) => {
   }
 }
 
+describe("Codex client disposal", () => {
+  it("releases the foreground slot when the client is disposed", async () => {
+    // A failed reconnect disposes the client and clears the native turn id.
+    // If the foreground slot survived that, interrupt() would find no turn to
+    // interrupt and every later startTurn would refuse forever.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      disposeClient: () => Promise<void>;
+    }>(session);
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+    await internals.disposeClient();
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+});
+
 describe("Codex app-server provider", () => {
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
