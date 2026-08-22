@@ -69,7 +69,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "@anthropic-ai/claude-agent-sdk": "0.3.220",
     "@anthropic-ai/sdk": "^0.104.2",
     "@babel/parser": "^7.29.8",
     "@getpaseo/client": "0.5.0-beta.4",
@@ -78,7 +78,7 @@
     "@getpaseo/protocol": "0.5.0-beta.4",
     "@getpaseo/relay": "0.5.0-beta.4",
     "@isaacs/ttlcache": "^2.1.4",
-    "@modelcontextprotocol/sdk": "^1.20.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@opencode-ai/sdk": "1.14.46",
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
