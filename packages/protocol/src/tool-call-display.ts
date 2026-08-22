@@ -20,6 +20,8 @@ interface DetailDisplay {
   summary?: string;
 }
 
+import { isSubAgentToolName } from "./tool-name-normalization.js";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -129,7 +131,7 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
 
 function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay {
   const lowerName = input.name.trim().toLowerCase();
-  if (input.detail.type === "unknown" && lowerName === "task") {
+  if (input.detail.type === "unknown" && isSubAgentToolName(lowerName)) {
     return {
       displayName: "Task",
       summary: isRecord(input.metadata) ? readString(input.metadata.subAgentActivity) : undefined,
