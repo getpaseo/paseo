@@ -502,6 +502,36 @@ For tighter loops, you can rebuild a single workspace:
 - Changed `packages/server/src/*`, `packages/cli/src/*`, `packages/relay/src/*`, or `packages/highlight/src/*`: `npm run build:server`.
 - Changed app build dependencies: `npm run build:app-deps`.
 
+## Dependency patches
+
+`patches/*.patch` are applied by `scripts/postinstall-patches.mjs` on every install. A patch only
+runs when its package is actually present, so add the package to that script's `patchedPackages`
+list when you introduce a new patch — otherwise the file sits in `patches/` and never applies.
+Regenerate a patch with `npx patch-package <package>` after editing `node_modules/<package>`, and
+patch every build the consumers use: Metro resolves the `react-native` field of a package
+(`src/*.ts` for `react-native-svg`), while Node and Vitest resolve `main`/`module`
+(`lib/commonjs`, `lib/module`). Patching only `lib/` leaves the app bundle unfixed.
+
+### react-native-svg: string transforms on a root `<Svg>`
+
+A root `<Svg>` is a real React Native view, so react-native-svg rewrites a _string_ `transform`
+into RN style syntax with a PEG parser that only accepts SVG transform functions. Upstream lets
+that parser's `SyntaxError` escape, so any string it does not understand — `none`,
+`rotate(-90deg)`, any CSS value — crashes the app during render with
+`Expected transform functions but "n" found`. Every other extractor in that file already swallows
+the same error; `patches/react-native-svg+15.15.3.patch` makes this one do the same and fall back
+to no transform.
+
+This matters because we render untrusted SVG: the daemon scans a project for `favicon.svg` /
+`icon.svg` / `logo.svg` (`packages/server/src/utils/project-icon.ts`) and ships it to the client,
+where `ProjectIconImage` hands it to `SvgCss` — which inlines `<style>` rules onto the root
+`<svg>` as a string `style.transform`. `SvgXml` does the same for a root `style="transform:…"`
+attribute. Note that an RN-style array (`style={{ transform: [{ rotate: "-90deg" }] }}`, which the
+context window meter and the checks ring both use) is _not_ affected: the extractor returns arrays
+untouched and only parses strings.
+
+`packages/app/src/components/svg-root-transform.test.ts` pins the patched behavior.
+
 ## ACP provider catalog versions
 
 The in-app ACP provider catalog pins package-runner entries (`npx`, `npm exec`,
