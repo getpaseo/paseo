@@ -739,6 +739,325 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("maps a personal Cursor plan to Cursor Models and Other Models percentages", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleStart: "1786552121000",
+              billingCycleEnd: "1789230521000",
+              planUsage: {
+                totalSpend: 13500,
+                includedSpend: 2000,
+                bonusSpend: 11500,
+                limit: 2000,
+                autoPercentUsed: 44.88,
+                apiPercentUsed: 0.8,
+                totalPercentUsed: 39.13,
+              },
+              spendLimitUsage: { limitType: "user" },
+              autoModelSelectedDisplayMessage: "You've used 39% of your included total usage",
+              namedModelSelectedDisplayMessage: "You've used 1% of your included API usage",
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Pro" } }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit",
+          () => jsonResponse({ noUsageBasedAllowed: true }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Pro",
+      windows: [
+        expect.objectContaining({
+          id: "cursor_models",
+          label: "Cursor Models",
+          usedPct: 44.88,
+        }),
+        expect.objectContaining({
+          id: "other_models",
+          label: "Other Models",
+          usedPct: 0.8,
+        }),
+      ],
+      balances: [],
+      details: [
+        expect.objectContaining({
+          id: "on_demand",
+          label: "On-Demand Spending",
+          value: "Disabled",
+        }),
+      ],
+    });
+  });
+
+  it("maps enabled Cursor on-demand spending to a dollar amount", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: {
+                autoPercentUsed: 20,
+                apiPercentUsed: 5,
+              },
+              spendLimitUsage: {
+                limitType: "user",
+                individualUsed: 1234,
+                individualRemaining: 3766,
+                individualLimit: 5000,
+              },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Pro" } }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit",
+          () => jsonResponse({ hardLimit: 50 }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "cursor_models", usedPct: 20 }),
+        expect.objectContaining({ id: "other_models", usedPct: 5 }),
+      ],
+      balances: [
+        expect.objectContaining({
+          id: "on_demand",
+          label: "On-Demand Spending",
+          used: 12.34,
+          remaining: 37.66,
+          limit: 50,
+        }),
+      ],
+      details: [],
+    });
+  });
+
+  it("maps unlimited Cursor on-demand spending to used dollars without a cap", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: { autoPercentUsed: 10, apiPercentUsed: 2 },
+              spendLimitUsage: { limitType: "user", individualUsed: 500 },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Pro+" } }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit",
+          () => jsonResponse({ hardLimit: 100_000_000 }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      balances: [
+        expect.objectContaining({
+          id: "on_demand",
+          label: "On-Demand Spending",
+          used: 5,
+          limit: null,
+        }),
+      ],
+      details: [],
+    });
+  });
+
+  it("maps a team Cursor plan to the same two model-pool percentages as personal", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleStart: "2026-01-14T12:42:14.000Z",
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: {
+                totalSpend: 13400,
+                remaining: 6600,
+                limit: 20000,
+                autoPercentUsed: 42,
+                apiPercentUsed: 15,
+              },
+              spendLimitUsage: {
+                limitType: "team",
+                pooledUsed: 34798,
+                pooledRemaining: 25202,
+                pooledLimit: 60000,
+              },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Team" } }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Team",
+      windows: [
+        expect.objectContaining({ id: "cursor_models", usedPct: 42 }),
+        expect.objectContaining({ id: "other_models", usedPct: 15 }),
+      ],
+      balances: [],
+    });
+  });
+
+  it("maps a Cursor Start plan to a single Monthly usage percentage", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: {
+                autoPercentUsed: 12,
+                apiPercentUsed: 3,
+                totalPercentUsed: 18.4,
+              },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Start" } }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit",
+          () => jsonResponse({ noUsageBasedAllowed: true }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Start",
+      windows: [expect.objectContaining({ id: "monthly_usage", usedPct: 18.4 })],
+      balances: [],
+      details: [],
+    });
+  });
+
+  it("maps pooled Cursor spend to dollars when the API has no percentages", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: {
+                totalSpend: 13400,
+                remaining: 6600,
+                limit: 20000,
+              },
+              spendLimitUsage: {
+                limitType: "team",
+                pooledUsed: 34798,
+                pooledRemaining: 25202,
+                pooledLimit: 60000,
+              },
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Enterprise" } }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [],
+      balances: [
+        expect.objectContaining({
+          id: "plan_usage",
+          used: 134,
+          remaining: 66,
+          limit: 200,
+        }),
+        expect.objectContaining({
+          id: "team_usage",
+          used: 347.98,
+          remaining: 252.02,
+          limit: 600,
+        }),
+      ],
+    });
+  });
+
+  it("reads Cursor model-pool percentages from display messages when numeric fields are absent", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              autoModelSelectedDisplayMessage: "You've used 42% of your included total usage",
+              namedModelSelectedDisplayMessage: "You've used 15% of your included API usage",
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "cursor_models", usedPct: 42 }),
+        expect.objectContaining({ id: "other_models", usedPct: 15 }),
+      ],
+      balances: [],
+    });
+  });
+
   it("reads the Cursor token from the modern cursorAuth/accessToken key in state.vscdb", async () => {
     writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_state_jwt" });
     let authorization: string | null = null;
