@@ -84,6 +84,25 @@ test("composer diff stat toggles Changes in the preferred Side panel", async ({ 
   }
 });
 
+test("composer diff stat opens the compact explorer instead of a Changes tab", async ({ page }) => {
+  const workspace = await seedChangedAgent("composer-diff-stat-compact-");
+
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openAgentRoute(page, {
+      workspaceId: workspace.workspaceId,
+      agentId: workspace.agentId,
+    });
+
+    await page.getByTestId("composer-diff-stat-pill").click();
+
+    await expect(page.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("composer diff stat opens Changes in the focused pane when Side panel routing is off", async ({
   page,
 }) => {

@@ -29,6 +29,7 @@ import { openSupportingTab, toggleSupportingTab } from "@/workspace-tabs/side-pa
 export const AgentTracks = memo(function AgentTracks({
   serverId,
   workspaceId,
+  cwd,
   subagentRows,
   tasks,
   archiveFinishedStatus,
@@ -36,6 +37,7 @@ export const AgentTracks = memo(function AgentTracks({
 }: {
   serverId: string;
   workspaceId: string;
+  cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
@@ -99,10 +101,11 @@ export const AgentTracks = memo(function AgentTracks({
     toggleSupportingTab({
       isCompact,
       workspaceKey,
+      checkout: { serverId, cwd, isGit: true },
       target: { kind: "working_diff" },
       openInSidePanelByDefault,
     });
-  }, [isCompact, openInSidePanelByDefault, workspaceKey]);
+  }, [cwd, isCompact, openInSidePanelByDefault, serverId, workspaceKey]);
 
   if (!hasWorkspaceDiffStat && !hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
     return null;
