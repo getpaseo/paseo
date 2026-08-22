@@ -5845,6 +5845,26 @@ export class Session {
     }
 
     const explicitTitle = request.title?.trim() || null;
+    if (request.source.reuseExisting) {
+      // Dedupe is daemon-side because only the host can expand `~` and resolve
+      // symlinks against the real filesystem. The matcher compares realpath
+      // variants on both sides, so a workspace registered through a symlinked
+      // or aliased path still matches this request's spelling.
+      const existing = await this.workspaceProvisioning.findActiveWorkspaceForDirectory(cwd);
+      if (existing) {
+        const descriptor = await this.describeWorkspaceRecord(existing);
+        this.emit({
+          type: "workspace.create.response",
+          payload: {
+            requestId: request.requestId,
+            workspace: descriptor,
+            setupTerminalId: null,
+            error: null,
+          },
+        });
+        return;
+      }
+    }
     const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
     const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
       cwd,

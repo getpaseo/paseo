@@ -73,8 +73,12 @@ export async function addExistingWorkspaceDirectly(
     return { ok: false, error: null };
   }
 
+  // reuseExisting makes the daemon the dedupe authority: it resolves `~`, dot
+  // segments, and symlinks against its own filesystem, which a client-side
+  // string comparison cannot. Older daemons ignore the flag and keep the old
+  // always-fresh behavior.
   const payload = await input.client.createWorkspace({
-    source: { kind: "directory", path: trimmedPath },
+    source: { kind: "directory", path: trimmedPath, reuseExisting: true },
   });
   if (payload.error || !payload.workspace) {
     return {

@@ -2449,8 +2449,11 @@ export const ArchiveWorkspaceRequestSchema = z.object({
 });
 
 // Create a new workspace record. Unlike open_project, this never deduplicates by
-// directory: it always produces a fresh workspace. The source discriminates
-// between an existing local directory and a newly created paseo worktree.
+// directory by default: it always produces a fresh workspace. The source
+// discriminates between an existing local directory and a newly created paseo
+// worktree. A directory source may opt into daemon-side dedupe with
+// reuseExisting: the daemon then returns the active workspace already backed by
+// an equivalent resolved path instead of minting a new one.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   requestId: z.string(),
@@ -2464,6 +2467,10 @@ export const WorkspaceCreateRequestSchema = z.object({
       // Path of the existing checkout/directory to back the workspace.
       path: z.string(),
       projectId: z.string().optional(),
+      // Reuse the active workspace already backed by this directory (compared
+      // after tilde expansion and symlink resolution) instead of creating a
+      // fresh one. Optional; older daemons ignore it and keep the old behavior.
+      reuseExisting: z.boolean().optional(),
     }),
     z.object({
       kind: z.literal("worktree"),
