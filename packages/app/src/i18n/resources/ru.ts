@@ -1759,6 +1759,7 @@ export const ru: TranslationResources = {
       label: "Файлы",
       subtitle: "Файлы рабочего пространства",
       tooltip: "Просмотр файлов рабочего пространства",
+      chooseFile: "Выберите файл",
     },
     pullRequest: {
       label: "PR",

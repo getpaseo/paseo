@@ -1738,6 +1738,7 @@ export const en = {
       label: "Files",
       subtitle: "Workspace files",
       tooltip: "Browse workspace files",
+      chooseFile: "Choose a file",
     },
     pullRequest: {
       label: "Pull request",

@@ -1760,6 +1760,7 @@ export const ptBR: TranslationResources = {
       label: "Arquivos",
       subtitle: "Arquivos do espaço de trabalho",
       tooltip: "Explorar arquivos do espaço de trabalho",
+      chooseFile: "Escolha um arquivo",
     },
     pullRequest: {
       label: "Pull request",

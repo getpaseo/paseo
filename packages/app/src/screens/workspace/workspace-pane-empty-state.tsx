@@ -122,13 +122,6 @@ export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
     <View style={styles.container} testID="workspace-pane-empty-state">
       <View style={styles.rail}>
         <View style={styles.stack}>
-          <LauncherRow
-            label={t("workspace.tabs.actions.files")}
-            icon={FILES_ICON}
-            onPress={openFiles}
-          >
-            <LauncherShortcut actionId="workspace-tab-target-files" />
-          </LauncherRow>
           {showChanges ? (
             <LauncherRow
               label={t("workspace.tabs.actions.changes")}
@@ -138,6 +131,13 @@ export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
               <LauncherShortcut actionId="workspace-tab-target-changes" />
             </LauncherRow>
           ) : null}
+          <LauncherRow
+            label={t("workspace.tabs.actions.files")}
+            icon={FILES_ICON}
+            onPress={openFiles}
+          >
+            <LauncherShortcut actionId="workspace-tab-target-files" />
+          </LauncherRow>
           {showPullRequest ? (
             <LauncherRow
               label={t("workspace.tabs.actions.pullRequest")}
@@ -146,14 +146,14 @@ export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
             />
           ) : null}
           <LauncherRow
-            label={t("workspace.tabs.actions.newAgent")}
+            label={t("workspace.tabs.fallback.agent")}
             icon={AGENT_ICON}
             onPress={createAgent}
           >
             <LauncherShortcut actionId="workspace-tab-target-agent" />
           </LauncherRow>
           <LauncherRow
-            label={t("workspace.tabs.actions.newTerminal")}
+            label={t("workspace.tabs.fallback.terminal")}
             icon={TERMINAL_ICON}
             onPress={createTerminal}
           >

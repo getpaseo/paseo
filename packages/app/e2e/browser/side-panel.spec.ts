@@ -22,6 +22,12 @@ function emptyState(scope: Locator): Locator {
   return scope.getByTestId("workspace-pane-empty-state");
 }
 
+async function launcherButtonLabels(launcher: Locator): Promise<(string | null)[]> {
+  return launcher
+    .getByRole("button")
+    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
+}
+
 function sidePanelToggle(page: Page): Locator {
   return page.getByTestId("workspace-explorer-toggle").first();
 }
@@ -61,7 +67,15 @@ test.describe("Side panel", () => {
       await test.step("revealing the Side panel seeds nothing", async () => {
         await sidePanelToggle(page).click();
         await expect(sidePanel(page)).toBeVisible({ timeout: 30_000 });
-        await expect(emptyState(sidePanel(page))).toBeVisible();
+        const launcher = emptyState(sidePanel(page));
+        await expect(launcher).toBeVisible();
+        expect(await launcherButtonLabels(launcher)).toEqual([
+          "Changes",
+          "Files",
+          "Agent",
+          "Terminal",
+          null,
+        ]);
         await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(0);
         await capture(page, testInfo, "01-side-panel-reveals-empty");
       });

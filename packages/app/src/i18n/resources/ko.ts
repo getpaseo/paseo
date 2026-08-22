@@ -1738,6 +1738,7 @@ export const ko: TranslationResources = {
       label: "파일",
       subtitle: "워크스페이스 파일",
       tooltip: "워크스페이스 파일 탐색",
+      chooseFile: "파일 선택",
     },
     pullRequest: {
       label: "풀 리퀘스트",

@@ -156,7 +156,7 @@ test.describe("Tab creation", () => {
     const shortcutPrefix = process.platform === "darwin" ? /⇧⌘/ : /Ctrl.*Shift/;
     await expect(agent).toContainText(new RegExp(`${shortcutPrefix.source}.*A`));
     await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
-    await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*C`));
+    await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
     await expect(files).toContainText(new RegExp(`${shortcutPrefix.source}.*E`));
     await expect(agent).toBeFocused();
 
