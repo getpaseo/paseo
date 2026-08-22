@@ -49,9 +49,12 @@ const CursorBillingCycleTimestampSchema = z.preprocess(
   z.union([z.string(), z.number()]).nullable(),
 );
 
-// cursor.com/dashboard/spending: Express/Start (India) is a single total-% bar
-// (`DW` / "Monthly usage"). Pro/Pro+/Ultra and current Teams use two pools.
 const SINGLE_POOL_PLAN_NAMES = new Set(["start", "express"]);
+
+// Request-based included usage is 500 requests per seat, at $0.04 each.
+const INCLUDED_REQUESTS_PER_SEAT = 500;
+const CENTS_PER_INCLUDED_REQUEST = 4;
+const FREE_OWNER_ROLES = new Set(["FREE_OWNER", "TEAM_ROLE_FREE_OWNER"]);
 
 const CursorPlanUsageSchema = z.object({
   totalSpend: ApiNullableNumberSchema,
@@ -97,9 +100,23 @@ const CursorHardLimitResponseSchema = z.object({
   hardLimit: z.union([z.number(), z.string()]).optional(),
 });
 
-type CursorHardLimitResponse = z.infer<typeof CursorHardLimitResponseSchema>;
+const CursorTeamSchema = z.object({
+  id: ApiNullableNumberSchema,
+  name: z.string().optional(),
+  role: z.string().optional(),
+  requestQuotaPerSeat: ApiNullableNumberSchema,
+  selfServeTieredPricingEnabled: z.boolean().optional(),
+  pricingStrategy: z.string().optional(),
+});
 
-// Spending page `rz.UNLIMITED_CAP`: a hardLimit at or above this is "Unlimited".
+const CursorTeamsResponseSchema = z.object({
+  teams: z.array(CursorTeamSchema).nullish(),
+});
+
+type CursorHardLimitResponse = z.infer<typeof CursorHardLimitResponseSchema>;
+type CursorTeam = z.infer<typeof CursorTeamSchema>;
+type CursorTeamWithId = CursorTeam & { id: number };
+
 const CURSOR_UNLIMITED_HARD_LIMIT = 100_000_000;
 const ON_DEMAND_LABEL = "On-Demand Spending";
 
@@ -150,6 +167,30 @@ function isSinglePoolPlan(planName: string | null): boolean {
   return name != null && SINGLE_POOL_PLAN_NAMES.has(name);
 }
 
+function isFreeOwnerRole(role: string | undefined): boolean {
+  return role != null && FREE_OWNER_ROLES.has(role);
+}
+
+function isCurrentTokenTeam(team: CursorTeam | null): boolean {
+  return team != null && team.selfServeTieredPricingEnabled === true && !isFreeOwnerRole(team.role);
+}
+
+// Token-priced teams without the current per-seat pools use a dollar included
+// meter. Everything else on a team is the older request-based included quota.
+function isRequestBasedTeam(team: CursorTeam | null): boolean {
+  if (team == null || isCurrentTokenTeam(team)) return false;
+  return team.pricingStrategy !== "tokens";
+}
+
+function usableTeam(team: CursorTeam | null): CursorTeamWithId | null {
+  if (team == null || team.id == null) return null;
+  return { ...team, id: team.id };
+}
+
+function requestCountFromSpendCents(cents: number): number {
+  return Math.ceil(cents / CENTS_PER_INCLUDED_REQUEST);
+}
+
 function percentWindow(input: {
   id: string;
   label: string;
@@ -174,58 +215,65 @@ function monthlyUsageWindow(utilizationPct: number, resetsAt: string | null): Pr
   });
 }
 
-function poolPercent(
-  numeric: boolean,
-  value: number | null,
-  message: string | null | undefined,
-): number | null {
-  return numeric ? value : parsePercentFromMessage(message);
+function poolPercent(input: {
+  value: number | null;
+  message: string | null | undefined;
+  numeric: boolean;
+  fillMissingZeros: boolean;
+}): number | null {
+  if (input.fillMissingZeros) return input.value ?? 0;
+  if (input.numeric) return input.value;
+  return parsePercentFromMessage(input.message);
 }
 
 function modelPoolWindows(input: {
   resp: CursorUsageResponse;
   planName: string | null;
   resetsAt: string | null;
+  fillMissingZeros?: boolean;
 }): ProviderUsageWindow[] {
-  const { resp, planName, resetsAt } = input;
+  const { resp, planName, resetsAt, fillMissingZeros = false } = input;
   const planUsage = resp.planUsage;
   const totalPct = planUsage?.totalPercentUsed ?? null;
 
-  // Official Spending `DK`: membershipType EXPRESS → one total-% bar, not the two pools.
   if (isSinglePoolPlan(planName) && totalPct != null) {
     return [monthlyUsageWindow(totalPct, resetsAt)];
   }
 
-  const numeric = planUsage?.autoPercentUsed != null || planUsage?.apiPercentUsed != null;
-  const autoPct = poolPercent(
-    numeric,
-    planUsage?.autoPercentUsed ?? null,
-    resp.autoModelSelectedDisplayMessage,
-  );
-  const apiPct = poolPercent(
-    numeric,
-    planUsage?.apiPercentUsed ?? null,
-    resp.namedModelSelectedDisplayMessage,
-  );
+  const numeric =
+    fillMissingZeros || planUsage?.autoPercentUsed != null || planUsage?.apiPercentUsed != null;
   const windows: ProviderUsageWindow[] = [];
   for (const pool of [
-    { id: "cursor_models", label: "Cursor Models", pct: autoPct },
-    { id: "other_models", label: "Other Models", pct: apiPct },
+    {
+      id: "cursor_models",
+      label: "Cursor Models",
+      value: planUsage?.autoPercentUsed ?? null,
+      message: resp.autoModelSelectedDisplayMessage,
+    },
+    {
+      id: "other_models",
+      label: "Other Models",
+      value: planUsage?.apiPercentUsed ?? null,
+      message: resp.namedModelSelectedDisplayMessage,
+    },
   ]) {
-    if (pool.pct != null) {
-      windows.push(
-        percentWindow({
-          id: pool.id,
-          label: pool.label,
-          utilizationPct: pool.pct,
-          resetsAt,
-        }),
-      );
-    }
+    const pct = poolPercent({
+      value: pool.value,
+      message: pool.message,
+      numeric,
+      fillMissingZeros,
+    });
+    if (pct == null) continue;
+    windows.push(
+      percentWindow({
+        id: pool.id,
+        label: pool.label,
+        utilizationPct: pct,
+        resetsAt,
+      }),
+    );
   }
   if (windows.length > 0) return windows;
-
-  // Express/Start without a plan name, or a payload that only has the combined %.
   if (totalPct != null) return [monthlyUsageWindow(totalPct, resetsAt)];
   return [];
 }
@@ -266,39 +314,77 @@ function appendUsdBalance(
 
 function dollarBalances(input: {
   resp: CursorUsageResponse;
-  hasWindows: boolean;
   resetsAt: string | null;
 }): ProviderUsageBalance[] {
-  const { resp, hasWindows, resetsAt } = input;
-  // Official Spending never mixes included-% bars with planUsage dollars. Those
-  // cents include bonus/on-demand and are what used to render as `$135 / $20`.
-  if (hasWindows) return [];
-
+  const { resp, resetsAt } = input;
   const balances: ProviderUsageBalance[] = [];
   if (resp.planUsage) {
     appendUsdBalance(balances, {
-      id: "plan_usage",
-      label: "Plan usage",
+      id: "included_usage",
+      label: "Your included usage",
       usedCents: resp.planUsage.totalSpend,
       remainingCents: resp.planUsage.remaining,
       limitCents: resp.planUsage.limit,
       resetsAt,
     });
-  }
-
-  const spend = resp.spendLimitUsage;
-  if (spend?.pooledLimit != null) {
+  } else if (resp.spendLimitUsage?.individualUsed != null) {
     appendUsdBalance(balances, {
-      id: "team_usage",
-      label: "Team usage",
-      usedCents: spend.pooledUsed,
-      remainingCents: spend.pooledRemaining,
-      limitCents: spend.pooledLimit,
+      id: "monthly_usage_usd",
+      label: "Your monthly usage",
+      usedCents: resp.spendLimitUsage.individualUsed,
+      remainingCents: resp.spendLimitUsage.individualRemaining ?? null,
+      limitCents: resp.spendLimitUsage.individualLimit ?? null,
       resetsAt,
     });
   }
 
   return balances;
+}
+
+function includedRequestBalance(input: {
+  team: CursorTeam;
+  resp: CursorUsageResponse;
+  resetsAt: string | null;
+}): ProviderUsageBalance | null {
+  const quota = input.team.requestQuotaPerSeat;
+  const limit = quota != null && quota > 0 ? INCLUDED_REQUESTS_PER_SEAT * quota : null;
+  const planUsedCents =
+    input.resp.planUsage?.includedSpend ?? input.resp.planUsage?.totalSpend ?? null;
+  const used =
+    planUsedCents != null && planUsedCents > 0 ? requestCountFromSpendCents(planUsedCents) : 0;
+  if (limit == null && (planUsedCents == null || planUsedCents <= 0)) return null;
+
+  const capped = limit != null ? Math.min(used, limit) : used;
+  const remaining = limit != null ? Math.max(0, limit - capped) : null;
+  const usedPct = usedPctOf(capped, limit);
+  return {
+    id: "included_requests",
+    label: "Included-Request Usage",
+    used: capped,
+    remaining,
+    limit,
+    unit: "requests",
+    resetsAt: input.resetsAt,
+    tone: usedPct != null ? toneFromUsedPct(usedPct) : balanceToneFromRemaining(remaining),
+  };
+}
+
+function includedBalances(input: {
+  team: CursorTeamWithId | null;
+  resp: CursorUsageResponse;
+  windows: ProviderUsageWindow[];
+  billingCycleEnd: string | null;
+}): ProviderUsageBalance[] {
+  if (input.windows.length > 0) return [];
+  if (input.team && isRequestBasedTeam(input.team)) {
+    const request = includedRequestBalance({
+      team: input.team,
+      resp: input.resp,
+      resetsAt: input.billingCycleEnd,
+    });
+    return request ? [request] : [];
+  }
+  return dollarBalances({ resp: input.resp, resetsAt: input.billingCycleEnd });
 }
 
 function numericHardLimitDollars(hardLimit: CursorHardLimitResponse["hardLimit"]): number | null {
@@ -324,9 +410,6 @@ function onDemandLimitCents(
   return spendLimitCents != null && spendLimitCents > 0 ? spendLimitCents : null;
 }
 
-// cursor.com/dashboard/spending On-Demand cell (`DK`):
-// noUsageBasedAllowed / hardLimit === "no-usage-based" → "Disabled"
-// unlimited → "$used"; fixed → "$used / $limit" (used is cents, limit is dollars).
 function onDemandUsage(input: {
   hardLimit: CursorHardLimitResponse | null;
   spend: CursorSpendLimitUsage | null | undefined;
@@ -412,7 +495,7 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Logger): Promi
     sqlite = (await import(sqliteSpecifier)) as unknown as NodeSqliteModule;
   } catch (err) {
     logger.debug({ err }, "node:sqlite unavailable; cannot read Cursor state.vscdb");
-    return null; // runtime without node:sqlite
+    return null;
   }
 
   for (const path of dbPaths) {
@@ -471,24 +554,21 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
 
     if (!token) return unavailableUsage(this);
 
+    const team = usableTeam(await this.fetchTeam(token));
     const [resp, planName, hardLimit] = await Promise.all([
-      this.fetchCurrentPeriodUsage(token),
+      this.fetchCurrentPeriodUsage(token, team?.id ?? null),
       this.fetchPlanName(token),
       this.fetchHardLimit(token),
     ]);
     if (!resp) return unavailableUsage(this);
 
-    // cursor.com/dashboard/spending Included usage: `Dq(planUsage)` → two %
-    // bars (personal `DK` and current Teams `DY`). Dollars are on-demand/admin,
-    // not this card. Fall back to cents only when the API has no percentages.
     const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
-    const windows = modelPoolWindows({ resp, planName, resetsAt: billingCycleEnd });
-    const includedBalances = dollarBalances({
+    const windows = modelPoolWindows({
       resp,
-      hasWindows: windows.length > 0,
+      planName,
       resetsAt: billingCycleEnd,
+      fillMissingZeros: isCurrentTokenTeam(team),
     });
-    // Start/Express hides the On-Demand section (`!b && !B` in `DK`).
     const onDemand = isSinglePoolPlan(planName)
       ? { balances: [], details: [] }
       : onDemandUsage({
@@ -503,13 +583,20 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
       status: "available",
       planLabel: planName,
       windows,
-      balances: [...includedBalances, ...onDemand.balances],
+      balances: [
+        ...includedBalances({ team, resp, windows, billingCycleEnd }),
+        ...onDemand.balances,
+      ],
       details: onDemand.details,
       error: null,
     };
   }
 
-  private cursorDashboardRequest(token: string, method: string): Promise<Response> {
+  private cursorDashboardRequest(
+    token: string,
+    method: string,
+    body: Record<string, unknown> = {},
+  ): Promise<Response> {
     return fetchProviderApi(
       this.fetchApi,
       `https://api2.cursor.sh/aiserver.v1.DashboardService/${method}`,
@@ -520,29 +607,37 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
           "Content-Type": "application/json",
           "Connect-Protocol-Version": "1",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       },
     );
   }
 
-  // Enrichment RPCs must not hide included usage from GetCurrentPeriodUsage.
-  private async fetchOptionalDashboard<T>(
-    token: string,
-    method: string,
-    schema: z.ZodType<T>,
-  ): Promise<T | null> {
+  // Plan name / hard limit / team lookup must not hide included usage if they fail.
+  private async fetchOptionalDashboard<T>(input: {
+    token: string;
+    method: string;
+    schema: z.ZodType<T>;
+  }): Promise<T | null> {
     try {
-      const res = await this.cursorDashboardRequest(token, method);
+      const res = await this.cursorDashboardRequest(input.token, input.method);
       if (!res.ok) return null;
-      const parsed = schema.safeParse(await res.json());
+      const parsed = input.schema.safeParse(await res.json());
       return parsed.success ? parsed.data : null;
     } catch {
       return null;
     }
   }
 
-  private async fetchCurrentPeriodUsage(token: string): Promise<CursorUsageResponse | null> {
-    const res = await this.cursorDashboardRequest(token, "GetCurrentPeriodUsage");
+  private async fetchCurrentPeriodUsage(
+    token: string,
+    teamId: number | null,
+  ): Promise<CursorUsageResponse | null> {
+    const res = await this.cursorDashboardRequest(
+      token,
+      "GetCurrentPeriodUsage",
+      // Team seats only populate period usage when the request is scoped to the team.
+      teamId == null ? {} : { teamId },
+    );
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Cursor usage fetch failed");
       return null;
@@ -551,15 +646,28 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
   }
 
   private fetchHardLimit(token: string): Promise<CursorHardLimitResponse | null> {
-    return this.fetchOptionalDashboard(token, "GetHardLimit", CursorHardLimitResponseSchema);
+    return this.fetchOptionalDashboard({
+      token,
+      method: "GetHardLimit",
+      schema: CursorHardLimitResponseSchema,
+    });
   }
 
   private async fetchPlanName(token: string): Promise<string | null> {
-    const parsed = await this.fetchOptionalDashboard(
+    const parsed = await this.fetchOptionalDashboard({
       token,
-      "GetPlanInfo",
-      CursorPlanInfoResponseSchema,
-    );
+      method: "GetPlanInfo",
+      schema: CursorPlanInfoResponseSchema,
+    });
     return parsed?.planInfo?.planName?.trim() || null;
+  }
+
+  private async fetchTeam(token: string): Promise<CursorTeam | null> {
+    const parsed = await this.fetchOptionalDashboard({
+      token,
+      method: "GetTeams",
+      schema: CursorTeamsResponseSchema,
+    });
+    return parsed?.teams?.[0] ?? null;
   }
 }

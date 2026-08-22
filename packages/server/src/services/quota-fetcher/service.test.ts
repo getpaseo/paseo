@@ -729,7 +729,7 @@ describe("real provider usage fetchers", () => {
       status: "available",
       balances: [
         expect.objectContaining({
-          id: "plan_usage",
+          id: "included_usage",
           used: 15,
           remaining: 25,
           limit: 40,
@@ -1015,19 +1015,184 @@ describe("real provider usage fetchers", () => {
       windows: [],
       balances: [
         expect.objectContaining({
-          id: "plan_usage",
+          id: "included_usage",
+          label: "Your included usage",
           used: 134,
           remaining: 66,
           limit: 200,
         }),
+      ],
+    });
+  });
+
+  it("maps an old request-based Cursor team seat to Included-Request Usage", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetTeams",
+          () =>
+            jsonResponse({
+              teams: [
+                {
+                  id: 42,
+                  name: "Acme",
+                  role: "TEAM_ROLE_MEMBER",
+                  requestQuotaPerSeat: 1,
+                  selfServeTieredPricingEnabled: false,
+                },
+              ],
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleStart: "1785884859130",
+              billingCycleEnd: "1785884859130",
+              displayThreshold: 100,
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Business" } }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Business",
+      windows: [],
+      balances: [
         expect.objectContaining({
-          id: "team_usage",
-          used: 347.98,
-          remaining: 252.02,
-          limit: 600,
+          id: "included_requests",
+          label: "Included-Request Usage",
+          used: 0,
+          remaining: 500,
+          limit: 500,
+          unit: "requests",
+          resetsAt: "2026-08-04T23:07:39.130Z",
         }),
       ],
     });
+  });
+
+  it("maps a current token Team with no planUsage to official 0% / 0% bars", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetTeams",
+          () =>
+            jsonResponse({
+              teams: [
+                {
+                  id: 7,
+                  role: "TEAM_ROLE_MEMBER",
+                  selfServeTieredPricingEnabled: true,
+                },
+              ],
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () => jsonResponse({ billingCycleEnd: "2026-02-14T12:42:14.000Z" }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+          () => jsonResponse({ planInfo: { planName: "Team" } }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor).toMatchObject({
+      status: "available",
+      planLabel: "Team",
+      windows: [
+        expect.objectContaining({ id: "cursor_models", usedPct: 0 }),
+        expect.objectContaining({ id: "other_models", usedPct: 0 }),
+      ],
+      balances: [],
+    });
+  });
+
+  it("converts request-based team planUsage included spend into request counts", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetTeams",
+          () =>
+            jsonResponse({
+              teams: [
+                {
+                  id: 42,
+                  requestQuotaPerSeat: 2,
+                  selfServeTieredPricingEnabled: false,
+                },
+              ],
+            }),
+        ],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          () =>
+            jsonResponse({
+              billingCycleEnd: "2026-02-14T12:42:14.000Z",
+              planUsage: { includedSpend: 804, totalSpend: 5000 },
+            }),
+        ],
+      ]),
+    );
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(cursor.balances).toEqual([
+      expect.objectContaining({
+        id: "included_requests",
+        used: 201,
+        limit: 1000,
+        unit: "requests",
+      }),
+    ]);
+  });
+
+  it("sends teamId on GetCurrentPeriodUsage the way the official dashboard does", async () => {
+    process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+    let usageBody: unknown = null;
+    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const key = url.toString();
+      if (key.endsWith("/GetTeams")) {
+        return jsonResponse({
+          teams: [{ id: 99, selfServeTieredPricingEnabled: true }],
+        });
+      }
+      if (key.endsWith("/GetCurrentPeriodUsage")) {
+        usageBody = JSON.parse(String(init?.body ?? "{}"));
+        return jsonResponse({
+          planUsage: { autoPercentUsed: 10, apiPercentUsed: 2 },
+        });
+      }
+      if (key.endsWith("/GetPlanInfo")) {
+        return jsonResponse({ planInfo: { planName: "Team" } });
+      }
+      if (key.endsWith("/GetHardLimit")) {
+        return jsonResponse({});
+      }
+      throw new Error(`Unmocked fetch: ${key}`);
+    }) as unknown as typeof fetch;
+
+    const cursor = findProvider(await service().listUsage(), "cursor");
+
+    expect(usageBody).toEqual({ teamId: 99 });
+    expect(cursor.windows).toEqual([
+      expect.objectContaining({ id: "cursor_models", usedPct: 10 }),
+      expect.objectContaining({ id: "other_models", usedPct: 2 }),
+    ]);
   });
 
   it("reads Cursor model-pool percentages from display messages when numeric fields are absent", async () => {
@@ -1081,7 +1246,9 @@ describe("real provider usage fetchers", () => {
     expect(authorization).toBe("Bearer cursor_state_jwt");
     expect(cursor).toMatchObject({
       status: "available",
-      balances: [expect.objectContaining({ id: "plan_usage", used: 15, remaining: 25, limit: 40 })],
+      balances: [
+        expect.objectContaining({ id: "included_usage", used: 15, remaining: 25, limit: 40 }),
+      ],
     });
   });
 
@@ -1128,7 +1295,9 @@ describe("real provider usage fetchers", () => {
     expect(authorization).toBe("Bearer cursor_cli_jwt");
     expect(cursor).toMatchObject({
       status: "available",
-      balances: [expect.objectContaining({ id: "plan_usage", used: 15, remaining: 25, limit: 40 })],
+      balances: [
+        expect.objectContaining({ id: "included_usage", used: 15, remaining: 25, limit: 40 }),
+      ],
     });
   });
 
