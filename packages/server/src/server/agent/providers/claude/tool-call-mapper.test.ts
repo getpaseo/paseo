@@ -448,7 +448,7 @@ describe("claude tool-call mapper", () => {
       type: "plain_text",
       label: "0 9 * * *",
       text: "Review overnight CI failures",
-      icon: "brain",
+      icon: "calendar_clock",
     });
 
     const wakeup = expectMapped(
@@ -463,7 +463,7 @@ describe("claude tool-call mapper", () => {
       type: "plain_text",
       label: "in 45m",
       text: "check the deploy",
-      icon: "brain",
+      icon: "alarm_clock",
     });
 
     const stop = expectMapped(
@@ -474,7 +474,7 @@ describe("claude tool-call mapper", () => {
         output: null,
       }),
     );
-    expect(stop.detail).toEqual({ type: "plain_text", label: "Stop loop", icon: "brain" });
+    expect(stop.detail).toEqual({ type: "plain_text", label: "Stop loop", icon: "alarm_clock" });
   });
 
   it("maps Monitor command watches as shell detail and websocket watches as plain text", () => {
@@ -598,7 +598,7 @@ describe("claude tool-call mapper", () => {
     expect(item.detail).toEqual({
       type: "plain_text",
       label: "*/5 * * * *",
-      icon: "brain",
+      icon: "calendar_clock",
     });
   });
 
@@ -628,7 +628,7 @@ describe("claude tool-call mapper", () => {
     expect(cronList.detail).toEqual({
       type: "plain_text",
       label: "Scheduled jobs",
-      icon: "brain",
+      icon: "calendar_clock",
     });
 
     const cron = expectMapped(
@@ -643,7 +643,7 @@ describe("claude tool-call mapper", () => {
       type: "plain_text",
       label: "0 9 * * *",
       text: "Review overnight CI failures",
-      icon: "brain",
+      icon: "calendar_clock",
     });
 
     const skill = expectMapped(

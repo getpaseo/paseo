@@ -193,6 +193,10 @@ export const TOOL_CALL_ICON_NAMES = [
   "sparkles",
   "brain",
   "mic_vocal",
+  "calendar_clock",
+  "alarm_clock",
+  "message_square",
+  "bell",
 ] as const;
 
 export type ToolCallIconName = (typeof TOOL_CALL_ICON_NAMES)[number];

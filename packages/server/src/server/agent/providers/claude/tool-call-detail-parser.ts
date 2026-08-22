@@ -320,13 +320,13 @@ const ClaudeToolDetailPass2Schema = z.union([
     "CronCreate",
     ClaudeCronCreateInputSchema,
     ClaudeTextOutputSchema,
-    (input) => claudePlainTextDetail(input?.cron, input?.prompt, "brain"),
+    (input) => claudePlainTextDetail(input?.cron, input?.prompt, "calendar_clock"),
   ),
   toolDetailBranchByName("CronDelete", ClaudeIdInputSchema, ClaudeTextOutputSchema, (input) =>
-    claudePlainTextDetail(input?.id, null, "brain"),
+    claudePlainTextDetail(input?.id, null, "calendar_clock"),
   ),
   toolDetailBranchByName("CronList", z.unknown(), ClaudeTextOutputSchema, (_input, output) =>
-    claudePlainTextDetail("Scheduled jobs", output, "brain"),
+    claudePlainTextDetail("Scheduled jobs", output, "calendar_clock"),
   ),
   toolDetailBranchByName(
     "ScheduleWakeup",
@@ -336,7 +336,7 @@ const ClaudeToolDetailPass2Schema = z.union([
       return claudePlainTextDetail(
         claudeWakeupLabel(input),
         input?.reason ?? input?.prompt,
-        "brain",
+        "alarm_clock",
       );
     },
   ),
@@ -369,13 +369,13 @@ const ClaudeToolDetailPass2Schema = z.union([
     "SendMessage",
     ClaudeSendMessageInputSchema,
     ClaudeTextOutputSchema,
-    (input) => claudePlainTextDetail(input?.summary ?? input?.to, input?.message),
+    (input) => claudePlainTextDetail(input?.summary ?? input?.to, input?.message, "message_square"),
   ),
   toolDetailBranchByName(
     "PushNotification",
     ClaudePushNotificationInputSchema,
     ClaudeTextOutputSchema,
-    (input) => claudePlainTextDetail(input?.message),
+    (input) => claudePlainTextDetail(input?.message, null, "bell"),
   ),
   toolDetailBranchByName("TaskStop", ClaudeTaskRefInputSchema, ClaudeTextOutputSchema, (input) =>
     claudePlainTextDetail(input?.task_id ?? input?.shell_id, null, "bot"),
