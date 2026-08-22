@@ -48,17 +48,18 @@ Approve the login in the browser tab that opens. Leave the Hub tab open: it watc
 
 ## 4. Answer the setup questions
 
-Your terminal picks up where the login left off. Most questions arrive with a default or a suggested answer; only your Slack member ID has to be typed.
+Your terminal confirms the login, then picks up where the browser left off. Most questions arrive with a default or a suggested answer; only your Slack member ID has to be typed.
 
-| Question                                  | What it wants                                                                                     |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Connect this daemon to `<hub>`?           | Yes. This enrolls the machine you are on.                                                         |
-| Initialize and deploy a starter workflow? | Yes.                                                                                              |
-| Starter agent provider, model, and mode   | What your daemon reports it can run. Entries marked **suggested** are that daemon's own defaults. |
-| Trigger provider                          | Slack.                                                                                            |
-| Your Slack member ID                      | `U01234567`, the only account allowed to trigger the bot.                                         |
+| Question                                  | What it wants                                                                           |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| Connect this daemon to this Hub?          | Yes. This enrolls the machine you are on.                                               |
+| Initialize and deploy a starter workflow? | Yes.                                                                                    |
+| Starter agent provider, model, and mode   | What your daemon reports it can run. Suggested model and mode entries are its defaults. |
+| Your Slack member ID                      | `U01234567`, the only account allowed to trigger the bot.                               |
 
-Setup suggests a provider, model, and mode only when the daemon reports a complete, compatible set. A provider that has modes but no default mode is still offered; setup asks you to pick the mode instead of guessing one.
+Setup lists the app connections ready for this workflow. Because you connected one Slack workspace in step 2, it selects that connection automatically instead of asking you to choose Slack. If several usable connections exist, setup asks for the **Trigger connection**. If none is ready, it sends you to **Hub → Apps** and stops before asking about the agent or writing files.
+
+The agent provider list contains only runtimes the daemon can use; it does not suggest one arbitrarily. Suggested model and mode entries are defaults reported by the daemon. A provider that has modes but no default mode is still offered; setup asks you to pick the mode instead of guessing one.
 
 [Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) has the two clicks that copy your member ID. The Slack workspace comes from the app you connected in step 2, so setup does not ask for it.
 
