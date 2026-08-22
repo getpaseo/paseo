@@ -145,7 +145,7 @@ Keep the protocol shape provider-agnostic. Do not add provider-specific renderer
 
 Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
-Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
+Cursor usage uses `CURSOR_ACCESS_TOKEN` / `CURSOR_TOKEN` if set, otherwise the desktop `state.vscdb` token, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
 
 ---
 
