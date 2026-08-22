@@ -696,6 +696,50 @@ describe("Codex foreground teardown wait (replace path)", () => {
   });
 });
 
+describe("Codex client disposal", () => {
+  it("releases the foreground slot when the client is disposed", async () => {
+    // A failed reconnect disposes the client and clears the native turn id.
+    // If the foreground slot survived that, interrupt() would find no turn to
+    // interrupt and every later startTurn would refuse forever.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      disposeClient: () => Promise<void>;
+    }>(session);
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+    await internals.disposeClient();
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
+  it("wakes a waiting startTurn when disposal releases the slot", async () => {
+    // The reconnect that disposes the client is usually racing a prompt that
+    // is already blocked on the teardown wait. Clearing the slot without
+    // waking that prompt trades a permanent wedge for a 10s one.
+    const session = createSession();
+    const internals = castInternals<{
+      disposeClient: () => Promise<void>;
+      foregroundTurnClearWaiters: Array<() => void>;
+    }>(session);
+
+    const queued = session.startTurn("queued behind the disposal");
+    const settled = queued.then(
+      () => "settled",
+      () => "settled",
+    );
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
+
+    await internals.disposeClient();
+
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
+    await expect(
+      Promise.race([
+        settled,
+        new Promise((resolve) => setTimeout(resolve, 50, "still waiting")),
+      ]),
+    ).resolves.toBe("settled");
+  });
+});
+
 describe("Codex app-server provider", () => {
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
