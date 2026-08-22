@@ -661,6 +661,23 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  it("maps EnterPlanMode, which carries no input at all", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-plan-1",
+        name: "EnterPlanMode",
+        input: {},
+        output: "You are now in plan mode.",
+      }),
+    );
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "Plan mode",
+      text: "You are now in plan mode.",
+      icon: "brain",
+    });
+  });
+
   it("drops tool calls when callId is missing", () => {
     const item = mapClaudeCompletedToolCall({
       callId: null,

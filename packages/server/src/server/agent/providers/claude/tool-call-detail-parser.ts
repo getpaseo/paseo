@@ -328,6 +328,11 @@ const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName("CronList", z.unknown(), ClaudeTextOutputSchema, (_input, output) =>
     claudePlainTextDetail("Scheduled jobs", output, "calendar_clock"),
   ),
+  // EnterPlanMode takes no arguments at all, so the confirmation is the only content there is.
+  // ExitPlanMode is handled upstream in agent.ts, where it becomes a plan card.
+  toolDetailBranchByName("EnterPlanMode", z.unknown(), ClaudeTextOutputSchema, (_input, output) =>
+    claudePlainTextDetail("Plan mode", output, "brain"),
+  ),
   toolDetailBranchByName(
     "ScheduleWakeup",
     ClaudeScheduleWakeupInputSchema,
