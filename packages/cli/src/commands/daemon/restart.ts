@@ -11,6 +11,7 @@ import type {
   OutputSchema,
   CommandError,
 } from "../../output/index.js";
+import { rejectAgentProcessControl } from "./agent-process-control.js";
 
 interface RestartResult {
   action: "restarted";
@@ -80,6 +81,7 @@ export async function runRestartCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<RestartCommandResult> {
+  rejectAgentProcessControl("restart");
   const timeoutMs = parseTimeoutMs(options.timeout);
   const force = options.force === true;
   const startOptions = toStartOptions(options);

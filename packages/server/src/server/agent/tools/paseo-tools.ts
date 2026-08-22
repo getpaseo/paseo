@@ -141,6 +141,7 @@ export interface PaseoToolHostDependencies {
    */
   resolveSpeakHandler?: (callerAgentId: string) => VoiceSpeakHandler | null;
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
+  requestDaemonRestart?: (callerAgentId: string) => void;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
   logger: Logger;
@@ -1206,6 +1207,26 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       callerAgentId,
       resolveCallerAgent,
     });
+  }
+
+  if (callerAgentId && options.requestDaemonRestart) {
+    registerTool(
+      "restart_daemon",
+      {
+        title: "Restart daemon",
+        description:
+          "Request one atomic supervisor-owned daemon restart. Use this instead of stopping and starting the daemon. Your connection will drop while the supervisor starts a healthy worker; do not retry the request.",
+        inputSchema: {},
+        outputSchema: { status: z.literal("restart_requested") },
+      },
+      async () => {
+        options.requestDaemonRestart?.(callerAgentId);
+        return {
+          content: [],
+          structuredContent: ensureValidJson({ status: "restart_requested" }),
+        };
+      },
+    );
   }
 
   registerTool(

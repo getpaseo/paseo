@@ -10,6 +10,7 @@ import type {
   OutputSchema,
   CommandError,
 } from "../../output/index.js";
+import { rejectAgentProcessControl } from "./agent-process-control.js";
 
 interface StopResult {
   action: "stopped" | "not_running";
@@ -59,6 +60,7 @@ export async function runStopCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<StopCommandResult> {
+  rejectAgentProcessControl("stop");
   const home = typeof options.home === "string" ? options.home : undefined;
   const force = options.force === true;
   const timeoutMs = parseSecondsOption(options.timeout, DEFAULT_STOP_TIMEOUT_MS, "timeout");

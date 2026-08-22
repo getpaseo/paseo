@@ -1370,6 +1370,15 @@ export async function createPaseoDaemon(
     voiceOnly: runtime.voiceOnly,
     resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
     resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
+    requestDaemonRestart: config.onLifecycleIntent
+      ? (agentId) =>
+          config.onLifecycleIntent?.({
+            type: "restart",
+            clientId: `agent:${agentId}`,
+            requestId: `tool:restart_daemon:${agentId}`,
+            reason: "agent_tool_restart",
+          })
+      : undefined,
     logger,
   });
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>

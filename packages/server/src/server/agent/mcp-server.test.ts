@@ -1564,6 +1564,35 @@ describe("create_agent MCP tool", () => {
     expect(lookupTool(server, "update_heartbeat")).toBeUndefined();
   });
 
+  it("exposes supervised daemon restart only to agent-scoped tool catalogs", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const restartRequests: string[] = [];
+    const agentServer = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "agent-1",
+      requestDaemonRestart: (callerAgentId) => restartRequests.push(callerAgentId),
+      logger,
+    });
+    const topLevelServer = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      requestDaemonRestart: (callerAgentId) => restartRequests.push(callerAgentId),
+      logger,
+    });
+
+    expect(lookupTool(topLevelServer, "restart_daemon")).toBeUndefined();
+    const response = await invokeToolWithParsedInput(
+      registeredTool(agentServer, "restart_daemon"),
+      {},
+    );
+
+    expect(response.structuredContent).toEqual({ status: "restart_requested" });
+    expect(restartRequests).toEqual(["agent-1"]);
+  });
+
   it("surfaces createAgent validation failures", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockRejectedValue(
