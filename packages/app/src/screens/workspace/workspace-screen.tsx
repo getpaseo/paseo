@@ -3047,6 +3047,47 @@ function WorkspaceScreenContent({
     ],
   );
 
+  const handleWorkspaceDirectTargetAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      const paneId = focusedPaneTabState.pane?.id;
+      switch (action.id) {
+        case "workspace.tab.target.agent":
+          handleCreateDraftTab({ paneId });
+          return true;
+        case "workspace.tab.target.browser":
+          handleCreateBrowserTab({ paneId });
+          return true;
+        case "workspace.tab.target.changes":
+          if (persistenceKey && isGitCheckout) {
+            openSupportingTab({
+              isCompact: isMobile,
+              workspaceKey: persistenceKey,
+              target: { kind: "working_diff" },
+              openInSidePanelByDefault,
+            });
+          }
+          return true;
+        case "workspace.tab.target.files":
+          if (persistenceKey) {
+            openWorkspaceTabFocused(persistenceKey, { kind: "files" }, paneLocalPlacement(paneId));
+          }
+          return true;
+        default:
+          return false;
+      }
+    },
+    [
+      focusedPaneTabState.pane?.id,
+      handleCreateBrowserTab,
+      handleCreateDraftTab,
+      isGitCheckout,
+      isMobile,
+      openInSidePanelByDefault,
+      openWorkspaceTabFocused,
+      persistenceKey,
+    ],
+  );
+
   const handleWorkspaceSidebarAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
       if (action.id === "sidebar.toggle.right") {
@@ -3176,6 +3217,24 @@ function WorkspaceScreenContent({
     priority: 100,
     isActive: () => true,
     handle: handleWorkspaceTabAction,
+  });
+
+  useKeyboardActionHandler({
+    handlerId: buildWorkspaceKeyboardHandlerId({
+      name: "workspace-direct-target-actions",
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+    }),
+    actions: [
+      "workspace.tab.target.agent",
+      "workspace.tab.target.browser",
+      "workspace.tab.target.changes",
+      "workspace.tab.target.files",
+    ] as const,
+    enabled: workspaceKeyboardActionsEnabled,
+    priority: 100,
+    isActive: () => true,
+    handle: handleWorkspaceDirectTargetAction,
   });
 
   useKeyboardActionHandler({

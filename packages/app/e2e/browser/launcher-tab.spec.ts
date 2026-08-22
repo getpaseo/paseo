@@ -357,9 +357,16 @@ test.describe("Terminal title propagation", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe("Tab transitions (no flash)", () => {
-  test("New agent tab transition has no blank intermediate tab state", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-    await openNewTabMenuWithShortcut(page);
+  test("New agent tab transition has no blank intermediate tab state", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const isolatedWorkspace = await withWorkspace({ prefix: "launcher-no-flash-" });
+    await isolatedWorkspace.navigateTo();
+    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+    await expect(
+      page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
+    ).toBeVisible();
 
     // Sample the single New → Agent replacement, not the separate action that
     // creates the New tab in the first place.
