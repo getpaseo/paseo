@@ -1,9 +1,14 @@
+import path from "node:path";
 import pino from "pino";
 
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 import type { TurnDetectionSession } from "../../turn-detection-provider.js";
 import { getLocalSpeechModelDir, type LocalSttModelId, type LocalTtsModelId } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
+import { getSherpaOnnxSttArchitecture } from "./sherpa/model-catalog.js";
+import {
+  SherpaOfflineRecognizerEngine,
+  type SherpaOfflineRecognizerModel,
+} from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
@@ -72,6 +77,35 @@ function ttsKey(config: LocalSpeechWorkerConfig): string {
   ].join(":");
 }
 
+function assertUnreachableArchitecture(value: never): never {
+  throw new Error(`Unsupported local STT architecture: ${String(value)}`);
+}
+
+function createSttRecognizerModel(
+  modelId: LocalSttModelId,
+  modelDir: string,
+): SherpaOfflineRecognizerModel {
+  const architecture = getSherpaOnnxSttArchitecture(modelId);
+  switch (architecture) {
+    case "nemo_transducer":
+      return {
+        kind: "nemo_transducer",
+        encoder: path.join(modelDir, "encoder.int8.onnx"),
+        decoder: path.join(modelDir, "decoder.int8.onnx"),
+        joiner: path.join(modelDir, "joiner.int8.onnx"),
+        tokens: path.join(modelDir, "tokens.txt"),
+      };
+    case "paraformer":
+      return {
+        kind: "paraformer",
+        model: path.join(modelDir, "model.int8.onnx"),
+        tokens: path.join(modelDir, "tokens.txt"),
+      };
+    default:
+      return assertUnreachableArchitecture(architecture);
+  }
+}
+
 function getSttEngine(
   config: LocalSpeechWorkerConfig,
   model: "voice" | "dictation",
@@ -85,13 +119,7 @@ function getSttEngine(
   const modelDir = getLocalSpeechModelDir(config.modelsDir, modelId);
   const created = new SherpaOfflineRecognizerEngine(
     {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
+      model: createSttRecognizerModel(modelId, modelDir),
       numThreads: 2,
       debug: 0,
     },
