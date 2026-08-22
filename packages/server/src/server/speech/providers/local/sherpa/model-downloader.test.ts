@@ -5,7 +5,11 @@ import path from "node:path";
 import pino from "pino";
 
 import { ensureSherpaOnnxModel, getSherpaOnnxModelDir } from "./model-downloader.js";
-import { LocalSttModelIdSchema, getSherpaOnnxSttArchitecture } from "./model-catalog.js";
+import {
+  LocalSttModelIdSchema,
+  getSherpaOnnxModelSpec,
+  getSherpaOnnxSttArchitecture,
+} from "./model-catalog.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(path.join(tmpdir(), "paseo-speech-models-"));
