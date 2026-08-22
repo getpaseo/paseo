@@ -3652,6 +3652,14 @@ class ClaudeAgentSession implements AgentSession {
     this.query = null;
     this.input = null;
     this.dispatchEvents([
+      // The Stop hook is the only writer of background work, and a crashed runtime never reaches
+      // it — so without this the strip would keep listing shells and schedules that died with the
+      // process, until some later turn happened to end cleanly.
+      {
+        type: "background_work_updated",
+        provider: "claude",
+        backgroundWork: { tasks: [], crons: [] },
+      },
       this.buildTurnFailedEvent(
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
       ),
