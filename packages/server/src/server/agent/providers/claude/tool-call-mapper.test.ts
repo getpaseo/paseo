@@ -614,6 +614,53 @@ describe("claude tool-call mapper", () => {
     expect(item.detail?.type).toBe("unknown");
   });
 
+  it("keeps the input-derived label when the tool result is structured JSON", () => {
+    // buildToolOutput JSON.parses any result text that happens to be valid JSON, so the mapper
+    // sees { output: [...] } rather than a string. That must not sink the branch.
+    const cronList = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cronlist-json",
+        name: "CronList",
+        input: {},
+        output: { output: [{ id: "abc123", cron: "0 9 * * *" }] },
+      }),
+    );
+    expect(cronList.detail).toEqual({
+      type: "plain_text",
+      label: "Scheduled jobs",
+      icon: "brain",
+    });
+
+    const cron = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cron-json",
+        name: "CronCreate",
+        input: { cron: "0 9 * * *", prompt: "Review overnight CI failures" },
+        output: { id: "abc123", created: true },
+      }),
+    );
+    expect(cron.detail).toEqual({
+      type: "plain_text",
+      label: "0 9 * * *",
+      text: "Review overnight CI failures",
+      icon: "brain",
+    });
+
+    const skill = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-skill-json",
+        name: "Skill",
+        input: { skill: "superpowers:brainstorming" },
+        output: [{ type: "text", text: "done" }],
+      }),
+    );
+    expect(skill.detail).toEqual({
+      type: "plain_text",
+      label: "superpowers:brainstorming",
+      icon: "sparkles",
+    });
+  });
+
   it("drops tool calls when callId is missing", () => {
     const item = mapClaudeCompletedToolCall({
       callId: null,

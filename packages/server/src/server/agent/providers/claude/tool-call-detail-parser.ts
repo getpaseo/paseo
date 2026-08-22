@@ -68,16 +68,22 @@ const ClaudeSpeakToolDetailSchema = z
 
 type ClaudePlainTextDetail = Extract<ToolCallDetail, { type: "plain_text" }>;
 
-// Claude tool results arrive either as a bare string or wrapped in `{ output }`.
-const ClaudeTextOutputSchema = z
-  .union([
-    z
-      .object({ output: z.string() })
-      .passthrough()
-      .transform((value) => value.output),
-    z.string(),
-  ])
-  .nullable();
+// Claude tool results arrive as a bare string, wrapped in `{ output }`, or — when the result
+// text happens to be valid JSON, which buildToolOutput eagerly parses — as an arbitrary object
+// or array. Never reject: the output schema failing would sink the whole branch and drop a
+// perfectly good input-derived label back to `unknown` the moment the call completed.
+const ClaudeTextOutputSchema = z.unknown().transform((value) => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const output = (value as { output?: unknown }).output;
+    if (typeof output === "string") {
+      return output;
+    }
+  }
+  return null;
+});
 
 function claudePlainTextDetail(
   label: string | undefined,
