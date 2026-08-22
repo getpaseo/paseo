@@ -1258,7 +1258,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   });
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
   const backgroundWork = useSessionStore(
-    (state) => state.sessions[serverId]?.agentDetails.get(agentId)?.backgroundWork,
+    (state) =>
+      state.sessions[serverId]?.agents.get(agentId)?.backgroundWork ??
+      state.sessions[serverId]?.agentDetails.get(agentId)?.backgroundWork,
   );
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
