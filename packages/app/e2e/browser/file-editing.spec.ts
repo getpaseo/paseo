@@ -494,10 +494,7 @@ test.describe("CodeMirror workspace file editing", () => {
       .filter({ visible: true })
       .first()
       .click({ button: "right" });
-    await page
-      .getByTestId("workspace-tab-context-file_draft.ts-close")
-      .filter({ visible: true })
-      .click();
+    await page.getByRole("menuitem", { name: "Close", exact: true }).click();
     expect(closePrompt).toContain("Closing it will discard the draft.");
 
     await expect(page.getByTestId("file-source-editor")).toBeVisible();

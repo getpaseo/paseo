@@ -107,8 +107,10 @@ export interface OpenSupportingTabInput extends SidePanelQuery {
   background?: boolean;
 }
 
-export interface ToggleSupportingTabInput extends SidePanelQuery {
-  target: WorkspaceTabTarget;
+type SidePanelViewTarget = Extract<WorkspaceTabTarget, { kind: SidePanelTabKind }>;
+
+export interface ToggleSupportingTabInput extends SidePanelInput {
+  target: SidePanelViewTarget;
   openInSidePanelByDefault: boolean;
 }
 
@@ -145,6 +147,10 @@ export function openSupportingTab(input: OpenSupportingTabInput): string | null 
 
 /** Toggle a supporting target when it is the visible Side panel tab; otherwise reveal it. */
 export function toggleSupportingTab(input: ToggleSupportingTabInput): string | null {
+  if (input.isCompact) {
+    openSidePanelView({ ...input, view: explorerViewForTarget(input.target) });
+    return null;
+  }
   if (!input.workspaceKey) return null;
   const store = useWorkspaceLayoutStore.getState();
   if (
@@ -156,6 +162,17 @@ export function toggleSupportingTab(input: ToggleSupportingTabInput): string | n
     return null;
   }
   return openSupportingTab(input);
+}
+
+function explorerViewForTarget(target: SidePanelViewTarget): ExplorerTab {
+  switch (target.kind) {
+    case "working_diff":
+      return "changes";
+    case "files":
+      return "files";
+    case "pull_request":
+      return "pr";
+  }
 }
 
 /** Explicitly place a companion tab in the Side panel, moving an existing tab there. */

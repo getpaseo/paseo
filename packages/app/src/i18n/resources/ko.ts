@@ -613,7 +613,7 @@ export const ko: TranslationResources = {
         files: "파일",
         pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
-        editTerminalProfiles: "프로필 편집…",
+        editTerminalProfiles: "프로필 편집",
       },
       sidePanel: {
         open: "사이드 패널 열기",

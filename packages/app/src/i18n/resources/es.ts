@@ -616,7 +616,7 @@ export const es: TranslationResources = {
         files: "Archivos",
         pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "Abrir panel lateral",

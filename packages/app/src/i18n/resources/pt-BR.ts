@@ -615,7 +615,7 @@ export const ptBR: TranslationResources = {
         files: "Arquivos",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
-        editTerminalProfiles: "Editar perfis…",
+        editTerminalProfiles: "Editar perfis",
       },
       sidePanel: {
         open: "Abrir painel lateral",

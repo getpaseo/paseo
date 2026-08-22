@@ -26,10 +26,7 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { useGitActionRunner, useGitActions } from "@/git/use-actions";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import {
-  resolveShortcutKeysForAction,
-  type ShortcutOverrides,
-} from "@/keyboard/keyboard-shortcuts";
+import { type ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
@@ -48,6 +45,7 @@ import {
   buildWorkspaceCommandCenterContributions,
   type WorkspaceCommandCenterShortcuts,
 } from "./workspace-contributions";
+import { resolveWorkspaceCommandCenterShortcuts } from "./workspace-shortcuts";
 
 const WORKSPACE_COMMAND_CENTER_ICONS = {
   newAgent: getCommandCenterIcon(SquarePen),
@@ -87,28 +85,7 @@ function staticIcon(element: ReactElement | undefined): CommandCenterIcon | unde
 
 function resolveWorkspaceShortcuts(overrides: ShortcutOverrides): WorkspaceCommandCenterShortcuts {
   const platform = { isMac: getShortcutOs() === "mac", isDesktop: getIsElectron() };
-  return {
-    newAgent: resolveShortcutKeysForAction("workspace-tab-new", overrides, platform) ?? undefined,
-    newTerminal:
-      resolveShortcutKeysForAction("workspace-terminal-new", overrides, platform) ?? undefined,
-    splitRight:
-      resolveShortcutKeysForAction("workspace-pane-split-right", overrides, platform) ?? undefined,
-    splitDown:
-      resolveShortcutKeysForAction("workspace-pane-split-down", overrides, platform) ?? undefined,
-    archiveWorkspace:
-      resolveShortcutKeysForAction("archive-workspace", overrides, platform) ?? undefined,
-    previousTab:
-      resolveShortcutKeysForAction("workspace-tab-prev", overrides, platform) ?? undefined,
-    nextTab: resolveShortcutKeysForAction("workspace-tab-next", overrides, platform) ?? undefined,
-    closeCurrentTab:
-      resolveShortcutKeysForAction("workspace-tab-close-current", overrides, platform) ?? undefined,
-    closePane:
-      resolveShortcutKeysForAction("workspace-pane-close", overrides, platform) ?? undefined,
-    togglePaneMaximization:
-      resolveShortcutKeysForAction("workspace-explorer-maximize", overrides, platform) ?? undefined,
-    toggleSidePanel:
-      resolveShortcutKeysForAction("toggle-right-sidebar", overrides, platform) ?? undefined,
-  };
+  return resolveWorkspaceCommandCenterShortcuts({ overrides, platform });
 }
 
 export function useWorkspaceCommandCenterActions(): void {

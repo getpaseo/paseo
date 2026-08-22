@@ -611,7 +611,7 @@ export const ar: TranslationResources = {
         files: "الملفات",
         pullRequest: "طلب السحب",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "افتح اللوحة الجانبية",

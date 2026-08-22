@@ -114,10 +114,11 @@ function reconcileWorkspaceTabs(workspaceKey: string, visibility: WorkspaceAgent
   );
 }
 
-function getWorkspaceTabIds(workspaceKey: string): string[] {
+function getWorkspaceContentTabIds(workspaceKey: string): string[] {
   return useWorkspaceLayoutStore
     .getState()
     .getWorkspaceTabs(workspaceKey)
+    .filter((tab) => tab.target.kind !== "new_tab")
     .map((tab) => tab.tabId);
 }
 
@@ -153,13 +154,13 @@ describe("workspace subagents integration", () => {
 
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual([]);
+    expect(getWorkspaceContentTabIds(workspaceKey!)).toEqual([]);
 
     appendAgent(parent);
 
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
+    expect(getWorkspaceContentTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -192,7 +193,7 @@ describe("workspace subagents integration", () => {
     initializeAgents([parent, child]);
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
+    expect(getWorkspaceContentTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -207,7 +208,10 @@ describe("workspace subagents integration", () => {
     appendAgent({ ...child, parentAgentId: null, labels: {} });
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent", "agent_child-agent"]);
+    expect(getWorkspaceContentTabIds(workspaceKey!)).toEqual([
+      "agent_parent-agent",
+      "agent_child-agent",
+    ]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -241,7 +245,7 @@ describe("workspace subagents integration", () => {
     initializeAgents([parent, child]);
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_child-agent"]);
+    expect(getWorkspaceContentTabIds(workspaceKey!)).toEqual(["agent_child-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
