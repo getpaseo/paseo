@@ -96,15 +96,6 @@ const sitemapPages = [
 
 export default defineConfig((): UserConfig => {
   return {
-    build: {
-      commonjsOptions: {
-        // packages/app/android-version-codes.js is CommonJS because Expo/EAS
-        // evaluate app.config.js directly with no build step. Rollup only applies
-        // CJS interop inside node_modules by default, so opt this one source file in
-        // rather than keeping a second copy of the version-code formula here.
-        include: [/android-version-codes\.js$/, /node_modules/],
-      },
-    },
     server: {
       host: "0.0.0.0",
       port: 8082,

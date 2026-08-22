@@ -8,7 +8,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

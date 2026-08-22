@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   getFdroidVersionCodes,
-  getNativeBuildVersionCode,
-} from "../packages/app/android-version-codes.js";
+  getNativeReleaseVersion,
+} from "../packages/app/native-release-version.js";
 import { formatFdroidChangelog, syncFdroidChangelogs } from "./sync-fdroid-changelogs.mjs";
 
 const CHANGELOG_CHARACTER_LIMIT = 500;
@@ -32,7 +32,7 @@ function readChangelogFile(dir, versionCode, locale = "en-US") {
 // The whole point of the shared module: these are the numbers the APKs actually
 // ship with, so the filenames have to track them exactly.
 test("derives one version code per published ABI", () => {
-  assert.equal(getNativeBuildVersionCode("0.2.2"), 2002);
+  assert.equal(getNativeReleaseVersion("0.2.2").androidVersionCode, 2002);
   assert.deepEqual(getFdroidVersionCodes("0.2.2"), [
     { abi: "armeabi-v7a", versionCode: 20021 },
     { abi: "arm64-v8a", versionCode: 20022 },
@@ -41,14 +41,26 @@ test("derives one version code per published ABI", () => {
   ]);
 });
 
-test("ignores prerelease metadata when deriving version codes", () => {
-  assert.equal(getNativeBuildVersionCode("0.2.3-beta.1"), getNativeBuildVersionCode("0.2.3"));
+test("does not write or validate F-Droid changelogs for beta releases", () => {
+  withTempRepo(
+    (dir) => {
+      const result = syncFdroidChangelogs([], { cwd: dir });
+      assert.deepEqual(result, {
+        contents: null,
+        version: "0.2.3-beta.1",
+        versionCodes: [],
+        written: [],
+      });
+      assert.equal(existsSync(path.join(dir, "fastlane")), false);
+    },
+    { changelog: "", version: "0.2.3-beta.1" },
+  );
 });
 
 test("rejects versions that would collide or overflow", () => {
-  assert.throws(() => getNativeBuildVersionCode("0.1000.0"), /collision-free/);
-  assert.throws(() => getNativeBuildVersionCode("not-a-version"), /non-semver/);
-  assert.throws(() => getNativeBuildVersionCode("210.0.0"), /ABI suffix/);
+  assert.throws(() => getNativeReleaseVersion("0.1000.0"), /collision-free/);
+  assert.throws(() => getNativeReleaseVersion("not-a-version"), /unsupported version/);
+  assert.throws(() => getNativeReleaseVersion("210.0.0"), /out of range/);
 });
 
 test("writes an identical changelog for every ABI version code", () => {
@@ -64,6 +76,25 @@ test("writes an identical changelog for every ABI version code", () => {
       assert.match(result.contents, /- Something broke\./);
     },
     { changelog },
+  );
+});
+
+test("writes the four stable 0.5.0 changelog files", () => {
+  const changelog = "## 0.5.0 - 2026-08-21\n\n### Added\n\n- Stable F-Droid metadata.\n";
+  withTempRepo(
+    (dir) => {
+      const result = syncFdroidChangelogs([], { cwd: dir });
+      assert.deepEqual(
+        result.written.map((entry) => entry.replace(/ \(.+\)$/, "")),
+        [
+          "fastlane/metadata/android/en-US/changelogs/50001.txt",
+          "fastlane/metadata/android/en-US/changelogs/50002.txt",
+          "fastlane/metadata/android/en-US/changelogs/50003.txt",
+          "fastlane/metadata/android/en-US/changelogs/50004.txt",
+        ],
+      );
+    },
+    { changelog, version: "0.5.0" },
   );
 });
 
@@ -232,6 +263,16 @@ test("renders the real 0.1.109 notice, which is the entry's whole point", () => 
     },
     { changelog, version: "0.1.109" },
   );
+});
+
+test("preserves the standalone 0.1.96 Android notice", () => {
+  const changelog = readFileSync(path.resolve("CHANGELOG.md"), "utf8");
+  const entry = changelog.match(/## 0\.1\.96 - 2026-06-13\n([\s\S]*?)(?=\n## |$)/)?.[1];
+  assert.ok(entry);
+
+  const contents = formatFdroidChangelog(entry.split("\n"));
+  assert.match(contents, /This release only fixes an Android issue/);
+  assert.equal(contents.includes("_This release"), false);
 });
 
 test("--check fails when the generated files are missing or stale", () => {

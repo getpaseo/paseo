@@ -55,6 +55,7 @@ export function stripChangelogMarkup(text) {
     .replace(/\s*\((?:[^()]*(?:#\d+|by @)[^()]*)\)\s*$/, "")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -89,7 +90,8 @@ function formatQuotedNote(quotedLines) {
 
 // Splits an entry body into blockquoted notes and `### Heading` sections of
 // plain-text bullets. Bullets before any section heading land in a leading
-// untitled section.
+// untitled section. Standalone prose is kept as a note: releases occasionally
+// use it for a short, important notice without a blockquote.
 //
 // Notes are parsed separately rather than dropped because releases use
 // blockquotes for action-required notices — 0.1.109's "you must reinstall
@@ -137,13 +139,17 @@ export function parseChangelogBody(bodyLines) {
     }
 
     const bulletMatch = line.match(bulletPattern);
-    if (!bulletMatch) {
+    if (bulletMatch) {
+      const bullet = stripChangelogMarkup(bulletMatch[1]);
+      if (bullet.length > 0) {
+        current.bullets.push(bullet);
+      }
       continue;
     }
 
-    const bullet = stripChangelogMarkup(bulletMatch[1]);
-    if (bullet.length > 0) {
-      current.bullets.push(bullet);
+    const prose = stripChangelogMarkup(line);
+    if (prose.length > 0) {
+      notes.push(prose);
     }
   }
 

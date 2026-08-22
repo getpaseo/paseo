@@ -436,7 +436,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 ## Notes
 
 - `version:all:*` bumps root + syncs workspace versions and `@getpaseo/*` dependency versions
-- The npm `version` lifecycle also regenerates the F-Droid changelog files from `CHANGELOG.md` (`npm run fdroid:changelogs`) and stages them, so the release tag carries them. It **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first, as the checklists require. See [docs/android.md](android.md) for why these files are generated per ABI.
+- The npm `version` lifecycle regenerates F-Droid changelog files from `CHANGELOG.md` for stable releases only (`npm run fdroid:changelogs`) and stages them, so the release tag carries them. Betas are a no-op. A stable run **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first. See [docs/android.md](android.md) for why these files are generated per ABI.
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions

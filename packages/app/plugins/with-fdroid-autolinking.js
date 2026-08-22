@@ -1,7 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { withAppBuildGradle, withDangerousMod, withSettingsGradle } = require("expo/config-plugins");
-const { FDROID_ABI_VERSION_CODE_SUFFIXES } = require("../android-version-codes");
+const { FDROID_ABI_VERSION_CODE_SUFFIXES } = require("../native-release-version");
 
 const EXCLUDED_ANDROID_MODULES = [
   "expo-camera",

@@ -13,12 +13,7 @@
     "isolatedModules": true,
     "types": ["@cloudflare/workers-types"],
     "paths": {
-      "~/*": ["./src/*"],
-      // The Android version-code formula is owned by packages/app because the Expo
-      // config and F-Droid Gradle plugin evaluate it with no build step. Aliased in
-      // rather than duplicated; vite-tsconfig-paths resolves it for build and tests.
-      // Extensionless: TypeScript resolves the sibling .d.ts, Vite resolves the .js.
-      "~android-version-codes": ["../app/android-version-codes"]
+      "~/*": ["./src/*"]
     }
   },
   "include": ["src/**/*", "vite.config.ts"]

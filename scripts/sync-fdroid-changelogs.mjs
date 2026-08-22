@@ -4,7 +4,7 @@
 //
 //   1. F-Droid matches `changelogs/<versionCode>.txt` literally, and the F-Droid
 //      profile splits one release into four single-ABI APKs with four distinct
-//      version codes (see packages/app/android-version-codes.js). A single
+//      version codes (see packages/app/native-release-version.js). A single
 //      hand-written file matches no published APK, which silently costs the
 //      "What's New" entry and the Latest tab placement that depends on it.
 //   2. F-Droid caps a changelog at 500 characters. Real Paseo entries run into
@@ -19,7 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // CommonJS on purpose: packages/app/app.config.js and the Expo config plugin both
 // require it, so the ABI table has exactly one definition across all three callers.
-import { getFdroidVersionCodes as defaultGetFdroidVersionCodes } from "../packages/app/android-version-codes.js";
+import { getFdroidVersionCodes as defaultGetFdroidVersionCodes } from "../packages/app/native-release-version.js";
 import { parseChangelogBody, parseChangelogEntries } from "./changelog-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -193,6 +193,11 @@ export function syncFdroidChangelogs(argv = process.argv.slice(2), deps = {}) {
     args.version || JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
   if (typeof version !== "string" || version.length === 0) {
     throw new Error('Root package.json must contain a valid "version".');
+  }
+
+  if (/-beta\.\d+$/.test(version)) {
+    console.log(`Skipping F-Droid changelogs for beta ${version}.`);
+    return { contents: null, version, versionCodes: [], written: [] };
   }
 
   const entries = parseChangelogEntries(readFileSync(path.join(cwd, "CHANGELOG.md"), "utf8"));

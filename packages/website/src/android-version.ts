@@ -1,18 +1,22 @@
-import { getNativeBuildVersionCode } from "~android-version-codes";
-
-/**
- * The Android version code for a release, as published at `/android-version.txt`.
- *
- * This is the **base** version code — the one the universal APK on GitHub Releases
- * ships with. It is deliberately not the per-ABI code (`base * 10 + abiSuffix`) that
- * the F-Droid build stamps into its four single-ABI APKs, because the endpoint
- * describes the APK we distribute ourselves. `/android-version.txt` is a public
- * contract with external update checkers, so do not change which of the two it
- * returns without treating that as a breaking change.
- *
- * The formula itself lives in `packages/app/android-version-codes.js` so the app
- * build, the F-Droid metadata, and this endpoint cannot drift apart.
- */
 export function getAndroidVersionCode(version: string): number {
-  return getNativeBuildVersionCode(version);
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (!match) {
+    throw new Error(`Cannot derive Android versionCode from non-semver version: ${version}`);
+  }
+
+  const [, majorText, minorText, patchText] = match;
+  const major = Number(majorText);
+  const minor = Number(minorText);
+  const patch = Number(patchText);
+
+  if (minor > 999 || patch > 999) {
+    throw new Error(`Cannot derive collision-free Android versionCode from version: ${version}`);
+  }
+
+  const versionCode = major * 1_000_000 + minor * 1_000 + patch;
+  if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
+    throw new Error(`Derived Android versionCode is out of range: ${versionCode}`);
+  }
+
+  return versionCode;
 }

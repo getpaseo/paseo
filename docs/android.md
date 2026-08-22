@@ -15,9 +15,7 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 ## Version codes
 
-`packages/app/android-version-codes.js` is the single definition of the Android version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.
-
-It stays untyped CommonJS because `app.config.js` and the Expo plugin are evaluated directly by Expo/EAS with no build step. `android-version-codes.d.ts` gives typed consumers the same shape; the website reaches it through the `~android-version-codes` tsconfig path, which `vite-tsconfig-paths` resolves for both build and tests.
+`packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.
 
 The base version code comes from the package version:
 
@@ -174,11 +172,11 @@ F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:change
 
 One changelog must be generated per-ABI-split, so each version will create **four** identical version-coded entries. F-Droid caps changelogs at 500 characters, so the generator strips some content and adds a link to the full notes.
 
-The sync fails loudly if `CHANGELOG.md` has no entry for the version being cut. That is intentional — the release checklist requires the entry to be committed first, so an abort here means the checklist was skipped.
+Stable sync fails loudly if `CHANGELOG.md` has no entry for the version being cut. That is intentional — the release checklist requires the entry to be committed first, so an abort here means the checklist was skipped.
 
 Because the generator runs off the version in `package.json`, it must run **before** the tag is created: fdroidserver only reads metadata from the tag it builds, so the file for version N has to exist in the commit N points at.
 
-Betas and their stable promotion share a base version code (prerelease metadata is ignored), so promoting overwrites the beta's changelog files in place. That is correct — no `-beta.N` notes are left behind on a stable APK.
+Beta releases are an explicit no-op: they do not create or rewrite F-Droid changelog files. Stable releases and promotions generate the four ABI entries from their final changelog.
 
 ### React version lockstep
 
