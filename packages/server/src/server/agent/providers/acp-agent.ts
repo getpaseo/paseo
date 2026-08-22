@@ -437,7 +437,7 @@ interface ACPAgentClientOptions {
   terminateProcess?: ProcessTerminator;
 }
 
-interface ACPAgentSessionOptions {
+export interface ACPAgentSessionOptions {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -857,7 +857,7 @@ export class ACPAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.assertProvider(config);
-    const session = new ACPAgentSession(
+    const session = this.createSessionInstance(
       { ...config, provider: this.provider },
       {
         provider: this.provider,
@@ -909,7 +909,7 @@ export class ACPAgentClient implements AgentClient {
       provider: this.provider,
       cwd,
     };
-    const session = new ACPAgentSession(mergedConfig, {
+    const session = this.createSessionInstance(mergedConfig, {
       provider: this.provider,
       logger: this.logger,
       runtimeSettings: this.runtimeSettings,
@@ -936,6 +936,13 @@ export class ACPAgentClient implements AgentClient {
     });
     await session.initializeResumedSession();
     return session;
+  }
+
+  protected createSessionInstance(
+    config: AgentSessionConfig,
+    options: ACPAgentSessionOptions,
+  ): ACPAgentSession {
+    return new ACPAgentSession(config, options);
   }
 
   async fetchCatalog(
@@ -2289,7 +2296,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const events = this.translateSessionUpdate(params.update);
+    const events = this.translateSessionNotification(params);
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2628,6 +2635,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private isModelSelectionUnavailableError(error: unknown): boolean {
     return error instanceof Error && error.message === this.modelSelectionUnavailableMessage();
+  }
+
+  protected translateSessionNotification(params: SessionNotification): AgentStreamEvent[] {
+    return this.translateSessionUpdate(params.update);
   }
 
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
