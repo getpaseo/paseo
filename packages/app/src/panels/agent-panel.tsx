@@ -26,7 +26,10 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Composer } from "@/composer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
-import { resolveComposerTrackTailClearance } from "@/composer/pill-styles";
+import {
+  resolveComposerTrackControlClearance,
+  resolveComposerTrackTailClearance,
+} from "@/composer/pill-styles";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -1444,6 +1447,9 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const bottomOverlayTailClearance = hasVisibleComposerTracks
     ? resolveComposerTrackTailClearance(isCompactFormFactor)
     : 0;
+  const bottomOverlayControlClearance = hasVisibleComposerTracks
+    ? resolveComposerTrackControlClearance(isCompactFormFactor)
+    : 0;
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
   );
@@ -1500,6 +1506,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       bottomOverlayTailClearance={bottomOverlayTailClearance}
+      bottomOverlayControlClearance={bottomOverlayControlClearance}
       toast={toast}
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
