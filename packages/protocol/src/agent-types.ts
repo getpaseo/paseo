@@ -339,6 +339,43 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+/**
+ * One piece of in-flight background work in a Claude Code session: a backgrounded shell, a
+ * subagent, a monitor, or a workflow. Mirrors the SDK's `BackgroundTaskSummary`.
+ */
+export interface AgentBackgroundTask {
+  id: string;
+  /** Task-type label, e.g. "shell", "subagent", "monitor", "workflow". */
+  type: string;
+  status: string;
+  description: string;
+  /** Shell command line; only present for shell tasks. */
+  command?: string;
+  /** Subagent type name; only present for subagent tasks. */
+  agentType?: string;
+  /** Workflow name; only present for workflow tasks. */
+  name?: string;
+}
+
+/**
+ * A schedule that will wake the session later — a cron, a one-shot wakeup, or a /loop.
+ * Mirrors the SDK's `SessionCronSummary`.
+ */
+export interface AgentSessionCron {
+  id: string;
+  /** Cron expression, e.g. "0 9 * * 1-5". A one-shot wakeup encodes a single fire time. */
+  schedule: string;
+  /** False for one-shot wakeups, true for schedules that re-fire. */
+  recurring: boolean;
+  prompt: string;
+}
+
+/** Everything a session still has pending when it goes idle. */
+export interface AgentBackgroundWork {
+  tasks: AgentBackgroundTask[];
+  crons: AgentSessionCron[];
+}
+
 export interface AgentTaskItem {
   text: string;
   completed: boolean;
@@ -368,6 +405,11 @@ export type AgentStreamEvent =
       availableModes: AgentMode[];
     }
   | { type: "model_changed"; provider: AgentProvider; runtimeInfo: AgentRuntimeInfo }
+  | {
+      type: "background_work_updated";
+      provider: AgentProvider;
+      backgroundWork: AgentBackgroundWork;
+    }
   | {
       type: "thinking_option_changed";
       provider: AgentProvider;

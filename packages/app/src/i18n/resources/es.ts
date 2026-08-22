@@ -339,6 +339,12 @@ export const es: TranslationResources = {
       answerPlaceholder: "Escribe tu respuesta...",
       otherPlaceholder: "Otro...",
     },
+    backgroundWork: {
+      title: "Trabajo en segundo plano",
+      running: "{{count}} en ejecución",
+      scheduled: "{{count}} programadas",
+      once: "una vez",
+    },
     todo: {
       title: "Tareas",
       empty: "Aún no hay tareas.",

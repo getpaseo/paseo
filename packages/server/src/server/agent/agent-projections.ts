@@ -142,6 +142,10 @@ export function toAgentPayload(
     payload.lastUsage = usage;
   }
 
+  if (agent.backgroundWork !== undefined) {
+    payload.backgroundWork = agent.backgroundWork;
+  }
+
   if (agent.lastError !== undefined) {
     payload.lastError = agent.lastError;
   }

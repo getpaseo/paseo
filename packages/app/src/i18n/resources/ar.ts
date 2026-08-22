@@ -336,6 +336,12 @@ export const ar: TranslationResources = {
       answerPlaceholder: "اكتب إجابتك...",
       otherPlaceholder: "آخر...",
     },
+    backgroundWork: {
+      title: "مهام في الخلفية",
+      running: "{{count}} قيد التشغيل",
+      scheduled: "{{count}} مجدولة",
+      once: "مرة واحدة",
+    },
     todo: {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",

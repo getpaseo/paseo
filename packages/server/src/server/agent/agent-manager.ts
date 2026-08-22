@@ -42,6 +42,7 @@ import {
   type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentBackgroundWork,
   type AgentUsage,
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
@@ -374,6 +375,7 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  backgroundWork?: AgentBackgroundWork;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -3892,6 +3894,12 @@ export class AgentManager {
         return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
+        this.emitState(agent);
+        return undefined;
+      case "background_work_updated":
+        agent.backgroundWork = event.backgroundWork;
+        // Ambient state, not history: the strip re-reads it, the transcript never sees it.
+        flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
       case "mode_changed":

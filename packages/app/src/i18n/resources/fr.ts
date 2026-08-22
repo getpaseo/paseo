@@ -340,6 +340,12 @@ export const fr: TranslationResources = {
       answerPlaceholder: "Tapez votre réponse...",
       otherPlaceholder: "Autre...",
     },
+    backgroundWork: {
+      title: "Tâches en arrière-plan",
+      running: "{{count}} en cours",
+      scheduled: "{{count}} planifiées",
+      once: "une fois",
+    },
     todo: {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",

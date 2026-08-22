@@ -813,6 +813,28 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentBackgroundTaskSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  status: z.string(),
+  description: z.string(),
+  command: z.string().optional(),
+  agentType: z.string().optional(),
+  name: z.string().optional(),
+});
+
+export const AgentSessionCronSchema = z.object({
+  id: z.string(),
+  schedule: z.string(),
+  recurring: z.boolean(),
+  prompt: z.string(),
+});
+
+export const AgentBackgroundWorkSchema = z.object({
+  tasks: z.array(AgentBackgroundTaskSchema),
+  crons: z.array(AgentSessionCronSchema),
+});
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -834,6 +856,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
+  backgroundWork: AgentBackgroundWorkSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),

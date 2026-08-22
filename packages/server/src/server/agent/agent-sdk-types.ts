@@ -1,4 +1,5 @@
 import type {
+  AgentBackgroundWork,
   AgentProviderNotice,
   AgentTaskItem,
   ProviderOptions,
@@ -7,7 +8,7 @@ import type {
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type { AgentBackgroundWork, AgentProviderNotice, AgentTaskItem };
 
 export type AgentProvider = string;
 
@@ -411,6 +412,11 @@ export type AgentStreamEvent =
       availableModes: AgentMode[];
     }
   | { type: "model_changed"; provider: AgentProvider; runtimeInfo: AgentRuntimeInfo }
+  | {
+      type: "background_work_updated";
+      provider: AgentProvider;
+      backgroundWork: AgentBackgroundWork;
+    }
   | {
       type: "thinking_option_changed";
       provider: AgentProvider;

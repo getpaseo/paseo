@@ -4,6 +4,8 @@ import fs from "node:fs";
 import { promises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readClaudeBackgroundWork } from "./background-work.js";
+import { mergeClaudeHooks } from "./hooks.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -3289,7 +3291,7 @@ class ClaudeAgentSession implements AgentSession {
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: mergeClaudeHooks(this.buildSubagentEffortHooks(), this.buildBackgroundWorkHooks()),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -4736,6 +4738,36 @@ class ClaudeAgentSession implements AgentSession {
       PostToolUse: [{ hooks: [observe] }],
       SubagentStop: [{ hooks: [observe] }],
     };
+  }
+
+  /**
+   * Claude Code hands the session's in-flight background work and pending schedules to the Stop
+   * hook, which is the only place they are exposed — there is no cron lifecycle hook and no
+   * control request that lists them. Stop fires when the turn ends, which is exactly when a
+   * "what is still pending" strip should refresh: the session is idle, so anything still listed
+   * is genuinely outstanding.
+   *
+   * Observation only: it records what it sees and always returns an empty result, so it can
+   * never alter turn control.
+   */
+  private buildBackgroundWorkHooks(): NonNullable<ClaudeOptions["hooks"]> {
+    const observe = async (input: unknown): Promise<Record<string, never>> => {
+      try {
+        const backgroundWork = readClaudeBackgroundWork(input);
+        if (backgroundWork) {
+          this.notifySubscribers({
+            type: "background_work_updated",
+            provider: "claude",
+            backgroundWork,
+          });
+        }
+      } catch (error) {
+        this.logger.debug({ err: error }, "Failed to read background work from Stop hook");
+      }
+      return {};
+    };
+
+    return { Stop: [{ hooks: [observe] }] };
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {

@@ -1257,9 +1257,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     rows: subagentRows,
   });
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  const backgroundWork = useSessionStore(
+    (state) => state.sessions[serverId]?.agentDetails.get(agentId)?.backgroundWork,
+  );
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
     tasks,
+    backgroundWork,
     archiveFinishedStatus: archiveFinishedSubagents.status,
   });
   const rawAgentInputDraft = useAgentInputDraft({
@@ -1349,6 +1353,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           workspaceId={workspaceId}
           subagentRows={subagentRows}
           tasks={tasks}
+          backgroundWork={backgroundWork}
           archiveFinishedStatus={archiveFinishedSubagents.status}
           onArchiveFinished={archiveFinishedSubagents.archiveFinished}
         />
