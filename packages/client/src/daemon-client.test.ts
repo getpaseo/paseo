@@ -5903,6 +5903,52 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
+test("sends provider.usage.list.request with forceRefresh when requested", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const usagePromise = client.listProviderUsage({ requestId: "usage-2", forceRefresh: true });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      requestId: "usage-2",
+      forceRefresh: true,
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-2",
+        fetchedAt: "2026-06-19T00:01:00.000Z",
+        providers: [],
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "usage-2",
+    fetchedAt: "2026-06-19T00:01:00.000Z",
+    providers: [],
+  });
+});
+
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

@@ -109,6 +109,7 @@ test.describe("provider usage settings", () => {
     await usageFixture.waitForRequestCount(2);
 
     expect(usageFixture.requestCount()).toBe(2);
+    expect(usageFixture.forceRefreshFlags()).toEqual([false, true]);
     await expect(page.getByText("64%")).toBeVisible();
   });
 

@@ -286,6 +286,41 @@ describe("ProviderCatalogSession", () => {
     });
   });
 
+  it("forwards forceRefresh to the usage service", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [],
+    }));
+    const { subsystem } = makeSubsystem({
+      usage: { listUsage },
+    });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u-force",
+      forceRefresh: true,
+    });
+
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: true });
+  });
+
+  it("lists cached usage when forceRefresh is omitted", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [],
+    }));
+    const { subsystem } = makeSubsystem({
+      usage: { listUsage },
+    });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u-cached",
+    });
+
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: false });
+  });
+
   it("surfaces a usage-list failure as an rpc_error envelope", async () => {
     const { subsystem, emitted } = makeSubsystem({
       usage: {
