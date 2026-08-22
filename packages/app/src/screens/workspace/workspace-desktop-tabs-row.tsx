@@ -106,8 +106,10 @@ import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useSettings } from "@/hooks/use-settings";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import { openSupportingTab } from "@/workspace-tabs/side-panel";
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -1169,6 +1171,10 @@ function ResolvedWorkspaceDesktopTabsRow({
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const isCompact = useIsCompactFormFactor();
+  const openInSidePanelByDefault = useSettings(
+    (settings) => settings.openSupportingTabsInSidePanel,
+  );
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
@@ -1450,6 +1456,14 @@ function ResolvedWorkspaceDesktopTabsRow({
     [openNewTab, paneId, workspaceKey],
   );
   const handleOpenChanges = useCallback(() => openPanelTarget(CHANGES_TARGET), [openPanelTarget]);
+  const handleOpenChangesShortcut = useCallback(() => {
+    openSupportingTab({
+      isCompact,
+      workspaceKey,
+      target: CHANGES_TARGET,
+      openInSidePanelByDefault,
+    });
+  }, [isCompact, openInSidePanelByDefault, workspaceKey]);
   const handleOpenFiles = useCallback(() => openPanelTarget(FILES_TARGET), [openPanelTarget]);
   const handleOpenPullRequest = useCallback(
     () => openPanelTarget(PULL_REQUEST_TARGET),
@@ -1484,7 +1498,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         case "workspace.tab.target.changes":
           if (!isGit) return true;
           setNewTabMenuOpen(false);
-          handleOpenChanges();
+          handleOpenChangesShortcut();
           return true;
         case "workspace.tab.target.files":
           setNewTabMenuOpen(false);
@@ -1497,7 +1511,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     [
       handleCreateAgentTab,
       handleCreateBrowser,
-      handleOpenChanges,
+      handleOpenChangesShortcut,
       handleOpenFiles,
       isFocused,
       isGit,

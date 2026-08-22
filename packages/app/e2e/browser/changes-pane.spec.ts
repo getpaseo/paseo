@@ -996,6 +996,23 @@ test("canvas diff creates, edits, and deletes an inline review without DOM code 
   await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
 });
 
+test("autofocusing an inline review keeps the Changes tab focused", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const changesTab = page.getByTestId("workspace-tab-working_diff").filter({ visible: true });
+  const focusedBackground = await changesTab.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+
+  await startReviewOnFirstChangedLine(page);
+  await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
+  await expect
+    .poll(() => changesTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(focusedBackground);
+});
+
 test("split canvas creates a review on the changed side and keeps it in that column", async ({
   page,
 }) => {
