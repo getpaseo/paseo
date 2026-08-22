@@ -27,6 +27,7 @@ export interface BuildWorkspacePaneContentModelInput {
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
+  onSetCurrentTabState: (state: WorkspaceTabDescriptor["state"]) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
   onOpenImportSheet: () => void;
 }
@@ -39,6 +40,7 @@ export function buildWorkspacePaneContentModel({
   onOpenTab,
   onCloseCurrentTab,
   onRetargetCurrentTab,
+  onSetCurrentTabState,
   onOpenWorkspaceFile,
   onOpenImportSheet,
 }: BuildWorkspacePaneContentModelInput): WorkspacePaneContentModel {
@@ -53,10 +55,12 @@ export function buildWorkspacePaneContentModel({
       workspaceId: normalizedWorkspaceId,
       tabId: tab.tabId,
       target: tab.target,
+      state: tab.state,
       fileNavigationRevision,
       openTab: onOpenTab,
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
+      setCurrentTabState: onSetCurrentTabState,
       openFileInWorkspace: onOpenWorkspaceFile,
       openImportSheet: onOpenImportSheet,
     },
@@ -80,6 +84,7 @@ export function WorkspacePaneContent({
   const openTab = useStableEvent(paneContextValue.openTab);
   const closeCurrentTab = useStableEvent(paneContextValue.closeCurrentTab);
   const retargetCurrentTab = useStableEvent(paneContextValue.retargetCurrentTab);
+  const setCurrentTabState = useStableEvent(paneContextValue.setCurrentTabState);
   const openFileInWorkspace = useStableEvent(paneContextValue.openFileInWorkspace);
   const openImportSheet = useStableEvent(paneContextValue.openImportSheet);
   const stablePaneContextValue = useMemo(
@@ -88,10 +93,12 @@ export function WorkspacePaneContent({
       workspaceId: paneContextValue.workspaceId,
       tabId: paneContextValue.tabId,
       target: paneContextValue.target,
+      state: paneContextValue.state,
       fileNavigationRevision: paneContextValue.fileNavigationRevision,
       openTab,
       closeCurrentTab,
       retargetCurrentTab,
+      setCurrentTabState,
       openFileInWorkspace,
       openImportSheet,
     }),
@@ -104,8 +111,10 @@ export function WorkspacePaneContent({
       paneContextValue.fileNavigationRevision,
       paneContextValue.tabId,
       paneContextValue.target,
+      paneContextValue.state,
       paneContextValue.workspaceId,
       retargetCurrentTab,
+      setCurrentTabState,
     ],
   );
   const paneFocusValue = useMemo(

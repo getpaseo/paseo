@@ -26,9 +26,41 @@ import {
   expectTimelineViewportAnchoredAfterPrepend,
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
+  waitForPersistedCanonicalTimelineRange,
 } from "../support/helpers/timeline-pagination";
+import { trackAgentTimelineRequests } from "../support/helpers/agent-timeline-gate";
+import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 test.describe("Agent timeline pagination", () => {
+  test("resumes a persisted canonical timeline after its exact end", async ({ page }) => {
+    const prompt = "timeline persisted range resumes without tail replay";
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "timeline-persisted-range-",
+      title: "Persisted timeline range",
+      initialPrompt: prompt,
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, prompt);
+      const range = await waitForPersistedCanonicalTimelineRange(page, agent.agentId);
+
+      const tracker = await trackAgentTimelineRequests(page, agent.agentId);
+      await page.reload();
+      await expectTimelinePromptVisible(page, prompt);
+
+      const request = await tracker.nextRequest();
+      expect(request).toEqual({
+        direction: "after",
+        cursor: { epoch: range.epoch, seq: range.endSeq },
+      });
+      await tracker.waitForResponse();
+      expect(tracker.requests().some((entry) => entry.direction === "tail")).toBe(false);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps a fixed history-start gutter before, during, and after pagination", async ({
     page,
   }) => {
@@ -59,14 +91,16 @@ test.describe("Agent timeline pagination", () => {
       await expectTimelinePromptVisible(page, agent.newestPrompt);
       await expectTimelinePromptCentered(page, agent.newestPrompt);
       await expectTimelinePromptNotMounted(page, agent.oldestPrompt);
+      await expectTimelinePromptNotMounted(page, agent.initialTailOldestPrompt);
 
       await userScrollsTimelineToHistoryStart(page);
+      await expectTimelinePromptVisible(page, agent.initialTailOldestPrompt);
       await history.expectRequestedPages(1);
       history.releasePage(1);
       await history.expectSettledWithRequestedPages(1);
-      await expectTimelinePromptCentered(page, agent.firstOlderPagePrompt);
 
       await userScrollsTimelineToHistoryStart(page);
+      await expectTimelinePromptCentered(page, agent.firstOlderPagePrompt);
       await history.expectRequestedPages(2);
     } finally {
       await agent.cleanup();

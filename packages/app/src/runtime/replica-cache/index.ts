@@ -1,6 +1,10 @@
 import { Buffer } from "buffer";
 import { z } from "zod";
-import { AgentStatusSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentStatusSchema,
+  AgentTimelineItemPayloadSchema,
+  WorkspaceGitHubRuntimePayloadSchema,
+} from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import {
   normalizeProjectDescriptor,
@@ -8,8 +12,8 @@ import {
   selectAgentTimelineState,
   useSessionStore,
   type Agent,
-  type AgentTimelineState,
   type SessionReplica,
+  type SessionReplicaTimeline,
   type SessionState,
   type ProjectDescriptor,
   type WorkspaceDescriptor,
@@ -18,10 +22,10 @@ import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream"
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const PERSIST_DELAY_MS = 750;
 const MAX_TIMELINE_ITEMS = 50;
-const MAX_CACHE_BYTES = 1024 * 1024;
+const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const IsoDateSchema = z.iso.datetime();
 const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
@@ -31,6 +35,8 @@ const TimelinePositionSchema = z.strictObject({
 const TimelineItemBaseShape = {
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
+  // COMPAT(active-turn-membership): absent on caches written before turn membership.
+  turnId: z.string().optional(),
   timestamp: IsoDateSchema,
 };
 
@@ -92,6 +98,12 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().nonnegative().optional(),
   }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
+    kind: z.literal("tool_call"),
+    provider: AgentProviderSchema,
+    item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
+  }),
 ]);
 
 const AgentCapabilitiesSchema = z.strictObject({
@@ -105,6 +117,43 @@ const AgentCapabilitiesSchema = z.strictObject({
   supportsRewindConversation: z.boolean().optional(),
   supportsRewindFiles: z.boolean().optional(),
   supportsRewindBoth: z.boolean().optional(),
+});
+
+const StoredProjectCheckoutSchema = z.union([
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(false),
+    currentBranch: z.null(),
+    remoteUrl: z.null(),
+    worktreeRoot: z.null(),
+    isPaseoOwnedWorktree: z.literal(false),
+    mainRepoRoot: z.null(),
+  }),
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(true),
+    currentBranch: z.string().nullable(),
+    remoteUrl: z.string().nullable(),
+    worktreeRoot: z.string(),
+    isPaseoOwnedWorktree: z.literal(false),
+    mainRepoRoot: z.string().nullable(),
+  }),
+  z.strictObject({
+    cwd: z.string(),
+    isGit: z.literal(true),
+    currentBranch: z.string().nullable(),
+    remoteUrl: z.string().nullable(),
+    worktreeRoot: z.string(),
+    isPaseoOwnedWorktree: z.literal(true),
+    mainRepoRoot: z.string(),
+  }),
+]);
+
+const StoredProjectPlacementSchema = z.strictObject({
+  projectKey: z.string(),
+  projectName: z.string(),
+  workspaceName: z.string().nullable().optional(),
+  checkout: StoredProjectCheckoutSchema,
 });
 
 const StoredAgentSnapshotSchema = z.strictObject({
@@ -141,7 +190,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
 
 const StoredAgentSchema = z.strictObject({
   snapshot: StoredAgentSnapshotSchema,
-  projectPlacement: z.null(),
+  projectPlacement: StoredProjectPlacementSchema.nullable(),
   lastActivityAt: IsoDateSchema,
 });
 
@@ -186,6 +235,10 @@ const StoredWorkspaceSchema = z.strictObject({
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
+  // Optional because entries written before labels existed have none. A cached workspace that
+  // dropped them painted its row without its chips and stayed that way: the directory cursor is
+  // current on reconnect, so the daemon has nothing newer to send back.
+  labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
@@ -193,6 +246,7 @@ const StoredWorkspaceSchema = z.strictObject({
   diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
   scripts: z.array(WorkspaceScriptSchema),
   gitRuntime: WorkspaceGitRuntimeSchema,
+  githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
 });
 
@@ -201,6 +255,8 @@ const StoredProjectSchema = z.strictObject({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable(),
+  projectCustomIconRevision: z.string().nullable(),
+  projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
   projectKind: z.enum(["git", "non_git", "directory"]),
 });
@@ -208,6 +264,14 @@ const StoredProjectSchema = z.strictObject({
 const StoredTimelineSchema = z.strictObject({
   agentId: z.string(),
   items: z.array(StoredTimelineItemSchema),
+  range: z
+    .strictObject({
+      epoch: z.string(),
+      startSeq: z.number().int().nonnegative(),
+      endSeq: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  hasOlder: z.boolean(),
 });
 
 const StoredHostSchema = z.strictObject({
@@ -217,6 +281,7 @@ const StoredHostSchema = z.strictObject({
   projects: z.array(StoredProjectSchema),
   emptyProjects: z.array(StoredProjectSchema),
   timeline: StoredTimelineSchema.nullable(),
+  directorySync: z.unknown().optional(),
 });
 
 const StoredCacheSchema = z.strictObject({
@@ -231,10 +296,13 @@ type StoredWorkspace = z.infer<typeof StoredWorkspaceSchema>;
 type StoredProject = z.infer<typeof StoredProjectSchema>;
 
 interface ReplicaInput {
-  agent: Agent | undefined;
-  workspace: WorkspaceDescriptor | undefined;
-  project: ProjectDescriptor | undefined;
+  agents: ReadonlyMap<string, Agent>;
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
+  projects: ReadonlyMap<string, ProjectDescriptor>;
+  focusedAgent: Agent | undefined;
   timelineItems: StreamItem[] | undefined;
+  timelineRange: SessionReplicaTimeline["range"];
+  timelineHasOlder: boolean;
 }
 
 export interface ReplicaCacheStorage {
@@ -254,6 +322,8 @@ function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["ti
   return {
     agentId: stored.agentId,
     items: stored.items.map(deserializeTimelineItem),
+    range: stored.range,
+    hasOlder: stored.hasOlder,
   };
 }
 
@@ -261,6 +331,7 @@ function timelineBase(item: StreamItem) {
   return {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
 }
@@ -311,7 +382,23 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
     case "tool_call":
-      return null;
+      if (item.payload.source !== "agent") return null;
+      const storedTool = AgentTimelineItemPayloadSchema.safeParse({
+        type: "tool_call",
+        callId: item.payload.data.callId,
+        name: item.payload.data.name,
+        status: item.payload.data.status,
+        error: item.payload.data.error,
+        detail: item.payload.data.detail,
+        ...(item.payload.data.metadata ? { metadata: item.payload.data.metadata } : {}),
+      });
+      if (!storedTool.success || storedTool.data.type !== "tool_call") return null;
+      return {
+        ...base,
+        kind: item.kind,
+        provider: item.payload.data.provider,
+        item: storedTool.data,
+      };
   }
 }
 
@@ -319,6 +406,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
   switch (item.kind) {
@@ -364,7 +452,33 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "tool_call": {
+      const tool = item.item;
+      if (tool.type !== "tool_call") {
+        throw new Error("Stored tool call contains a non-tool timeline item");
+      }
+      return {
+        ...base,
+        kind: item.kind,
+        payload: {
+          source: "agent",
+          data: {
+            provider: item.provider,
+            callId: tool.callId,
+            name: tool.name,
+            status: tool.status,
+            error: tool.error,
+            detail: tool.detail,
+            ...(tool.metadata ? { metadata: tool.metadata } : {}),
+          },
+        },
+      };
+    }
   }
+}
+
+function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"] {
+  return agent.projectPlacement ?? null;
 }
 
 function serializeAgent(agent: Agent): StoredAgent {
@@ -421,7 +535,7 @@ function serializeAgent(agent: Agent): StoredAgent {
   };
   return {
     snapshot,
-    projectPlacement: null,
+    projectPlacement: serializeProjectPlacement(agent),
     lastActivityAt: agent.lastActivityAt.toISOString(),
   };
 }
@@ -449,6 +563,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     name: workspace.name,
     title: workspace.title ?? null,
     pinnedAt: workspace.pinnedAt ?? null,
+    labels: workspace.labels,
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
@@ -468,6 +583,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
       terminalId: script.terminalId,
     })),
     gitRuntime: workspace.gitRuntime,
+    githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
   };
 }
@@ -478,57 +594,94 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
     ...(project.projectKey ? { projectKey: project.projectKey } : {}),
     projectDisplayName: project.projectDisplayName,
     projectCustomName: project.projectCustomName,
+    projectCustomIconRevision: project.projectCustomIconRevision ?? null,
+    projectIconRevision: project.projectIconRevision,
     projectRootPath: project.projectRootPath,
     projectKind: project.projectKind,
   };
 }
 
+function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
+  switch (item.kind) {
+    case "user_message":
+      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+    case "activity_log":
+      return item.metadata === undefined;
+    case "tool_call":
+      return item.payload.source === "agent";
+    default:
+      return true;
+  }
+}
+
 function replicaInputsEqual(left: ReplicaInput, right: ReplicaInput): boolean {
   return (
-    left.agent === right.agent &&
-    left.workspace === right.workspace &&
-    left.project === right.project &&
-    left.timelineItems === right.timelineItems
+    left.agents === right.agents &&
+    left.workspaces === right.workspaces &&
+    left.projects === right.projects &&
+    left.focusedAgent === right.focusedAgent &&
+    left.timelineItems === right.timelineItems &&
+    left.timelineRange === right.timelineRange &&
+    left.timelineHasOlder === right.timelineHasOlder
   );
 }
 
 function selectReplicaInput(session: SessionState, agentId: string | null): ReplicaInput {
   const agent = agentId ? session.agents.get(agentId) : undefined;
-  const workspace = agent
-    ? ((agent.workspaceId ? session.workspaces.get(agent.workspaceId) : undefined) ??
-      Array.from(session.workspaces.values()).find(
-        (candidate) => candidate.workspaceDirectory === agent.cwd,
-      ))
-    : undefined;
-  const timeline: AgentTimelineState = agentId
+  const timeline = agentId
     ? selectAgentTimelineState(session, agentId)
-    : { status: "cold" };
+    : { status: "cold" as const };
   return {
-    agent,
-    workspace,
-    project: workspace ? session.projects.get(workspace.projectId) : undefined,
+    agents: session.agents,
+    workspaces: session.workspaces,
+    projects: session.projects,
+    focusedAgent: agent,
     timelineItems: timeline.status === "cold" ? undefined : timeline.items,
+    timelineRange: timeline.status === "synced" ? timeline.range : null,
+    timelineHasOlder: timeline.status === "synced" && timeline.older === "available",
   };
 }
 
-function serializeHost(serverId: string, input: ReplicaInput): StoredHost {
-  const items = input.timelineItems
-    ?.filter((item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item))
-    .map(serializeTimelineItem)
-    .filter((item) => item !== null);
+function serializeHost(serverId: string, input: ReplicaInput, directorySync?: unknown): StoredHost {
+  const canonicalItems = input.timelineItems?.filter(
+    (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
+  );
+  const items = canonicalItems
+    ? canonicalItems.map(serializeTimelineItem).filter((item) => item !== null)
+    : undefined;
+  const range = input.timelineRange;
+  const canPersistCoverage =
+    range !== null &&
+    range.retainedRanges === undefined &&
+    canonicalItems !== undefined &&
+    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
+    items?.length === canonicalItems.length &&
+    canonicalItems.every(
+      (item) =>
+        isTimelineItemStoredLosslessly(item) &&
+        item.timelineCursor?.epoch === range.epoch &&
+        item.timelineCursor.seq >= range.startSeq &&
+        item.timelineCursor.seq <= range.endSeq,
+    ) &&
+    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
   return {
     serverId,
-    agents: input.agent ? [serializeAgent(input.agent)] : [],
-    workspaces: input.workspace ? [serializeWorkspace(input.workspace)] : [],
-    projects: input.project ? [serializeProject(input.project)] : [],
+    agents: Array.from(input.agents.values(), serializeAgent),
+    workspaces: Array.from(input.workspaces.values(), serializeWorkspace),
+    projects: Array.from(input.projects.values(), serializeProject),
     emptyProjects: [],
     timeline:
-      input.agent && items
+      input.focusedAgent && items
         ? {
-            agentId: input.agent.id,
+            agentId: input.focusedAgent.id,
             items: items.slice(-MAX_TIMELINE_ITEMS),
+            range: canPersistCoverage
+              ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+              : null,
+            hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
           }
         : null,
+    ...(directorySync ? { directorySync } : {}),
   };
 }
 
@@ -688,6 +841,24 @@ export class ReplicaCache {
     this.schedulePersist();
   }
 
+  readDirectoryCheckpoint(serverId: string): unknown {
+    return this.storedHosts.get(serverId)?.directorySync;
+  }
+
+  writeDirectoryCheckpoint(serverId: string, checkpoint: unknown): void {
+    let stored = this.storedHosts.get(serverId);
+    if (!stored) {
+      const session = useSessionStore.getState().sessions[serverId];
+      if (!session) return;
+      const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
+      this.capturedInputs.set(serverId, input);
+      stored = serializeHost(serverId, input);
+    }
+    this.storedHosts.delete(serverId);
+    this.storedHosts.set(serverId, { ...stored, directorySync: checkpoint });
+    this.schedulePersist();
+  }
+
   async flush(): Promise<void> {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -722,13 +893,27 @@ export class ReplicaCache {
     if (session.focusedAgentId) {
       this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
     }
-    const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
+    const focusedAgentId = this.lastFocusedAgentIds.get(serverId) ?? null;
     const previous = this.capturedInputs.get(serverId);
+    const selected = selectReplicaInput(session, focusedAgentId);
+    const hasTimelineHead =
+      focusedAgentId !== null && (session.agentStreamHead.get(focusedAgentId)?.length ?? 0) > 0;
+    let input = selected;
+    if (hasTimelineHead && previous && selected.timelineItems === previous.timelineItems) {
+      input = {
+        ...selected,
+        timelineRange: previous.timelineRange,
+        timelineHasOlder: previous.timelineHasOlder,
+      };
+    } else if (hasTimelineHead) {
+      input = { ...selected, timelineRange: null, timelineHasOlder: false };
+    }
     if (previous && replicaInputsEqual(previous, input)) return false;
 
     this.capturedInputs.set(serverId, input);
+    const directorySync = this.storedHosts.get(serverId)?.directorySync;
     this.storedHosts.delete(serverId);
-    this.storedHosts.set(serverId, serializeHost(serverId, input));
+    this.storedHosts.set(serverId, serializeHost(serverId, input, directorySync));
     return true;
   }
 

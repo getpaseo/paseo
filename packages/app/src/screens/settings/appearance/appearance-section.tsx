@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, TextInput, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
 import {
@@ -18,25 +18,32 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import { useContributedThemes } from "@/appearance/provider";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
   MAX_CODE_FONT_SIZE,
-  MAX_UI_FONT_SIZE,
+  MAX_CONTENT_FONT_SIZE,
+  MAX_UI_BASE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
-  MIN_UI_FONT_SIZE,
+  MIN_CONTENT_FONT_SIZE,
+  MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   sanitizeFontFamily,
   useAppSettings,
   type AppSettings,
+  DEFAULT_THEME_PREFERENCE,
 } from "@/hooks/use-settings";
 import {
   DEFAULT_MONO_FONT_STACK,
   DEFAULT_UI_FONT_STACK,
   ICON_SIZE,
+  PLUGIN_THEME_PREFERENCE,
   THEME_OPTIONS,
   THEME_SWATCHES,
   type Theme,
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
+import type { PluginThemeOption } from "@/plugins/themes";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
 
@@ -53,7 +60,9 @@ const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function getThemeLabel(t: TFunction, value: AppSettings["theme"]): string {
+type BuiltInThemePreference = Exclude<AppSettings["theme"], typeof PLUGIN_THEME_PREFERENCE>;
+
+function getThemeLabel(t: TFunction, value: BuiltInThemePreference): string {
   return t(`settings.appearance.theme.options.${value}`);
 }
 
@@ -82,7 +91,7 @@ function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
 // ---------------------------------------------------------------------------
 
 interface ThemeLeadingProps {
-  themeValue: AppSettings["theme"];
+  themeValue: BuiltInThemePreference;
 }
 
 function ThemeLeading({ themeValue }: ThemeLeadingProps) {
@@ -108,9 +117,9 @@ function ThemeSwatch({ color }: ThemeSwatchProps) {
 }
 
 interface ThemeMenuItemProps {
-  themeValue: AppSettings["theme"];
+  themeValue: BuiltInThemePreference;
   selected: boolean;
-  onChange: (theme: AppSettings["theme"]) => void;
+  onChange: (theme: BuiltInThemePreference) => void;
 }
 
 function ThemeMenuItem({ themeValue, selected, onChange }: ThemeMenuItemProps) {
@@ -126,14 +135,45 @@ function ThemeMenuItem({ themeValue, selected, onChange }: ThemeMenuItemProps) {
   );
 }
 
-interface ThemeRowProps {
-  value: AppSettings["theme"];
-  onChange: (theme: AppSettings["theme"]) => void;
+interface PluginThemeMenuItemProps {
+  option: PluginThemeOption;
+  selected: boolean;
+  onSelect: (option: PluginThemeOption) => void;
 }
 
-function ThemeRow({ value, onChange }: ThemeRowProps) {
+function PluginThemeMenuItem({ option, selected, onSelect }: PluginThemeMenuItemProps) {
+  const handleSelect = useCallback(() => {
+    onSelect(option);
+  }, [onSelect, option]);
+  const leading = useMemo(() => <ThemeSwatch color={option.swatch} />, [option.swatch]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
+      {option.name}
+    </DropdownMenuItem>
+  );
+}
+
+interface ThemeRowProps {
+  value: AppSettings["theme"];
+  pluginThemes: PluginThemeOption[];
+  selectedPluginTheme: PluginThemeOption | null;
+  onChange: (theme: BuiltInThemePreference) => void;
+  onSelectPluginTheme: (option: PluginThemeOption) => void;
+}
+
+function ThemeRow({
+  value,
+  pluginThemes,
+  selectedPluginTheme,
+  onChange,
+  onSelectPluginTheme,
+}: ThemeRowProps) {
   const { t } = useTranslation();
-  const selectedLabel = getThemeLabel(t, value);
+  // A selected contribution that is no longer installed shows the fallback the app renders.
+  const builtInValue = value === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : value;
+  const selectedLabel = selectedPluginTheme
+    ? selectedPluginTheme.name
+    : getThemeLabel(t, builtInValue);
   return (
     <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
@@ -146,7 +186,11 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
             value: selectedLabel,
           })}
         >
-          <ThemeLeading themeValue={value} />
+          {selectedPluginTheme ? (
+            <ThemeSwatch color={selectedPluginTheme.swatch} />
+          ) : (
+            <ThemeLeading themeValue={builtInValue} />
+          )}
           <Text style={styles.triggerText}>{selectedLabel}</Text>
           <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
         </DropdownMenuTrigger>
@@ -160,12 +204,21 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
                 ) : null}
                 <ThemeMenuItem
                   themeValue={option.name}
-                  selected={value === option.name}
+                  selected={selectedPluginTheme === null && builtInValue === option.name}
                   onChange={onChange}
                 />
               </Fragment>
             );
           })}
+          {pluginThemes.length > 0 ? <DropdownMenuSeparator /> : null}
+          {pluginThemes.map((option) => (
+            <PluginThemeMenuItem
+              key={option.id}
+              option={option}
+              selected={selectedPluginTheme?.id === option.id}
+              onSelect={onSelectPluginTheme}
+            />
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     </View>
@@ -332,7 +385,7 @@ function FontFamilyRow({
         <Text style={settingsStyles.rowHint}>{hint}</Text>
       </View>
       <TextInput
-        value={draft}
+        initialValue={draft}
         onChangeText={onChangeDraft}
         onBlur={handleCommit}
         onSubmitEditing={handleCommit}
@@ -350,6 +403,7 @@ function FontFamilyRow({
 
 interface FontSizeRowProps {
   title: string;
+  hint: string;
   accessibilityLabel: string;
   draft: string;
   withBorder?: boolean;
@@ -359,6 +413,7 @@ interface FontSizeRowProps {
 
 function FontSizeRow({
   title,
+  hint,
   accessibilityLabel,
   draft,
   withBorder = true,
@@ -369,10 +424,11 @@ function FontSizeRow({
     <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{title}</Text>
+        <Text style={settingsStyles.rowHint}>{hint}</Text>
       </View>
       <View style={styles.sizeField}>
         <TextInput
-          value={draft}
+          initialValue={draft}
           onChangeText={onChangeDraft}
           onBlur={onCommit}
           onSubmitEditing={onCommit}
@@ -464,28 +520,44 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
-  const showFontFamilyRows = !isNative;
+  const {
+    options: pluginThemes,
+    selected: selectedPluginTheme,
+    select: selectPluginTheme,
+  } = useContributedThemes();
+  const showInterfaceFontFamilyRow = !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
 
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
-  const [uiSizeDraft, setUiSizeDraft] = useState(String(settings.uiFontSize));
+  const [uiBaseSizeDraft, setUiBaseSizeDraft] = useState(String(settings.uiBaseFontSize));
+  const [contentSizeDraft, setContentSizeDraft] = useState(String(settings.contentFontSize));
   const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
 
   // Resync numeric drafts when the committed value changes elsewhere.
   useEffect(() => {
-    setUiSizeDraft(String(settings.uiFontSize));
-  }, [settings.uiFontSize]);
+    setUiBaseSizeDraft(String(settings.uiBaseFontSize));
+  }, [settings.uiBaseFontSize]);
+  useEffect(() => {
+    setContentSizeDraft(String(settings.contentFontSize));
+  }, [settings.contentFontSize]);
   useEffect(() => {
     setCodeSizeDraft(String(settings.codeFontSize));
   }, [settings.codeFontSize]);
 
   const handleThemeChange = useCallback(
-    (theme: AppSettings["theme"]) => {
+    (theme: BuiltInThemePreference) => {
       void updateSettings({ theme });
     },
     [updateSettings],
+  );
+
+  const handlePluginThemeChange = useCallback(
+    (option: PluginThemeOption) => {
+      selectPluginTheme(option);
+    },
+    [selectPluginTheme],
   );
 
   const handleSyntaxThemeChange = useCallback(
@@ -546,25 +618,29 @@ export function AppearanceSection() {
     [settings.monoFontFamily, updateSettings],
   );
 
-  const handleUiSizeChange = useCallback((value: string) => {
-    setUiSizeDraft(value.replace(/[^\d]/g, ""));
+  const handleUiBaseSizeChange = useCallback((value: string) => {
+    setUiBaseSizeDraft(value.replace(/[^\d]/g, ""));
   }, []);
 
   const handleCodeSizeChange = useCallback((value: string) => {
     setCodeSizeDraft(value.replace(/[^\d]/g, ""));
   }, []);
 
-  const commitUiSize = useCallback(() => {
-    const parsed = parseClampedFontSize(uiSizeDraft, {
-      min: MIN_UI_FONT_SIZE,
-      max: MAX_UI_FONT_SIZE,
+  const handleContentSizeChange = useCallback((value: string) => {
+    setContentSizeDraft(value.replace(/[^\d]/g, ""));
+  }, []);
+
+  const commitUiBaseSize = useCallback(() => {
+    const parsed = parseClampedFontSize(uiBaseSizeDraft, {
+      min: MIN_UI_BASE_FONT_SIZE,
+      max: MAX_UI_BASE_FONT_SIZE,
     });
-    const next = parsed ?? settings.uiFontSize;
-    setUiSizeDraft(String(next));
-    if (next !== settings.uiFontSize) {
-      void updateSettings({ uiFontSize: next });
+    const next = parsed ?? settings.uiBaseFontSize;
+    setUiBaseSizeDraft(String(next));
+    if (next !== settings.uiBaseFontSize) {
+      void updateSettings({ uiBaseFontSize: next });
     }
-  }, [settings.uiFontSize, uiSizeDraft, updateSettings]);
+  }, [settings.uiBaseFontSize, uiBaseSizeDraft, updateSettings]);
 
   const commitCodeSize = useCallback(() => {
     const parsed = parseClampedFontSize(codeSizeDraft, {
@@ -578,22 +654,41 @@ export function AppearanceSection() {
     }
   }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
 
+  const commitContentSize = useCallback(() => {
+    const parsed = parseClampedFontSize(contentSizeDraft, {
+      min: MIN_CONTENT_FONT_SIZE,
+      max: MAX_CONTENT_FONT_SIZE,
+    });
+    const next = parsed ?? settings.contentFontSize;
+    setContentSizeDraft(String(next));
+    if (next !== settings.contentFontSize) {
+      void updateSettings({ contentFontSize: next });
+    }
+  }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
+
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
+      contentFontSize: sizeDraftToOverride(contentSizeDraft),
       monoFontFamily: monoFontDraft,
       codeFontSize: sizeDraftToOverride(codeSizeDraft),
     }),
-    [codeSizeDraft, monoFontDraft],
+    [codeSizeDraft, contentSizeDraft, monoFontDraft],
   );
 
   return (
     <View>
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
-          <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+          <ThemeRow
+            value={settings.theme}
+            pluginThemes={pluginThemes}
+            selectedPluginTheme={selectedPluginTheme}
+            onChange={handleThemeChange}
+            onSelectPluginTheme={handlePluginThemeChange}
+          />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
@@ -616,7 +711,7 @@ export function AppearanceSection() {
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
-          {showFontFamilyRows ? (
+          {showInterfaceFontFamilyRow ? (
             <FontFamilyRow
               title={t("settings.appearance.fonts.interfaceFont")}
               hint={t("settings.appearance.fonts.interfaceFontHint")}
@@ -631,27 +726,35 @@ export function AppearanceSection() {
           ) : null}
           <FontSizeRow
             title={t("settings.appearance.fonts.interfaceSize")}
+            hint={t("settings.appearance.fonts.interfaceSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
-            draft={uiSizeDraft}
-            withBorder={showFontFamilyRows}
-            onChangeDraft={handleUiSizeChange}
-            onCommit={commitUiSize}
+            draft={uiBaseSizeDraft}
+            withBorder={showInterfaceFontFamilyRow}
+            onChangeDraft={handleUiBaseSizeChange}
+            onCommit={commitUiBaseSize}
           />
-          {showFontFamilyRows ? (
-            <FontFamilyRow
-              title={t("settings.appearance.fonts.codeFont")}
-              hint={t("settings.appearance.fonts.codeFontHint")}
-              accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
-              placeholder={monoFontPlaceholder}
-              value={settings.monoFontFamily}
-              draft={monoFontDraft}
-              withBorder
-              onChangeDraft={setMonoFontDraft}
-              onCommit={commitMonoFontFamily}
-            />
-          ) : null}
+          <FontSizeRow
+            title={t("settings.appearance.fonts.contentSize")}
+            hint={t("settings.appearance.fonts.contentSizeHint")}
+            accessibilityLabel={t("settings.appearance.fonts.contentSizeAccessibility")}
+            draft={contentSizeDraft}
+            onChangeDraft={handleContentSizeChange}
+            onCommit={commitContentSize}
+          />
+          <FontFamilyRow
+            title={t("settings.appearance.fonts.codeFont")}
+            hint={t("settings.appearance.fonts.codeFontHint")}
+            accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
+            placeholder={monoFontPlaceholder}
+            value={settings.monoFontFamily}
+            draft={monoFontDraft}
+            withBorder
+            onChangeDraft={setMonoFontDraft}
+            onCommit={commitMonoFontFamily}
+          />
           <FontSizeRow
             title={t("settings.appearance.fonts.codeSize")}
+            hint={t("settings.appearance.fonts.codeSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
             draft={codeSizeDraft}
             onChangeDraft={handleCodeSizeChange}
@@ -699,7 +802,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   swatch: {
     width: ICON_SIZE.md,
@@ -720,7 +823,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "left",
   },
   sizeField: {
@@ -738,12 +841,12 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "right",
   },
   unit: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   placeholderColor: {
     color: theme.colors.foregroundMuted,

@@ -337,6 +337,7 @@ export function useCloseFileExplorerGesture() {
     windowWidth,
   } = useMobilePanelsRuntime();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
+  const horizontalScroll = useHorizontalScrollOptional();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
 
@@ -372,6 +373,7 @@ export function useCloseFileExplorerGesture() {
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "file-explorer", position.value) ||
+            horizontalScroll?.activeGestureStartedScrolled.value ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -405,6 +407,7 @@ export function useCloseFileExplorerGesture() {
       beginGesture,
       commit,
       finishGesture,
+      horizontalScroll?.activeGestureStartedScrolled,
       motionState,
       position,
       rightCloseGestureRef,

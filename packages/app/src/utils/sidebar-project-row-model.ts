@@ -1,10 +1,12 @@
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { createProjectIconTarget, type ProjectIconTarget } from "@/projects/icon-target";
 
 export interface SidebarProjectHostTarget {
   serverId: string;
   projectId: string;
   iconWorkingDir: string;
   customIconRevision?: string | null;
+  iconRevision?: string;
 }
 
 export type SidebarProjectTrailingAction =
@@ -25,6 +27,7 @@ function hostTarget(input: {
   projectId: string;
   iconWorkingDir: string;
   customIconRevision?: string | null;
+  iconRevision?: string;
 }): SidebarProjectHostTarget | null {
   const iconWorkingDir = input.iconWorkingDir.trim();
   if (!input.serverId || !iconWorkingDir) {
@@ -35,6 +38,7 @@ function hostTarget(input: {
     projectId: input.projectId,
     iconWorkingDir,
     customIconRevision: input.customIconRevision,
+    iconRevision: input.iconRevision,
   };
 }
 
@@ -50,16 +54,17 @@ export function resolveSidebarProjectIconTarget(
   return null;
 }
 
-export interface SidebarProjectIconTarget extends SidebarProjectHostTarget {
-  projectViewKey: string;
-}
+export type SidebarProjectIconTarget = ProjectIconTarget;
 
 export function resolveSidebarProjectIconTargets(
   projects: readonly SidebarProjectEntry[],
 ): SidebarProjectIconTarget[] {
   return projects.flatMap((project) => {
     const target = resolveSidebarProjectIconTarget(project);
-    return target ? [{ projectViewKey: project.viewKey, ...target }] : [];
+    const iconTarget = target
+      ? createProjectIconTarget({ projectViewKey: project.viewKey, placement: target })
+      : null;
+    return iconTarget ? [iconTarget] : [];
   });
 }
 

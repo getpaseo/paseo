@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
@@ -17,18 +19,10 @@ import {
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
 
-interface TerminalProfileInput {
-  name: string;
-  command: string;
-  args?: string[];
-}
-
 interface PendingTerminalCreateInput {
   paneId?: string;
-  profile?: TerminalProfileInput;
+  profile?: TerminalProfile;
 }
-
-export type { TerminalProfileInput };
 
 interface UseWorkspaceTerminalsInput {
   client: DaemonClient | null;
@@ -135,10 +129,13 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = _input?.profile
-        ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
-            command: _input.profile.command,
-            args: _input.profile.args,
+      const profile = _input?.profile
+        ? resolveTerminalProfileLaunch(_input.profile, "")
+        : undefined;
+      const payload = profile
+        ? await client.createTerminal(workspaceDirectory, profile.name, undefined, {
+            command: profile.command,
+            args: profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {

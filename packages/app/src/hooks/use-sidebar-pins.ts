@@ -5,6 +5,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { applyStoredOrdering } from "@/hooks/sidebar-workspaces-view-model";
 import { useSessionStore } from "@/stores/session-store";
 
 export interface PinnedSidebarKeys {
@@ -101,8 +102,9 @@ export function usePinnedSidebarKeys(projects: SidebarProjectEntry[]): PinnedSid
 export function splitPinnedSidebarGroups(input: {
   projects: SidebarProjectEntry[];
   keys: PinnedSidebarKeys;
+  pinnedWorkspaceOrder: string[];
 }): PinnedSidebarGroups {
-  const { projects, keys } = input;
+  const { projects, keys, pinnedWorkspaceOrder } = input;
   if (keys.pinnedWorkspaceKeys.length === 0) {
     return { pinnedChats: [], unpinnedProjects: projects };
   }
@@ -138,5 +140,12 @@ export function splitPinnedSidebarGroups(input: {
     ),
   );
 
-  return { pinnedChats, unpinnedProjects };
+  return {
+    pinnedChats: applyStoredOrdering({
+      items: pinnedChats,
+      storedOrder: pinnedWorkspaceOrder,
+      getKey: (workspace) => workspace.workspaceKey,
+    }),
+    unpinnedProjects,
+  };
 }

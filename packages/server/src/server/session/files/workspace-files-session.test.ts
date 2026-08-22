@@ -372,6 +372,30 @@ describe("WorkspaceFilesSession", () => {
     ]);
   });
 
+  test("rejects an over-budget file before opening a binary transfer", async () => {
+    const cwd = makeDir("workspace-files-read-budget-");
+    writeFileSync(join(cwd, "notes.txt"), "hello world");
+    const { subsystem, emitted, binary } = makeSubsystem({ hasBinaryChannel: true });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "notes.txt",
+      mode: "file",
+      requestId: "req-read-budget",
+      acceptBinary: true,
+      maxBytes: 5,
+    });
+
+    expect(binary).toEqual([]);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "file_explorer_response",
+        payload: expect.objectContaining({ error: "File is too large to display" }),
+      }),
+    ]);
+  });
+
   test("streams a real file larger than the socket limit as paced ordered chunks", async () => {
     const cwd = makeDir("workspace-files-large-binary-");
     const fileBytes = Buffer.alloc(8 * 1024 * 1024 + 123);

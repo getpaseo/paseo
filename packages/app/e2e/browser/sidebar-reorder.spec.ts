@@ -18,7 +18,25 @@ async function visibleBoundingBox(row: Locator) {
   return box;
 }
 
-async function quickDragFirstRowAfterSecond(rows: Locator) {
+async function pressProjectRow(rows: Locator) {
+  await rows.page().mouse.down();
+}
+
+async function pressWorkspaceRow(rows: Locator) {
+  const solidScrimStop = rows
+    .nth(0)
+    .getByTestId("sidebar-workspace-trailing-scrim")
+    .locator("stop")
+    .nth(1);
+  const hoverScrimColor = await solidScrimStop.getAttribute("stop-color");
+  await rows.page().mouse.down();
+  await expect.poll(() => solidScrimStop.getAttribute("stop-color")).not.toBe(hoverScrimColor);
+}
+
+async function quickDragFirstRowAfterSecond(
+  rows: Locator,
+  pressRow: (rows: Locator) => Promise<void>,
+) {
   await expect(rows).toHaveCount(2);
   const before = await rowTestIds(rows);
   const sourceBox = await visibleBoundingBox(rows.nth(0));
@@ -29,15 +47,19 @@ async function quickDragFirstRowAfterSecond(rows: Locator) {
   const target = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
 
   await page.mouse.move(source.x, source.y);
-  await page.mouse.down();
+  const trailingScrim = rows.nth(0).getByTestId("sidebar-workspace-trailing-scrim");
+  await pressRow(rows);
   await page.mouse.move(source.x, source.y + 7);
+  await expect(trailingScrim).toHaveCount(0);
   await page.mouse.move(target.x, target.y, { steps: 4 });
   await page.mouse.up();
 
   await expect.poll(() => rowTestIds(rows)).toEqual([before[1], before[0]]);
 }
 
-test("projects and workspaces reorder with an immediate mouse drag", async ({ page }) => {
+test("projects, workspaces, and pinned chats reorder with an immediate mouse drag", async ({
+  page,
+}) => {
   const firstProject = await seedWorkspace({ repoPrefix: "sidebar-reorder-first-" });
   const secondProject = await seedWorkspace({ repoPrefix: "sidebar-reorder-second-" });
 
@@ -61,6 +83,7 @@ test("projects and workspaces reorder with an immediate mouse drag", async ({ pa
     const secondProjectTestId = `sidebar-project-row-${projectEquivalenceViewKey(secondProject.projectKey)}`;
     await quickDragFirstRowAfterSecond(
       page.locator(`[data-testid="${firstProjectTestId}"], [data-testid="${secondProjectTestId}"]`),
+      pressProjectRow,
     );
     const firstWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${firstProject.workspaceId}`;
     const secondWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondWorkspace.workspace.id}`;
@@ -68,6 +91,17 @@ test("projects and workspaces reorder with an immediate mouse drag", async ({ pa
       page.locator(
         `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondWorkspaceTestId}"]`,
       ),
+      pressWorkspaceRow,
+    );
+
+    await firstProject.client.setWorkspacePinned(firstProject.workspaceId, true);
+    await secondProject.client.setWorkspacePinned(secondProject.workspaceId, true);
+    const secondProjectWorkspaceTestId = `sidebar-workspace-row-${getServerId()}:${secondProject.workspaceId}`;
+    await quickDragFirstRowAfterSecond(
+      page.locator(
+        `[data-testid="${firstWorkspaceTestId}"], [data-testid="${secondProjectWorkspaceTestId}"]`,
+      ),
+      pressWorkspaceRow,
     );
   } finally {
     await firstProject.cleanup();

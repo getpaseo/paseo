@@ -105,7 +105,6 @@ export async function declineRelay(page: Page): Promise<void> {
 export async function enableRelayAndExpectOffer(page: Page): Promise<void> {
   const enableButton = page.getByRole("button", { name: "Enable relay", exact: true });
   await enableButton.click();
-  await expect(page.getByRole("button", { name: "Enabling...", exact: true })).toBeDisabled();
   await expect(page.getByRole("img", { name: "Pairing QR code" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Pairing link" })).toHaveValue(/#offer=/);
   await expect(page.getByText("Enable relay?", { exact: true })).toHaveCount(0);

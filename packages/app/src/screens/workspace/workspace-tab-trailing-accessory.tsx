@@ -137,6 +137,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   menuItemHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

@@ -38,10 +38,7 @@ function fitsViewportWidth(element: HTMLElement): boolean {
 }
 
 async function replaceEditorText(page: Page, content: string): Promise<void> {
-  const contentElement = editor(page);
-  await contentElement.click();
-  await contentElement.press("Control+A");
-  await contentElement.type(content);
+  await editor(page).fill(content);
 }
 
 async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
@@ -93,6 +90,87 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("renders a lockfile-sized read-only source with a bounded CodeMirror DOM", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-lockfile-",
+      title: "Large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    const lockfile = `${'{"packages":['}${Array.from({ length: 42_000 }, (_, index) => `{"name":"package-${index}","version":"1.0.0"}`).join(",")}]}`;
+    await writeFile(path.join(session.cwd, "package-lock.json"), lockfile, "utf8");
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "package-lock.json");
+
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(editor(page)).toContainText('"package-0"');
+      await expect.poll(() => page.locator(".cm-line").count()).toBeLessThan(200);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("keeps the app interactive around a plain 11 MB source", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-plain-",
+      title: "Plain large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    await writeFile(
+      path.join(session.cwd, "plain.txt"),
+      "plain source\n".repeat(1_050_000),
+      "utf8",
+    );
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "plain.txt");
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expect(editor(page)).toContainText("plain source");
+      await expect.poll(() => page.locator(".cm-line").count()).toBeLessThan(200);
+
+      await page.getByTestId(`workspace-tab-agent_${session.agentId}`).first().click();
+      await expect(page.getByTestId("message-input-root")).toBeVisible();
+      await page.getByTestId("workspace-tab-file_plain.txt").first().click();
+      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("refuses a file above the display budget and keeps its tab recoverable", async ({
+    page,
+  }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-source-unsupported-",
+      title: "Unsupported large source",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    await writeFile(
+      path.join(session.cwd, "too-large.txt"),
+      Buffer.alloc(51 * 1024 * 1024),
+      "utf8",
+    );
+
+    try {
+      await openAgentRoute(page, session);
+      await openWorkspaceFile(page, "too-large.txt");
+      await expect(page.getByTestId("file-source-too-large")).toContainText(
+        "This file is too large to display",
+      );
+
+      await page.getByTestId(`workspace-tab-agent_${session.agentId}`).first().click();
+      await expect(page.getByTestId("message-input-root")).toBeVisible();
+      await page.getByTestId("workspace-tab-file_too-large.txt").first().click();
+      await expect(page.getByTestId("file-source-too-large")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens an assistant file link at its referenced line", async ({ page }) => {
     const target = "target.ts:42";
     const session = await seedAgentWithFileLink({
@@ -120,7 +198,7 @@ test.describe("CodeMirror workspace file editing", () => {
 
       const sourceEditor = editor(page);
       await sourceEditor.click();
-      await sourceEditor.press("Control+Home");
+      await sourceEditor.press("ControlOrMeta+Home");
       await expect(page.getByLabel(/^Line 1, column \d+$/)).toBeVisible();
 
       await page
@@ -154,9 +232,8 @@ test.describe("CodeMirror workspace file editing", () => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await openAgentRoute(page, session);
 
-      await page.getByRole("button", { name: "Split pane right" }).first().click();
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
       await openWorkspaceFile(page, "target.ts");
+      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(2);
 
       await page
         .getByTestId(`workspace-tab-agent_${session.agentId}`)
@@ -245,13 +322,13 @@ test.describe("CodeMirror workspace file editing", () => {
     const initialModeBox = await modeControl.boundingBox();
     expect(initialModeBox).not.toBeNull();
     const initialModeX = initialModeBox!.x;
-    await content.press("Control+End");
+    await content.press("ControlOrMeta+End");
     await expect(page.getByLabel(/Line 12, column \d+/)).toBeVisible();
     const movedModeBox = await modeControl.boundingBox();
     expect(movedModeBox).not.toBeNull();
     expect(movedModeBox!.x).toBe(initialModeX);
 
-    await content.press("Control+a");
+    await content.press("ControlOrMeta+a");
     const selection = editorHost.locator(".cm-selectionBackground").first();
     await expect(selection).toBeVisible();
     await expect(selection).toHaveCSS("background-color", "rgba(255, 255, 255, 0.2)");
@@ -347,14 +424,13 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "const localWins = 5;\n");
     await writeFile(sourcePath, "const diskLoses = 6;\n", "utf8");
     await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
+    await page.getByRole("button", { name: "Overwrite", exact: true }).click();
+    await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const localWins = 5;\n");
     for (const fileName of ["one.ts", "two.ts", "three.ts", "four.ts"]) {
       await openWorkspaceFile(page, fileName);
     }
-    await page.getByTestId("workspace-tab-file_source.ts").filter({ visible: true }).click();
+    await openWorkspaceFile(page, "source.ts");
     await expect(editor(page)).toContainText("const localWins = 5;");
-    await expect(page.getByTestId("file-conflict-alert")).toBeVisible();
-    await page.getByRole("button", { name: "Overwrite", exact: true }).click();
-    await expect.poll(() => readFile(sourcePath, "utf8")).toBe("const localWins = 5;\n");
 
     await replaceEditorText(page, "const discarded = 7;\n");
     await writeFile(sourcePath, "const diskWins = 8;\n", "utf8");
@@ -441,20 +517,21 @@ test.describe("CodeMirror workspace file editing", () => {
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
 
-    await expect(page.getByText("First heading", { exact: true })).toBeVisible();
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    await expect(visibleFilePane.getByText("First heading", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
-    await expect(page.getByText("Updated heading", { exact: true })).toBeVisible();
+    await expect(visibleFilePane.getByText("Updated heading", { exact: true })).toBeVisible();
 
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await replaceEditorText(page, "# Saved from source\n");
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
     await selectFileView(page, "Preview");
-    await expect(page.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
 
     await openWorkspaceFile(page, "pixel.png");
-    const image = page.getByTestId("workspace-file-pane").locator("img");
+    const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);

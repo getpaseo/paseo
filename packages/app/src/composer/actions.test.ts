@@ -179,6 +179,7 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
+    activeTurnBehavior?: "interrupt" | "steer";
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };
@@ -417,6 +418,50 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  it("forwards the configured active-turn intent without provider capability checks", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "steer this turn",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: stream,
+      activeTurnBehavior: "steer",
+    });
+
+    expect(client.calls[0]?.options.activeTurnBehavior).toBe("steer");
+  });
+
+  it("stamps only a steer optimistic row with the daemon active turn ID", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "hello",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: stream,
+      activeTurnBehavior: "steer",
+      activeTurnId: "turn-1",
+    });
+    expect(stream.tail.get("agent")?.[0]).toMatchObject({ turnId: "turn-1" });
+    const legacy = createFakeStream();
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "legacy",
+      text: "hello",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: legacy,
+      activeTurnBehavior: "steer",
+    });
+    expect(legacy.tail.get("legacy")?.[0]?.turnId).toBeUndefined();
+  });
+
   it("removes the submitted prompt when the host rejects it", async () => {
     const rejection = new Error("Host rejected prompt");
     const client = createFakeSendClient({ rejection });
@@ -473,6 +518,28 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission,
+      }),
+    ).rejects.toBe(transportError);
+  });
+
+  it("surfaces an ambiguous failure even when a concurrent canonical echo was observed", async () => {
+    const transportError = new Error("Connection lost after delivery may have occurred");
+    const client = createFakeSendClient({ rejection: transportError });
+    const submission: MessageSubmissionWriter = {
+      begin: () => {},
+      accept: () => {},
+      reject: () => "accepted",
+    };
+
+    await expect(
+      dispatchComposerAgentMessage({
+        client,
+        agentId: "agent",
+        text: "ambiguous steer",
+        attachments: [],
+        encodeImages: passthroughEncodeImages,
+        submission,
+        activeTurnBehavior: "steer",
       }),
     ).rejects.toBe(transportError);
   });
@@ -862,6 +929,35 @@ describe("openComposerAttachment", () => {
       },
     });
     expect(externalUrlCalls).toEqual([issueItem.url]);
+  });
+
+  it("opens plugin resource URLs through the external url opener", () => {
+    const externalUrlCalls: string[] = [];
+    openComposerAttachment({
+      attachment: {
+        kind: "plugin_resource",
+        pluginId: "linear",
+        sourceId: "issues",
+        sourceTitle: "Linear issue",
+        sourceIcon: "CircleDot",
+        item: {
+          id: "issue-uuid",
+          identifier: "ENG-123",
+          title: "Plugin attachments",
+          url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+          text: "Linear issue ENG-123: Plugin attachments",
+          resourceType: "issue",
+        },
+      },
+      setLightboxMetadata: () => {
+        throw new Error("unexpected lightbox call");
+      },
+      openWorkspaceAttachment: () => false,
+      openExternalUrl: (url) => {
+        externalUrlCalls.push(url);
+      },
+    });
+    expect(externalUrlCalls).toEqual(["https://linear.app/acme/issue/ENG-123/plugin-attachments"]);
   });
 });
 

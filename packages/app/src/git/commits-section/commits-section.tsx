@@ -3,7 +3,6 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
@@ -13,6 +12,8 @@ interface CommitsSectionProps {
   serverId: string;
   cwd: string;
   onCommitPress: (sha: string) => void;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 function CommitsSectionSkeleton() {
@@ -82,11 +83,15 @@ function CommitsSectionContent({
   );
 }
 
-export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionProps) {
+export function CommitsSection({
+  serverId,
+  cwd,
+  onCommitPress,
+  collapsed = true,
+  onCollapsedChange,
+}: CommitsSectionProps) {
   const { t } = useTranslation();
-  const { preferences, updatePreferences } = useChangesPreferences();
   const isPanelActive = useRetainedPanelActive();
-  const collapsed = preferences.commitsCollapsed;
   const [now, setNow] = useState(() => new Date());
   const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
@@ -99,8 +104,8 @@ export function CommitsSection({ serverId, cwd, onCommitPress }: CommitsSectionP
     if (collapsed) {
       setNow(new Date());
     }
-    void updatePreferences({ commitsCollapsed: !collapsed });
-  }, [collapsed, updatePreferences]);
+    onCollapsedChange?.(!collapsed);
+  }, [collapsed, onCollapsedChange]);
 
   useEffect(() => {
     if (collapsed || !isPanelActive) {
@@ -180,11 +185,11 @@ const styles = StyleSheet.create((theme) => ({
     transform: [{ rotate: "90deg" }],
   },
   title: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   count: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flex: 1,
   },
@@ -203,11 +208,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   noWorkspaceCommitsText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   errorRow: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[3],

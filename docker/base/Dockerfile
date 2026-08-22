@@ -23,6 +23,7 @@ RUN set -eux; \
     npm pack --workspace=@getpaseo/relay --pack-destination /tmp/paseo-packs; \
     npm pack --workspace=@getpaseo/protocol --pack-destination /tmp/paseo-packs; \
     npm pack --workspace=@getpaseo/client --pack-destination /tmp/paseo-packs; \
+    npm pack --workspace=@getpaseo/plugin --pack-destination /tmp/paseo-packs; \
     npm pack --workspace=@getpaseo/server --pack-destination /tmp/paseo-packs; \
     npm pack --workspace=@getpaseo/cli --pack-destination /tmp/paseo-packs
 

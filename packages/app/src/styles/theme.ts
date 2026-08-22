@@ -203,93 +203,7 @@ const darkStatusDotColors = {
   statusDotRunning: "#5caaf6",
 };
 
-// Semantic color tokens - Layer-based system
-const lightSemanticColors = {
-  // Surfaces (layers) - shifted one step lighter
-  surface0: "#ffffff", // App background
-  surface1: "#fafafa", // Subtle hover (was zinc-100, now zinc-50)
-  surface2: "#f4f4f5", // Elevated: badges, inputs, sheets (was zinc-200, now zinc-100)
-  surface3: "#e4e4e7", // Highest elevation (was zinc-300, now zinc-200)
-  surface4: "#d4d4d8", // Extra emphasis (was zinc-400, now zinc-300)
-  surfaceDiffEmpty: "#f6f6f6", // Empty side of split diff rows, between surface1 and surface2 and biased toward surface2
-  surfaceSidebar: "#f4f4f5", // Sidebar background (darker than main)
-  surfaceSidebarHover: "#e9e9ec", // Sidebar hover (darker in light mode)
-  surfaceWorkspace: "#ffffff", // Workspace main background
-
-  // Text
-  foreground: "#1a1a1e",
-  foregroundMuted: "#71717a",
-  foregroundExtraMuted: "#a1a1aa",
-
-  // Controls
-  scrollbarHandle: "#3f3f46", // zinc-700
-
-  // Borders - shifted one step lighter
-  border: "#e4e4e7", // (was zinc-200, now zinc-200 - keep for contrast)
-  borderAccent: "#ececf1", // Softer accent border for low-emphasis outlines
-
-  // Brand
-  accent: "#20744A",
-  accentBright: "#239956",
-  accentForeground: "#ffffff",
-
-  // Semantic
-  destructive: "#b04138", // dark warm red on white — calm but unambiguously red
-  destructiveForeground: "#ffffff",
-  success: "#20744A",
-  successForeground: "#ffffff",
-
-  // Legacy aliases (for gradual migration)
-  background: "#ffffff",
-  popover: "#ffffff",
-  popoverForeground: "#1a1a1e",
-  primary: "#18181b",
-  primaryForeground: "#fafafa",
-  secondary: "#f4f4f5",
-  secondaryForeground: "#1a1a1e",
-  muted: "#f4f4f5",
-  mutedForeground: "#71717a",
-  accentBorder: "#ececf1",
-  input: "#f4f4f5",
-  ring: "#18181b",
-
-  ...lightDiffColors,
-  ...lightStatusColors,
-  ...lightStatusDotColors,
-
-  terminal: {
-    background: "#ffffff",
-    foreground: "#1a1a1e",
-    cursor: "#1a1a1e",
-    cursorAccent: "#ffffff",
-    selectionBackground: "rgba(0, 0, 0, 0.15)",
-    selectionForeground: "#1a1a1e",
-
-    black: "#1a1a1e",
-    red: "#dc2626",
-    green: "#16a34a",
-    yellow: "#ca8a04",
-    blue: "#2563eb",
-    magenta: "#9333ea",
-    cyan: "#0891b2",
-    white: "#ffffff",
-
-    brightBlack: "#3f3f46",
-    brightRed: "#ef4444",
-    brightGreen: "#22c55e",
-    brightYellow: "#f59e0b",
-    brightBlue: "#3b82f6",
-    brightMagenta: "#a855f7",
-    brightCyan: "#06b6d4",
-    brightWhite: "#fafafa",
-  },
-} as const;
-
-// ---------------------------------------------------------------------------
-// Dark theme variant builder
-// ---------------------------------------------------------------------------
-
-interface DarkThemeConfig {
+export interface LightThemeConfig {
   surface0: string;
   surface1: string;
   surface2: string;
@@ -297,10 +211,137 @@ interface DarkThemeConfig {
   surface4: string;
   surfaceDiffEmpty: string;
   surfaceSidebar: string;
-  surfaceSidebarHover: string;
+  foreground: string;
   foregroundMuted: string;
   foregroundExtraMuted: string;
-  scrollbarHandle: string;
+  border: string;
+  borderAccent: string;
+  accent: string;
+  accentBright: string;
+  accentForeground?: string;
+  primary: string;
+  primaryForeground: string;
+  destructive: string;
+  terminalBlack: string;
+  terminalBrightBlack: string;
+  ring: string;
+}
+
+const lightTerminalAnsi = {
+  red: "#dc2626",
+  green: "#16a34a",
+  yellow: "#ca8a04",
+  blue: "#2563eb",
+  magenta: "#9333ea",
+  cyan: "#0891b2",
+  white: "#ffffff",
+  brightRed: "#ef4444",
+  brightGreen: "#22c55e",
+  brightYellow: "#f59e0b",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#a855f7",
+  brightCyan: "#06b6d4",
+  brightWhite: "#fafafa",
+} as const;
+
+export function buildLightSemanticColors(tint: LightThemeConfig) {
+  return {
+    surface0: tint.surface0,
+    surface1: tint.surface1,
+    surface2: tint.surface2,
+    surface3: tint.surface3,
+    surface4: tint.surface4,
+    surfaceDiffEmpty: tint.surfaceDiffEmpty,
+    surfaceSidebar: tint.surfaceSidebar,
+    surfaceSidebarHover: tint.surface1,
+    surfaceSidebarSelected: tint.surface2,
+    surfaceWorkspace: tint.surface0,
+
+    foreground: tint.foreground,
+    foregroundMuted: tint.foregroundMuted,
+    foregroundExtraMuted: tint.foregroundExtraMuted,
+
+    border: tint.border,
+    borderAccent: tint.borderAccent,
+
+    accent: tint.accent,
+    accentBright: tint.accentBright,
+    accentForeground: tint.accentForeground ?? tint.surface0,
+
+    destructive: tint.destructive,
+    destructiveForeground: tint.surface0,
+    success: tint.accent,
+    successForeground: tint.surface0,
+
+    background: tint.surface0,
+    popover: tint.surface0,
+    popoverForeground: tint.foreground,
+    primary: tint.primary,
+    primaryForeground: tint.primaryForeground,
+    secondary: tint.surface2,
+    secondaryForeground: tint.foreground,
+    muted: tint.surface2,
+    mutedForeground: tint.foregroundMuted,
+    accentBorder: tint.borderAccent,
+    input: tint.surface2,
+    ring: tint.ring,
+
+    ...lightDiffColors,
+    ...lightStatusColors,
+    ...lightStatusDotColors,
+
+    terminal: {
+      background: tint.surface0,
+      foreground: tint.foreground,
+      cursor: tint.foreground,
+      cursorAccent: tint.surface0,
+      selectionBackground: "rgba(0, 0, 0, 0.15)",
+      selectionForeground: tint.foreground,
+      black: tint.terminalBlack,
+      ...lightTerminalAnsi,
+      brightBlack: tint.terminalBrightBlack,
+    },
+  };
+}
+
+const lightSemanticColors = buildLightSemanticColors({
+  surface0: "#ffffff",
+  surface1: "#fafafa",
+  surface2: "#f4f4f5",
+  surface3: "#e4e4e7",
+  surface4: "#d4d4d8",
+  surfaceDiffEmpty: "#f6f6f6",
+  surfaceSidebar: "#f4f4f5",
+  foreground: "#1a1a1e",
+  foregroundMuted: "#71717a",
+  foregroundExtraMuted: "#a1a1aa",
+  border: "#e4e4e7",
+  borderAccent: "#ececf1",
+  accent: "#20744A",
+  accentBright: "#239956",
+  accentForeground: "#ffffff",
+  primary: "#18181b",
+  primaryForeground: "#fafafa",
+  destructive: "#b04138",
+  terminalBlack: "#1a1a1e",
+  terminalBrightBlack: "#3f3f46",
+  ring: "#18181b",
+});
+
+// ---------------------------------------------------------------------------
+// Dark theme variant builder
+// ---------------------------------------------------------------------------
+
+export interface DarkThemeConfig {
+  surface0: string;
+  surface1: string;
+  surface2: string;
+  surface3: string;
+  surface4: string;
+  surfaceDiffEmpty: string;
+  surfaceSidebar: string;
+  foregroundMuted: string;
+  foregroundExtraMuted: string;
   border: string;
   borderAccent: string;
   accent: string;
@@ -309,6 +350,8 @@ interface DarkThemeConfig {
   destructive: string;
   terminalBlack: string;
   terminalBrightBlack: string;
+  foreground?: string;
+  ring?: string;
 }
 
 const darkTerminalAnsi = {
@@ -328,7 +371,9 @@ const darkTerminalAnsi = {
   brightWhite: "#f0f0f2",
 } as const;
 
-function buildDarkSemanticColors(tint: DarkThemeConfig) {
+export function buildDarkSemanticColors(tint: DarkThemeConfig) {
+  const foreground = tint.foreground ?? "#fafafa";
+  const ring = tint.ring ?? "#d4d4d8";
   return {
     surface0: tint.surface0,
     surface1: tint.surface1,
@@ -337,14 +382,13 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surface4: tint.surface4,
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
-    surfaceSidebarHover: tint.surfaceSidebarHover,
+    surfaceSidebarHover: tint.surface1,
+    surfaceSidebarSelected: tint.surface2,
     surfaceWorkspace: tint.surface1,
 
-    foreground: "#fafafa",
+    foreground,
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
-
-    scrollbarHandle: tint.scrollbarHandle,
 
     border: tint.border,
     borderAccent: tint.borderAccent,
@@ -361,16 +405,16 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     // Legacy aliases (for gradual migration)
     background: tint.surface0,
     popover: tint.surface2,
-    popoverForeground: "#fafafa",
-    primary: "#fafafa",
+    popoverForeground: foreground,
+    primary: foreground,
     primaryForeground: tint.surface0,
     secondary: tint.surface2,
-    secondaryForeground: "#fafafa",
+    secondaryForeground: foreground,
     muted: tint.surface2,
     mutedForeground: tint.foregroundMuted,
     accentBorder: tint.borderAccent,
     input: tint.surface2,
-    ring: "#d4d4d8",
+    ring,
 
     ...darkDiffColors,
     ...darkStatusColors,
@@ -378,11 +422,11 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     terminal: {
       background: tint.surface0,
-      foreground: "#fafafa",
-      cursor: "#fafafa",
+      foreground,
+      cursor: foreground,
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(255, 255, 255, 0.2)",
-      selectionForeground: "#fafafa",
+      selectionForeground: foreground,
       black: tint.terminalBlack,
       ...darkTerminalAnsi,
       brightBlack: tint.terminalBrightBlack,
@@ -403,10 +447,8 @@ const paseoDarkColors = buildDarkSemanticColors({
   surface4: "#595B5B",
   surfaceDiffEmpty: "#252827",
   surfaceSidebar: "#141716",
-  surfaceSidebarHover: "#1c1f1e",
   foregroundMuted: "#A1A5A4",
   foregroundExtraMuted: "#717574",
-  scrollbarHandle: "#717574",
   border: "#252B2A",
   borderAccent: "#2F3534",
   accent: "#20744A",
@@ -425,10 +467,8 @@ const zincDarkColors = buildDarkSemanticColors({
   surface4: "#52525b",
   surfaceDiffEmpty: "#242427",
   surfaceSidebar: "#131316",
-  surfaceSidebarHover: "#1b1b1e",
   foregroundMuted: "#a1a1aa",
   foregroundExtraMuted: "#71717a",
-  scrollbarHandle: "#71717a",
   border: "#27272a",
   borderAccent: "#303036",
   accent: "#e4e4e7",
@@ -448,10 +488,8 @@ const midnightDarkColors = buildDarkSemanticColors({
   surface4: "#535564",
   surfaceDiffEmpty: "#222430",
   surfaceSidebar: "#121420",
-  surfaceSidebarHover: "#1a1c28",
   foregroundMuted: "#9a9db0",
   foregroundExtraMuted: "#6b6e82",
-  scrollbarHandle: "#6b6e82",
   border: "#242636",
   borderAccent: "#2e3040",
   accent: "#3b6fcf",
@@ -470,10 +508,8 @@ const claudeDarkColors = buildDarkSemanticColors({
   surface4: "#605d5b",
   surfaceDiffEmpty: "#2a2826",
   surfaceSidebar: "#1a1918",
-  surfaceSidebarHover: "#222120",
   foregroundMuted: "#ada9a5",
   foregroundExtraMuted: "#78746f",
-  scrollbarHandle: "#78746f",
   border: "#2c2a27",
   borderAccent: "#36332f",
   accent: "#d97757",
@@ -492,10 +528,8 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   surface4: "#5b6175",
   surfaceDiffEmpty: "#323643",
   surfaceSidebar: "#21252d",
-  surfaceSidebarHover: "#292d36",
   foregroundMuted: "#c8ccd8",
   foregroundExtraMuted: "#a0a4b2",
-  scrollbarHandle: "#a0a4b2",
   border: "#353a47",
   borderAccent: "#3f4454",
   accent: "#89b4fa",
@@ -523,15 +557,15 @@ export const SPACING = {
 } as const;
 
 export const FONT_SIZE = {
-  xs: 12,
   code: 12,
-  sm: 14,
-  base: 16,
-  lg: 18,
-  xl: 20,
-  "2xl": 22,
-  "3xl": 26,
-  "4xl": 34,
+  content: 15,
+  sm: 12,
+  base: 14,
+  lg: 16,
+  xl: 18,
+  "2xl": 20,
+  "3xl": 22,
+  "4xl": 26,
 } as const;
 
 export const LINE_HEIGHT = {
@@ -639,7 +673,7 @@ const darkShadow = {
   },
 } as const;
 
-function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
+export function buildDarkTheme(semanticColors: ReturnType<typeof buildDarkSemanticColors>) {
   return {
     colorScheme: "dark" as const,
     colors: {
@@ -667,11 +701,8 @@ const pureBlackDarkColors = buildDarkSemanticColors({
   surface4: "#2d2d2d",
   surfaceDiffEmpty: "#0c0c0c",
   surfaceSidebar: "#000000",
-  // Selected sidebar rows share this surface with hover, so it must remain visible at rest.
-  surfaceSidebarHover: "#161616",
   foregroundMuted: "#a1a1aa",
   foregroundExtraMuted: "#71717a",
-  scrollbarHandle: "#71717a",
   border: "#1c1c1c",
   borderAccent: "#242424",
   accent: "#20744A",
@@ -683,35 +714,41 @@ const pureBlackDarkColors = buildDarkSemanticColors({
 
 export const darkPureBlackTheme = buildDarkTheme(pureBlackDarkColors);
 
-export const lightTheme = {
-  colorScheme: "light" as const,
-  colors: {
-    ...lightSemanticColors,
-    palette: baseColors,
-    syntax: lightHighlightColors,
+const lightShadow = {
+  sm: {
+    shadowColor: "rgba(0, 0, 0, 0.02)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 8,
+    elevation: 2,
   },
-  shadow: {
-    sm: {
-      shadowColor: "rgba(0, 0, 0, 0.02)",
-      shadowOffset: { width: 0, height: 2 },
-      shadowRadius: 8,
-      elevation: 2,
-    },
-    md: {
-      shadowColor: "rgba(0, 0, 0, 0.04)",
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 16,
-      elevation: 4,
-    },
-    lg: {
-      shadowColor: "rgba(0, 0, 0, 0.08)",
-      shadowOffset: { width: 0, height: 8 },
-      shadowRadius: 24,
-      elevation: 8,
-    },
+  md: {
+    shadowColor: "rgba(0, 0, 0, 0.04)",
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 16,
+    elevation: 4,
   },
-  ...commonTheme,
+  lg: {
+    shadowColor: "rgba(0, 0, 0, 0.08)",
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 24,
+    elevation: 8,
+  },
 } as const;
+
+export function buildLightTheme(semanticColors: ReturnType<typeof buildLightSemanticColors>) {
+  return {
+    colorScheme: "light" as const,
+    colors: {
+      ...semanticColors,
+      palette: baseColors,
+      syntax: lightHighlightColors,
+    },
+    shadow: lightShadow,
+    ...commonTheme,
+  } as const;
+}
+
+export const lightTheme = buildLightTheme(lightSemanticColors);
 
 // Keep compatibility with existing code
 export const theme = darkTheme;
@@ -769,8 +806,16 @@ export const THEME_OPTIONS = [
   },
 ] as const;
 
-export type ThemePreference = (typeof THEME_OPTIONS)[number]["name"];
-export type ThemeName = Exclude<ThemePreference, "auto">;
+export const PLUGIN_THEME_PREFERENCE = "plugin";
+export const PLUGIN_THEME_NAMES = {
+  light: "pluginLight",
+  dark: "pluginDark",
+} as const;
+
+export type ThemePreference =
+  | (typeof THEME_OPTIONS)[number]["name"]
+  | typeof PLUGIN_THEME_PREFERENCE;
+export type ThemeName = Exclude<ThemePreference, "auto" | typeof PLUGIN_THEME_PREFERENCE>;
 type ConcreteThemeOption = Exclude<(typeof THEME_OPTIONS)[number], { name: "auto" }>;
 export type Theme = ConcreteThemeOption["theme"];
 
@@ -788,6 +833,9 @@ type ThemeSwatches = {
 
 type RegisteredThemes = {
   [Option in ConcreteThemeOption as Option["unistylesName"]]: Option["theme"];
+} & {
+  pluginLight: typeof lightTheme;
+  pluginDark: typeof darkTheme;
 };
 
 export const THEME_TO_UNISTYLES = Object.fromEntries(
@@ -798,9 +846,13 @@ export const THEME_SWATCHES = Object.fromEntries(
   CONCRETE_THEME_OPTIONS.map((option) => [option.name, option.swatch]),
 ) as ThemeSwatches;
 
-export const REGISTERED_THEMES = Object.fromEntries(
-  CONCRETE_THEME_OPTIONS.map((option) => [option.unistylesName, option.theme]),
-) as RegisteredThemes;
+export const REGISTERED_THEMES = {
+  ...Object.fromEntries(
+    CONCRETE_THEME_OPTIONS.map((option) => [option.unistylesName, option.theme]),
+  ),
+  [PLUGIN_THEME_NAMES.light]: lightTheme,
+  [PLUGIN_THEME_NAMES.dark]: darkTheme,
+} as RegisteredThemes;
 
 export function getNextThemePreference(current: ThemePreference): ThemePreference {
   const currentIndex = THEME_OPTIONS.findIndex((option) => option.name === current);

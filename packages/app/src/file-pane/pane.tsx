@@ -8,23 +8,15 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { DaemonClient, FileReadResult } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { Image as RNImage, ScrollView as RNScrollView, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
-import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
-import { lineNumberGutterWidth } from "@/components/code-insets";
-import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
-import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { persistAttachmentFromBytes } from "@/attachments/service";
-import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
-import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { getFileNameFromPath } from "@/attachments/utils";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -33,12 +25,15 @@ import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
+import { useFilePreview } from "./preview-lifecycle/hook";
+import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
+import { FileSourceView } from "./source/view";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -49,13 +44,6 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-
-interface CodeLineProps {
-  tokens: HighlightToken[];
-  lineNumber: number;
-  gutterWidth: number;
-  highlighted: boolean;
-}
 
 interface FilePreviewBodyProps {
   preview: ExplorerFile | null;
@@ -77,11 +65,6 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-interface FileLineSelection {
-  lineStart: number;
-  lineEnd: number;
-}
-
 function formatFileSize({ size }: { size: number }): string {
   if (size < 1024) {
     return `${size} B`;
@@ -92,133 +75,66 @@ function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function createFilePanePreview(file: FileReadResult | null): Promise<{
-  file: ExplorerFile | null;
-  imageAttachment: AttachmentMetadata | null;
-}> {
-  if (!file) {
-    return { file: null, imageAttachment: null };
-  }
-
-  const explorerFile = explorerFileFromReadResult(file);
-  if (file.kind !== "image") {
-    return { file: explorerFile, imageAttachment: null };
-  }
-
-  const imageAttachment = await persistAttachmentFromBytes({
-    id: createPreviewAttachmentId({
-      mimeType: file.mime,
-      path: file.path,
-      size: file.size,
-      modifiedAt: file.modifiedAt,
-      contentLength: file.bytes.byteLength,
+function ReadonlySource({
+  preview,
+  filename,
+  location,
+  navigationRevision,
+}: {
+  preview: ExplorerFile;
+  filename: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
+}) {
+  const theme = UnistylesRuntime.getTheme();
+  const { t } = useTranslation();
+  const visualTheme = useMemo(
+    () => ({
+      colorScheme: theme.colorScheme,
+      background: theme.colors.surface0,
+      foreground: theme.colors.foreground,
+      cursor: theme.colors.terminal.cursor,
+      foregroundMuted: theme.colors.foregroundMuted,
+      border: theme.colors.border,
+      selection: theme.colors.terminal.selectionBackground,
+      monoFont: theme.fontFamily.mono,
+      codeFontSize: theme.fontSize.code,
+      syntax: theme.colors.syntax,
     }),
-    bytes: file.bytes,
-    mimeType: file.mime,
-    fileName: getFileNameFromPath(file.path),
-  });
-
-  return {
-    file: explorerFile,
-    imageAttachment,
-  };
-}
-
-function clampLineSelection(input: {
-  lineStart?: number;
-  lineEnd?: number;
-  lineCount: number;
-}): FileLineSelection | null {
-  if (!input.lineStart || input.lineStart <= 0 || input.lineCount <= 0) {
-    return null;
-  }
-  const lineStart = Math.min(Math.floor(input.lineStart), input.lineCount);
-  const rawLineEnd =
-    input.lineEnd && input.lineEnd >= input.lineStart ? input.lineEnd : input.lineStart;
-  const lineEnd = Math.min(Math.floor(rawLineEnd), input.lineCount);
-  return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
-}
-
-const CodeLine = React.memo(function CodeLine({
-  tokens,
-  lineNumber,
-  gutterWidth,
-  highlighted,
-}: CodeLineProps) {
-  const gutterStyle = useMemo(
-    () => [codeLineStyles.gutter, inlineUnistylesStyle({ width: gutterWidth })],
-    [gutterWidth],
-  );
-  const lineStyle = useMemo(
-    () => [codeLineStyles.line, highlighted && codeLineStyles.highlightedLine],
-    [highlighted],
-  );
-  const keyedTokens = useMemo(
-    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
-    [tokens],
+    [theme],
   );
   return (
-    <View style={lineStyle}>
-      <View style={gutterStyle}>
-        <Text numberOfLines={1} style={codeLineStyles.gutterText}>
-          {String(lineNumber)}
-        </Text>
-      </View>
-      <Text selectable style={codeLineStyles.lineText}>
-        {keyedTokens.map(({ key, token }) => (
-          <CodeLineToken key={key} token={token} />
-        ))}
-      </Text>
+    <FileSourceView
+      content={preview.content ?? ""}
+      filename={filename}
+      location={location}
+      navigationRevision={navigationRevision}
+      size={preview.size}
+      theme={visualTheme}
+      tooLargeMessage={t("panels.file.tooLargeToDisplay")}
+    />
+  );
+}
+
+function TooLargeSource({ size }: { size?: number }) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.centerState} testID="file-source-too-large">
+      <Text style={styles.emptyText}>{t("panels.file.tooLargeToDisplay")}</Text>
+      {size ? <Text style={styles.binaryMetaText}>{formatFileSize({ size })}</Text> : null}
     </View>
   );
-});
-
-interface CodeLineTokenProps {
-  token: HighlightToken;
 }
-
-function CodeLineToken({ token }: CodeLineTokenProps) {
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
-}
-
-const codeLineStyles = StyleSheet.create((theme) => ({
-  line: {
-    flexDirection: "row",
-  },
-  highlightedLine: {
-    backgroundColor: theme.colors.accentBorder,
-  },
-  gutter: {
-    alignItems: "flex-end",
-    paddingRight: theme.spacing[3],
-    flexShrink: 0,
-  },
-  gutterText: {
-    color: theme.colors.foreground,
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-    lineHeight: theme.fontSize.code * 1.45,
-    opacity: 0.4,
-    userSelect: "none",
-  },
-  lineText: {
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-    lineHeight: theme.fontSize.code * 1.45,
-    flex: 1,
-  },
-}));
 
 function FilePreviewBody({
   preview,
   mode,
   isLoading,
-  isMobile,
+  isMobile: _isMobile,
   location,
   navigationRevision,
   imagePreviewUri,
 }: FilePreviewBodyProps) {
-  const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
   // A line target means the caller wants to land on that line, so fall back to
@@ -230,51 +146,14 @@ function FilePreviewBody({
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
-  const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || renderKind) {
-      return null;
-    }
-
-    return highlightCode(preview.content ?? "", filePath);
-  }, [renderKind, preview, filePath]);
-
-  const gutterWidth = useMemo(() => {
-    if (!highlightedLines) return 0;
-    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.code);
-  }, [highlightedLines, theme.fontSize.code]);
-  const lineHeight = theme.fontSize.code * 1.45;
-  const lineSelection = useMemo(() => {
-    if (!highlightedLines) {
-      return null;
-    }
-    return clampLineSelection({
-      lineStart: location.lineStart,
-      lineEnd: location.lineEnd,
-      lineCount: highlightedLines.length,
-    });
-  }, [highlightedLines, location.lineEnd, location.lineStart]);
-
   const imageSource = useMemo(
     () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
     [imagePreviewUri],
   );
 
-  useEffect(() => {
-    if (!lineSelection) {
-      return;
-    }
-    const timeout = setTimeout(() => {
-      previewScrollRef.current?.scrollTo({
-        y: Math.max(0, (lineSelection.lineStart - 1) * lineHeight),
-        animated: false,
-      });
-    }, 0);
-    return () => clearTimeout(timeout);
-  }, [lineHeight, lineSelection, navigationRevision]);
-
   if (isLoading && !preview) {
     return (
-      <View style={styles.centerState}>
+      <View style={styles.centerState} testID="file-preview-loading">
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
         <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
       </View>
@@ -283,7 +162,7 @@ function FilePreviewBody({
 
   if (!preview) {
     return (
-      <View style={styles.centerState}>
+      <View style={styles.centerState} testID="file-preview-unsupported">
         <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
       </View>
     );
@@ -313,51 +192,13 @@ function FilePreviewBody({
       );
     }
 
-    const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
-    const keyedLines = lines.map((tokens, index) => ({
-      key: `line-${index}`,
-      tokens,
-      lineNumber: index + 1,
-    }));
-    const codeLines = (
-      <View dataSet={CODE_SURFACE_DATASET}>
-        {keyedLines.map(({ key, tokens, lineNumber }) => (
-          <CodeLine
-            key={key}
-            tokens={tokens}
-            lineNumber={lineNumber}
-            gutterWidth={gutterWidth}
-            highlighted={
-              Boolean(lineSelection) &&
-              lineNumber >= (lineSelection?.lineStart ?? 0) &&
-              lineNumber <= (lineSelection?.lineEnd ?? 0)
-            }
-          />
-        ))}
-      </View>
-    );
-
     return (
-      <View style={styles.previewScrollContainer}>
-        <RNScrollView
-          ref={previewScrollRef}
-          style={styles.previewContent}
-          showsVerticalScrollIndicator
-        >
-          {isMobile ? (
-            <View style={styles.previewCodeScrollContent}>{codeLines}</View>
-          ) : (
-            <RNScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              contentContainerStyle={styles.previewCodeScrollContent}
-            >
-              {codeLines}
-            </RNScrollView>
-          )}
-        </RNScrollView>
-      </View>
+      <ReadonlySource
+        preview={preview}
+        filename={filePath}
+        location={location}
+        navigationRevision={navigationRevision}
+      />
     );
   }
 
@@ -411,11 +252,6 @@ export function FilePane({
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
-  const [resolvedPreview, setResolvedPreview] = useState<{
-    key: string | null;
-    file: ExplorerFile | null;
-    imageAttachment: AttachmentMetadata | null;
-  }>({ key: null, file: null, imageAttachment: null });
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
@@ -453,26 +289,16 @@ export function FilePane({
     liveUpdates: supportsEditing,
   });
 
-  useEffect(() => {
-    if (!liveFile.file) return;
-    let active = true;
-    const key = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
-    void (async () => {
-      const nextPreview = await createFilePanePreview(liveFile.file);
-      if (active) setResolvedPreview({ key, ...nextPreview });
-    })();
-    return () => {
-      active = false;
-    };
-  }, [liveFile.file, readTarget]);
+  const targetKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
+  const previewLifecycle = useFilePreview({
+    targetKey,
+    liveFileSnapshot: liveFile.snapshot,
+  });
 
-  const previewKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
-  useEffect(() => setPreviewMode("preview"), [previewKey]);
+  useEffect(() => setPreviewMode("preview"), [targetKey]);
 
-  const preview = resolvedPreview.key === previewKey ? resolvedPreview.file : null;
-  const imagePreviewUri = useAttachmentPreviewUrl(
-    resolvedPreview.key === previewKey ? resolvedPreview.imageAttachment : null,
-  );
+  const { file: preview, imageAttachment } = resolveFilePreviewLifecycle(previewLifecycle);
+  const imagePreviewUri = useAttachmentPreviewUrl(imageAttachment);
   const isRenderable = isRenderablePreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
@@ -481,7 +307,11 @@ export function FilePane({
   const canTogglePreviewMode = isRenderable && !location.lineStart;
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
-  const errorMessage = getFileErrorMessage(liveFile.error, t("panels.file.failedToLoad"));
+  const errorMessage = previewLifecycle.status === "error" ? previewLifecycle.message : null;
+  const isLoading =
+    previewLifecycle.status === "initial" ||
+    previewLifecycle.status === "read_pending" ||
+    previewLifecycle.status === "preparing";
 
   return (
     <FilePanePresentation
@@ -500,7 +330,7 @@ export function FilePane({
       editable={editable}
       disconnectedMessage={t("workspace.terminal.hostDisconnected")}
       errorMessage={errorMessage}
-      isLoading={liveFile.isFetching}
+      isLoading={isLoading}
       isMobile={isMobile}
       location={location}
       navigationRevision={navigationRevision}
@@ -511,12 +341,6 @@ export function FilePane({
 
 function isRenderablePreview(preview: ExplorerFile | null, path: string): boolean {
   return preview?.kind === "text" && filePreviewRenderKind(path) !== null;
-}
-
-function getFileErrorMessage(error: unknown, fallback: string): string | null {
-  if (!error) return null;
-  if (typeof error === "string") return error;
-  return error instanceof Error ? error.message : fallback;
 }
 
 function isEditableTextFile(input: {
@@ -607,6 +431,13 @@ function FilePanePresentation({
   }
 
   if (errorMessage) {
+    if (errorMessage === "File is too large to display") {
+      return (
+        <View style={styles.container} testID="workspace-file-pane">
+          <TooLargeSource />
+        </View>
+      );
+    }
     return (
       <View style={styles.container} testID="workspace-file-pane">
         <View style={styles.centerState}>
@@ -852,22 +683,22 @@ const styles = StyleSheet.create((theme) => ({
   loadingText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   binaryMetaText: {
     marginTop: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   previewScrollContainer: {
     flex: 1,

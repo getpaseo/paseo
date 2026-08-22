@@ -243,7 +243,7 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 22,
   },
   description: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
   footer: {

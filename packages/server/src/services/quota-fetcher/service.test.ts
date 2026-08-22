@@ -84,6 +84,12 @@ function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8
   db.close();
 }
 
+function writeCursorAuthJson(homeDir: string, accessToken: string): void {
+  const dir = join(homeDir, ".config", "cursor");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "auth.json"), JSON.stringify({ accessToken }));
+}
+
 function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
   mkdirSync(join(home, ".grok"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), JSON.stringify(auth));
@@ -777,6 +783,52 @@ describe("real provider usage fetchers", () => {
     const cursor = findProvider(await service({ cursorHomeDir: homeDir }).listUsage(), "cursor");
 
     expect(authorization).toBe("Bearer cursor_legacy_jwt");
+    expect(cursor.status).toBe("available");
+  });
+
+  it("reads the Cursor token from cursor-agent ~/.config/cursor/auth.json when desktop state is absent", async () => {
+    writeCursorAuthJson(homeDir, "cursor_cli_jwt");
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        planUsage: {
+          totalSpend: "1500",
+          includedSpend: "1000",
+          bonusSpend: "500",
+          remaining: "2500",
+          limit: "4000",
+        },
+        billingCycleStart: "2026-01-14T12:42:14.000Z",
+        billingCycleEnd: "2026-02-14T12:42:14.000Z",
+      });
+    }) as unknown as typeof fetch;
+
+    const cursor = findProvider(await service({ cursorHomeDir: homeDir }).listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer cursor_cli_jwt");
+    expect(cursor).toMatchObject({
+      status: "available",
+      balances: [expect.objectContaining({ id: "plan_usage", used: 15, remaining: 25, limit: 40 })],
+    });
+  });
+
+  it("prefers the desktop state.vscdb token over cursor-agent auth.json", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor_desktop_jwt" });
+    writeCursorAuthJson(homeDir, "cursor_cli_jwt");
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        planUsage: { totalSpend: "0", remaining: "100", limit: "100" },
+        billingCycleStart: null,
+        billingCycleEnd: null,
+      });
+    }) as unknown as typeof fetch;
+
+    const cursor = findProvider(await service({ cursorHomeDir: homeDir }).listUsage(), "cursor");
+
+    expect(authorization).toBe("Bearer cursor_desktop_jwt");
     expect(cursor.status).toBe("available");
   });
 

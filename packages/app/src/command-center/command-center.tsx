@@ -3,7 +3,6 @@ import {
   Modal,
   Pressable,
   Text,
-  TextInput,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -18,12 +17,15 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   BottomSheetBackdrop,
   BottomSheetFlatList,
-  BottomSheetTextInput,
   type BottomSheetFlatListMethods,
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -44,7 +46,7 @@ import {
   type CommandCenterScope,
 } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
@@ -69,7 +71,7 @@ import {
 } from "./results";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
 
-const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
+const ThemedBottomSheetTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
@@ -211,7 +213,7 @@ interface CommandCenterState {
   results: readonly CommandCenterResult[];
   rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
-  inputRef: React.RefObject<TextInput | null>;
+  inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
   close(): void;
@@ -220,13 +222,14 @@ interface CommandCenterState {
 }
 
 function useCommandCenterState(): CommandCenterState {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
   const scope = useKeyboardShortcutsStore((state) => state.commandCenterScope);
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const setScope = useKeyboardShortcutsStore((state) => state.setCommandCenterScope);
   const snapshot = useCommandCenterContributions();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -321,7 +324,7 @@ function useCommandCenterState(): CommandCenterState {
         keyboardActionDispatcher.dispatch({ id: "message-input.focus", scope: "message-input" }),
     });
     return cancel;
-  }, [open]);
+  }, [keyboardActionDispatcher, open]);
 
   return {
     open,
@@ -546,7 +549,7 @@ export function CommandCenter() {
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
-  const bottomSheetInputRef = useRef<React.ElementRef<typeof BottomSheetTextInput>>(null);
+  const bottomSheetInputRef = useRef<EditingTextInputHandle>(null);
   const scrollMetricsRef = useRef({ offset: 0, visibleLength: 0 });
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
@@ -710,7 +713,8 @@ export function CommandCenter() {
           <ThemedBottomSheetTextInput
             testID="command-center-input"
             ref={bottomSheetInputRef}
-            value={state.query}
+            initialValue={state.query}
+            variant="bottom-sheet"
             onChangeText={state.setQuery}
             onKeyPress={keyPress}
             onSubmitEditing={submit}
@@ -748,7 +752,7 @@ export function CommandCenter() {
               <ThemedTextInput
                 testID="command-center-input"
                 ref={state.inputRef}
-                value={state.query}
+                initialValue={state.query}
                 onChangeText={state.setQuery}
                 placeholder={
                   state.scope === "files"
@@ -866,14 +870,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   scopeChipLabel: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "500",
   },
   results: { flex: 1 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sectionDivider: {
@@ -901,14 +905,14 @@ const styles = StyleSheet.create((theme) => ({
   textContent: { flex: 1, minWidth: 0 },
   title: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 18,
     flexShrink: 1,
   },
-  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.sm, lineHeight: 20 },
+  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.base, lineHeight: 20 },
   fileName: { color: theme.colors.foreground },
   filePath: { color: theme.colors.foregroundMuted },
-  subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, lineHeight: 16 },
+  subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm, lineHeight: 16 },
   iconSlot: { width: 16, height: 20, alignItems: "center", justifyContent: "center" },
   rowShortcut: { flexShrink: 0 },
   breadcrumb: {
@@ -926,7 +930,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   breadcrumbGroup: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
     flexShrink: 0,
   },
@@ -935,7 +939,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[6],
     textAlign: "center",
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     paddingHorizontal: theme.spacing[4],
@@ -943,7 +947,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     color: theme.colors.statusDanger,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   sheetBackground: { backgroundColor: theme.colors.surface0 },
   sheetHandle: { backgroundColor: theme.colors.palette.zinc[600] },

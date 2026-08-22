@@ -7,6 +7,7 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "PASEO_SUPERVISED",
   ELECTRON_RUN_AS_NODE,
   "ELECTRON_NO_ATTACH_CONSOLE",
+  "ESBUILD_BINARY_PATH",
 ] as const;
 
 export type PaseoNodeEnv = "development" | "production" | "test";

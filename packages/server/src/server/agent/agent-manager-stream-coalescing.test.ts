@@ -438,7 +438,7 @@ describe("target coalesced behavior", () => {
       });
       session.setHistory([timelineEvent(toolCall({ status: "completed", output }))]);
 
-      await harness.manager.hydrateTimelineFromProvider(agentId);
+      await harness.manager.hydrateTimelineFromProvider(agentId, { force: true });
 
       expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
         expectedItem,
@@ -1209,7 +1209,7 @@ describe("target coalesced behavior", () => {
       const { agentId, session } = await createManagedSession(harness);
       session.setHistory([assistant("a1"), assistant("a2"), reasoning("r1"), reasoning("r2")]);
 
-      await harness.manager.hydrateTimelineFromProvider(agentId);
+      await harness.manager.hydrateTimelineFromProvider(agentId, { force: true });
 
       const rows = await harness.manager.getTimelineRows(agentId);
       expect(getTimelineItems(rows)).toEqual([

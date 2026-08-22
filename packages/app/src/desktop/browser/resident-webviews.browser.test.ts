@@ -5,7 +5,6 @@ import {
   clearResidentBrowserWebviewsForTests,
   ensureResidentBrowserWebview,
   getResidentBrowserWebview,
-  isResidentBrowserWebviewReady,
   prepareBrowserWebview,
   presentBrowserWebview,
   rememberBrowserWebviewSize,
@@ -203,28 +202,6 @@ describe("resident browser webviews", () => {
     expect(webview.style.top).toBe("-450px");
     expect(webview.parentElement.style.width).toBe("800px");
     expect(webview.parentElement.style.height).toBe("600px");
-  });
-
-  it("retains document readiness with the resident webview", () => {
-    const webview = ensureTestBrowser({
-      browserId: "browser-ready",
-      workspaceId: "workspace-ready",
-      url: "https://example.com",
-    });
-    if (!webview) {
-      throw new Error("Expected resident browser webview");
-    }
-
-    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
-    webview.dispatchEvent(new Event("dom-ready"));
-    releaseResidentBrowserWebview("browser-ready", webview);
-
-    const reusedWebview = takeResidentBrowserWebview("browser-ready");
-    expect(reusedWebview).toBe(webview);
-    expect(isResidentBrowserWebviewReady(reusedWebview as HTMLElement)).toBe(true);
-
-    webview.dispatchEvent(new Event("did-start-loading"));
-    expect(isResidentBrowserWebviewReady(webview)).toBe(false);
   });
 
   it("creates a resident webview for an agent-created unfocused tab", () => {

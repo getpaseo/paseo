@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
 import { SvgXml } from "react-native-svg";
@@ -16,6 +16,10 @@ import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
 const FLEX_ONE_STYLE = { flex: 1 } as const;
@@ -230,6 +234,8 @@ function RelayHeroBadge() {
 
 function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
   const { t } = useTranslation();
+  const inputRef = useRef<EditingTextInputHandle>(null);
+  useEffect(() => inputRef.current?.replaceText(props.offer.url), [props.offer.url]);
   return (
     <View style={styles.offer}>
       <Text style={styles.offerHint}>{t("pairing.device.hint")}</Text>
@@ -239,8 +245,9 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
       <View style={styles.linkRow}>
         <View style={styles.inputWrapper}>
           <TextInput
+            ref={inputRef}
             style={styles.linkInput}
-            value={props.offer.url}
+            initialValue={props.offer.url}
             readOnly
             selectTextOnFocus
             accessibilityLabel={t("pairing.link.label")}
@@ -280,7 +287,7 @@ function PairingQr({ svg, isError }: { svg: string | null; isError: boolean }) {
 const styles = StyleSheet.create((theme) => ({
   stateLine: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
     paddingVertical: theme.spacing[6],
   },
@@ -309,8 +316,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   consentDescription: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.5,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.5,
   },
   actions: {
     flexDirection: "row",
@@ -331,15 +338,15 @@ const styles = StyleSheet.create((theme) => ({
   directHint: {
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.5,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
   },
   offer: {
     gap: theme.spacing[4],
   },
   offerHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   qrTile: {
@@ -375,13 +382,13 @@ const styles = StyleSheet.create((theme) => ({
   linkInput: {
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     outlineStyle: "none",
   } as object,
   hint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
 }));

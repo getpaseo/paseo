@@ -34,10 +34,12 @@ export async function ensureLocalSpeechModels(options: {
   modelsDir: string;
   modelIds: LocalSpeechModelId[];
   logger: import("pino").Logger;
+  signal?: AbortSignal;
 }): Promise<Record<LocalSpeechModelId, string>> {
   return ensureSherpaOnnxModels({
     modelsDir: options.modelsDir,
     modelIds: options.modelIds,
     logger: options.logger,
+    signal: options.signal,
   });
 }
