@@ -17,7 +17,7 @@ import { SubagentsTrack } from "@/subagents/track";
 import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openSupportingTab } from "@/workspace-tabs/side-panel";
+import { openSupportingTab, toggleSupportingTab } from "@/workspace-tabs/side-panel";
 
 /**
  * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
@@ -96,7 +96,7 @@ export const AgentTracks = memo(function AgentTracks({
     if (!workspaceKey) {
       return;
     }
-    openSupportingTab({
+    toggleSupportingTab({
       isCompact,
       workspaceKey,
       target: { kind: "working_diff" },

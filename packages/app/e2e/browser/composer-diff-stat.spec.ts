@@ -2,6 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { openFilesPanel } from "../support/helpers/workspace-tabs";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -37,7 +38,7 @@ async function seedChangedAgent(repoPrefix: string) {
   }
 }
 
-test("composer diff stat opens Changes in the preferred Side panel", async ({ page }) => {
+test("composer diff stat toggles Changes in the preferred Side panel", async ({ page }) => {
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
@@ -58,6 +59,26 @@ test("composer diff stat opens Changes in the preferred Side panel", async ({ pa
       timeout: 30_000,
     });
     await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible({ timeout: 30_000 });
+
+    await test.step("switching from another Side panel view reveals Changes", async () => {
+      await openFilesPanel(page);
+      await expect(sidePanel.getByTestId("file-explorer-tree-scroll")).toBeVisible();
+
+      await pill.click();
+      await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible();
+    });
+
+    await test.step("clicking visible Changes hides the panel without closing its tab", async () => {
+      await pill.click();
+      await expect(sidePanel).toHaveCount(0);
+      await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(1);
+    });
+
+    await test.step("clicking again restores Changes", async () => {
+      await pill.click();
+      await expect(sidePanel.getByTestId("workspace-tab-working_diff")).toBeVisible();
+      await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible();
+    });
   } finally {
     await workspace.cleanup();
   }

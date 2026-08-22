@@ -1,4 +1,4 @@
-import { memo, useCallback, type ReactElement, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import {
@@ -11,6 +11,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
+import { isWeb } from "@/constants/platform";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { Theme } from "@/styles/theme";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -31,6 +32,7 @@ const TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMappin
 const FILES_TARGET: WorkspaceTabTarget = { kind: "files" };
 const CHANGES_TARGET: WorkspaceTabTarget = { kind: "working_diff" };
 const PULL_REQUEST_TARGET: WorkspaceTabTarget = { kind: "pull_request" };
+const LAUNCHER_ROW_DATA_SET = { emptyPaneLauncherRow: "true" };
 
 /** The launcher's own binding, or nothing when the action has no shortcut. */
 function LauncherShortcut({ actionId }: { actionId: string }): ReactElement | null {
@@ -38,8 +40,19 @@ function LauncherShortcut({ actionId }: { actionId: string }): ReactElement | nu
   return keys ? <Shortcut chord={keys} /> : null;
 }
 
-function getLauncherRowStyle({ pressed, hovered }: PressableStateCallbackType) {
-  return [styles.row, hovered && styles.rowHovered, pressed && styles.pressed];
+const LAUNCHER_ROW_SELECTOR = '[data-empty-pane-launcher-row="true"]';
+
+function getLauncherRowStyle({
+  pressed,
+  hovered = false,
+  focused = false,
+}: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) {
+  return [
+    styles.row,
+    (hovered || focused) && styles.rowHovered,
+    focused && styles.rowFocused,
+    pressed && styles.pressed,
+  ];
 }
 
 /**
@@ -62,6 +75,8 @@ function LauncherRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      dataSet={LAUNCHER_ROW_DATA_SET}
+      tabIndex={-1}
       onPress={onPress}
       style={getLauncherRowStyle}
     >
@@ -75,6 +90,8 @@ function LauncherRow({
 
 export interface WorkspacePaneEmptyStateProps {
   paneId: string;
+  /** Logical pane focus. On desktop, the launcher turns this into DOM focus. */
+  isFocused: boolean;
   /** Changes needs a Git workspace; the pull request needs one that has been detected. */
   showChanges: boolean;
   showPullRequest: boolean;
@@ -91,6 +108,7 @@ export interface WorkspacePaneEmptyStateProps {
 
 export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
   paneId,
+  isFocused,
   showChanges,
   showPullRequest,
   onOpenView,
@@ -99,6 +117,42 @@ export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
   onClosePane,
 }: WorkspacePaneEmptyStateProps): ReactElement {
   const { t } = useTranslation();
+  const containerRef = useRef<View | null>(null);
+
+  useEffect(() => {
+    if (!isWeb || !isFocused) return;
+    const container = containerRef.current;
+    if (!(container instanceof HTMLElement)) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(LAUNCHER_ROW_SELECTOR));
+      if (rows.length === 0) return;
+      const currentIndex = rows.findIndex((row) => row === document.activeElement);
+      let nextIndex: number | null = null;
+      if (event.key === "ArrowDown") {
+        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % rows.length;
+      }
+      if (event.key === "ArrowUp") {
+        nextIndex =
+          currentIndex < 0 ? rows.length - 1 : (currentIndex - 1 + rows.length) % rows.length;
+      }
+      if (nextIndex !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        rows[nextIndex]?.focus();
+        return;
+      }
+      if (event.key === "Enter" && currentIndex >= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        rows[currentIndex]?.click();
+      }
+    };
+
+    container.addEventListener("keydown", handleKeyDown);
+    container.querySelector<HTMLElement>(LAUNCHER_ROW_SELECTOR)?.focus({ preventScroll: true });
+    return () => container.removeEventListener("keydown", handleKeyDown);
+  }, [isFocused]);
 
   const openFiles = useCallback(
     () => onOpenView({ paneId, target: FILES_TARGET }),
@@ -119,7 +173,7 @@ export const WorkspacePaneEmptyState = memo(function WorkspacePaneEmptyState({
   );
 
   return (
-    <View style={styles.container} testID="workspace-pane-empty-state">
+    <View ref={containerRef} style={styles.container} testID="workspace-pane-empty-state">
       <View style={styles.rail}>
         <View style={styles.stack}>
           {showChanges ? (
@@ -196,10 +250,17 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 44,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: "transparent",
+    outlineWidth: 0,
+    outlineColor: "transparent",
     backgroundColor: theme.colors.surface2,
   },
   rowHovered: {
     backgroundColor: theme.colors.surface3,
+  },
+  rowFocused: {
+    borderColor: theme.colors.borderAccent,
   },
   pressed: {
     opacity: 0.85,

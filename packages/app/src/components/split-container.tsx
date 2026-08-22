@@ -135,6 +135,7 @@ interface SplitContainerProps {
   renderPaneEmptyState?: (input: {
     paneId: string;
     paneIsolated: boolean;
+    isFocused: boolean;
     onClosePane: () => void;
   }) => ReactNode;
   focusModeEnabled?: boolean;
@@ -1289,6 +1290,7 @@ function SplitPaneView({
             : (renderPaneEmptyState?.({
                 paneId,
                 paneIsolated,
+                isFocused: isFocused && isWorkspaceFocused,
                 onClosePane: handleClosePane,
               }) ?? null)}
           <SplitDropZone paneId={pane.id} active={showDropZones} preview={dropPreview} />

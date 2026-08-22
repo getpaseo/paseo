@@ -31,6 +31,7 @@ import {
   openSupportingTab,
   showSidePanel,
   toggleSidePanel,
+  toggleSupportingTab,
 } from "@/workspace-tabs/side-panel";
 
 const WORKSPACE_KEY = "server-1:ws-main";
@@ -204,6 +205,27 @@ describe("non-compact with splits", () => {
 
     expect(isSidePanelOpen(wide)).toBe(false);
     expect(tabKinds()).toEqual(["files"]);
+  });
+
+  it("toggles the visible supporting target without closing its tab", () => {
+    const changes = {
+      ...wide,
+      target: { kind: "working_diff" } as const,
+      openInSidePanelByDefault: true,
+    };
+    const tabId = toggleSupportingTab(changes);
+    openSidePanelView({ ...wide, view: "files" });
+
+    toggleSupportingTab(changes);
+    expect(isSidePanelOpen(wide)).toBe(true);
+    expect(focusedPaneTabKinds()).toContain("working_diff");
+
+    toggleSupportingTab(changes);
+    expect(isSidePanelOpen(wide)).toBe(false);
+    expect(tabKinds()).toContain("working_diff");
+
+    expect(toggleSupportingTab(changes)).toBe(tabId);
+    expect(isSidePanelOpen(wide)).toBe(true);
   });
 });
 

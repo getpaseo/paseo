@@ -14,6 +14,7 @@ import {
   type WorkspaceTabPlacement,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 
 /**
  * The side panel is the companion surface beside the user's work — Changes, Files,
@@ -62,6 +63,20 @@ function canUseSidePanelPane(input: SidePanelQuery): boolean {
   return !input.isCompact && (input.supportsPaneSplits ?? supportsDesktopPaneSplits());
 }
 
+function isTargetVisibleInSidePanel(
+  state: LayoutState,
+  workspaceKey: string,
+  target: WorkspaceTabTarget,
+): boolean {
+  if (!selectIsSidePanelVisible(state, workspaceKey)) return false;
+  const layout = state.layoutByWorkspace[workspaceKey];
+  const paneId = selectSidePanelPaneId(state, workspaceKey);
+  const focusedTabId = layout && paneId ? findPaneById(layout.root, paneId)?.focusedTabId : null;
+  if (!layout || !focusedTabId) return false;
+  const focusedTab = collectAllTabs(layout.root).find((tab) => tab.tabId === focusedTabId);
+  return Boolean(focusedTab && workspaceTabTargetsEqual(focusedTab.target, target));
+}
+
 // ─── Side panel tabs (non-compact, no splits) ──────────────────────────────
 
 /**
@@ -92,6 +107,11 @@ export interface OpenSupportingTabInput extends SidePanelQuery {
   background?: boolean;
 }
 
+export interface ToggleSupportingTabInput extends SidePanelQuery {
+  target: WorkspaceTabTarget;
+  openInSidePanelByDefault: boolean;
+}
+
 /**
  * Opens a tab the user did not place themselves — an agent's file link, a detected
  * pull request, workspace setup progress. A supporting tab that is already open is
@@ -120,6 +140,52 @@ export function openSupportingTab(input: OpenSupportingTabInput): string | null 
     intent: "reveal",
     placement,
     parentTabId: input.parentTabId ?? undefined,
+  });
+}
+
+/** Toggle a supporting target when it is the visible Side panel tab; otherwise reveal it. */
+export function toggleSupportingTab(input: ToggleSupportingTabInput): string | null {
+  if (!input.workspaceKey) return null;
+  const store = useWorkspaceLayoutStore.getState();
+  if (
+    input.openInSidePanelByDefault &&
+    canUseSidePanelPane(input) &&
+    isTargetVisibleInSidePanel(store, input.workspaceKey, input.target)
+  ) {
+    store.hideSidePanel(input.workspaceKey);
+    return null;
+  }
+  return openSupportingTab(input);
+}
+
+/** Explicitly place a companion tab in the Side panel, moving an existing tab there. */
+export function openTabInSidePanel(
+  input: SidePanelInput & { target: WorkspaceTabTarget },
+): string | null {
+  if (!input.workspaceKey) {
+    return null;
+  }
+
+  if (input.isCompact) {
+    const view = Object.entries(SIDE_PANEL_VIEW_TARGETS).find(
+      ([, target]) => target.kind === input.target.kind,
+    )?.[0] as ExplorerTab | undefined;
+    if (!view || !input.checkout) {
+      return null;
+    }
+    const panel = usePanelStore.getState();
+    panel.setExplorerTabForCheckout({ ...input.checkout, tab: view });
+    panel.openCompactFileExplorer(input.checkout);
+    return null;
+  }
+
+  const store = useWorkspaceLayoutStore.getState();
+  const paneId = canUseSidePanelPane(input) ? store.showSidePanel(input.workspaceKey) : undefined;
+  return store.openTab({
+    workspaceKey: input.workspaceKey,
+    target: input.target,
+    intent: "reveal",
+    placement: paneId ? { mode: "pane", paneId } : undefined,
   });
 }
 

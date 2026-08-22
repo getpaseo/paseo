@@ -85,7 +85,9 @@ supporting tabs land in the focused pane instead. Mobile ignores it. Explicit ac
 — the header toggle, a pane's `+` menu, the empty-state launcher — are never subject
 to it. The Changes keyboard shortcut and the diff-stat pill above an agent composer are
 supporting opens: they follow the preference and focus an existing Changes tab wherever
-the user left it.
+the user left it. When Changes is already visible in the Side panel, the diff-stat pill
+hides the panel without closing the tab. A different visible Side panel tab switches to
+Changes instead.
 
 ## The name
 
