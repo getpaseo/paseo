@@ -411,3 +411,98 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     }
   });
 });
+
+describe("DictationStreamManager (size limits)", () => {
+  const previousEnv = {
+    debug: process.env.PASEO_DICTATION_DEBUG,
+    hardSegment: process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES,
+    maxChunk: process.env.PASEO_DICTATION_MAX_CHUNK_BYTES,
+  };
+
+  beforeEach(() => {
+    process.env.PASEO_DICTATION_DEBUG = "false";
+  });
+
+  afterEach(() => {
+    process.env.PASEO_DICTATION_DEBUG = previousEnv.debug;
+    process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES = previousEnv.hardSegment;
+    process.env.PASEO_DICTATION_MAX_CHUNK_BYTES = previousEnv.maxChunk;
+  });
+
+  it("fails the stream and drops audio when a single chunk exceeds the byte limit", async () => {
+    process.env.PASEO_DICTATION_MAX_CHUNK_BYTES = "1024";
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 15,
+    });
+
+    await manager.handleStart("d-big", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-big",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 20000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    await tick();
+
+    expect(session.appended).toHaveLength(0);
+    const error = emitted.find((msg) => msg.type === "dictation_stream_error");
+    expect(error).toBeDefined();
+    expect((error?.payload as { error?: string } | undefined)?.error).toContain(
+      "exceeds the 1024-byte limit",
+    );
+  });
+
+  it("forces a segment commit once uncommitted audio crosses the hard cap even with auto-commit disabled", async () => {
+    process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES = "480";
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 0,
+    });
+
+    await manager.handleStart("d-cap", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-cap",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 1000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    expect(session.appended).toHaveLength(1);
+    expect(session.commitCalls).toBe(1);
+    expect(session.clearCalls).toBe(0);
+  });
+
+  it("clears instead of committing silent audio that reaches the hard cap", async () => {
+    process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES = "480";
+    const session = new FakeRealtimeSession();
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: () => {},
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 0,
+    });
+
+    await manager.handleStart("d-quiet", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-quiet",
+      seq: 0,
+      audioBase64: buildPcmBase64(10, 1000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+
+    expect(session.appended).toHaveLength(1);
+    expect(session.clearCalls).toBe(1);
+    expect(session.commitCalls).toBe(0);
+  });
+});

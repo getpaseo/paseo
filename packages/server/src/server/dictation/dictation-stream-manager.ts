@@ -26,6 +26,8 @@ const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
   process.env.PASEO_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10,
 );
+const DEFAULT_DICTATION_MAX_CHUNK_BYTES = 512 * 1024;
+const DEFAULT_DICTATION_HARD_SEGMENT_BYTES = 60 * 2 * 16000;
 
 function parseNonNegativeNumber(value: string | undefined): number | null {
   if (value === undefined) {
@@ -133,6 +135,8 @@ export class DictationStreamManager {
   private readonly language: string;
   private readonly finalTimeoutMs: number;
   private readonly autoCommitSeconds: number;
+  private readonly maxChunkBytes: number;
+  private readonly hardSegmentBytes: number;
   private readonly streams = new Map<string, DictationStreamState>();
 
   constructor(params: {
@@ -154,6 +158,12 @@ export class DictationStreamManager {
       params.autoCommitSeconds ??
       parseNonNegativeNumber(process.env.PASEO_DICTATION_AUTO_COMMIT_SECONDS) ??
       DEFAULT_DICTATION_AUTO_COMMIT_SECONDS;
+    this.maxChunkBytes =
+      parseNonNegativeNumber(process.env.PASEO_DICTATION_MAX_CHUNK_BYTES) ??
+      DEFAULT_DICTATION_MAX_CHUNK_BYTES;
+    this.hardSegmentBytes =
+      parseNonNegativeNumber(process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES) ??
+      DEFAULT_DICTATION_HARD_SEGMENT_BYTES;
   }
 
   public cleanupAll(): void {
@@ -346,7 +356,16 @@ export class DictationStreamManager {
     }
 
     if (!state.receivedChunks.has(params.seq)) {
-      state.receivedChunks.set(params.seq, Buffer.from(params.audioBase64, "base64"));
+      const decoded = Buffer.from(params.audioBase64, "base64");
+      if (decoded.length > this.maxChunkBytes) {
+        void this.failAndCleanupDictationStream(
+          params.dictationId,
+          `Dictation chunk of ${decoded.length} bytes exceeds the ${this.maxChunkBytes}-byte limit`,
+          true,
+        );
+        return;
+      }
+      state.receivedChunks.set(params.seq, decoded);
     }
 
     while (state.receivedChunks.has(state.nextSeqToForward)) {
@@ -612,7 +631,10 @@ export class DictationStreamManager {
     if (state.finishRequested) {
       return;
     }
-    if (state.autoCommitBytes <= 0 || state.bytesSinceCommit < state.autoCommitBytes) {
+    const autoCommitReached =
+      state.autoCommitBytes > 0 && state.bytesSinceCommit >= state.autoCommitBytes;
+    const hardCapReached = state.bytesSinceCommit >= this.hardSegmentBytes;
+    if (!autoCommitReached && !hardCapReached) {
       return;
     }
     if (state.peakSinceCommit < DICTATION_SILENCE_PEAK_THRESHOLD) {
