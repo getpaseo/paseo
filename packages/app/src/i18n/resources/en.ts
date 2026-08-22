@@ -2409,10 +2409,9 @@ export const en = {
         featuresLabel: "Features",
         featureCount: "{{count}} features",
         featureCountOne: "{{count}} feature",
-        notesLabel: "Notes for agents",
+        notesLabel: "When to use",
         notesPlaceholder: "Use for UI work — components, layout and design tokens.",
-        notesHint:
-          "Returned by the list_profiles MCP tool. Write it as an instruction to another agent.",
+        notesHint: "Helps agents choose this profile when starting another agent.",
         save: "Save",
         saving: "Saving...",
         remove: "Remove",

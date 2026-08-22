@@ -45,7 +45,7 @@ export function Field({ label, children, hint, error, testID }: FieldProps) {
     }
     if (hint) {
       return (
-        <Text numberOfLines={1} style={styles.hintText} testID={hintTestID}>
+        <Text style={styles.hintText} testID={hintTestID}>
           {hint}
         </Text>
       );

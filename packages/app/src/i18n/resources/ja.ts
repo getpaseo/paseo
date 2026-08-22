@@ -2365,10 +2365,9 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
-        notesLabel: "エージェントへのメモ",
+        notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
-        notesHint:
-          "list_profiles MCPツールによって返されます。他のエージェントへの指示として記述してください。",
+        notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
         save: "保存",
         saving: "保存中...",
         remove: "削除",

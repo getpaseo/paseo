@@ -2386,10 +2386,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
-        notesLabel: "Заметки для агентов",
+        notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
-        notesHint:
-          "MCP-инструмент «list_profiles» возвращает эти заметки. Сформулируйте их как инструкцию для другого агента.",
+        notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",
         save: "Сохранить",
         saving: "Сохранение...",
         remove: "Удалить",
