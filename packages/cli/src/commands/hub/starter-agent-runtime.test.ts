@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   availableStarterAgentProviders,
   selectedStarterAgentRuntime,
+  starterAgentProviderSnapshotState,
   suggestedStarterAgentChoice,
 } from "./starter-agent-runtime.js";
 
@@ -30,7 +31,6 @@ describe("starter agent runtime choices", () => {
         {
           id: "codex",
           label: "Codex",
-          suggested: true,
           models: [
             { id: "gpt-5", label: "GPT-5", suggested: true },
             { id: "gpt-5-mini", label: "GPT-5 mini", suggested: false },
@@ -59,7 +59,6 @@ describe("starter agent runtime choices", () => {
         {
           id: "claude",
           label: "Claude",
-          suggested: false,
           models: [{ id: "sonnet", label: "Sonnet", suggested: true }],
           modes: [{ id: "auto", label: "Auto", suggested: false }],
         },
@@ -81,7 +80,6 @@ describe("starter agent runtime choices", () => {
         {
           id: "claude",
           label: "claude",
-          suggested: false,
           models: [{ id: "sonnet", label: "Sonnet", suggested: true }],
           modes: [{ id: "auto", label: "Auto", suggested: false }],
         },
@@ -117,5 +115,17 @@ describe("starter agent runtime choices", () => {
       model: "default",
     });
     expect(suggestedStarterAgentChoice(provider!.modes)).toBeUndefined();
+  });
+
+  it("distinguishes discovery in progress from a terminally unusable snapshot", () => {
+    expect(starterAgentProviderSnapshotState([])).toEqual({ kind: "loading" });
+    expect(
+      starterAgentProviderSnapshotState([{ provider: "claude", status: "loading", enabled: true }]),
+    ).toEqual({ kind: "loading" });
+    expect(
+      starterAgentProviderSnapshotState([
+        { provider: "claude", status: "unavailable", enabled: true },
+      ]),
+    ).toEqual({ kind: "unavailable" });
   });
 });

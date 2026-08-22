@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "vitest";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { HubCredentialStore, StoredHubCredential } from "./credentials.js";
 import type { HubDaemonClient, HubStatus } from "./daemon-client.js";
 import type { HubHttpClient } from "./hub-client/index.js";
@@ -24,11 +25,7 @@ describe("Hub guided setup continuation", () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers(
-      [true, true],
-      ["codex", "gpt-5", "full-access", "slack"],
-      ["U123"],
-    );
+    const prompts = new PromptAnswers([true, true], ["codex", "gpt-5", "full-access"], ["U123"]);
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
     const environment = setupEnvironment(cwd, credentials, daemon, prompts, calls);
 
@@ -46,24 +43,22 @@ describe("Hub guided setup continuation", () => {
     );
 
     assert.deepEqual(prompts.confirmations, [
-      "Connect this daemon to https://hub.test?",
+      "Connect this daemon to this Hub?",
       "Initialize and deploy a starter workflow?",
     ]);
     assert.deepEqual(prompts.selections, [
       "Starter agent provider",
       "Starter agent model",
       "Starter agent mode",
-      "Trigger provider",
     ]);
     assert.deepEqual(prompts.selectionOptions, [
-      ["Codex (suggested)"],
+      ["Codex"],
       ["GPT-5 (suggested)", "GPT-5 mini"],
       ["Read only", "Full access (suggested)"],
-      [
-        "GitHub (issue or pull request comment)",
-        "Slack (channel mention)",
-        "Discord (channel mention)",
-      ],
+    ]);
+    assert.deepEqual(prompts.messages, [
+      "Hub app connections ready for this workflow:\nSlack — Paseo\n\nOnly configured connections are shown. To add another, open Hub → Apps, then run `paseo hub init` again.",
+      "Using Slack — Paseo",
     ]);
     assert.deepEqual(calls, [
       { operation: "token", origin: "https://hub.test" },
@@ -111,6 +106,36 @@ describe("Hub guided setup continuation", () => {
     assert.deepEqual(initDeclined.messages, ["Skipped starter workflow. Run: paseo hub init"]);
   });
 
+  it("keeps login successful when no Hub app connection can initialize a workflow", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    const daemon = new SetupDaemon();
+    const prompts = new PromptAnswers([true, true], [], []);
+
+    await runHubLogin(
+      "https://hub.test",
+      {},
+      {
+        env: {},
+        credentials,
+        flow: { authorize: async () => "paseo_cli_prefix_durable-secret" },
+        isInteractive: () => true,
+        continueGuidedSetup: (origin) =>
+          continueHubGuidedSetup(
+            origin,
+            setupEnvironment(cwd, credentials, daemon, prompts, [], {
+              setupResources: { github: [], slack: [], discord: [] },
+            }),
+          ),
+        reporter: { progress() {} },
+      },
+    );
+
+    assert.deepEqual(prompts.messages, [
+      "No Hub app connection is ready for this workflow.\nConnect GitHub, Slack, or Discord in Hub → Apps, then run `paseo hub init` again.",
+    ]);
+  });
+
   it("keeps hub init's existing replacement confirmation", async () => {
     const cwd = await temporaryDirectory();
     await mkdir(path.join(cwd, ".paseo"));
@@ -140,7 +165,7 @@ describe("Hub guided setup continuation", () => {
       },
     ]);
 
-    const prompts = new PromptAnswers([true], ["claude", "sonnet", "auto", "slack"], ["U123"]);
+    const prompts = new PromptAnswers([true], ["claude", "sonnet", "auto"], ["U123"]);
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
 
     await runHubGuidedSetup(setupEnvironment(cwd, credentials, daemon, prompts, calls), {
@@ -162,6 +187,52 @@ describe("Hub guided setup continuation", () => {
       ["validate", "install"],
     );
   });
+
+  it("stops before runtime discovery and file writes when no Hub app connection is usable", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const daemon = new SetupDaemon();
+    const prompts = new PromptAnswers([], [], []);
+
+    await assert.rejects(
+      runHubGuidedSetup(
+        setupEnvironment(cwd, credentials, daemon, prompts, [], {
+          setupResources: { github: [], slack: [], discord: [] },
+        }),
+        { origin: "https://hub.test", daemonId: "daemon-1", deploy: true },
+      ),
+      /No Hub app connection is ready for this workflow/u,
+    );
+
+    assert.equal(daemon.snapshotCwds.length, 0);
+    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml")), { code: "ENOENT" });
+  });
+
+  it("waits for fresh-daemon provider discovery before offering runtime choices", async () => {
+    const cwd = await temporaryDirectory();
+    const credentials = new MemoryCredentials();
+    credentials.save({ origin: "https://hub.test", credential: "secret" });
+    const ready = new SetupDaemon().providerEntries;
+    const daemon = new SetupDaemon(ready, [
+      [{ provider: "codex", status: "loading", enabled: true }],
+      ready,
+    ]);
+    const prompts = new PromptAnswers([], ["codex", "gpt-5", "full-access"], ["U123"]);
+
+    await runHubGuidedSetup(setupEnvironment(cwd, credentials, daemon, prompts, []), {
+      origin: "https://hub.test",
+      daemonId: "daemon-1",
+      deploy: true,
+    });
+
+    assert.equal(daemon.snapshotCwds.length, 2);
+    assert.deepEqual(prompts.selections.slice(0, 3), [
+      "Starter agent provider",
+      "Starter agent model",
+      "Starter agent mode",
+    ]);
+  });
 });
 
 function setupEnvironment(
@@ -170,6 +241,9 @@ function setupEnvironment(
   daemon: SetupDaemon,
   prompts: PromptAnswers,
   calls: Array<{ operation: string; origin: string; files?: readonly string[] }>,
+  options: {
+    setupResources?: Awaited<ReturnType<HubHttpClient["listSetupResources"]>>;
+  } = {},
 ): HubGuidedSetupEnvironment {
   const hub = {
     async issueEnrollmentToken(origin: string) {
@@ -182,11 +256,13 @@ function setupEnvironment(
     },
     async listSetupResources(origin: string) {
       calls.push({ operation: "setup", origin });
-      return {
-        github: [],
-        discord: [],
-        slack: [{ teamId: "T123", teamName: "Paseo" }],
-      };
+      return (
+        options.setupResources ?? {
+          github: [],
+          discord: [],
+          slack: [{ teamId: "T123", teamName: "Paseo" }],
+        }
+      );
     },
     async listConfigurationResources(origin: string) {
       calls.push({ operation: "resources", origin });
@@ -294,7 +370,7 @@ class SetupDaemon implements HubDaemonClient {
   private origin: string | null = null;
 
   constructor(
-    private readonly providerEntries = [
+    readonly providerEntries: readonly ProviderSnapshotEntry[] = [
       {
         provider: "codex",
         status: "ready" as const,
@@ -311,6 +387,7 @@ class SetupDaemon implements HubDaemonClient {
         defaultModeId: "full-access",
       },
     ],
+    private readonly providerEntrySequence?: readonly (readonly ProviderSnapshotEntry[])[],
   ) {}
 
   async connectHub(origin: string) {
@@ -325,7 +402,11 @@ class SetupDaemon implements HubDaemonClient {
 
   async getProvidersSnapshot(options?: { cwd?: string }) {
     this.snapshotCwds.push(options?.cwd);
-    return { entries: this.providerEntries };
+    const index = Math.min(
+      this.snapshotCwds.length - 1,
+      (this.providerEntrySequence?.length ?? 1) - 1,
+    );
+    return { entries: this.providerEntrySequence?.[index] ?? this.providerEntries };
   }
 
   async disconnectHub() {

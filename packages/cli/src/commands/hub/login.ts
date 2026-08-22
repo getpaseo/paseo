@@ -42,6 +42,7 @@ export async function runHubLogin(
   reportHubProgress(dependencies.reporter, options, `Logging in to ${origin}`);
   const credential = await dependencies.flow.authorize(origin);
   dependencies.credentials.save({ origin, credential });
+  reportHubProgress(dependencies.reporter, options, "Logged in");
   if (
     !options.json &&
     dependencies.isInteractive?.() &&
