@@ -610,7 +610,7 @@ export const ru: TranslationResources = {
         files: "Файлы",
         pullRequest: "PR",
         terminalProfilesMenu: "Профили терминала",
-        editTerminalProfiles: "Изменить профили…",
+        editTerminalProfiles: "Изменить профили",
       },
       sidePanel: {
         open: "Открыть боковую панель",

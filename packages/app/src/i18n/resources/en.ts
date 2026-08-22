@@ -603,7 +603,7 @@ export const en = {
         files: "Files",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "Open side panel",

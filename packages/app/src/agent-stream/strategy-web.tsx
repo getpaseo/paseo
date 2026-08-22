@@ -15,7 +15,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
-import { estimateStreamItemHeight } from "./web-virtualization";
+import {
+  estimateStreamItemHeight,
+  shouldAdjustScrollForVirtualRowResize,
+} from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
 import {
@@ -370,14 +373,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     overscan: 8,
   });
   useEffect(() => {
-    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
-      if (historyStartPrependAnchorActiveRef.current) {
-        return false;
-      }
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
-      return remainingDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
+      return shouldAdjustScrollForVirtualRowResize({
+        isHistoryStartPrependActive: historyStartPrependAnchorActiveRef.current,
+        rowStart: item.start,
+        scrollOffset,
+        remainingDistanceFromBottom: remainingDistance,
+        bottomThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+      });
     };
     return () => {
       rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
