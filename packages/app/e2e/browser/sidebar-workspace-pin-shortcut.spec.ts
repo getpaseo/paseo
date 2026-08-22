@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { openNewWorkspaceComposer } from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
@@ -142,6 +143,24 @@ async function installPinRpcGate(
 }
 
 test.describe("Pin workspace shortcut", () => {
+  test("keeps project creation reachable after pinning its only workspace", async ({ page }) => {
+    const workspace = await seedWorkspace({
+      repoPrefix: "pin-project-creation-",
+      title: "Pinned workspace",
+    });
+
+    try {
+      await gotoAppShell(page);
+      await openWorkspace(page, workspace.workspaceId);
+      await page.keyboard.press(PIN_SHORTCUT);
+      await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+
+      await openNewWorkspaceComposer(page, workspace);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("pins the active workspace while its project section is collapsed", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "pin-shortcut-collapsed-" });
 
