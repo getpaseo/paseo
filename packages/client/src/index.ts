@@ -5,6 +5,7 @@ import type {
   FetchWorkspacesResponseMessage,
   GetProvidersSnapshotResponseMessage,
   ListAvailableProvidersResponse,
+  ListCommandsResponse,
   ListProviderFeaturesRequestMessage,
   ListProviderFeaturesResponseMessage,
   ListProviderModelsResponseMessage,
@@ -225,6 +226,12 @@ export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
 
 export type PaseoAgentRunResult = WaitForFinishResult;
 
+export interface PaseoAgentCommandsOptions {
+  requestId?: string;
+}
+
+export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
+
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
@@ -258,6 +265,14 @@ export interface PaseoAgentHandle {
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
   waitForFinish(timeoutMs?: number): Promise<PaseoAgentRunResult>;
+  /**
+   * Asks the running session for the slash commands and skills it actually
+   * loaded. Providers answer from the live session, so this sees built-in and
+   * bundled entries that no directory scan can find. The payload carries its own
+   * `error` string; a provider that cannot answer reports it there rather than
+   * rejecting.
+   */
+  commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
@@ -613,6 +628,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         }
         return result;
       },
+      commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
         if (current) {

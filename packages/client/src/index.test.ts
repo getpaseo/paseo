@@ -689,6 +689,54 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await client.close();
 });
 
+test("agent handles list the session's own commands through the existing daemon RPC", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  const commandsPromise = agent.commands({ requestId: "agent-commands-request" });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "list_commands_request",
+    agentId: "agent_sdk",
+    requestId: "agent-commands-request",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "list_commands_response",
+      payload: {
+        requestId: "agent-commands-request",
+        agentId: "agent_sdk",
+        commands: [
+          {
+            name: "brainstorming",
+            description: "Turn an idea into a design",
+            argumentHint: "[topic]",
+            kind: "skill",
+          },
+          {
+            name: "usage",
+            description: "Show usage",
+            argumentHint: "",
+            kind: "command",
+          },
+        ],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(commandsPromise).resolves.toMatchObject({
+    agentId: "agent_sdk",
+    error: null,
+    commands: [
+      { name: "brainstorming", kind: "skill" },
+      { name: "usage", kind: "command" },
+    ],
+  });
+  await client.close();
+});
+
 test("provider actions delegate to existing provider RPCs and local snapshot updates", async () => {
   const { client, ws } = await connectClient();
 

@@ -140,6 +140,19 @@ const assessment = JSON.parse(result.lastMessage) as {
 
 Validate the parsed value in your application before using it as trusted input.
 
+## List the commands a session loaded
+
+```ts
+const { commands, error } = await agent.commands();
+if (error) throw new Error(error);
+
+const skills = commands.filter((command) => command.kind === "skill");
+```
+
+The answer comes from the running session, not from a directory scan, so it includes commands and skills built into the provider that never appear on disk. `kind` is the provider's own classification and is optional; treat a missing `kind` as unclassified rather than assuming `"command"`.
+
+A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
+
 ## Archive or detach
 
 ```ts
