@@ -356,15 +356,17 @@ export class DictationStreamManager {
     }
 
     if (!state.receivedChunks.has(params.seq)) {
-      const decoded = Buffer.from(params.audioBase64, "base64");
-      if (decoded.length > this.maxChunkBytes) {
+      const maxEncodedLength = Math.ceil(this.maxChunkBytes / 3) * 4;
+      if (params.audioBase64.length > maxEncodedLength) {
+        const approxBytes = Math.floor((params.audioBase64.length * 3) / 4);
         void this.failAndCleanupDictationStream(
           params.dictationId,
-          `Dictation chunk of ${decoded.length} bytes exceeds the ${this.maxChunkBytes}-byte limit`,
+          `Dictation chunk of ~${approxBytes} bytes exceeds the ${this.maxChunkBytes}-byte limit`,
           true,
         );
         return;
       }
+      const decoded = Buffer.from(params.audioBase64, "base64");
       state.receivedChunks.set(params.seq, decoded);
     }
 
