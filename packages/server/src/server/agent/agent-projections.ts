@@ -66,8 +66,10 @@ export function toStoredAgentRecord(
 ): StoredAgentRecord {
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
   const config = buildSerializableConfig(agent.config);
-  const persistence = sanitizePersistenceHandle(agent.persistence);
-  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
+  // Stored records are private resume state. Public status projections apply
+  // redaction separately without removing credentials required for resumption.
+  const persistence = sanitizePersistenceHandle(agent.persistence, false);
+  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo, false);
 
   return {
     id: agent.id,
@@ -323,13 +325,13 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
   if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
-    const featureValues = sanitizeMetadata(config.featureValues);
+    const featureValues = sanitizeMetadata(config.featureValues, false);
     if (featureValues !== undefined) {
       serializable.featureValues = featureValues;
     }
   }
   if (config.providerOptions !== undefined) {
-    const providerOptions = sanitizeOptionalJson(config.providerOptions);
+    const providerOptions = sanitizeOptionalJson(config.providerOptions, undefined, false);
     if (providerOptions && isJsonObject(providerOptions)) {
       serializable.providerOptions = providerOptions;
     }
@@ -363,6 +365,7 @@ function sanitizePendingPermissions(
 
 function sanitizePersistenceHandle(
   handle: AgentPersistenceHandle | null,
+  redactSensitive = true,
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
@@ -374,7 +377,7 @@ function sanitizePersistenceHandle(
   if (handle.nativeHandle !== undefined) {
     sanitized.nativeHandle = handle.nativeHandle;
   }
-  const metadata = sanitizeMetadata(handle.metadata);
+  const metadata = sanitizeMetadata(handle.metadata, redactSensitive);
   if (metadata !== undefined) {
     sanitized.metadata = metadata;
   }
@@ -415,8 +418,12 @@ const SENSITIVE_METADATA_KEYS = new Set([
   "x-api-key",
 ]);
 
-function sanitizeOptionalJson(value: unknown, key?: string): JsonValue | undefined {
-  if (key && SENSITIVE_METADATA_KEYS.has(key.toLowerCase())) {
+function sanitizeOptionalJson(
+  value: unknown,
+  key?: string,
+  redactSensitive = true,
+): JsonValue | undefined {
+  if (redactSensitive && key && SENSITIVE_METADATA_KEYS.has(key.toLowerCase())) {
     return "[REDACTED]";
   }
   if (value === undefined) {
@@ -427,7 +434,7 @@ function sanitizeOptionalJson(value: unknown, key?: string): JsonValue | undefin
   }
   if (Array.isArray(value)) {
     const sanitized = value
-      .map((item) => sanitizeOptionalJson(item))
+      .map((item) => sanitizeOptionalJson(item, undefined, redactSensitive))
       .filter((item) => item !== undefined);
     return sanitized;
   }
@@ -437,7 +444,7 @@ function sanitizeOptionalJson(value: unknown, key?: string): JsonValue | undefin
   if (typeof value === "object") {
     const result: { [key: string]: JsonValue } = {};
     for (const [entryKey, val] of Object.entries(value)) {
-      const sanitized = sanitizeOptionalJson(val, entryKey);
+      const sanitized = sanitizeOptionalJson(val, entryKey, redactSensitive);
       if (sanitized !== undefined) {
         result[entryKey] = sanitized;
       }
@@ -454,8 +461,8 @@ function isJsonObject(value: JsonValue): value is { [key: string]: JsonValue } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sanitizeMetadata(value: unknown): AgentMetadata | undefined {
-  const sanitized = sanitizeOptionalJson(value);
+function sanitizeMetadata(value: unknown, redactSensitive = true): AgentMetadata | undefined {
+  const sanitized = sanitizeOptionalJson(value, undefined, redactSensitive);
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
@@ -511,6 +518,7 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
 
 function sanitizeRuntimeInfo(
   runtimeInfo: AgentRuntimeInfo | undefined,
+  redactSensitive = true,
 ): AgentRuntimeInfo | undefined {
   if (!runtimeInfo) {
     return undefined;
@@ -528,7 +536,7 @@ function sanitizeRuntimeInfo(
   if (runtimeInfo.modeId !== undefined) {
     sanitized.modeId = runtimeInfo.modeId;
   }
-  const extra = sanitizeMetadata(runtimeInfo.extra);
+  const extra = sanitizeMetadata(runtimeInfo.extra, redactSensitive);
   if (extra !== undefined) {
     sanitized.extra = extra;
   }

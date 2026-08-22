@@ -232,6 +232,12 @@ describe("toAgentPayload", () => {
       provider: "claude",
       sessionId: "persist-sensitive",
       metadata: {
+        transport: {
+          headers: {
+            Authorization: authorization,
+            "X-Non-Secret": "preserved",
+          },
+        },
         mcpServers: {
           paseo: {
             type: "http",
@@ -253,8 +259,9 @@ describe("toAgentPayload", () => {
     const storedPayload = buildStoredAgentPayload(storedRecord, ["claude"]);
 
     for (const payload of [livePayload, storedPayload]) {
-      const headers = payload.persistence?.metadata?.mcpServers?.paseo?.headers;
+      const headers = payload.persistence?.metadata?.transport?.headers;
       expect(JSON.stringify(payload)).not.toContain(authorization);
+      expect(payload.persistence?.metadata?.mcpServers).toBeUndefined();
       expect(headers).toEqual({
         Authorization: "[REDACTED]",
         "X-Non-Secret": "preserved",
