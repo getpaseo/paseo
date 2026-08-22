@@ -459,6 +459,7 @@ describe("workspace-layout-store actions", () => {
     const fileState: FileState = { treeVisible: true, treeWidth: 240 };
     store.setTabState(workspaceKey, file, fileState);
     const sameKind = store.replaceTab(workspaceKey, file, { kind: "file", path: "/repo/b.ts" });
+    expect(sameKind).toBe(file);
     expect(
       collectAllTabs(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root).find(
         (tab) => tab.tabId === sameKind,
@@ -554,11 +555,9 @@ describe("workspace-layout-store actions", () => {
       { kind: "file", path: "/repo/b.ts" },
       { ...defaultFileState, treeVisible: true, treeWidth: 300 },
     );
-    expect(replacement).not.toBe(file);
+    expect(replacement).toBe(file);
     const replacedLayout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-    expect(replacedLayout.parentTabIdByTabId?.[file]).toBeUndefined();
-    expect(replacedLayout.parentTabIdByTabId?.[replacement as string]).toBe(parent);
-    expect(Object.entries(replacedLayout.parentTabIdByTabId ?? {}).flat()).not.toContain(file);
+    expect(replacedLayout.parentTabIdByTabId?.[file]).toBe(parent);
 
     store.closeTab(workspaceKey, replacement as string);
     expect(

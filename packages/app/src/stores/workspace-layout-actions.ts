@@ -1582,7 +1582,12 @@ export function replaceTabTargetInLayout(
     };
   }
   let tabId = input.createTabId();
-  if (currentTab?.target.kind === "draft") {
+  // File navigation is a retarget of one File tab, not a new panel instance. Keeping its
+  // identity preserves the mounted tab track and the File tab's local presentation state.
+  if (
+    currentTab?.target.kind === "draft" ||
+    (currentTab?.target.kind === "file" && input.target.kind === "file")
+  ) {
     tabId = input.tabId;
   } else if (input.target.kind === "draft") {
     tabId = buildDeterministicWorkspaceTabId(input.target);
