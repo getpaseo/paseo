@@ -38,6 +38,24 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("shows the end of thinking as its folded summary", () => {
+    const display = buildToolCallDisplayModel({
+      name: "thinking",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: "Earlier thinking.\nAwaiting the final verification.",
+        output: null,
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "Thinking",
+      summary: "Awaiting the final verification.",
+    });
+  });
+
   it("uses sub-agent detail for task label and description", () => {
     const display = buildToolCallDisplayModel({
       name: "task",
