@@ -464,6 +464,24 @@ test("manual retries can immediately re-attempt a failed catch-up", async () => 
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
+test("redeclaring unchanged visibility does not bypass catch-up backoff", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+
+  const failed = await world.nextFetch("agent-a");
+  failed.fail("timeline unavailable");
+  await world.nextRetry();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
+});
+
 test("a manual retry that fails returns to the error state", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
@@ -584,6 +602,22 @@ test("membership failures retry with exponential backoff", async () => {
   const catchUp = await world.nextFetch("agent-a");
   catchUp.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("redeclaring unchanged visibility does not bypass membership backoff", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+
+  const failed = await world.nextMembership();
+  failed.fail("subscription unavailable");
+  await world.nextRetry();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+
+  world.expectNoPendingMembership();
+  world.expectNoPendingFetch();
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
 });
 
 test("backgrounding preserves the hot membership without catch-up on return", async () => {

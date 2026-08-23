@@ -52,8 +52,6 @@ The daemon requires a valid cryptographic handshake before processing any comman
 
 The QR code or pairing link is the trust anchor. It contains the daemon's public key, which is required to establish the encrypted connection. Treat it like a password, don't share it publicly.
 
-If you believe a pairing offer has been compromised, restart the daemon to generate a new session ID and rotate the relay pairing.
-
 ## Direct connections
 
 By default, the daemon listens on `127.0.0.1:6767` (localhost only). This is safe for local CLI usage but not reachable from your phone or other devices.

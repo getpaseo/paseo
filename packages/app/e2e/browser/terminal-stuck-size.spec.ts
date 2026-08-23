@@ -59,8 +59,12 @@ async function createTerminalViaMenu(page: Page): Promise<void> {
   // Workspaces always render a hidden explorer companion pane alongside the
   // main pane, so an unscoped testid locator matches both; scope to the
   // visible one.
-  await page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).click();
-  await page.getByTestId("workspace-new-tab-menu-terminal").click();
+  await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+  await page
+    .getByTestId("workspace-new-tab-menu-terminal")
+    .filter({ visible: true })
+    .first()
+    .click();
 }
 
 async function listTerminalIds(harness: TerminalE2EHarness): Promise<string[]> {
@@ -128,7 +132,7 @@ test.describe("terminal PTY size claim under lost window focus", () => {
 
     await page.goto(buildHostWorkspaceRoute(getServerId(), harness.workspaceId));
     await expect(
-      page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }),
+      page.getByTestId("workspace-new-tab-button").filter({ visible: true }),
     ).toBeVisible({
       timeout: 30_000,
     });

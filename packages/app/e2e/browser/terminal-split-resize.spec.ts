@@ -81,7 +81,7 @@ async function verifySplitDownResizesPty(page: Page, harness: TerminalE2EHarness
       beforeXterm.rows,
     );
 
-    // Split the pane downward. This focuses the new empty pane, so the terminal
+    // Split the pane downward. This focuses the new tab pane, so the terminal
     // pane is unfocused at the exact moment its container shrinks.
     await runWorkspaceActionFromCommandCenter(page, "Split pane down");
 

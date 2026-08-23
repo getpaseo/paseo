@@ -7,6 +7,7 @@ import { discoverHubBundle } from "./deploy-bundle.js";
 import { runHubDeploy } from "./deploy.js";
 import {
   createHubInitScaffold,
+  hubLoginResumeCommand,
   planHubInitOpening,
   resolveHubInitConnection,
   resolveHubInitProjects,
@@ -26,6 +27,12 @@ afterEach(async () => {
 });
 
 describe("Hub init planning", () => {
+  it("prints direct resumable commands for declined login continuations", () => {
+    expect(hubLoginResumeCommand("connect", "https://hub.test")).toBe(
+      "paseo hub connect https://hub.test",
+    );
+    expect(hubLoginResumeCommand("init", "https://hub.test")).toBe("paseo hub init");
+  });
   it("includes login only when there is no active login", () => {
     expect(planHubInitOpening({ loggedIn: false, paseoDirectoryExists: false })).toEqual({
       replaceExisting: false,
@@ -86,10 +93,25 @@ describe("Hub init planning", () => {
 });
 
 describe("Hub init scaffold", () => {
+  it("omits mode for a provider that explicitly exposes none", () => {
+    const scaffold = createHubInitScaffold({
+      cwd: "/workspace",
+      daemonSlug: "build-studio",
+      agent: { provider: "pi", model: "default" },
+      provider: "slack",
+      providerFilters: { workspace: "T123456", user: "U123456" },
+    });
+
+    expect(YAML.parse(scaffold.hub)).toMatchObject({
+      agents: { starter: { provider: "pi", model: "default" } },
+    });
+    expect(YAML.parse(scaffold.hub).agents.starter.mode).toBeUndefined();
+  });
+
   it.each([
     ["github", { repo: "getpaseo/paseo", user: "boudra" }],
-    ["slack", { workspace: "paseo", user: "boudra" }],
-    ["discord", { guild: "paseo", user: "boudra" }],
+    ["slack", { workspace: "T123456", user: "U123456" }],
+    ["discord", { guild: "123456789", user: "987654321" }],
   ] satisfies readonly [HubInitProvider, Record<string, string>][])(
     "creates a closed %s trigger that the deploy discovery path accepts",
     async (provider, providerFilters) => {
@@ -97,6 +119,11 @@ describe("Hub init scaffold", () => {
       const scaffold = createHubInitScaffold({
         cwd,
         daemonSlug: "build-studio",
+        agent: {
+          provider: "codex",
+          model: "gpt-5",
+          mode: "full-access",
+        },
         provider,
         providerFilters,
       });
@@ -114,7 +141,12 @@ describe("Hub init scaffold", () => {
         filters: { from_users: string[]; channels?: string[] };
       };
       expect(parsed.filters.from_users).toEqual([providerFilters.user]);
+      if (provider === "slack") expect(parsed.filters.workspace).toBe("T123456");
+      if (provider === "discord") expect(parsed.filters.guild).toBe("123456789");
       expect(parsed.filters.channels).toBeUndefined();
+      expect(YAML.parse(scaffold.hub)).toMatchObject({
+        agents: { starter: { provider: "codex", model: "gpt-5", mode: "full-access" } },
+      });
 
       let validatedPaths: readonly string[] = [];
       const result = await runHubDeploy(

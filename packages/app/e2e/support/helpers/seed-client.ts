@@ -12,6 +12,7 @@ export interface SeedWorkspaceDescriptor {
   projectDisplayName: string;
   projectRootPath: string;
   workspaceDirectory: string;
+  diffStat: { additions: number; deletions: number } | null;
   labels?: string[];
 }
 
