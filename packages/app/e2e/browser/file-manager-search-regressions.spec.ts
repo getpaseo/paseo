@@ -62,7 +62,8 @@ test("opening the same search match again recenters the file", async ({ page }) 
   });
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(0);
 
-  await page.getByTestId("explorer-sidebar-tab-files").filter({ visible: true }).click();
+  await page.getByTestId("files-search-toggle").filter({ visible: true }).click();
+  await page.getByTestId("files-search-input").filter({ visible: true }).fill("uniqueSearchNeedle");
   await expect(match).toBeVisible({ timeout: 30_000 });
   await match.click();
 
