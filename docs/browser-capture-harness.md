@@ -12,6 +12,8 @@ It validates the compositor behavior that unit tests cannot see:
   by retrying until the frame appears;
 - both viewport `capturePage` and full-page CDP screenshots return real pixels from
   the permanent production parking state;
+- CDP screencast frames contain rendered text, report the guest's logical viewport,
+  and follow page changes from the permanent production parking state;
 - guest background throttling can be disabled once at attach without per-capture
   renderer coordination;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
@@ -29,6 +31,16 @@ Run it with the repo Electron:
 ```bash
 npm run capture-harness --workspace=@getpaseo/desktop
 ```
+
+Run the screencast fixture with:
+
+```bash
+PASEO_CAPTURE_HARNESS_GROUP=screencast npm run capture-harness --workspace=@getpaseo/desktop
+```
+
+The screencast group verifies that a production-parked guest emits rendered text, reports
+its 1280x800 logical viewport separately from the JPEG size, follows a visible page change,
+and stops emitting frames after `Page.stopScreencast`.
 
 Build the desktop main process before the automation group so its production guest
 preload is available:
