@@ -518,6 +518,7 @@ export const fr: TranslationResources = {
         subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
       mirror: {
+        keyboard: "Clavier du navigateur miroir",
         connecting: "Connexion au navigateur de l'hôte…",
       },
       session: "Session de navigateur{{browserId}}",

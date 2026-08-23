@@ -518,6 +518,7 @@ export const ptBR: TranslationResources = {
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
       },
       mirror: {
+        keyboard: "Teclado do navegador espelhado",
         connecting: "Conectando ao navegador no host…",
       },
       session: "Sessão do navegador {{browserId}}",

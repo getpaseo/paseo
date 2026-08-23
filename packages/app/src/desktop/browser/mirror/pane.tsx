@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { NativeSyntheticEvent, TextInputKeyPressEventData } from "react-native";
 import {
   Pressable,
   Text,
@@ -15,6 +16,7 @@ import { Image } from "expo-image";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useBrowserScreencast } from "./use-screencast";
 import { useRemoteBrowserTab } from "./use-remote-tab";
@@ -45,6 +47,7 @@ export function BrowserMirrorPane({
   const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(serverId, browserId);
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
   const gestureRef = useRef<{ x: number; y: number; scrolled: boolean } | null>(null);
+  const keyboardRef = useRef<EditingTextInputHandle>(null);
 
   const hasFrame = uri !== null && deviceWidth > 0 && deviceHeight > 0;
   const frameSource = useMemo(() => (uri === null ? null : { uri }), [uri]);
@@ -81,6 +84,26 @@ export function BrowserMirrorPane({
   );
   const reload = useCallback(
     () => run({ command: "reload", args: { browserId } }),
+    [browserId, run],
+  );
+
+  const handleKeyPress = useCallback(
+    (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+      const { key } = event.nativeEvent;
+      if (key) {
+        sendInput({ kind: "key", key });
+      }
+    },
+    [sendInput],
+  );
+
+  const submitUrl = useCallback(
+    (event: NativeSyntheticEvent<{ text: string }>) => {
+      const url = event.nativeEvent.text.trim();
+      if (url) {
+        run({ command: "navigate", args: { browserId, url } });
+      }
+    },
     [browserId, run],
   );
 
@@ -131,6 +154,8 @@ export function BrowserMirrorPane({
       }
       const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
       sendInput({ kind: "mouse", x: point.x, y: point.y, button: "left", clickCount: 1 });
+      // Tapping the page is what arms typing, mirroring how a real click focuses it.
+      keyboardRef.current?.focus();
     },
     [deviceHeight, deviceWidth, fit, sendInput],
   );
@@ -160,13 +185,18 @@ export function BrowserMirrorPane({
           icon={ThemedRotateCw}
           onPress={reload}
         />
-        <Text
-          numberOfLines={1}
+        <EditingTextInput
+          key={tab?.url ?? ""}
+          initialValue={tab?.url ?? ""}
+          onSubmitEditing={submitUrl}
           style={styles.url}
           accessibilityLabel={t("workspace.browser.controls.browserUrl")}
-        >
-          {tab?.url ?? ""}
-        </Text>
+          placeholder={t("workspace.browser.controls.enterUrl")}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="go"
+          submitBehavior="submit"
+        />
       </View>
       <View
         style={styles.container}
@@ -189,6 +219,16 @@ export function BrowserMirrorPane({
         ) : (
           <Text style={styles.message}>{error ?? t("workspace.browser.mirror.connecting")}</Text>
         )}
+        <EditingTextInput
+          ref={keyboardRef}
+          initialValue=""
+          onKeyPress={handleKeyPress}
+          style={styles.keyboardCapture}
+          accessibilityLabel={t("workspace.browser.mirror.keyboard")}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+        />
       </View>
     </View>
   );
@@ -219,11 +259,15 @@ function ToolbarButton({ label, icon: Icon, disabled = false, onPress }: Toolbar
 
 type BrowserMirrorInput =
   | { kind: "mouse"; x: number; y: number; button: "left"; clickCount: number }
-  | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number };
+  | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
+  | { kind: "key"; key: string };
 
 function buildInputCommand(browserId: string, event: BrowserMirrorInput): BrowserAutomationCommand {
   if (event.kind === "wheel") {
     return { command: "input_at", args: { browserId, event } };
+  }
+  if (event.kind === "key") {
+    return { command: "input_at", args: { browserId, event: { ...event, modifiers: [] } } };
   }
   return {
     command: "input_at",
@@ -261,6 +305,13 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  keyboardCapture: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+    padding: 0,
   },
   message: {
     fontSize: 13,

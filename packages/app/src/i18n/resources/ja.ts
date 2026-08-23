@@ -518,6 +518,7 @@ export const ja: TranslationResources = {
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",
       },
       mirror: {
+        keyboard: "ミラー表示ブラウザのキーボード",
         connecting: "ホストのブラウザに接続しています…",
       },
       session: "ブラウザセッション{{browserId}}",

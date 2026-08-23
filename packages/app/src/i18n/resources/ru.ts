@@ -518,6 +518,7 @@ export const ru: TranslationResources = {
           "Откройте это рабочее пространство в Electron, чтобы использовать встроенный браузер.",
       },
       mirror: {
+        keyboard: "Клавиатура зеркального браузера",
         connecting: "Подключение к браузеру на хосте…",
       },
       session: "Сеанс браузера {{browserId}}",

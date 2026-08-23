@@ -515,6 +515,7 @@ export const ko: TranslationResources = {
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
       },
       mirror: {
+        keyboard: "미러링된 브라우저 키보드",
         connecting: "호스트의 브라우저에 연결하는 중…",
       },
       session: "브라우저 세션 {{browserId}}",

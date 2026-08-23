@@ -512,6 +512,7 @@ export const en = {
         subtitle: "Open this workspace in Electron to use the built-in browser.",
       },
       mirror: {
+        keyboard: "Mirrored browser keyboard",
         connecting: "Connecting to the browser on the host…",
       },
       session: "Browser session {{browserId}}",

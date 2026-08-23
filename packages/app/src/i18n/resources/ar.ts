@@ -514,6 +514,7 @@ export const ar: TranslationResources = {
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
       mirror: {
+        keyboard: "لوحة مفاتيح المتصفح المعكوس",
         connecting: "جارٍ الاتصال بالمتصفح على المضيف…",
       },
       session: "جلسة المتصفح{{browserId}}",
