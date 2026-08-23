@@ -29,12 +29,18 @@ function userMessage(id: string, text: string, seed: number): StreamItem {
   };
 }
 
-function assistantMessage(id: string, text: string, seed: number): StreamItem {
+function assistantMessage(
+  id: string,
+  text: string,
+  seed: number,
+  blockGroupId?: string,
+): StreamItem {
   return {
     kind: "assistant_message",
     id,
     text,
     timestamp: createTimestamp(seed),
+    ...(blockGroupId ? { blockGroupId } : {}),
   };
 }
 
@@ -229,6 +235,52 @@ describe("neighbor and traversal semantics", () => {
         startIndex: 2,
       }),
     ).toBe("first turn\n\nsecond turn");
+  });
+
+  it("collects only the terminal assistant message when completed responses are folded", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user", 1),
+      assistantMessage("progress", "intermediate commentary", 2, "progress"),
+      toolCall("tool", 3),
+      assistantMessage("final-1", "final part one", 4, "final"),
+      assistantMessage("final-2", "final part two", 5, "final"),
+    ];
+
+    for (const platform of ["web", "ios"] as const) {
+      const strategy = resolveStreamRenderStrategy({
+        platform,
+        isMobileBreakpoint: false,
+      });
+      const items = orderTailForStreamRenderStrategy({ strategy, streamItems: chronological });
+      const startIndex = items.findIndex((item) => item.id === "final-2");
+
+      expect(
+        collectAssistantResponseContentForStreamRenderStrategy({
+          strategy,
+          items,
+          startIndex,
+          scope: "terminal-message",
+        }),
+      ).toBe("final part one\n\nfinal part two");
+    }
+  });
+
+  it("treats an ungrouped terminal assistant row as one message", () => {
+    const items: StreamItem[] = [
+      userMessage("u1", "user", 1),
+      assistantMessage("progress", "intermediate commentary", 2),
+      assistantMessage("final", "final answer", 3),
+    ];
+    const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy,
+        items,
+        startIndex: 2,
+        scope: "terminal-message",
+      }),
+    ).toBe("final answer");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {

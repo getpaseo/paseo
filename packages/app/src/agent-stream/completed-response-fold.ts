@@ -4,6 +4,7 @@ import {
   type ToolCallActivitySummary,
 } from "@/tool-calls/activity-summary";
 import { continuesResponse } from "./turn-membership";
+import { findTerminalAssistantGroup } from "./terminal-assistant-group";
 
 export interface CompletedResponseSummary extends ToolCallActivitySummary {
   messageCount: number;
@@ -55,58 +56,6 @@ function isProtectedPresentationItem(item: StreamItem): boolean {
     return true;
   }
   return item.kind === "tool_call" && isToolCallRunning(item);
-}
-
-interface TerminalAssistantGroup {
-  anchorItemId: string;
-  itemIds: ReadonlySet<string>;
-}
-
-function findTerminalAssistantGroup(response: StreamItem[]): TerminalAssistantGroup | null {
-  let assistantIndex: number | null = null;
-  let lastWorkIndex = -1;
-
-  for (let index = 0; index < response.length; index += 1) {
-    const item = response[index];
-    if (!item) continue;
-    if (item.kind === "assistant_message") {
-      assistantIndex = index;
-    } else if (item.kind === "thought" || item.kind === "tool_call" || item.kind === "todo_list") {
-      lastWorkIndex = index;
-    }
-  }
-
-  if (assistantIndex === null || assistantIndex < lastWorkIndex) {
-    return null;
-  }
-
-  const terminalAssistant = response[assistantIndex];
-  if (!terminalAssistant || terminalAssistant.kind !== "assistant_message") {
-    return null;
-  }
-
-  const terminalBlockGroupId = terminalAssistant.blockGroupId;
-  if (!terminalBlockGroupId) {
-    return {
-      anchorItemId: terminalAssistant.id,
-      itemIds: new Set([terminalAssistant.id]),
-    };
-  }
-
-  const terminalBlockGroup = response.filter(
-    (item, index) =>
-      index > lastWorkIndex &&
-      item.kind === "assistant_message" &&
-      item.blockGroupId === terminalBlockGroupId,
-  );
-  const anchor = terminalBlockGroup[0];
-  if (!anchor) {
-    return null;
-  }
-  return {
-    anchorItemId: anchor.id,
-    itemIds: new Set(terminalBlockGroup.map((item) => item.id)),
-  };
 }
 
 function partitionVisibleResponses(items: StreamItem[]): StreamItem[][] {

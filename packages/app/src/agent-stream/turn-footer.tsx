@@ -7,6 +7,7 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
   collectAssistantResponseContentForStreamRenderStrategy,
+  type AssistantResponseContentScope,
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
@@ -48,6 +49,7 @@ export const TurnFooter = memo(function TurnFooter({
   host,
   strategy,
   supportsTimelineCursor,
+  copyContentScope = "response",
   onForkAssistantTurn,
   onForkInFlightTurn,
 }: {
@@ -56,6 +58,7 @@ export const TurnFooter = memo(function TurnFooter({
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
+  copyContentScope?: AssistantResponseContentScope;
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
@@ -79,6 +82,7 @@ export const TurnFooter = memo(function TurnFooter({
       timing={host.timing}
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
+      copyContentScope={copyContentScope}
       onForkAssistantTurn={onForkAssistantTurn}
     />
   );
@@ -90,6 +94,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   timing,
   startIndex,
   supportsTimelineCursor,
+  copyContentScope = "response",
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
@@ -97,6 +102,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   timing?: TurnTiming;
   startIndex: number;
   supportsTimelineCursor: boolean;
+  copyContentScope?: AssistantResponseContentScope;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   return (
@@ -107,6 +113,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         timing={timing}
         startIndex={startIndex}
         supportsTimelineCursor={supportsTimelineCursor}
+        copyContentScope={copyContentScope}
         onForkAssistantTurn={onForkAssistantTurn}
       />
     </TurnFooterRow>
@@ -163,6 +170,7 @@ function CompletedTurnFooter({
   timing,
   startIndex,
   supportsTimelineCursor,
+  copyContentScope,
   onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
@@ -170,6 +178,7 @@ function CompletedTurnFooter({
   timing?: TurnTiming;
   startIndex: number;
   supportsTimelineCursor: boolean;
+  copyContentScope: AssistantResponseContentScope;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   const getContent = useCallback(
@@ -178,8 +187,9 @@ function CompletedTurnFooter({
         strategy,
         items,
         startIndex,
+        scope: copyContentScope,
       }),
-    [strategy, items, startIndex],
+    [copyContentScope, strategy, items, startIndex],
   );
   const boundary = resolveAssistantTurnForkBoundary({
     items,
@@ -199,6 +209,7 @@ function CompletedTurnFooter({
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
         getContent={getContent}
+        copyMessageOnly={copyContentScope === "terminal-message"}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}

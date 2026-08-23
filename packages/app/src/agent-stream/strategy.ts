@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
 import { continuesResponse } from "./turn-membership";
+import { findTerminalAssistantGroup } from "./terminal-assistant-group";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
@@ -12,6 +13,7 @@ type EdgeSlot = "header" | "footer";
 type NeighborRelation = "above" | "below";
 type AssistantTurnTraversalStep = -1 | 1;
 export type StreamFrameChildOrder = "content-then-footer" | "footer-then-content";
+export type AssistantResponseContentScope = "response" | "terminal-message";
 
 export type MaintainVisibleContentPositionConfig = Readonly<{
   minIndexForVisible: number;
@@ -99,7 +101,11 @@ export interface StreamStrategy {
     index: number,
     relation: NeighborRelation,
   ) => StreamItem | undefined;
-  collectAssistantResponseContent: (items: StreamItem[], startIndex: number) => string;
+  collectAssistantResponseContent: (
+    items: StreamItem[],
+    startIndex: number,
+    scope: AssistantResponseContentScope,
+  ) => string;
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
   getEdgeSlotProps: (
@@ -164,8 +170,8 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       }
       return items[neighborIndex];
     },
-    collectAssistantResponseContent: (items, startIndex) => {
-      const messages: string[] = [];
+    collectAssistantResponseContent: (items, startIndex, scope) => {
+      const responseNewestFirst: StreamItem[] = [];
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -176,12 +182,19 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
           break;
         }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
-        }
+        responseNewestFirst.push(currentItem);
         laterItem = currentItem;
       }
-      return messages.toReversed().join("\n\n");
+
+      const response = responseNewestFirst.toReversed();
+      const messages =
+        scope === "terminal-message"
+          ? (findTerminalAssistantGroup(response)?.items ?? [])
+          : response.filter(
+              (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+                item.kind === "assistant_message",
+            );
+      return messages.map((item) => item.text).join("\n\n");
     },
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),
@@ -280,8 +293,13 @@ export function collectAssistantResponseContentForStreamRenderStrategy(params: {
   strategy: StreamStrategy;
   items: StreamItem[];
   startIndex: number;
+  scope?: AssistantResponseContentScope;
 }): string {
-  return params.strategy.collectAssistantResponseContent(params.items, params.startIndex);
+  return params.strategy.collectAssistantResponseContent(
+    params.items,
+    params.startIndex,
+    params.scope ?? "response",
+  );
 }
 
 export function isNearBottomForStreamRenderStrategy(

@@ -571,6 +571,7 @@ export const UserMessage = memo(function UserMessage({
 
 interface AssistantTurnFooterProps {
   getContent: () => string;
+  copyMessageOnly?: boolean;
   completedAt?: Date;
   durationMs?: number;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
@@ -616,10 +617,12 @@ const TIMESTAMP_REVEAL_MS = 3000;
  */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
+  copyMessageOnly = false,
   completedAt,
   durationMs,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -671,6 +674,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       <TurnCopyButton
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
+        accessibilityLabel={copyMessageOnly ? t("message.actions.copyMessage") : undefined}
       />
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
