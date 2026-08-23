@@ -365,12 +365,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     }
   };
 
-  const retryFailedCatchUps = () => {
-    for (const agentId of acknowledged) {
-      if (catchUps.get(agentId)?.status === "error") startCatchUp(agentId);
-    }
-  };
-
   const retryVisibleAgentTimeline = (agentId: string) => {
     if (!isDesired(agentId) || manualRetries.has(agentId)) return;
     const catchUp = catchUps.get(agentId);
@@ -407,8 +401,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     }
     if (sameAgentIds(nextDesired, desired)) {
       if (statusChanged) notifyListeners();
-      if (deliveryMode === "selective" && membershipNeedsRetry) void reconcileMembership();
-      retryFailedCatchUps();
       return;
     }
 
