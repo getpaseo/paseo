@@ -953,3 +953,77 @@ describe("relative typed-entry configuration", () => {
     expect(results).toEqual([{ path: "blankpage/editor", kind: "directory" }]);
   });
 });
+
+describe("exact filename queries surface gitignored matches", () => {
+  it("returns a gitignored file when the query names its exact filename", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-exact-name-"));
+    try {
+      mkdirSync(path.join(cwd, "src"), { recursive: true });
+      mkdirSync(path.join(cwd, "generated"), { recursive: true });
+      initGitRepo(cwd, "generated/\n");
+      writeFileSync(path.join(cwd, "src", "index.ts"), "export {}\n");
+      writeFileSync(
+        path.join(cwd, "generated", "user-profile-card.tsx"),
+        "export {}\n",
+      );
+
+      const entries = await searchRelativeDirectoryEntries({
+        cwd,
+        query: "user-profile-card.tsx",
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "fuzzy",
+        respectGitIgnore: true,
+      });
+
+      expect(entries.map((entry) => entry.path)).toEqual([
+        "generated/user-profile-card.tsx",
+      ]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps discovery filtering for partial queries that do not name a file", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-partial-name-"));
+    try {
+      mkdirSync(path.join(cwd, "generated"), { recursive: true });
+      initGitRepo(cwd, "generated/\n");
+      writeFileSync(path.join(cwd, "generated", "user-profile-card.tsx"), "export {}\n");
+
+      const entries = await searchRelativeDirectoryEntries({
+        cwd,
+        query: "user-profile",
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "fuzzy",
+        respectGitIgnore: true,
+      });
+
+      expect(entries).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("returns no fabricated results when the exact filename does not exist", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-missing-name-"));
+    try {
+      mkdirSync(path.join(cwd, "src"), { recursive: true });
+      writeFileSync(path.join(cwd, "src", "index.ts"), "export {}\n");
+
+      const entries = await searchRelativeDirectoryEntries({
+        cwd,
+        query: "no-such-file.tsx",
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "fuzzy",
+        respectGitIgnore: true,
+      });
+
+      expect(entries).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
