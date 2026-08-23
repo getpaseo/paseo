@@ -10,6 +10,9 @@ describe("formatPairingInstructions", () => {
 
     expect(output).toContain(QR);
     expect(output.split("\n")).toContain(URL);
+    expect(output).toContain(
+      "Treat this pairing link like a password. Anyone with it can access this daemon.",
+    );
   });
 
   it("does not print a QR that would reach the terminal edge", () => {

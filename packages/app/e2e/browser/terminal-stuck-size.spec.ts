@@ -60,7 +60,11 @@ async function createTerminalViaMenu(page: Page): Promise<void> {
   // main pane, so an unscoped testid locator matches both; scope to the
   // visible one.
   await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
-  await page.getByTestId("workspace-new-tab-terminal").filter({ visible: true }).first().click();
+  await page
+    .getByTestId("workspace-new-tab-menu-terminal")
+    .filter({ visible: true })
+    .first()
+    .click();
 }
 
 async function listTerminalIds(harness: TerminalE2EHarness): Promise<string[]> {
