@@ -85,7 +85,8 @@
                 },
                 "backgroundFetchIntervalMinutes": {
                   "type": "integer",
-                  "minimum": 0
+                  "minimum": 0,
+                  "maximum": 1440
                 }
               },
               "additionalProperties": false
