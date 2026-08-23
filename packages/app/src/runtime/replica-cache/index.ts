@@ -14,7 +14,6 @@ import {
   useSessionStore,
   type Agent,
   type SessionReplica,
-  type SessionReplicaTimeline,
   type SessionState,
   type ProjectDescriptor,
   type WorkspaceDescriptor,
@@ -25,9 +24,23 @@ import {
   type StreamItem,
 } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import {
+  diffReplicaInput,
+  hasReplicaInputChanges,
+  type ReplicaInput,
+  type ReplicaInputChanges,
+} from "./diff";
+import { clearLegacyReplicaCache } from "./legacy-cleanup";
+import {
+  REPLICA_SINGLETON_ROW_ID,
+  type ReplicaHostRows,
+  type ReplicaRow,
+  type ReplicaRowChanges,
+  type ReplicaRowKey,
+  type ReplicaRowKind,
+  type ReplicaRowStore,
+} from "./row-store";
 
-const STORAGE_KEY = "@paseo:replica-cache";
-const CACHE_VERSION = 6;
 const PERSIST_AFTER_USER_INACTIVITY_MS = 5_000;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
@@ -289,36 +302,17 @@ const StoredHostSchema = z.strictObject({
   directorySync: z.unknown().optional(),
 });
 
-const StoredCacheSchema = z.strictObject({
-  version: z.literal(CACHE_VERSION),
-  hosts: z.array(StoredHostSchema),
-});
-
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
 type StoredHost = z.infer<typeof StoredHostSchema>;
+type StoredTimeline = z.infer<typeof StoredTimelineSchema>;
 type StoredTimelineItem = z.infer<typeof StoredTimelineItemSchema>;
 type StoredToolCall = Extract<StoredTimelineItem, { kind: "tool_call" }>["item"];
 type StoredWorkspace = z.infer<typeof StoredWorkspaceSchema>;
 type StoredProject = z.infer<typeof StoredProjectSchema>;
 
-interface ReplicaInput {
-  agents: ReadonlyMap<string, Agent>;
-  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
-  projects: ReadonlyMap<string, ProjectDescriptor>;
-  focusedAgent: Agent | undefined;
-  timelineItems: StreamItem[] | undefined;
-  timelineRange: SessionReplicaTimeline["range"];
-  timelineHasOlder: boolean;
-}
-
-export interface ReplicaCacheStorage {
-  getItem: (key: string) => Promise<string | null>;
-  setItem: (key: string, value: string) => Promise<void>;
-  removeItem: (key: string) => Promise<void>;
-}
-
 interface ReplicaCacheOptions {
   maxBytes?: number;
+  clearLegacyCache?: () => Promise<void>;
 }
 
 function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["timeline"] {
@@ -628,18 +622,6 @@ function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   }
 }
 
-function replicaInputsEqual(left: ReplicaInput, right: ReplicaInput): boolean {
-  return (
-    left.agents === right.agents &&
-    left.workspaces === right.workspaces &&
-    left.projects === right.projects &&
-    left.focusedAgent === right.focusedAgent &&
-    left.timelineItems === right.timelineItems &&
-    left.timelineRange === right.timelineRange &&
-    left.timelineHasOlder === right.timelineHasOlder
-  );
-}
-
 function selectReplicaInput(session: SessionState, agentId: string | null): ReplicaInput {
   const agent = agentId ? session.agents.get(agentId) : undefined;
   const timeline = agentId
@@ -649,14 +631,14 @@ function selectReplicaInput(session: SessionState, agentId: string | null): Repl
     agents: session.agents,
     workspaces: session.workspaces,
     projects: session.projects,
-    focusedAgent: agent,
+    focusedAgentId: agent?.id,
     timelineItems: timeline.status === "cold" ? undefined : timeline.items,
     timelineRange: timeline.status === "synced" ? timeline.range : null,
     timelineHasOlder: timeline.status === "synced" && timeline.older === "available",
   };
 }
 
-function serializeHost(serverId: string, input: ReplicaInput, directorySync?: unknown): StoredHost {
+function serializeTimeline(input: ReplicaInput): StoredTimeline | null {
   const canonicalItems = input.timelineItems?.filter(
     (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
   );
@@ -678,24 +660,14 @@ function serializeHost(serverId: string, input: ReplicaInput, directorySync?: un
         item.timelineCursor.seq <= range.endSeq,
     ) &&
     canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
+  if (!input.focusedAgentId || !items) return null;
   return {
-    serverId,
-    agents: Array.from(input.agents.values(), serializeAgent),
-    workspaces: Array.from(input.workspaces.values(), serializeWorkspace),
-    projects: Array.from(input.projects.values(), serializeProject),
-    emptyProjects: [],
-    timeline:
-      input.focusedAgent && items
-        ? {
-            agentId: input.focusedAgent.id,
-            items: items.slice(-MAX_TIMELINE_ITEMS),
-            range: canPersistCoverage
-              ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
-              : null,
-            hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
-          }
-        : null,
-    ...(directorySync ? { directorySync } : {}),
+    agentId: input.focusedAgentId,
+    items: items.slice(-MAX_TIMELINE_ITEMS),
+    range: canPersistCoverage
+      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+      : null,
+    hasOlder: canPersistCoverage ? input.timelineHasOlder : false,
   };
 }
 
@@ -729,38 +701,66 @@ function legacyProjectDescriptorFromWorkspace(workspace: WorkspaceDescriptor): P
   };
 }
 
+function rowKey(key: Pick<ReplicaRowKey, "kind" | "id">): string {
+  return `${key.kind}\u0000${key.id}`;
+}
+
+function pendingRowKey(key: ReplicaRowKey): string {
+  return `${key.serverId}\u0000${rowKey(key)}`;
+}
+
+function payloadBytes(payload: string): number {
+  return Buffer.byteLength(payload, "utf8");
+}
+
+function parseJsonPayload(payload: string): unknown {
+  return JSON.parse(payload);
+}
+
+function parseStoredPayload<Value>(schema: z.ZodType<Value>, payload: string): Value {
+  const parsed = schema.safeParse(parseJsonPayload(payload));
+  if (!parsed.success) throw new Error("Invalid replica row payload");
+  return parsed.data;
+}
+
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
-  private readonly storedHosts = new Map<string, StoredHost>();
+  private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
+  private readonly hostBytes = new Map<string, number>();
+  private readonly hostWriteOrder = new Map<string, true>();
+  private readonly evictedServerIds = new Set<string>();
   private readonly lastFocusedAgentIds = new Map<string, string>();
   private readonly capturedInputs = new Map<string, ReplicaInput>();
+  private readonly directoryCheckpoints = new Map<string, unknown>();
+  private readonly checkpointInputs = new Map<string, unknown>();
+  private pendingUpserts = new Map<string, ReplicaRow>();
+  private pendingDeletes = new Map<string, ReplicaRowKey>();
   private readonly maxBytes: number;
-  private needsPersist = false;
+  private totalBytes = 0;
   private unsubscribe: (() => void) | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
+  private preparePromise: Promise<void> | null = null;
 
   constructor(
-    private readonly storage: ReplicaCacheStorage,
+    private readonly rowStore: ReplicaRowStore,
     options: ReplicaCacheOptions = {},
   ) {
-    const emptyPayloadBytes = Buffer.byteLength(
-      JSON.stringify({ version: CACHE_VERSION, hosts: [] }),
-      "utf8",
-    );
-    this.maxBytes = Math.max(options.maxBytes ?? MAX_CACHE_BYTES, emptyPayloadBytes);
+    this.maxBytes = Math.max(options.maxBytes ?? MAX_CACHE_BYTES, 0);
+    this.clearLegacyCache = options.clearLegacyCache ?? clearLegacyReplicaCache;
   }
+
+  private readonly clearLegacyCache: () => Promise<void>;
 
   setHosts(serverIds: Iterable<string>): void {
     const next = new Set(serverIds);
+    const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
-    let removedStoredHost = false;
-    for (const serverId of this.storedHosts.keys()) {
-      if (!next.has(serverId)) {
-        this.storedHosts.delete(serverId);
-        removedStoredHost = true;
-      }
+    for (const serverId of removed) {
+      this.removeStoredHost(serverId);
+      this.dropPendingHostChanges(serverId);
+      this.queueOperation(() => this.rowStore.deleteHost(serverId));
     }
     for (const serverId of this.lastFocusedAgentIds.keys()) {
       if (!next.has(serverId)) this.lastFocusedAgentIds.delete(serverId);
@@ -768,41 +768,52 @@ export class ReplicaCache {
     for (const serverId of this.capturedInputs.keys()) {
       if (!next.has(serverId)) this.capturedInputs.delete(serverId);
     }
-    if (removedStoredHost) this.needsPersist = true;
-    if (this.unsubscribe && this.needsPersist) this.schedulePersist();
+    for (const serverId of this.directoryCheckpoints.keys()) {
+      if (!next.has(serverId)) this.directoryCheckpoints.delete(serverId);
+    }
+    for (const serverId of this.checkpointInputs.keys()) {
+      if (!next.has(serverId)) this.checkpointInputs.delete(serverId);
+    }
+    for (const serverId of this.evictedServerIds) {
+      if (!next.has(serverId)) this.evictedServerIds.delete(serverId);
+    }
   }
 
   async restore(): Promise<void> {
-    let raw: string | null;
     try {
-      raw = await this.storage.getItem(STORAGE_KEY);
+      await this.prepareStore();
     } catch {
       return;
     }
-    if (!raw) return;
-    let parsed: unknown;
+    let hosts: ReplicaHostRows[];
     try {
-      parsed = JSON.parse(raw);
+      hosts = await this.rowStore.readAll();
     } catch {
-      await this.clearInvalidCache();
       return;
     }
-    const cache = StoredCacheSchema.safeParse(parsed);
-    if (!cache.success) {
-      await this.clearInvalidCache();
-      return;
-    }
-    for (const host of cache.data.hosts) {
-      if (!this.activeServerIds.has(host.serverId)) {
-        this.needsPersist = true;
-        continue;
+    this.storedRows.clear();
+    this.hostBytes.clear();
+    this.hostWriteOrder.clear();
+    this.directoryCheckpoints.clear();
+    this.checkpointInputs.clear();
+    this.totalBytes = 0;
+    const restoredHosts: StoredHost[] = [];
+    try {
+      for (const hostRows of hosts) {
+        if (!this.activeServerIds.has(hostRows.serverId)) {
+          await this.rowStore.deleteHost(hostRows.serverId);
+          continue;
+        }
+        restoredHosts.push(this.restoreHostRows(hostRows));
       }
-      this.storedHosts.set(host.serverId, host);
-      if (host.timeline) this.lastFocusedAgentIds.set(host.serverId, host.timeline.agentId);
+    } catch {
+      await this.clearInvalidCache();
+      return;
     }
-    const bounded = this.buildBoundedPayload();
-    if (bounded.evicted) this.needsPersist = true;
-    for (const host of this.storedHosts.values()) {
+    await this.evictOverBudget();
+    for (const host of restoredHosts) {
+      if (!this.storedRows.has(host.serverId)) continue;
+      if (host.timeline) this.lastFocusedAgentIds.set(host.serverId, host.timeline.agentId);
       useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
       const session = useSessionStore.getState().sessions[host.serverId];
       if (session) {
@@ -828,14 +839,24 @@ export class ReplicaCache {
       if (this.activeServerIds.size === 0) return;
       this.schedulePersist();
     });
-    if (changedBeforeSubscription || this.needsPersist) this.schedulePersist();
+    if (changedBeforeSubscription || this.hasPendingChanges()) this.schedulePersist();
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
-    const stored = this.storedHosts.get(oldServerId);
-    if (stored) {
-      this.storedHosts.delete(oldServerId);
-      this.storedHosts.set(newServerId, { ...stored, serverId: newServerId });
+    const rows = this.storedRows.get(oldServerId);
+    if (rows) {
+      const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
+      this.totalBytes -=
+        (this.hostBytes.get(oldServerId) ?? 0) + (this.hostBytes.get(newServerId) ?? 0);
+      this.storedRows.delete(oldServerId);
+      for (const [key, row] of rows) newRows.set(key, { ...row, serverId: newServerId });
+      this.storedRows.set(newServerId, newRows);
+      const bytes = [...newRows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0);
+      this.hostBytes.delete(oldServerId);
+      this.hostBytes.set(newServerId, bytes);
+      this.totalBytes += bytes;
+      this.hostWriteOrder.delete(oldServerId);
+      this.touchHost(newServerId);
     }
     const focusedAgentId = this.lastFocusedAgentIds.get(oldServerId);
     if (focusedAgentId) {
@@ -847,32 +868,56 @@ export class ReplicaCache {
       this.capturedInputs.delete(oldServerId);
       this.capturedInputs.set(newServerId, capturedInput);
     }
+    if (this.directoryCheckpoints.has(oldServerId)) {
+      const checkpoint = this.directoryCheckpoints.get(oldServerId);
+      this.directoryCheckpoints.delete(oldServerId);
+      this.directoryCheckpoints.set(newServerId, checkpoint);
+    }
+    if (this.checkpointInputs.has(oldServerId)) {
+      const checkpoint = this.checkpointInputs.get(oldServerId);
+      this.checkpointInputs.delete(oldServerId);
+      this.checkpointInputs.set(newServerId, checkpoint);
+    }
+    if (this.evictedServerIds.delete(oldServerId)) this.evictedServerIds.add(newServerId);
+    this.renamePendingHostChanges(oldServerId, newServerId);
     if (this.activeServerIds.delete(oldServerId)) this.activeServerIds.add(newServerId);
-    this.needsPersist = true;
-    this.schedulePersist();
+    this.queueOperation(() => this.rowStore.renameHost(oldServerId, newServerId));
   }
 
   readDirectoryCheckpoint(serverId: string): unknown {
-    return this.storedHosts.get(serverId)?.directorySync;
+    return this.directoryCheckpoints.get(serverId);
   }
 
   writeDirectoryCheckpoint(serverId: string, checkpoint: unknown): void {
-    let stored = this.storedHosts.get(serverId);
-    if (!stored) {
+    if (this.checkpointInputs.get(serverId) === checkpoint) return;
+    if (this.evictedServerIds.has(serverId)) {
       const session = useSessionStore.getState().sessions[serverId];
       if (!session) return;
-      const input = selectReplicaInput(session, this.lastFocusedAgentIds.get(serverId) ?? null);
-      this.capturedInputs.set(serverId, input);
-      stored = serializeHost(serverId, input);
+      this.captureHost(serverId, session);
     }
-    this.storedHosts.delete(serverId);
-    this.storedHosts.set(serverId, { ...stored, directorySync: checkpoint });
-    this.needsPersist = true;
+    this.checkpointInputs.set(serverId, checkpoint);
+    this.directoryCheckpoints.set(serverId, checkpoint);
+    const payload = JSON.stringify(checkpoint);
+    if (payload === undefined) {
+      this.queueDelete({
+        serverId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+      });
+    } else {
+      this.queueUpsert({
+        serverId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+        payload,
+      });
+    }
     this.schedulePersist();
   }
 
   async flush(): Promise<void> {
     await this.persist(false);
+    await this.writeQueue.catch(() => undefined);
   }
 
   private async flushPending(): Promise<void> {
@@ -889,14 +934,24 @@ export class ReplicaCache {
       this.persistTimer = null;
     }
     const changed = this.captureSessions();
-    if (skipUnchanged && !changed && !this.needsPersist) return;
-    const bounded = this.buildBoundedPayload();
-    this.needsPersist = false;
+    if (skipUnchanged && !changed && !this.hasPendingChanges()) return;
+    const changes = this.drainPendingChanges();
+    if (changes.upserts.length === 0 && changes.deletes.length === 0) return;
     const write = this.writeQueue
       .catch(() => undefined)
-      .then(() => this.storage.setItem(STORAGE_KEY, bounded.payload));
+      .then(async () => {
+        try {
+          await this.prepareStore();
+          await this.rowStore.apply(changes);
+          this.applyStoredChanges(changes);
+          await this.evictOverBudget();
+        } catch {
+          this.restorePendingChanges(changes);
+        }
+        return undefined;
+      });
     this.writeQueue = write;
-    await write.catch(() => undefined);
+    await write;
   }
 
   private captureSessions(): boolean {
@@ -929,41 +984,268 @@ export class ReplicaCache {
     } else if (hasTimelineHead) {
       input = { ...selected, timelineRange: null, timelineHasOlder: false };
     }
-    if (previous && replicaInputsEqual(previous, input)) return false;
-
+    const initialInput = this.evictedServerIds.has(serverId) ? undefined : previous;
+    const changes = diffReplicaInput(initialInput, input);
     this.capturedInputs.set(serverId, input);
-    const directorySync = this.storedHosts.get(serverId)?.directorySync;
-    this.storedHosts.delete(serverId);
-    this.storedHosts.set(serverId, serializeHost(serverId, input, directorySync));
+    if (!hasReplicaInputChanges(changes)) return false;
+    this.queueReplicaChanges(serverId, input, changes);
     return true;
   }
 
-  private buildBoundedPayload(): { payload: string; evicted: boolean } {
-    let evicted = false;
-    let payload = this.serialize();
-    while (Buffer.byteLength(payload, "utf8") > this.maxBytes && this.storedHosts.size > 0) {
-      const oldestServerId = this.storedHosts.keys().next().value;
-      if (oldestServerId === undefined) break;
-      this.storedHosts.delete(oldestServerId);
-      evicted = true;
-      payload = this.serialize();
+  private queueReplicaChanges(
+    serverId: string,
+    input: ReplicaInput,
+    changes: ReplicaInputChanges,
+  ): void {
+    for (const agent of changes.agents.upserts) {
+      this.queueEntityUpsert(serverId, "agent", agent.id, serializeAgent(agent));
     }
-    return { payload, evicted };
+    for (const id of changes.agents.deletes) this.queueEntityDelete(serverId, "agent", id);
+    for (const workspace of changes.workspaces.upserts) {
+      this.queueEntityUpsert(serverId, "workspace", workspace.id, serializeWorkspace(workspace));
+    }
+    for (const id of changes.workspaces.deletes) this.queueEntityDelete(serverId, "workspace", id);
+    for (const project of changes.projects.upserts) {
+      this.queueEntityUpsert(serverId, "project", project.projectId, serializeProject(project));
+    }
+    for (const id of changes.projects.deletes) this.queueEntityDelete(serverId, "project", id);
+    if (!changes.timelineChanged) return;
+    const timeline = serializeTimeline(input);
+    if (timeline) {
+      this.queueEntityUpsert(serverId, "timeline", REPLICA_SINGLETON_ROW_ID, timeline);
+    } else {
+      this.queueEntityDelete(serverId, "timeline", REPLICA_SINGLETON_ROW_ID);
+    }
   }
 
-  private serialize(): string {
-    return JSON.stringify({
-      version: CACHE_VERSION,
-      hosts: Array.from(this.storedHosts.values()),
-    });
+  private queueEntityUpsert(
+    serverId: string,
+    kind: ReplicaRowKind,
+    id: string,
+    value: unknown,
+  ): void {
+    this.queueUpsert({ serverId, kind, id, payload: JSON.stringify(value) });
   }
 
   private async clearInvalidCache(): Promise<void> {
     try {
-      await this.storage.removeItem(STORAGE_KEY);
+      await this.rowStore.clear();
     } catch {
       // A storage failure must not turn invalid cached data into application state.
     }
+    this.storedRows.clear();
+    this.hostBytes.clear();
+    this.hostWriteOrder.clear();
+    this.evictedServerIds.clear();
+    this.directoryCheckpoints.clear();
+    this.checkpointInputs.clear();
+    this.capturedInputs.clear();
+    this.lastFocusedAgentIds.clear();
+    this.pendingUpserts.clear();
+    this.pendingDeletes.clear();
+    this.totalBytes = 0;
+  }
+
+  private restoreHostRows(hostRows: ReplicaHostRows): StoredHost {
+    const agents: StoredAgent[] = [];
+    const workspaces: StoredWorkspace[] = [];
+    const projects: StoredProject[] = [];
+    let timeline: StoredTimeline | null = null;
+    let checkpoint: unknown;
+    const rows = new Map<string, ReplicaRow>();
+    let bytes = 0;
+    for (const row of hostRows.rows) {
+      if (row.serverId !== hostRows.serverId) throw new Error("Replica row host key mismatch");
+      switch (row.kind) {
+        case "agent": {
+          const agent = parseStoredPayload(StoredAgentSchema, row.payload);
+          if (agent.snapshot.id !== row.id) throw new Error("Replica agent row id mismatch");
+          agents.push(agent);
+          break;
+        }
+        case "workspace": {
+          const workspace = parseStoredPayload(StoredWorkspaceSchema, row.payload);
+          if (workspace.id !== row.id) throw new Error("Replica workspace row id mismatch");
+          workspaces.push(workspace);
+          break;
+        }
+        case "project": {
+          const project = parseStoredPayload(StoredProjectSchema, row.payload);
+          if (project.projectId !== row.id) throw new Error("Replica project row id mismatch");
+          projects.push(project);
+          break;
+        }
+        case "timeline":
+          if (row.id !== REPLICA_SINGLETON_ROW_ID) {
+            throw new Error("Replica timeline row id mismatch");
+          }
+          timeline = parseStoredPayload(StoredTimelineSchema, row.payload);
+          break;
+        case "checkpoint":
+          if (row.id !== REPLICA_SINGLETON_ROW_ID) {
+            throw new Error("Replica checkpoint row id mismatch");
+          }
+          checkpoint = parseJsonPayload(row.payload);
+          break;
+        default:
+          throw new Error("Unknown replica row kind");
+      }
+      rows.set(rowKey(row), row);
+      bytes += payloadBytes(row.payload);
+    }
+    this.storedRows.set(hostRows.serverId, rows);
+    this.hostBytes.set(hostRows.serverId, bytes);
+    this.totalBytes += bytes;
+    this.touchHost(hostRows.serverId);
+    if (checkpoint !== undefined) {
+      this.directoryCheckpoints.set(hostRows.serverId, checkpoint);
+      this.checkpointInputs.set(hostRows.serverId, checkpoint);
+    }
+    return {
+      serverId: hostRows.serverId,
+      agents,
+      workspaces,
+      projects,
+      emptyProjects: [],
+      timeline,
+      ...(checkpoint !== undefined ? { directorySync: checkpoint } : {}),
+    };
+  }
+
+  private queueEntityDelete(serverId: string, kind: ReplicaRowKind, id: string): void {
+    this.queueDelete({ serverId, kind, id });
+  }
+
+  private queueUpsert(row: ReplicaRow): void {
+    const key = pendingRowKey(row);
+    this.pendingDeletes.delete(key);
+    this.pendingUpserts.set(key, row);
+  }
+
+  private queueDelete(key: ReplicaRowKey): void {
+    const pendingKey = pendingRowKey(key);
+    this.pendingUpserts.delete(pendingKey);
+    this.pendingDeletes.set(pendingKey, key);
+  }
+
+  private hasPendingChanges(): boolean {
+    return this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0;
+  }
+
+  private drainPendingChanges(): ReplicaRowChanges {
+    const changes = {
+      upserts: [...this.pendingUpserts.values()],
+      deletes: [...this.pendingDeletes.values()],
+    };
+    this.pendingUpserts = new Map();
+    this.pendingDeletes = new Map();
+    return changes;
+  }
+
+  private restorePendingChanges(changes: ReplicaRowChanges): void {
+    const newer = this.drainPendingChanges();
+    for (const key of changes.deletes) this.queueDelete(key);
+    for (const row of changes.upserts) this.queueUpsert(row);
+    for (const key of newer.deletes) this.queueDelete(key);
+    for (const row of newer.upserts) this.queueUpsert(row);
+  }
+
+  private applyStoredChanges(changes: ReplicaRowChanges): void {
+    const touchedServerIds = new Set<string>();
+    for (const key of changes.deletes) {
+      const rows = this.storedRows.get(key.serverId);
+      const previous = rows?.get(rowKey(key));
+      if (previous) {
+        rows?.delete(rowKey(key));
+        this.adjustHostBytes(key.serverId, -payloadBytes(previous.payload));
+      }
+      touchedServerIds.add(key.serverId);
+    }
+    for (const row of changes.upserts) {
+      const rows = this.storedRows.get(row.serverId) ?? new Map<string, ReplicaRow>();
+      const previous = rows.get(rowKey(row));
+      const previousBytes = previous ? payloadBytes(previous.payload) : 0;
+      rows.set(rowKey(row), row);
+      this.storedRows.set(row.serverId, rows);
+      this.adjustHostBytes(row.serverId, payloadBytes(row.payload) - previousBytes);
+      this.evictedServerIds.delete(row.serverId);
+      touchedServerIds.add(row.serverId);
+    }
+    for (const serverId of touchedServerIds) {
+      if ((this.storedRows.get(serverId)?.size ?? 0) === 0) {
+        this.removeStoredHost(serverId);
+      } else {
+        this.touchHost(serverId);
+      }
+    }
+  }
+
+  private adjustHostBytes(serverId: string, delta: number): void {
+    this.hostBytes.set(serverId, (this.hostBytes.get(serverId) ?? 0) + delta);
+    this.totalBytes += delta;
+  }
+
+  private touchHost(serverId: string): void {
+    this.hostWriteOrder.delete(serverId);
+    this.hostWriteOrder.set(serverId, true);
+  }
+
+  private async evictOverBudget(): Promise<void> {
+    while (this.totalBytes > this.maxBytes) {
+      const oldestServerId = this.hostWriteOrder.keys().next().value;
+      if (oldestServerId === undefined) return;
+      await this.rowStore.deleteHost(oldestServerId);
+      this.removeStoredHost(oldestServerId);
+      this.evictedServerIds.add(oldestServerId);
+      this.directoryCheckpoints.delete(oldestServerId);
+      this.checkpointInputs.delete(oldestServerId);
+    }
+  }
+
+  private removeStoredHost(serverId: string): void {
+    this.totalBytes -= this.hostBytes.get(serverId) ?? 0;
+    this.storedRows.delete(serverId);
+    this.hostBytes.delete(serverId);
+    this.hostWriteOrder.delete(serverId);
+  }
+
+  private dropPendingHostChanges(serverId: string): void {
+    for (const [key, row] of this.pendingUpserts) {
+      if (row.serverId === serverId) this.pendingUpserts.delete(key);
+    }
+    for (const [key, row] of this.pendingDeletes) {
+      if (row.serverId === serverId) this.pendingDeletes.delete(key);
+    }
+  }
+
+  private renamePendingHostChanges(oldServerId: string, newServerId: string): void {
+    const changes = this.drainPendingChanges();
+    for (const key of changes.deletes) {
+      this.queueDelete(key.serverId === oldServerId ? { ...key, serverId: newServerId } : key);
+    }
+    for (const row of changes.upserts) {
+      this.queueUpsert(row.serverId === oldServerId ? { ...row, serverId: newServerId } : row);
+    }
+  }
+
+  private prepareStore(): Promise<void> {
+    this.preparePromise ??= (async () => {
+      await this.rowStore.open();
+      // COMPAT(replica-blob-cache): remove after 2026-11
+      await this.clearLegacyCache().catch(() => undefined);
+    })();
+    return this.preparePromise;
+  }
+
+  private queueOperation(operation: () => Promise<void>): void {
+    this.writeQueue = this.writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.prepareStore();
+        await operation();
+        return undefined;
+      })
+      .catch(() => undefined);
   }
 
   private schedulePersist(): void {

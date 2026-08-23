@@ -104,7 +104,7 @@ Cross-platform React Native app that connects to one or more daemons.
 
 - Expo Router navigation (`/h/[serverId]/workspace/[workspaceId]`, `/h/[serverId]/agent/[agentId]`, etc.). The `workspaceId` URL segment is an opaque workspace id, not a directly meaningful filesystem path.
 - `HostRuntimeController` manages saved host connections, reconnection, and per-host runtime state
-- `runtime/replica-cache` keeps the complete project, workspace, and active-agent directory plus one short focused timeline tail in AsyncStorage. It restores before navigation becomes ready and leaves remote hydration flags false.
+- `runtime/replica-cache` keeps the complete project, workspace, and active-agent directory plus one short focused timeline tail in a row store. It restores before navigation becomes ready and leaves remote hydration flags false.
 - `runtime/directory-sync` owns directory reconciliation. On reconnect it passes the persisted per-entity cursor through `project.list`, `fetch_workspaces`, and `fetch_agents`; the daemon returns each entity's latest projection when its sequence is newer, plus tombstones.
 - `workspace-labels` owns one sequenced catalog replica per connected host, the deterministic cross-host projection that surfaces spanning hosts use (the filter page, the manager), and the per-host resolution a workspace row's chips use. Two hosts may give one name different colors, so a row resolves against its own host's catalog and a merged answer would be wrong there. Catalogs never synchronize between hosts; assignment creates a missing definition only on the target host. On the daemon, catalog and assignment rewrites share a journaled commit boundary. Startup recovery completes that commit before workspace or catalog publication.
 - `SessionContext` wraps the daemon client for the active session
@@ -115,12 +115,14 @@ Cross-platform React Native app that connects to one or more daemons.
 
 The replica cache paints stale data immediately while the host connects. Directory cursors are
 reconciliation checkpoints; cached entities remain non-authoritative until the daemon answers.
-Pending permission requests are not restored from it. AsyncStorage is not encrypted, so the cached
+Pending permission requests are not restored from it. The row store is not encrypted, so the cached
 timeline tail may contain source code, prompts, and tool output; encrypted-at-rest storage is a
-separate product/security decision. Its serialized payload has a 32 MiB byte budget and evicts whole
-host snapshots in least-recently-written order; a single oversized host is omitted rather than
-partially restored. Browser and Electron builds store it in IndexedDB. Native builds use
-AsyncStorage, and Android reserves 64 MiB for that database.
+separate product/security decision. Agents, workspaces, and projects have individual rows; the
+focused timeline tail and directory checkpoint each have one row per host. Writes serialize only
+rows whose in-memory identities changed. Restore validates every row before hydration; one invalid
+row clears the cache and starts cold. The 32 MiB byte budget is tracked incrementally from row
+payload lengths and evicts whole hosts in least-recently-written order. Browser and Electron builds
+use IndexedDB. Native builds use expo-sqlite.
 
 The three directory entity types have independent monotonic sequences and share one daemon
 generation. The daemon retains only the latest projection per entity and bounded tombstones, not an

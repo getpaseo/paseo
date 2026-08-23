@@ -1,11 +1,12 @@
 import type { CDPSession, Page } from "@playwright/test";
 
-const REPLICA_CACHE_DATABASE = "paseo-replica-cache";
+const REPLICA_CACHE_DATABASE = "paseo-replica-row-store";
+const REPLICA_CACHE_ROWS_STORE = "rows";
 const PERSIST_FRAME_NAMES = [
   "captureSessions",
   "captureHost",
-  "buildBoundedPayload",
-  "serialize",
+  "queueReplicaChanges",
+  "apply",
   "safeParse",
   "stringify",
   "setItem",
@@ -14,8 +15,7 @@ const PERSIST_FRAME_NAMES = [
 const PERSIST_STACK_ANCHORS = new Set([
   "captureSessions",
   "captureHost",
-  "buildBoundedPayload",
-  "serialize",
+  "queueReplicaChanges",
   "persist",
   "flushPending",
   "measuredPut",
@@ -69,7 +69,7 @@ declare global {
 
 export async function installReplicaCacheMeasurement(page: Page): Promise<void> {
   await page.addInitScript(
-    ({ databaseName }) => {
+    ({ databaseName, storeName }) => {
       const encoder = new TextEncoder();
       const transactionWrites = new WeakMap<
         IDBTransaction,
@@ -128,8 +128,12 @@ export async function installReplicaCacheMeasurement(page: Page): Promise<void> 
       IDBObjectStore.prototype.put = function measuredPut(value: unknown, key?: IDBValidKey) {
         const request =
           key === undefined ? originalPut.call(this, value) : originalPut.call(this, value, key);
-        if (this.transaction.db.name !== databaseName) return request;
-        const serialized = typeof value === "string" ? value : JSON.stringify(value);
+        if (this.transaction.db.name !== databaseName || this.name !== storeName) return request;
+        const rowPayload =
+          value && typeof value === "object" ? Reflect.get(value, "payload") : undefined;
+        let serialized = JSON.stringify(value);
+        if (typeof value === "string") serialized = value;
+        if (typeof rowPayload === "string") serialized = rowPayload;
         const storageKey = JSON.stringify(resolveStorageKey(this, value, key));
         observeTransaction(this.transaction).push({
           type: "put",
@@ -143,7 +147,7 @@ export async function installReplicaCacheMeasurement(page: Page): Promise<void> 
       const originalDelete = IDBObjectStore.prototype.delete;
       IDBObjectStore.prototype.delete = function measuredDelete(query: IDBValidKey | IDBKeyRange) {
         const request = originalDelete.call(this, query);
-        if (this.transaction.db.name !== databaseName) return request;
+        if (this.transaction.db.name !== databaseName || this.name !== storeName) return request;
         observeTransaction(this.transaction).push({
           type: "delete",
           key: `${this.name}:${JSON.stringify(query)}`,
@@ -156,6 +160,7 @@ export async function installReplicaCacheMeasurement(page: Page): Promise<void> 
       const markRestoreRead = (store: IDBObjectStore) => {
         if (
           store.transaction.db.name === databaseName &&
+          store.name === storeName &&
           store.transaction.mode === "readonly" &&
           window.__replicaCacheRestoreReadStartedAt === undefined
         ) {
@@ -197,7 +202,7 @@ export async function installReplicaCacheMeasurement(page: Page): Promise<void> 
         }
       }
     },
-    { databaseName: REPLICA_CACHE_DATABASE },
+    { databaseName: REPLICA_CACHE_DATABASE, storeName: REPLICA_CACHE_ROWS_STORE },
   );
 }
 
