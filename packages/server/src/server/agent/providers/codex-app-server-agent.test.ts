@@ -872,6 +872,40 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("forwards the native auto-compaction threshold to thread and turn start", async () => {
+    const session = createSession({
+      modeId: undefined,
+      providerOptions: {
+        model_auto_compact_token_limit: 256_000,
+        model_auto_compact_token_limit_scope: "body_after_prefix",
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "model/list") {
+        return { data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }] };
+      }
+      if (method === "thread/start") return { thread: { id: "compact-thread" } };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("use the configured threshold");
+
+    const expectedConfig = {
+      model_auto_compact_token_limit: 256_000,
+      model_auto_compact_token_limit_scope: "body_after_prefix",
+    };
+    expect(request.mock.calls.find(([method]) => method === "thread/start")?.[1]).toMatchObject({
+      config: expectedConfig,
+    });
+    expect(request.mock.calls.find(([method]) => method === "turn/start")?.[1]).toMatchObject({
+      config: expectedConfig,
+    });
+  });
+
   test("preserves cwd-resolved Codex writable roots under an explicit workflow mode", async () => {
     const appServer = createFakeCodexAppServer({
       "config/read": () => ({

@@ -20,6 +20,8 @@ describe("provider-owned option schemas", () => {
     expect(
       CodexProviderOptionsSchema.parse({
         approval_policy: "never",
+        model_auto_compact_token_limit: 256_000,
+        model_auto_compact_token_limit_scope: "body_after_prefix",
         sandbox_mode: "workspace-write",
         sandbox_workspace_write: {
           writable_roots: ["/var/cache/npm"],
@@ -34,8 +36,18 @@ describe("provider-owned option schemas", () => {
         },
       }),
     ).toMatchObject({
+      model_auto_compact_token_limit: 256_000,
+      model_auto_compact_token_limit_scope: "body_after_prefix",
       sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
     });
+  });
+
+  test.each([0, -1, 1.5])("rejects invalid Codex auto-compaction limit %s", (limit) => {
+    expect(() =>
+      validateProviderOptions("codex", CodexProviderOptionsSchema, {
+        model_auto_compact_token_limit: limit,
+      }),
+    ).toThrow("providerOptions.model_auto_compact_token_limit");
   });
 
   test("reports the exact invalid Codex option path", () => {

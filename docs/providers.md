@@ -12,7 +12,8 @@ prompt, environment, session identity, MCP transport, callbacks, and hooks canno
 
 This Paseo version accepts these keys:
 
-- **Codex:** `approval_policy`, `sandbox_mode`,
+- **Codex:** `approval_policy`, `model_auto_compact_token_limit`,
+  `model_auto_compact_token_limit_scope` (`total` or `body_after_prefix`), `sandbox_mode`,
   `sandbox_workspace_write.{writable_roots,network_access,exclude_slash_tmp,exclude_tmpdir_env_var}`,
   `web_search`, `features.multi_agent_v2`, and `features.network_proxy`. A network proxy object may
   contain `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,

@@ -46,6 +46,55 @@ describe("Codex app-server provider (real)", () => {
     }
   }, 30_000);
 
+  test("auto-compacts at the configured threshold without replacing the native thread", async () => {
+    const client = new CodexAppServerAgentClient(createTestLogger());
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-auto-compact-e2e-"));
+    try {
+      const { models } = await client.fetchCatalog({ scope: "workspace", cwd, force: false });
+      const model = models.find((candidate) => candidate.isDefault) ?? models[0];
+      if (!model) {
+        throw new Error("Native Codex app-server returned no models");
+      }
+      const session = await client.createSession({
+        provider: "codex",
+        model: model.id,
+        cwd,
+        modeId: "auto",
+        providerOptions: {
+          model_auto_compact_token_limit: 30_000,
+          model_auto_compact_token_limit_scope: "total",
+        },
+      });
+
+      try {
+        await session.run(`${"context ".repeat(8_000)}\nReply with exactly OK.`);
+        const before = await session.run("Reply with exactly OK again.");
+        const nativeThreadId = before.sessionId;
+        expect(nativeThreadId).toBeTruthy();
+        const events: AgentStreamEvent[] = [];
+        const unsubscribe = session.subscribe((event) => events.push(event));
+        const after = await session.run("Reply with exactly OK once more.");
+        unsubscribe();
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ type: "compaction", status: "completed" }),
+          }),
+        );
+        expect(before.usage?.contextWindowUsedTokens).toBeGreaterThan(30_000);
+        expect(after.usage?.contextWindowUsedTokens).toBeLessThan(
+          before.usage?.contextWindowUsedTokens ?? 0,
+        );
+        expect(after.sessionId).toBe(nativeThreadId);
+        expect(session.id).toBe(nativeThreadId);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test("keeps a real MultiAgentV2 child inside its parent turn", async () => {
     const client = new CodexAppServerAgentClient(createTestLogger());
     const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-multi-agent-v2-e2e-"));
