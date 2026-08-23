@@ -145,12 +145,12 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   });
 }
 
-/** Create a New tab from `+` and pick Agent in its launcher. */
+/** Open the pane-local `+` menu and pick Agent. */
 export async function createAgentTabFromMenu(page: Page): Promise<void> {
   const trigger = visibleTestId(page, "workspace-new-tab-button").first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
-  const item = visibleTestId(page, "workspace-new-tab-agent").first();
+  const item = visibleTestId(page, "workspace-new-tab-menu-agent").first();
   await expect(item).toBeVisible({ timeout: 10_000 });
   await item.click();
 }

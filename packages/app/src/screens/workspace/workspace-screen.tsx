@@ -156,8 +156,12 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
-import { NewTabLauncherProvider, type NewTabLauncher } from "@/panels/new-tab-panel";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
+import {
+  NewTabLauncherProvider,
+  type NewTabLauncher,
+  type WorkspaceTabLaunchDestination,
+} from "@/workspace-tabs/launcher";
 import type { TerminalTabDestination } from "@/screens/workspace/terminals/use-workspace-terminals";
 import {
   buildBulkCloseConfirmationMessage,
@@ -2314,17 +2318,24 @@ function WorkspaceScreenContent({
     [createWorkspaceTab, persistenceKey],
   );
 
-  const activateNewTab = useCallback(
-    (tabId: string, selection: NewTabSelection) => {
+  const launchWorkspaceTab = useCallback(
+    (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => {
       if (!persistenceKey) {
         return;
       }
+      const openTarget = (target: WorkspaceTab["target"]) => {
+        if (destination.kind === "replace") {
+          replaceWorkspaceTabTarget(persistenceKey, destination.tabId, target);
+        } else {
+          createWorkspaceTab(persistenceKey, target, paneLocalPlacement(destination.paneId));
+        }
+      };
       if (selection.kind === "target") {
-        replaceWorkspaceTabTarget(persistenceKey, tabId, selection.target);
+        openTarget(selection.target);
         return;
       }
       if (selection.kind === "agent") {
-        replaceWorkspaceTabTarget(persistenceKey, tabId, {
+        openTarget({
           kind: "draft",
           draftId: generateDraftId(),
         });
@@ -2333,14 +2344,14 @@ function WorkspaceScreenContent({
       if (selection.kind === "terminal") {
         createTerminal({
           profile: selection.profile,
-          destination: { kind: "replace", tabId },
+          destination,
         });
         return;
       }
       const { browserId } = createWorkspaceBrowser();
-      replaceWorkspaceTabTarget(persistenceKey, tabId, { kind: "browser", browserId });
+      openTarget({ kind: "browser", browserId });
     },
-    [createTerminal, persistenceKey, replaceWorkspaceTabTarget],
+    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
@@ -3679,9 +3690,15 @@ function WorkspaceScreenContent({
       showPullRequest: hasPullRequest,
       showBrowser: showCreateBrowserTab,
       terminalDisabled: createTerminalDisabled,
-      activate: activateNewTab,
+      launch: launchWorkspaceTab,
     }),
-    [activateNewTab, createTerminalDisabled, hasPullRequest, isGitCheckout, showCreateBrowserTab],
+    [
+      createTerminalDisabled,
+      hasPullRequest,
+      isGitCheckout,
+      launchWorkspaceTab,
+      showCreateBrowserTab,
+    ],
   );
   const focusedPaneIdOrUndefined = useMemo(() => focusedPaneId ?? undefined, [focusedPaneId]);
   const desktopFocusModeEnabled = useMemo(

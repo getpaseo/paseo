@@ -137,6 +137,18 @@ test.describe("Tab creation", () => {
     ).toBeVisible();
   });
 
+  test("clicking + opens its menu without creating a New tab", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+    const countBefore = await countTabsOfKind(page, "new_tab");
+
+    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+
+    await expect(
+      page.getByTestId("workspace-new-tab-menu").filter({ visible: true }),
+    ).toBeVisible();
+    await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(countBefore);
+  });
+
   test("opening two New tabs creates two independent tab identities", async ({ page }) => {
     await gotoWorkspace(page, workspace.workspaceId);
 
@@ -230,10 +242,10 @@ test.describe("Tab creation", () => {
     await gotoWorkspace(page, workspace.workspaceId);
     await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
 
-    const panel = page.getByTestId("workspace-new-tab-panel").filter({ visible: true });
-    await expect(panel.getByText("Terminal profiles", { exact: true })).toBeVisible();
+    const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
+    await expect(menu.getByText("Terminal profiles", { exact: true })).toBeVisible();
 
-    const editProfiles = panel.getByTestId("workspace-new-tab-edit-terminal-profiles");
+    const editProfiles = menu.getByTestId("workspace-new-tab-menu-edit-terminal-profiles");
     await expect(editProfiles).toHaveAccessibleName("Edit profiles");
 
     await editProfiles.click();
@@ -363,7 +375,7 @@ test.describe("Tab transitions (no flash)", () => {
   }) => {
     const isolatedWorkspace = await withWorkspace({ prefix: "launcher-no-flash-" });
     await isolatedWorkspace.navigateTo();
-    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+    await pressNewTabShortcut(page);
     await expect(
       page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
     ).toBeVisible();

@@ -1,72 +1,21 @@
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import {
-  FileDiff,
-  FolderTree,
-  GitPullRequest,
-  Globe,
-  Pencil,
-  Plus,
-  SquarePen,
-  SquareTerminal,
-  type LucideIcon,
-} from "lucide-react-native";
-import { useRouter, type Href } from "expo-router";
+import { Pencil, Plus, type LucideIcon } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import invariant from "tiny-invariant";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import { getLauncherActionOrder, type LauncherAction } from "@/panels/new-tab-action-order";
 import type { PanelRegistration } from "@/panels/panel-registry";
-import { resolvePluginIcon } from "@/plugins/icons";
-import { useInstalledPlugins } from "@/plugins/registry";
-import type { InstalledPlugin } from "@/plugins/types";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
-import type { NewTabSelection } from "@/workspace-tabs/new-tab";
-import type { PluginWorkspacePanelContribution } from "@getpaseo/plugin";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@getpaseo/protocol/terminal-profiles";
-
-export interface NewTabLauncher {
-  showChanges: boolean;
-  showPullRequest: boolean;
-  showBrowser: boolean;
-  terminalDisabled: boolean;
-  activate: (tabId: string, selection: NewTabSelection) => void;
-}
-
-const NewTabLauncherContext = createContext<NewTabLauncher | null>(null);
-
-export function NewTabLauncherProvider({
-  value,
-  children,
-}: {
-  value: NewTabLauncher;
-  children: ReactNode;
-}) {
-  return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
-}
+  useWorkspaceTabLaunchCatalog,
+  type WorkspaceTabLaunchItem,
+} from "@/workspace-tabs/launcher";
 
 const ThemedPlus = withUnistyles(Plus);
 const ThemedPencil = withUnistyles(Pencil);
@@ -80,29 +29,6 @@ const LAUNCHER_MAX_WIDTH = 380;
 const EDIT_PROFILES_HIT_SIZE = ICON_SIZE.xs + SPACING[2];
 const ROW_DATA_SET = { newTabLauncherRow: "true" };
 const ROW_SELECTOR = '[data-new-tab-launcher-row="true"]';
-const CHANGES_SELECTION: NewTabSelection = {
-  kind: "target",
-  target: { kind: "working_diff" },
-};
-const FILES_SELECTION: NewTabSelection = { kind: "target", target: { kind: "files" } };
-const PULL_REQUEST_SELECTION: NewTabSelection = {
-  kind: "target",
-  target: { kind: "pull_request" },
-};
-const AGENT_SELECTION: NewTabSelection = { kind: "agent" };
-const TERMINAL_SELECTION: NewTabSelection = { kind: "terminal" };
-const BROWSER_SELECTION: NewTabSelection = { kind: "browser" };
-
-interface LauncherActionDefinition {
-  label: string;
-  Icon: LucideIcon;
-  disabled?: boolean;
-  hidden?: boolean;
-  selection: NewTabSelection;
-  shortcut?: string;
-  testID: string;
-}
-
 function LauncherIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
   return <Icon size={LAUNCHER_ICON_SIZE} color={color} />;
 }
@@ -147,107 +73,33 @@ function EditProfilesButton({ label, onPress }: { label: string; onPress: () => 
   );
 }
 
-function LauncherRow({
-  label,
-  Icon,
-  terminalIconKey,
-  disabled,
-  selection,
-  shortcut,
-  testID,
-}: {
-  label: string;
-  Icon?: LucideIcon;
-  terminalIconKey?: string;
-  disabled?: boolean;
-  selection: NewTabSelection;
-  shortcut?: string;
-  testID: string;
-}) {
+function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
   const { tabId } = usePaneContext();
-  const launcher = useContext(NewTabLauncherContext);
-  invariant(launcher, "NewTabLauncherProvider is required");
   const handlePress = useCallback(() => {
-    launcher.activate(tabId, selection);
-  }, [launcher, selection, tabId]);
+    item.launch({ kind: "replace", tabId });
+  }, [item, tabId]);
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={item.label}
       dataSet={ROW_DATA_SET}
-      disabled={disabled}
+      disabled={item.disabled}
       onPress={handlePress}
       style={rowStyle}
       tabIndex={-1}
-      testID={testID}
+      testID={`workspace-new-tab-${item.id}`}
     >
-      {Icon ? <ThemedLauncherIcon Icon={Icon} uniProps={mutedColorMapping} /> : null}
-      {terminalIconKey ? (
-        <TerminalProfileIcon iconKey={terminalIconKey} size={LAUNCHER_ICON_SIZE} />
+      {item.Icon ? <ThemedLauncherIcon Icon={item.Icon} uniProps={mutedColorMapping} /> : null}
+      {item.terminalIconKey ? (
+        <TerminalProfileIcon iconKey={item.terminalIconKey} size={LAUNCHER_ICON_SIZE} />
       ) : null}
       <Text numberOfLines={1} style={styles.rowLabel}>
-        {label}
+        {item.label}
       </Text>
-      {shortcut ? <LauncherShortcut actionId={shortcut} /> : null}
+      {item.shortcutActionId ? <LauncherShortcut actionId={item.shortcutActionId} /> : null}
     </Pressable>
   );
-}
-
-function TerminalProfileLauncherRow({
-  profile,
-  disabled,
-}: {
-  profile: TerminalProfile;
-  disabled: boolean;
-}) {
-  const selection = useMemo<NewTabSelection>(() => ({ kind: "terminal", profile }), [profile]);
-  return (
-    <LauncherRow
-      label={profile.name}
-      terminalIconKey={getTerminalProfileIcon(profile)}
-      disabled={disabled}
-      selection={selection}
-      testID={`workspace-new-tab-terminal-profile-${profile.id}`}
-    />
-  );
-}
-
-function PluginLauncherRow({
-  pluginId,
-  panel,
-}: {
-  pluginId: string;
-  panel: PluginWorkspacePanelContribution;
-}) {
-  const selection = useMemo<NewTabSelection>(
-    () => ({
-      kind: "target",
-      target: { kind: "plugin", pluginId, panelId: panel.id, context: "workspace" },
-    }),
-    [panel.id, pluginId],
-  );
-  return (
-    <LauncherRow
-      label={panel.title}
-      Icon={resolvePluginIcon(panel.icon)}
-      selection={selection}
-      testID={`workspace-new-tab-plugin-${pluginId}-${panel.id}`}
-    />
-  );
-}
-
-function collectWorkspacePluginPanels(plugins: InstalledPlugin[], serverId: string) {
-  const result: Array<{ pluginId: string; panel: PluginWorkspacePanelContribution }> = [];
-  for (const plugin of plugins) {
-    if (plugin.serverId !== serverId) continue;
-    for (const panel of plugin.workspacePanels) {
-      if (panel.context === "workspace") {
-        result.push({ pluginId: plugin.id, panel });
-      }
-    }
-  }
-  return result;
 }
 
 function useNewTabDescriptor() {
@@ -264,73 +116,17 @@ function useNewTabDescriptor() {
 }
 
 const NewTabPanel = memo(function NewTabPanel(): ReactElement {
-  const { t } = useTranslation();
-  const router = useRouter();
   const { isSidePanel, serverId, tabId } = usePaneContext();
   const { isInteractive, focusPane } = usePaneFocus();
-  const launcher = useContext(NewTabLauncherContext);
-  invariant(launcher, "NewTabLauncherProvider is required");
-  const { config } = useDaemonConfig(serverId);
-  const plugins = useInstalledPlugins();
   const containerRef = useRef<View | null>(null);
-  const profiles = useMemo(
-    () => resolveTerminalProfiles(config?.terminalProfiles),
-    [config?.terminalProfiles],
+  const groups = useWorkspaceTabLaunchCatalog({
+    serverId,
+    purpose: isSidePanel ? "supporting" : "primary",
+  });
+  const itemsById = useMemo(
+    () => new Map(groups.flatMap((group) => group.items).map((item) => [item.id, item])),
+    [groups],
   );
-  const pluginPanels = useMemo(
-    () => collectWorkspacePluginPanels(plugins, serverId),
-    [plugins, serverId],
-  );
-  const editTerminalProfiles = useCallback(() => {
-    router.push(buildSettingsHostSectionRoute(serverId, "terminals") as Href);
-  }, [router, serverId]);
-  const launcherActions: Record<LauncherAction, LauncherActionDefinition> = {
-    agent: {
-      label: t("workspace.tabs.fallback.agent"),
-      Icon: SquarePen,
-      selection: AGENT_SELECTION,
-      shortcut: "workspace-tab-target-agent",
-      testID: "workspace-new-tab-agent",
-    },
-    terminal: {
-      label: t("workspace.tabs.fallback.terminal"),
-      Icon: SquareTerminal,
-      disabled: launcher.terminalDisabled,
-      selection: TERMINAL_SELECTION,
-      shortcut: "workspace-terminal-new",
-      testID: "workspace-new-tab-terminal",
-    },
-    changes: {
-      label: t("workspace.tabs.actions.changes"),
-      Icon: FileDiff,
-      hidden: !launcher.showChanges,
-      selection: CHANGES_SELECTION,
-      shortcut: "workspace-tab-target-changes",
-      testID: "workspace-new-tab-changes",
-    },
-    files: {
-      label: t("workspace.tabs.actions.files"),
-      Icon: FolderTree,
-      selection: FILES_SELECTION,
-      shortcut: "workspace-tab-target-files",
-      testID: "workspace-new-tab-files",
-    },
-    browser: {
-      label: t("workspace.tabs.fallback.browser"),
-      Icon: Globe,
-      hidden: !launcher.showBrowser,
-      selection: BROWSER_SELECTION,
-      shortcut: "workspace-tab-target-browser",
-      testID: "workspace-new-tab-browser",
-    },
-    pullRequest: {
-      label: t("workspace.tabs.actions.pullRequest"),
-      Icon: GitPullRequest,
-      hidden: !launcher.showPullRequest,
-      selection: PULL_REQUEST_SELECTION,
-      testID: "workspace-new-tab-pull-request",
-    },
-  };
 
   useEffect(() => {
     if (!isWeb || !isInteractive) return;
@@ -383,39 +179,31 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
     };
   }, [focusPane, isInteractive]);
 
-  const activate = useCallback(
-    (selection: NewTabSelection) => launcher.activate(tabId, selection),
-    [launcher, tabId],
-  );
   const handleKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
       if (action.id === "workspace.agent.new" || action.id === "workspace.tab.target.agent") {
-        activate({ kind: "agent" });
+        itemsById.get("agent")?.launch({ kind: "replace", tabId });
         return true;
       }
       if (action.id === "workspace.terminal.new") {
-        activate({ kind: "terminal" });
+        itemsById.get("terminal")?.launch({ kind: "replace", tabId });
         return true;
       }
       if (action.id === "workspace.browser.new" || action.id === "workspace.tab.target.browser") {
-        if (launcher.showBrowser) {
-          activate({ kind: "browser" });
-        }
+        itemsById.get("browser")?.launch({ kind: "replace", tabId });
         return true;
       }
       if (action.id === "workspace.tab.target.changes") {
-        if (launcher.showChanges) {
-          activate({ kind: "target", target: { kind: "working_diff" } });
-        }
+        itemsById.get("changes")?.launch({ kind: "replace", tabId });
         return true;
       }
       if (action.id === "workspace.tab.target.files") {
-        activate({ kind: "target", target: { kind: "files" } });
+        itemsById.get("files")?.launch({ kind: "replace", tabId });
         return true;
       }
       return false;
     },
-    [activate, launcher.showBrowser, launcher.showChanges],
+    [itemsById, tabId],
   );
   useKeyboardActionHandler({
     handlerId: `new-tab:${tabId}`,
@@ -437,40 +225,24 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
     <View ref={containerRef} style={styles.container} testID="workspace-new-tab-panel">
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.rail}>
-          <View style={styles.group}>
-            {getLauncherActionOrder(isSidePanel).map((actionId) => {
-              const action = launcherActions[actionId];
-              if (action.hidden) return null;
-              return <LauncherRow key={actionId} {...action} />;
-            })}
-            {pluginPanels.map(({ pluginId, panel }) => (
-              <PluginLauncherRow
-                key={`${pluginId}:${panel.id}`}
-                pluginId={pluginId}
-                panel={panel}
-              />
-            ))}
-          </View>
-          {profiles.length > 0 ? (
-            <View style={styles.group}>
-              <View style={styles.groupHeader}>
-                <Text style={styles.groupLabel}>
-                  {t("workspace.tabs.actions.terminalProfilesMenu")}
-                </Text>
-                <EditProfilesButton
-                  label={t("workspace.tabs.actions.editTerminalProfiles")}
-                  onPress={editTerminalProfiles}
-                />
-              </View>
-              {profiles.map((profile) => (
-                <TerminalProfileLauncherRow
-                  key={profile.id}
-                  disabled={launcher.terminalDisabled}
-                  profile={profile}
-                />
+          {groups.map((group) => (
+            <View key={group.id} style={styles.group}>
+              {group.label ? (
+                <View style={styles.groupHeader}>
+                  <Text style={styles.groupLabel}>{group.label}</Text>
+                  {group.accessory ? (
+                    <EditProfilesButton
+                      label={group.accessory.label}
+                      onPress={group.accessory.run}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {group.items.map((item) => (
+                <LauncherRow key={item.id} item={item} />
               ))}
             </View>
-          ) : null}
+          ))}
         </View>
       </ScrollView>
     </View>

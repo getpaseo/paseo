@@ -51,6 +51,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { DropdownMenu, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -79,6 +80,8 @@ import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
+import { SIDE_PANEL_PANE_ID } from "@/stores/workspace-layout-actions";
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -217,36 +220,48 @@ function TabLabelMeasurement({
 }
 
 interface WorkspaceNewTabButtonProps {
+  serverId: string;
+  paneId?: string;
   shortcutKeys: ShortcutKey[][] | null;
-  onPress: () => void;
   onLayout: (event: LayoutChangeEvent) => void;
 }
 
-function WorkspaceNewTabButton({ shortcutKeys, onPress, onLayout }: WorkspaceNewTabButtonProps) {
+function WorkspaceNewTabButton({
+  serverId,
+  paneId,
+  shortcutKeys,
+  onLayout,
+}: WorkspaceNewTabButtonProps) {
   const { t } = useTranslation();
   const tooltipText = t("workspace.tabs.actions.newTab");
 
   return (
     <View style={styles.inlineAddButton} onLayout={onLayout}>
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild triggerRefProp="triggerRef">
-          <Pressable
-            testID="workspace-new-tab-button"
-            accessibilityRole="button"
-            accessibilityLabel={tooltipText}
-            onPress={onPress}
-            style={inlineAddActionButtonStyle}
-          >
-            <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <View style={styles.newTabTooltipRow}>
-            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
-            {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
-          </View>
-        </TooltipContent>
-      </Tooltip>
+      <DropdownMenu>
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild triggerRefProp="triggerRef">
+            <DropdownMenuTrigger
+              testID="workspace-new-tab-button"
+              accessibilityRole="button"
+              accessibilityLabel={tooltipText}
+              style={inlineAddActionButtonStyle}
+            >
+              <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <View style={styles.newTabTooltipRow}>
+              <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
+              {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+            </View>
+          </TooltipContent>
+        </Tooltip>
+        <WorkspaceNewTabMenuContent
+          serverId={serverId}
+          purpose={paneId === SIDE_PANEL_PANE_ID ? "supporting" : "primary"}
+          paneId={paneId}
+        />
+      </DropdownMenu>
     </View>
   );
 }
@@ -1347,8 +1362,9 @@ function ResolvedWorkspaceDesktopTabsRow({
           />
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
+              serverId={normalizedServerId}
+              paneId={paneId}
               shortcutKeys={newTabKeys}
-              onPress={createNewTab}
               onLayout={handleInlineAddButtonLayout}
             />
           ) : null}
@@ -1361,8 +1377,9 @@ function ResolvedWorkspaceDesktopTabsRow({
       </View>
       {layout.requiresHorizontalScrollFallback ? (
         <WorkspaceNewTabButton
+          serverId={normalizedServerId}
+          paneId={paneId}
           shortcutKeys={newTabKeys}
-          onPress={createNewTab}
           onLayout={handleInlineAddButtonLayout}
         />
       ) : null}
