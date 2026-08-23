@@ -83,6 +83,12 @@ type ClaudeLimit = z.infer<typeof ClaudeLimitSchema>;
 
 const SCOPED_WEEKLY_KIND = "weekly_scoped";
 
+// A 403 is not a stale token, so refreshing cannot clear it, and refreshing anyway rewrites
+// the credentials on every poll. What causes the refusal is not visible from here, so the
+// message names the refusal rather than guessing at a reason.
+const CLAUDE_USAGE_FORBIDDEN_MESSAGE =
+  "Usage request was refused (HTTP 403). Check the daemon's network access to api.anthropic.com.";
+
 interface ClaudeCredentialRecord {
   oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
   filePath: string | null;
@@ -374,6 +380,10 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
     let resp = await this.callClaudeApi(oauth.accessToken);
 
+    if (resp === "FORBIDDEN") {
+      return this.forbiddenUsage();
+    }
+
     if (resp === "NEEDS_AUTH") {
       if (!filePath || !oauth.refreshToken) {
         return unavailableUsage(this);
@@ -391,6 +401,11 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       });
 
       resp = await this.callClaudeApi(refreshed.access_token);
+      // A refreshed token that is still forbidden gets the same explicit message; a still
+      // unauthenticated one is a genuine auth failure and stays generic unavailable.
+      if (resp === "FORBIDDEN") {
+        return this.forbiddenUsage();
+      }
       if (resp === "NEEDS_AUTH") {
         return unavailableUsage(this);
       }
@@ -459,6 +474,14 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     return parsed;
   }
 
+  private forbiddenUsage(): ProviderUsage {
+    return unavailableUsage({
+      providerId: this.providerId,
+      displayName: this.displayName,
+      error: CLAUDE_USAGE_FORBIDDEN_MESSAGE,
+    });
+  }
+
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
     const credPath = join(this.claudeHome, ".credentials.json");
 
@@ -487,7 +510,9 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     return null;
   }
 
-  private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
+  private async callClaudeApi(
+    token: string,
+  ): Promise<ClaudeUsageResponse | "NEEDS_AUTH" | "FORBIDDEN"> {
     const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -495,7 +520,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
+    if (res.status === 401) return "NEEDS_AUTH";
+    if (res.status === 403) return "FORBIDDEN";
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
