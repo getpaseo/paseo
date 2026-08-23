@@ -6,7 +6,7 @@ import {
   type DictationDebugChunkWriter,
 } from "../agent/dictation-debug.js";
 import { isPaseoDictationDebugEnabled } from "../agent/recordings-debug.js";
-import { Pcm16MonoResampler } from "../agent/pcm16-resampler.js";
+import { Pcm16MonoResampler, Pcm16ResamplerOutputLimitError } from "../agent/pcm16-resampler.js";
 import type {
   SpeechToTextProvider,
   StreamingTranscriptionSession,
@@ -28,6 +28,10 @@ const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
 );
 const DEFAULT_DICTATION_MAX_CHUNK_BYTES = 512 * 1024;
 const DEFAULT_DICTATION_HARD_SEGMENT_BYTES = 60 * 2 * 16000;
+const DICTATION_REORDER_SEQ_WINDOW = 4096;
+const DICTATION_REORDER_MAX_ENTRIES = 512;
+const DICTATION_REORDER_MAX_BYTES = 16 * 1024 * 1024;
+const DICTATION_DEBUG_TAIL_MAX_BYTES = 8 * 1024 * 1024;
 
 function parseNonNegativeNumber(value: string | undefined): number | null {
   if (value === undefined) {
@@ -38,6 +42,32 @@ function parseNonNegativeNumber(value: string | undefined): number | null {
     return null;
   }
   return parsed;
+}
+
+// Byte limits must be positive safe integers: 0, negatives, floats, NaN, and
+// junk strings all fall through to the next source instead of producing a
+// broken limit (e.g. a zero cap that rejects every chunk).
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function parsePositiveSafeInteger(value: string | undefined): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return isPositiveSafeInteger(parsed) ? parsed : null;
+}
+
+function resolvePositiveSafeInteger(
+  explicit: number | undefined,
+  envValue: string | undefined,
+  fallback: number,
+): number {
+  if (isPositiveSafeInteger(explicit)) {
+    return explicit;
+  }
+  return parsePositiveSafeInteger(envValue) ?? fallback;
 }
 
 function convertPCMToWavBuffer(
@@ -77,10 +107,13 @@ interface DictationStreamState {
   inputRate: number;
   outputRate: number;
   resampler: Pcm16MonoResampler | null;
+  debugEnabled: boolean;
   debugAudioChunks: Buffer[];
+  debugAudioBytes: number;
   debugRecordingPath: string | null;
   debugChunkWriter: DictationDebugChunkWriter | null;
   receivedChunks: Map<number, Buffer>;
+  reorderBufferedBytes: number;
   nextSeqToForward: number;
   ackSeq: number;
   autoCommitBytes: number;
@@ -138,7 +171,6 @@ export class DictationStreamManager {
   private readonly maxChunkBytes: number;
   private readonly hardSegmentBytes: number;
   private readonly streams = new Map<string, DictationStreamState>();
-
   constructor(params: {
     logger: pino.Logger;
     emit: (msg: DictationStreamOutboundMessage) => void;
@@ -147,6 +179,8 @@ export class DictationStreamManager {
     language?: string;
     finalTimeoutMs?: number;
     autoCommitSeconds?: number;
+    maxChunkBytes?: number;
+    hardSegmentBytes?: number;
   }) {
     this.logger = params.logger.child({ component: "dictation-stream-manager" });
     this.emit = params.emit;
@@ -158,12 +192,16 @@ export class DictationStreamManager {
       params.autoCommitSeconds ??
       parseNonNegativeNumber(process.env.PASEO_DICTATION_AUTO_COMMIT_SECONDS) ??
       DEFAULT_DICTATION_AUTO_COMMIT_SECONDS;
-    this.maxChunkBytes =
-      parseNonNegativeNumber(process.env.PASEO_DICTATION_MAX_CHUNK_BYTES) ??
-      DEFAULT_DICTATION_MAX_CHUNK_BYTES;
-    this.hardSegmentBytes =
-      parseNonNegativeNumber(process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES) ??
-      DEFAULT_DICTATION_HARD_SEGMENT_BYTES;
+    this.maxChunkBytes = resolvePositiveSafeInteger(
+      params.maxChunkBytes,
+      process.env.PASEO_DICTATION_MAX_CHUNK_BYTES,
+      DEFAULT_DICTATION_MAX_CHUNK_BYTES,
+    );
+    this.hardSegmentBytes = resolvePositiveSafeInteger(
+      params.hardSegmentBytes,
+      process.env.PASEO_DICTATION_HARD_SEGMENT_BYTES,
+      DEFAULT_DICTATION_HARD_SEGMENT_BYTES,
+    );
   }
 
   public cleanupAll(): void {
@@ -307,10 +345,13 @@ export class DictationStreamManager {
               inputRate,
               outputRate,
             }),
+      debugEnabled: isPaseoDictationDebugEnabled(),
       debugAudioChunks: [],
+      debugAudioBytes: 0,
       debugRecordingPath: null,
       debugChunkWriter,
       receivedChunks: new Map(),
+      reorderBufferedBytes: 0,
       nextSeqToForward: 0,
       ackSeq: -1,
       autoCommitBytes,
@@ -356,6 +397,7 @@ export class DictationStreamManager {
     }
 
     if (!state.receivedChunks.has(params.seq)) {
+      // Precheck bounds the decode allocation; the decoded length is the real limit.
       const maxEncodedLength = Math.ceil(this.maxChunkBytes / 3) * 4;
       if (params.audioBase64.length > maxEncodedLength) {
         const approxBytes = Math.floor((params.audioBase64.length * 3) / 4);
@@ -367,7 +409,28 @@ export class DictationStreamManager {
         return;
       }
       const decoded = Buffer.from(params.audioBase64, "base64");
+      if (decoded.length > this.maxChunkBytes) {
+        void this.failAndCleanupDictationStream(
+          params.dictationId,
+          `Dictation chunk of ${decoded.length} bytes exceeds the ${this.maxChunkBytes}-byte limit`,
+          true,
+        );
+        return;
+      }
+      const seqWindowExceeded = params.seq >= state.nextSeqToForward + DICTATION_REORDER_SEQ_WINDOW;
+      const entriesExceeded = state.receivedChunks.size >= DICTATION_REORDER_MAX_ENTRIES;
+      const bytesExceeded =
+        state.reorderBufferedBytes + decoded.length > DICTATION_REORDER_MAX_BYTES;
+      if (seqWindowExceeded || entriesExceeded || bytesExceeded) {
+        void this.failAndCleanupDictationStream(
+          params.dictationId,
+          `Dictation reorder buffer limit exceeded (seq=${params.seq}, nextToForward=${state.nextSeqToForward}, buffered=${state.receivedChunks.size} entries / ${state.reorderBufferedBytes} bytes)`,
+          true,
+        );
+        return;
+      }
       state.receivedChunks.set(params.seq, decoded);
+      state.reorderBufferedBytes += decoded.length;
     }
 
     while (state.receivedChunks.has(state.nextSeqToForward)) {
@@ -375,29 +438,33 @@ export class DictationStreamManager {
       const pcm16 = state.receivedChunks.get(seq)!;
       state.receivedChunks.delete(seq);
 
-      const resampled = state.resampler ? state.resampler.processChunk(pcm16) : pcm16;
-      if (resampled.length > 0) {
-        state.stt.appendPcm16(resampled);
-        state.debugAudioChunks.push(resampled);
-        state.bytesSinceCommit += resampled.length;
-        state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
-        try {
+      let resampled: Buffer;
+      try {
+        resampled = state.resampler ? state.resampler.processChunk(pcm16) : pcm16;
+        if (resampled.length > 0) {
+          state.stt.appendPcm16(resampled);
+          this.retainDictationDebugAudio(state, resampled);
+          state.bytesSinceCommit += resampled.length;
+          state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
           this.maybeAutoCommitDictationSegment(state);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          void this.failAndCleanupDictationStream(params.dictationId, message, true);
-          return;
         }
-
-        if (state.debugChunkWriter) {
-          void state.debugChunkWriter.writeChunk(seq, resampled).catch((err) => {
-            this.logger.warn(
-              { dictationId: params.dictationId, seq, err },
-              "Failed to write debug chunk",
-            );
-          });
-        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const retryable = !(error instanceof Pcm16ResamplerOutputLimitError);
+        void this.failAndCleanupDictationStream(params.dictationId, message, retryable);
+        return;
       }
+
+      if (resampled.length > 0 && state.debugChunkWriter) {
+        void state.debugChunkWriter.writeChunk(seq, resampled).catch((err) => {
+          this.logger.warn(
+            { dictationId: params.dictationId, seq, err },
+            "Failed to write debug chunk",
+          );
+        });
+      }
+
+      state.reorderBufferedBytes -= pcm16.length;
 
       state.nextSeqToForward += 1;
       state.ackSeq = state.nextSeqToForward - 1;
@@ -498,13 +565,35 @@ export class DictationStreamManager {
     this.emit({ type: "dictation_stream_partial", payload: { dictationId, text } });
   }
 
-  private async maybePersistDictationStreamAudio(dictationId: string): Promise<string | null> {
-    if (!isPaseoDictationDebugEnabled()) {
-      return null;
+  // Retains a bounded recent-audio tail for debug persistence. Streams that run
+  // with debug disabled never hold PCM; enabled streams drop the tail whenever
+  // it would exceed the cap and at every segment boundary (commit/clear).
+  private retainDictationDebugAudio(state: DictationStreamState, pcm16: Buffer): void {
+    if (!state.debugEnabled) {
+      return;
     }
+    // A single chunk larger than the tail cannot fit; dropping it whole keeps
+    // the retained bytes at or under the cap without copying a trimmed slice.
+    if (pcm16.length > DICTATION_DEBUG_TAIL_MAX_BYTES) {
+      state.debugAudioChunks.length = 0;
+      state.debugAudioBytes = 0;
+      return;
+    }
+    if (state.debugAudioBytes + pcm16.length > DICTATION_DEBUG_TAIL_MAX_BYTES) {
+      state.debugAudioChunks.length = 0;
+      state.debugAudioBytes = 0;
+    }
+    state.debugAudioChunks.push(pcm16);
+    state.debugAudioBytes += pcm16.length;
+  }
 
-    const state = this.streams.get(dictationId);
-    if (!state) {
+  private releaseDictationDebugTail(state: DictationStreamState): void {
+    state.debugAudioChunks.length = 0;
+    state.debugAudioBytes = 0;
+  }
+
+  private async persistDictationStreamAudio(state: DictationStreamState): Promise<string | null> {
+    if (!state.debugEnabled) {
       return null;
     }
     if (state.debugRecordingPath) {
@@ -543,7 +632,13 @@ export class DictationStreamManager {
     error: string,
     retryable: boolean,
   ): Promise<void> {
-    const debugRecordingPath = await this.maybePersistDictationStreamAudio(dictationId);
+    // Detach first so concurrent messages observe the stream as closed while
+    // the bounded debug persist runs, and so exactly one failure is emitted.
+    const state = this.detachDictationStream(dictationId);
+    if (!state) {
+      return;
+    }
+    const debugRecordingPath = await this.persistDictationStreamAudio(state);
     this.emit({
       type: "dictation_stream_error",
       payload: {
@@ -565,14 +660,14 @@ export class DictationStreamManager {
         },
       });
     }
-    this.cleanupDictationStream(dictationId);
   }
 
-  private cleanupDictationStream(dictationId: string): void {
-    const state = this.streams.get(dictationId) ?? null;
+  private detachDictationStream(dictationId: string): DictationStreamState | null {
+    const state = this.streams.get(dictationId);
     if (!state) {
-      return;
+      return null;
     }
+    this.streams.delete(dictationId);
     if (state.finalTimeout) {
       clearTimeout(state.finalTimeout);
     }
@@ -581,7 +676,11 @@ export class DictationStreamManager {
     } catch {
       // no-op
     }
-    this.streams.delete(dictationId);
+    return state;
+  }
+
+  private cleanupDictationStream(dictationId: string): void {
+    this.detachDictationStream(dictationId);
   }
 
   private estimateFinalizationTimeout(state: DictationStreamState): {
@@ -630,12 +729,13 @@ export class DictationStreamManager {
   }
 
   private maybeAutoCommitDictationSegment(state: DictationStreamState): void {
-    if (state.finishRequested) {
-      return;
-    }
-    const autoCommitReached =
-      state.autoCommitBytes > 0 && state.bytesSinceCommit >= state.autoCommitBytes;
+    // The hard cap stays active while finish is pending (missing/out-of-order chunks
+    // may keep arriving); only the periodic auto-commit pauses once finish is requested.
     const hardCapReached = state.bytesSinceCommit >= this.hardSegmentBytes;
+    const autoCommitReached =
+      !state.finishRequested &&
+      state.autoCommitBytes > 0 &&
+      state.bytesSinceCommit >= state.autoCommitBytes;
     if (!autoCommitReached && !hardCapReached) {
       return;
     }
@@ -643,12 +743,16 @@ export class DictationStreamManager {
       state.stt.clear();
       state.bytesSinceCommit = 0;
       state.peakSinceCommit = 0;
+      this.releaseDictationDebugTail(state);
       return;
     }
 
+    // Commit before resetting so a throwing commit fails the stream with the
+    // fault audio still retained for debug persistence.
+    state.stt.commit();
     state.bytesSinceCommit = 0;
     state.peakSinceCommit = 0;
-    state.stt.commit();
+    this.releaseDictationDebugTail(state);
   }
 
   private maybeSealDictationStreamFinish(dictationId: string): void {
@@ -679,6 +783,7 @@ export class DictationStreamManager {
         state.stt.clear();
         state.bytesSinceCommit = 0;
         state.peakSinceCommit = 0;
+        this.releaseDictationDebugTail(state);
         state.awaitingFinalCommit = false;
         const droppedSegments = this.dropUncommittedNonFinalTranscripts(state);
         if (droppedSegments > 0) {
@@ -749,7 +854,7 @@ export class DictationStreamManager {
 
     if (orderedSegmentIds.length === 0) {
       void (async () => {
-        const debugRecordingPath = await this.maybePersistDictationStreamAudio(dictationId);
+        const debugRecordingPath = await this.persistDictationStreamAudio(state);
         this.emit({
           type: "dictation_stream_final",
           payload: {
@@ -788,7 +893,7 @@ export class DictationStreamManager {
       .trim();
 
     void (async () => {
-      const debugRecordingPath = await this.maybePersistDictationStreamAudio(dictationId);
+      const debugRecordingPath = await this.persistDictationStreamAudio(state);
       this.emit({
         type: "dictation_stream_final",
         payload: {
