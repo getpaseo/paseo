@@ -310,6 +310,26 @@ describe("BrowserScreencastRegistry", () => {
     });
   });
 
+  test("a re-subscribe during teardown keeps its stream alive", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const leaving = createViewer();
+    const arriving = createViewer();
+    await registry.subscribe({ viewer: leaving, browserId: BROWSER_ID });
+
+    // The pane remounts: the old subscription drops and a new one takes over
+    // before the stop, which waits on the in-flight start, can be sent.
+    const teardown = registry.unsubscribe({ viewer: leaving, browserId: BROWSER_ID });
+    const resubscribed = await registry.subscribe({ viewer: arriving, browserId: BROWSER_ID });
+    await teardown;
+
+    expect(resubscribed).toMatchObject({ ok: true });
+    expect(broker.commandNames()).not.toContain("screencast_stop");
+
+    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+    expect(arriving.frames).toHaveLength(1);
+  });
+
   test("replays the last frame to a viewer that joins an existing stream", async () => {
     const broker = new FakeBroker();
     const registry = new BrowserScreencastRegistry(broker);

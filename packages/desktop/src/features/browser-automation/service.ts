@@ -17,6 +17,7 @@ import {
   dispatchTrustedDrag,
   dispatchTrustedHover,
   dispatchTrustedKey,
+  dispatchTrustedKeyEvent,
   dispatchTrustedMousePhase,
   dispatchTrustedScroll,
   dispatchTrustedText,
@@ -576,11 +577,9 @@ async function executeInputAt(
       event.deltaY,
     );
   } else {
-    dispatchTrustedKey(
-      (input) => target.contents.sendInputEvent(input),
-      event.key,
-      event.modifiers,
-    );
+    // sendInputEvent's keyDown/char/keyUp triple types the character three
+    // times in a guest that is not presented, so keys ride the same CDP path.
+    await dispatchTrustedKeyEvent(cdpSender(target.contents), event.key, event.modifiers);
   }
   return {
     requestId,

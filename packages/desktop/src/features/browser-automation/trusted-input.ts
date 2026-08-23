@@ -210,6 +210,84 @@ export async function dispatchTrustedText(send: CdpCommandSender, text: string):
   await send("Input.insertText", { text });
 }
 
+interface CdpControlKey {
+  code: string;
+  windowsVirtualKeyCode: number;
+}
+
+const CDP_CONTROL_KEYS: Record<string, CdpControlKey> = {
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+};
+
+// A held Alt, Control or Meta produces a shortcut, not a character; carrying
+// text as well would type into the page instead of running the shortcut.
+const SHORTCUT_MODIFIER_MASK = MODIFIER_MASKS.Alt | MODIFIER_MASKS.Control | MODIFIER_MASKS.Meta;
+
+interface CdpKeyFields {
+  key: string;
+  code: string;
+  windowsVirtualKeyCode: number;
+  modifiers: number;
+}
+
+/**
+ * A key press in a guest that is parked off-screen, where sendInputEvent's
+ * keyDown/char/keyUp triple typed the character three times. CDP inserts the
+ * character from the keyDown itself, so one press is one character while the
+ * page still sees real keydown and keypress handlers run.
+ */
+export async function dispatchTrustedKeyEvent(
+  send: CdpCommandSender,
+  key: string,
+  modifiers: InputModifier[] = [],
+): Promise<void> {
+  const fields = cdpKeyFields(key, modifierMask(modifiers));
+  const isShortcut = (fields.modifiers & SHORTCUT_MODIFIER_MASK) !== 0;
+  const typesText = key.length === 1 && !isShortcut;
+  const textFields = typesText ? { text: key } : {};
+  await send("Input.dispatchKeyEvent", { type: "keyDown", ...fields, ...textFields });
+  await send("Input.dispatchKeyEvent", { type: "keyUp", ...fields });
+}
+
+function cdpKeyFields(key: string, modifiers: number): CdpKeyFields {
+  const control = CDP_CONTROL_KEYS[key];
+  if (control) {
+    return {
+      key,
+      code: control.code,
+      windowsVirtualKeyCode: control.windowsVirtualKeyCode,
+      modifiers,
+    };
+  }
+  if (key.length !== 1) {
+    return { key, code: "", windowsVirtualKeyCode: 0, modifiers };
+  }
+  const upper = key.toUpperCase();
+  return { key, code: printableCode(upper), windowsVirtualKeyCode: upper.charCodeAt(0), modifiers };
+}
+
+function printableCode(upperKey: string): string {
+  if (upperKey >= "A" && upperKey <= "Z") {
+    return `Key${upperKey}`;
+  }
+  if (upperKey >= "0" && upperKey <= "9") {
+    return `Digit${upperKey}`;
+  }
+  return "";
+}
+
 export function dispatchTrustedKey(
   send: KeyboardInputSender,
   key: string,

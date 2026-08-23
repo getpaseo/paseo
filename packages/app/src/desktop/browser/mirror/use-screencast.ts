@@ -27,6 +27,11 @@ const EMPTY_VIEW: BrowserScreencastView = {
 // climbs in steps: a drag across a whole step costs one re-arm, not one a pixel.
 const SCREENCAST_SIZE_STEP = 320;
 
+// The host encodes a JPEG of this many pixels per frame and the viewer decodes
+// it, which is what a keystroke waits on. A retina pane asks for four times the
+// pixels it has, so cap the budget rather than the device ratio.
+const SCREENCAST_MAX_PIXELS = 4_000_000;
+
 /** The displayed frame plus the one behind it, which may still be decoding. */
 const FRAME_RETENTION = 2;
 
@@ -45,9 +50,21 @@ function createFrameSource(data: Uint8Array): FrameSource {
   };
 }
 
-function requestedPixels(layoutSize: number): number {
-  const devicePixels = layoutSize * PixelRatio.get();
-  return Math.max(1, Math.ceil(devicePixels / SCREENCAST_SIZE_STEP)) * SCREENCAST_SIZE_STEP;
+function quantise(pixels: number): number {
+  return Math.max(1, Math.round(pixels / SCREENCAST_SIZE_STEP)) * SCREENCAST_SIZE_STEP;
+}
+
+function requestedSize(pane: PaneSize): { maxWidth: number; maxHeight: number } {
+  const ratio = PixelRatio.get();
+  let width = pane.width * ratio;
+  let height = pane.height * ratio;
+  const budget = SCREENCAST_MAX_PIXELS / (width * height);
+  if (budget < 1) {
+    const scale = Math.sqrt(budget);
+    width *= scale;
+    height *= scale;
+  }
+  return { maxWidth: quantise(width), maxHeight: quantise(height) };
 }
 
 /**
@@ -63,8 +80,9 @@ export function useBrowserScreencast(
   const client = useHostRuntimeClient(serverId);
   const [view, setView] = useState<BrowserScreencastView>(EMPTY_VIEW);
   const framesRef = useRef<FrameSource[]>([]);
-  const maxWidth = paneSize ? requestedPixels(paneSize.width) : null;
-  const maxHeight = paneSize ? requestedPixels(paneSize.height) : null;
+  const requested = paneSize ? requestedSize(paneSize) : null;
+  const maxWidth = requested?.maxWidth ?? null;
+  const maxHeight = requested?.maxHeight ?? null;
 
   useEffect(() => {
     if (!client) {

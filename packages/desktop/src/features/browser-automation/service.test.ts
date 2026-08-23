@@ -1428,21 +1428,106 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
-  test("input_at sends keys through the shared trusted key mapping", async () => {
+  // sendInputEvent's keyDown/char/keyUp triple typed the character three times
+  // in a guest that is parked off-screen. One keyDown carrying text, one keyUp.
+  test("input_at types a printable key with a single CDP keyDown carrying text", async () => {
     const browser = new BrowserAutomationHarness();
 
     await browser.execute({
       command: "input_at",
-      args: {
-        browserId: BROWSER_A,
-        event: { kind: "key", key: "a", modifiers: ["Meta"] },
-      },
+      args: { browserId: BROWSER_A, event: { kind: "key", key: "a" } },
     });
 
-    expect(browser.tab.inputEvents).toEqual([
-      { type: "keyDown", keyCode: "a", modifiers: ["meta"], skipIfUnhandled: true },
-      { type: "char", keyCode: "a", modifiers: ["meta"], skipIfUnhandled: true },
-      { type: "keyUp", keyCode: "a", modifiers: ["meta"], skipIfUnhandled: true },
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyDown",
+          key: "a",
+          code: "KeyA",
+          windowsVirtualKeyCode: 65,
+          modifiers: 0,
+          text: "a",
+        },
+      },
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyUp",
+          key: "a",
+          code: "KeyA",
+          windowsVirtualKeyCode: 65,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
+  test("input_at sends a control key with a virtual key code and no text", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "input_at",
+      args: { browserId: BROWSER_A, event: { kind: "key", key: "Enter" } },
+    });
+
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyDown",
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          modifiers: 0,
+        },
+      },
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyUp",
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
+  // Text alongside a held Meta would type "a" instead of running select-all.
+  test("input_at carries the modifier mask on both events of a shortcut", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "input_at",
+      args: { browserId: BROWSER_A, event: { kind: "key", key: "a", modifiers: ["Meta"] } },
+    });
+
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyDown",
+          key: "a",
+          code: "KeyA",
+          windowsVirtualKeyCode: 65,
+          modifiers: 4,
+        },
+      },
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyUp",
+          key: "a",
+          code: "KeyA",
+          windowsVirtualKeyCode: 65,
+          modifiers: 4,
+        },
+      },
     ]);
   });
 

@@ -114,6 +114,12 @@ export class BrowserScreencastRegistry {
     }
     this.release(stream);
     await stream.started;
+    // A viewer can re-subscribe while the start we had to wait for settles, and
+    // that subscribe builds a new stream on this browser. Stopping now would
+    // kill the stream that replaced ours and leave the host silent.
+    if (this.streams.has(params.browserId)) {
+      return;
+    }
     await this.broker.execute({
       command: { command: "screencast_stop", args: { browserId: params.browserId } },
     });
