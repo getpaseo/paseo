@@ -72,7 +72,12 @@ function createToast(): ToastApi {
   };
 }
 
-function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; toast?: ToastApi }) {
+function createWrapper(input: {
+  client: TestClient;
+  openedFiles: OpenedFile[];
+  openInPreferredTarget?: (target: InlinePathTarget) => Promise<boolean>;
+  toast?: ToastApi;
+}) {
   const queryClient = createQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
     const openWorkspaceFile = useCallback(
@@ -89,6 +94,7 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
           serverId="server-1"
           workspaceRoot="/Users/test/project"
           onOpenWorkspaceFile={openWorkspaceFile}
+          onOpenWorkspaceFileInPreferredTarget={input.openInPreferredTarget}
           toast={input.toast}
         >
           {children}
@@ -269,6 +275,67 @@ describe("useFileLink", () => {
       expect(openedFiles).toHaveLength(1);
     });
     expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a modified-click file in the preferred target", async () => {
+    const getDirectorySuggestions = vi.fn(async () =>
+      resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),
+    );
+    const openedFiles: OpenedFile[] = [];
+    const openInPreferredTarget = vi.fn(async () => true);
+    const { result } = renderHook(() => useFileLink(SOURCE), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        openInPreferredTarget,
+      }),
+    });
+
+    act(() => {
+      result.current.onOpenInPreferredTarget();
+    });
+
+    await waitFor(() => {
+      expect(openInPreferredTarget).toHaveBeenCalledWith({
+        raw: "dumm.md",
+        path: "/Users/test/project/docs/dumm.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      });
+    });
+    expect(openedFiles).toEqual([]);
+  });
+
+  it("falls back to the Paseo side pane when no preferred target can open the file", async () => {
+    const getDirectorySuggestions = vi.fn(async () =>
+      resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),
+    );
+    const openedFiles: OpenedFile[] = [];
+    const { result } = renderHook(() => useFileLink(SOURCE), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        openInPreferredTarget: async () => false,
+      }),
+    });
+
+    act(() => {
+      result.current.onOpenInPreferredTarget();
+    });
+
+    await waitFor(() => {
+      expect(openedFiles).toEqual([
+        {
+          target: {
+            raw: "dumm.md",
+            path: "/Users/test/project/docs/dumm.md",
+            lineStart: undefined,
+            lineEnd: undefined,
+          },
+          disposition: "side",
+        },
+      ]);
+    });
   });
 
   it("does not open a stale result after the workspace changes", async () => {
