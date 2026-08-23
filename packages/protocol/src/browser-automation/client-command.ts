@@ -3,6 +3,7 @@ import {
   BrowserAutomationCommandSchema,
   BrowserAutomationErrorSchema,
   BrowserAutomationResultSchema,
+  BrowserAutomationTabInfoSchema,
 } from "./rpc-schemas.js";
 
 /**
@@ -34,5 +35,24 @@ export const BrowserClientCommandResponseSchema = z.object({
   ]),
 });
 
+/**
+ * A browser host tells the daemon that its tab set changed. Bare signal with no
+ * response: the daemon re-runs its own `list_tabs` fan-out and broadcasts
+ * `browsers_changed` with the result.
+ */
+export const BrowserTabsAnnounceRequestSchema = z.object({
+  type: z.literal("browser.tabs.announce.request"),
+});
+
+/** The daemon's browser tab set after a host announced a change. */
+export const BrowsersChangedSchema = z.object({
+  type: z.literal("browsers_changed"),
+  payload: z.object({
+    tabs: z.array(BrowserAutomationTabInfoSchema),
+  }),
+});
+
 export type BrowserClientCommandRequest = z.infer<typeof BrowserClientCommandRequestSchema>;
 export type BrowserClientCommandResponse = z.infer<typeof BrowserClientCommandResponseSchema>;
+export type BrowserTabsAnnounceRequest = z.infer<typeof BrowserTabsAnnounceRequestSchema>;
+export type BrowsersChanged = z.infer<typeof BrowsersChangedSchema>;

@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo } from "react";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import {
+  findWorkspaceBrowserTab,
+  useWorkspaceBrowsers,
+} from "@/desktop/browser/use-workspace-browsers";
 
 export interface RemoteBrowserTab {
   url: string;
@@ -16,10 +20,8 @@ export interface RemoteBrowserTabView {
 }
 
 /**
- * Tab metadata for a browser owned by another host. Refreshed on mount and
- * after each navigation, so a page that navigates itself lags until the next
- * command.
- * ponytail: pull-on-change, switch to a daemon push if the lag shows.
+ * Tab metadata for a browser owned by another host, read from the workspace tab
+ * list the daemon pushes on every change.
  */
 export function useRemoteBrowserTab(
   serverId: string,
@@ -27,48 +29,30 @@ export function useRemoteBrowserTab(
   browserId: string,
 ): RemoteBrowserTabView {
   const client = useHostRuntimeClient(serverId);
-  const [tab, setTab] = useState<RemoteBrowserTab | null>(null);
+  const { tabs } = useWorkspaceBrowsers({ serverId, workspaceId });
 
-  const refresh = useCallback(async () => {
-    if (!client) {
-      return;
+  const tab = useMemo<RemoteBrowserTab | null>(() => {
+    const match = findWorkspaceBrowserTab(tabs, browserId);
+    if (!match) {
+      return null;
     }
-    const payload = await client.runBrowserCommand({
-      command: { command: "list_tabs", args: {} },
-      workspaceId,
-    });
-    if (!payload.ok || payload.result.command !== "list_tabs") {
-      return;
-    }
-    const match = payload.result.tabs.find((entry) => entry.browserId === browserId);
-    setTab(
-      match
-        ? {
-            url: match.url,
-            title: match.title,
-            hostLabel: match.hostLabel ?? null,
-            canGoBack: match.canGoBack ?? false,
-            canGoForward: match.canGoForward ?? false,
-          }
-        : null,
-    );
-  }, [browserId, client, workspaceId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    return {
+      url: match.url,
+      title: match.title,
+      hostLabel: match.hostLabel ?? null,
+      canGoBack: match.canGoBack ?? false,
+      canGoForward: match.canGoForward ?? false,
+    };
+  }, [browserId, tabs]);
 
   const run = useCallback(
     (command: BrowserAutomationCommand) => {
       if (!client) {
         return;
       }
-      void (async () => {
-        await client.runBrowserCommand({ command, workspaceId });
-        await refresh();
-      })();
+      void client.runBrowserCommand({ command, workspaceId });
     },
-    [client, refresh, workspaceId],
+    [client, workspaceId],
   );
 
   return { tab, run };

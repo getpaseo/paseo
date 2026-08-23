@@ -106,6 +106,7 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { useBrowserStore } from "@/desktop/browser/store";
+import { useWorkspaceBrowsers } from "@/desktop/browser/use-workspace-browsers";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -179,6 +180,7 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { useShallow } from "zustand/react/shallow";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -1516,6 +1518,13 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const workspaceBrowsers = useWorkspaceBrowsers({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
+  // Tabs this client hosts itself are known before the daemon has listed them,
+  // so a freshly opened local tab is never pruned as unknown.
+  const localBrowserIds = useBrowserStore(useShallow((state) => Object.keys(state.browsersById)));
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
@@ -1829,13 +1838,29 @@ function WorkspaceScreenContent({
       }
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
+        const isLocalBrowser = Boolean(useBrowserStore.getState().browsersById[browserId]);
         useBrowserStore.getState().removeBrowser(browserId);
         removeResidentBrowserWebview(browserId);
         void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
+        // A mirrored tab lives on another host; closing it only here would let
+        // the next reconcile adopt it straight back.
+        if (!isLocalBrowser && client) {
+          void client.runBrowserCommand({
+            command: { command: "close_tab", args: { browserId } },
+            workspaceId: normalizedWorkspaceId,
+          });
+        }
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [
+      client,
+      closeWorkspaceTab,
+      hideWorkspaceAgent,
+      normalizedWorkspaceId,
+      persistenceKey,
+      unpinWorkspaceAgent,
+    ],
   );
 
   const focusedPaneTabState = useMemo(
@@ -1968,6 +1993,11 @@ function WorkspaceScreenContent({
         terminalsHydrated: terminalsQuery.isSuccess,
         knownTerminalIds,
         standaloneTerminalIds,
+        browsers: {
+          hydrated: workspaceBrowsers.isHydrated,
+          knownIds: [...workspaceBrowsers.browserIds, ...localBrowserIds],
+          liveIds: workspaceBrowsers.browserIds,
+        },
         hasActivePendingTerminalCreate:
           createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
         hasActivePendingDraftCreate: hasActivePendingDraftCreateInWorkspace,
@@ -1985,10 +2015,13 @@ function WorkspaceScreenContent({
     persistenceKey,
     reconcileWorkspaceTabs,
     knownTerminalIds,
+    localBrowserIds,
     standaloneTerminalIds,
     terminalsQuery.isSuccess,
     uiTabs,
     workspaceAgentVisibility,
+    workspaceBrowsers.browserIds,
+    workspaceBrowsers.isHydrated,
   ]);
 
   const activeTabId = focusedPaneTabState.activeTabId;

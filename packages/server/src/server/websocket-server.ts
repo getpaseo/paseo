@@ -598,6 +598,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
+  private browsersChangedSequence = 0;
   private readonly browserScreencast: BrowserScreencastRegistry | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
@@ -1987,6 +1988,38 @@ export class VoiceAssistantWebSocketServer {
     await connection.session.cleanup();
   }
 
+  /**
+   * A host announced that its tab set changed, so re-run the `list_tabs` fan-out
+   * and push the result to every client. Announces overlap, so only the newest
+   * fan-out is allowed to broadcast; a slower older one would publish stale tabs.
+   */
+  private broadcastBrowsersChanged(): void {
+    const broker = this.browserToolsBroker;
+    if (!broker) {
+      return;
+    }
+    const sequence = ++this.browsersChangedSequence;
+    void this.publishBrowserTabs(broker, sequence).catch((error: unknown) => {
+      this.logger.warn({ err: error }, "Failed to broadcast browsers_changed");
+    });
+  }
+
+  private async publishBrowserTabs(broker: BrowserToolsBroker, sequence: number): Promise<void> {
+    const payload = await broker.execute({ command: { command: "list_tabs", args: {} } });
+    if (sequence !== this.browsersChangedSequence) {
+      return;
+    }
+    if (!payload.ok || payload.result.command !== "list_tabs") {
+      return;
+    }
+    this.broadcast(
+      wrapSessionMessage({
+        type: "browsers_changed",
+        payload: { tabs: payload.result.tabs },
+      }),
+    );
+  }
+
   /** A browser host is only advertised while one is connected and able to serve tabs. */
   private hasBrowserHost(): boolean {
     return (this.browserToolsBroker?.getRegisteredClientCount() ?? 0) > 0;
@@ -2317,6 +2350,14 @@ export class VoiceAssistantWebSocketServer {
       message.message.type === "browser.automation.execute.response"
     ) {
       this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
+      return;
+    }
+
+    if (
+      activeConnection.kind === "trusted" &&
+      message.message.type === "browser.tabs.announce.request"
+    ) {
+      this.broadcastBrowsersChanged();
       return;
     }
 

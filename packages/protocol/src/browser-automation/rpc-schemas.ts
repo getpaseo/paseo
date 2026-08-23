@@ -607,6 +607,7 @@ export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCo
 export type BrowserAutomationCommandName = z.infer<typeof BrowserAutomationCommandNameSchema>;
 export type BrowserAutomationCommand = z.infer<typeof BrowserAutomationCommandSchema>;
 export type BrowserAutomationResult = z.infer<typeof BrowserAutomationResultSchema>;
+export type BrowserAutomationTabInfo = z.infer<typeof BrowserAutomationTabInfoSchema>;
 export type BrowserAutomationConsoleLogEntry = z.infer<
   typeof BrowserAutomationConsoleLogEntrySchema
 >;

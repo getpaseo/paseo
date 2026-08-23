@@ -4816,6 +4816,14 @@ export class DaemonClient {
     });
   }
 
+  /**
+   * Used by a browser host to tell the daemon its tab set changed. The daemon
+   * answers by broadcasting `browsers_changed` to every connected client.
+   */
+  announceBrowserTabs(): void {
+    this.sendSessionMessage({ type: "browser.tabs.announce.request" });
+  }
+
   /** Used by a browser host to push a captured frame up to the daemon. */
   sendBrowserScreencastFrame(input: {
     slot: number;

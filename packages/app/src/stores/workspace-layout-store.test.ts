@@ -3048,6 +3048,95 @@ describe("workspace-layout-store actions", () => {
     expect(contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey))).toEqual([]);
   });
 
+  it("reconcileTabs adopts browser tabs hosted on another client", () => {
+    const workspaceKey = createWorkspaceKey();
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+      browsers: {
+        hydrated: true,
+        knownIds: ["browser-1"],
+        liveIds: ["browser-1"],
+      },
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
+        (tab) => tab.tabId,
+      ),
+    ).toEqual(["browser_browser-1"]);
+  });
+
+  it("reconcileTabs prunes browser tabs the daemon no longer reports", () => {
+    const workspaceKey = createWorkspaceKey();
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: ["browser-1"] },
+      hasActivePendingDraftCreate: false,
+    });
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+      browsers: { hydrated: true, knownIds: [], liveIds: [] },
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).filter(
+        (tab) => tab.target.kind === "browser",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reconcileTabs keeps a locally hosted browser tab the daemon has not listed yet", () => {
+    const workspaceKey = createWorkspaceKey();
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: ["browser-1"] },
+      hasActivePendingDraftCreate: false,
+    });
+
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: [] },
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
+        (tab) => tab.tabId,
+      ),
+    ).toEqual(["browser_browser-1"]);
+  });
+
   it("reconcileTabs lands on an existing agent instead of the initial New tab", () => {
     const workspaceKey = createWorkspaceKey();
 

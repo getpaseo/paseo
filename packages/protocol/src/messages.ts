@@ -67,6 +67,8 @@ import {
 import {
   BrowserClientCommandRequestSchema,
   BrowserClientCommandResponseSchema,
+  BrowserTabsAnnounceRequestSchema,
+  BrowsersChangedSchema,
 } from "./browser-automation/client-command.js";
 import {
   PaseoConfigRawSchema,
@@ -3116,6 +3118,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BrowserScreencastSubscribeRequestSchema,
   BrowserScreencastUnsubscribeRequestSchema,
   BrowserClientCommandRequestSchema,
+  BrowserTabsAnnounceRequestSchema,
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
@@ -6177,6 +6180,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   BrowserScreencastSubscribeResponseSchema,
   BrowserClientCommandResponseSchema,
+  BrowsersChangedSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,

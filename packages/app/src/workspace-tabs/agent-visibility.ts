@@ -1,5 +1,8 @@
 import type { Agent } from "@/stores/session-store";
-import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
+import type {
+  WorkspaceBrowsersSnapshot,
+  WorkspaceTabSnapshot,
+} from "@/stores/workspace-layout-actions";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
@@ -64,6 +67,7 @@ export function buildWorkspaceTabSnapshot(input: {
   terminalsHydrated: boolean;
   knownTerminalIds: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
+  browsers?: WorkspaceBrowsersSnapshot;
   hasActivePendingTerminalCreate: boolean;
   hasActivePendingDraftCreate: boolean;
 }): WorkspaceTabSnapshot {
@@ -75,6 +79,7 @@ export function buildWorkspaceTabSnapshot(input: {
     knownAgentIds: input.agentVisibility.knownAgentIds,
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
+    ...(input.browsers ? { browsers: input.browsers } : {}),
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
     hasActivePendingDraftCreate: input.hasActivePendingDraftCreate,
   };

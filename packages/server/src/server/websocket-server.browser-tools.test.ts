@@ -8,6 +8,7 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowsersChanged } from "@getpaseo/protocol/browser-automation/client-command";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserScreencastEvent } from "@getpaseo/client/internal/daemon-client";
 import type pino from "pino";
@@ -42,6 +43,7 @@ interface ConnectBrowserHostClientOptions {
 
 interface BrowserHostClientHandle {
   clientId: string;
+  announceBrowserTabs(): void;
   nextBrowserRequest(): Promise<BrowserAutomationExecuteRequest>;
   respondToBrowserRequest(response: BrowserAutomationExecuteResponse): void;
   sendScreencastFrame(input: { slot: number; data: Uint8Array }): void;
@@ -239,6 +241,28 @@ describe("WebSocketServer browser tools wiring", () => {
     });
   });
 
+  it("broadcasts the browser tab set to viewers when a host announces a change", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+
+    const pushes: BrowsersChanged[] = [];
+    viewer.on("browsers_changed", (message) => {
+      pushes.push(message);
+    });
+
+    browserHost.announceBrowserTabs();
+    await respondWithTab(browserHost, { browserId: BROWSER_ID, url: "https://one.example" });
+    await waitFor(() => pushes.length === 1);
+
+    expect(pushes[0]).toMatchObject({
+      type: "browsers_changed",
+      payload: {
+        tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1", hostLabel: hostname() }],
+      },
+    });
+  });
+
   it("returns the broker failure payload untouched when no host can run the command", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const viewer = await harness.connectViewerClient();
@@ -345,6 +369,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
       return {
         clientId: clientId ?? "",
+        announceBrowserTabs: () => client.announceBrowserTabs(),
         nextBrowserRequest: () => requests.next(),
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),
