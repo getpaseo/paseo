@@ -250,15 +250,22 @@ function serializeInlineScriptJson(value: unknown): string {
     .replace(/&/g, "\\u0026");
 }
 
+function addDefaultPort(host: string, useTls: boolean): string {
+  if (!host || (host.includes(":") && !host.endsWith("]"))) {
+    return host;
+  }
+  return `${host}:${useTls ? 443 : 80}`;
+}
+
 function injectConnectionHint(
   html: string,
   req: Parameters<RequestHandler>[0],
   label: string,
 ): string {
-  const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
+  const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const hint = {
-    listen: host,
+    listen: addDefaultPort(host, useTls),
     useTls,
     label,
   };

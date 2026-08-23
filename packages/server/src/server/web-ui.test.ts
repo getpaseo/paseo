@@ -157,6 +157,20 @@ describe("daemon web UI route module", () => {
     expect(res.body).toContain('"label":"test-label"');
   });
 
+  test("adds the default HTTPS port when the forwarded host omits it", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+    app.set("trust proxy", true);
+
+    const res = await request(app, "GET", "/", {
+      host: "paseo.example.com",
+      "x-forwarded-proto": "https",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:443"');
+    expect(res.body).toContain('"useTls":true');
+  });
+
   test("injects hint before closing head tag", async () => {
     const app = createApp({ enabled: true, distDir, publicDir });
 

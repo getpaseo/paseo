@@ -3408,6 +3408,37 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
     store.syncHosts([]);
   });
 
+  it("surfaces a password-protected initial hint for direct connection", async () => {
+    const seenProbes: { endpoint: string; useTls?: boolean }[] = [];
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            seenProbes.push({ endpoint: connection.endpoint, useTls: connection.useTls });
+          }
+          throw new Error("Password required");
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => ({
+          listen: "paseo.example.com:443",
+          useTls: true,
+        }),
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    await store.boot();
+
+    expect(seenProbes).toEqual([{ endpoint: "paseo.example.com:443", useTls: true }]);
+    expect(store.getInitialConnectionHintAuthentication()).toEqual({
+      id: "direct:paseo.example.com:443",
+      type: "directTcp",
+      endpoint: "paseo.example.com:443",
+      useTls: true,
+    });
+  });
+
   it("does not infer window.location.host when no explicit hint is present", async () => {
     const seenProbes: { endpoint: string; useTls?: boolean }[] = [];
     const firstProbe = createDeferred<void>();

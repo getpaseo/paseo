@@ -1330,6 +1330,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isPasswordRequiredError(error: unknown): boolean {
+  return toErrorMessage(error) === "Password required";
+}
+
 function rekeyMap<V>(map: Map<string, V>, oldKey: string, newKey: string): void {
   const value = map.get(oldKey);
   if (value === undefined) {
@@ -1365,6 +1369,7 @@ export class HostRuntimeStore {
   private directorySyncByServer = new Map<string, DirectorySync>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
+  private initialConnectionHintAuthentication: HostConnection | null = null;
   private storage: HostRuntimeStorage;
   private replicaCache: ReplicaCache;
   private readonly revokePushNotifications: typeof revokePushNotifications;
@@ -1388,6 +1393,10 @@ export class HostRuntimeStore {
 
   getHostRegistryStatus(): HostRegistryStatus {
     return this.hostRegistryStatus;
+  }
+
+  getInitialConnectionHintAuthentication(): HostConnection | null {
+    return this.initialConnectionHintAuthentication;
   }
 
   recordUserActivity(): void {
@@ -1591,6 +1600,11 @@ export class HostRuntimeStore {
       });
       return true;
     } catch (error) {
+      if (isPasswordRequiredError(error)) {
+        this.initialConnectionHintAuthentication = connectionWithHint;
+        this.emitGlobal();
+        return true;
+      }
       console.warn("[HostRuntime] initial connection hint probe failed", {
         listen: hint.listen,
         useTls: hint.useTls,
@@ -1719,6 +1733,10 @@ export class HostRuntimeStore {
       connection: input.connection,
       existingClient: client,
     });
+    if (this.initialConnectionHintAuthentication?.id === input.connection.id) {
+      this.initialConnectionHintAuthentication = null;
+      this.emitGlobal();
+    }
     return { profile, serverId, hostname };
   }
 
@@ -2336,6 +2354,13 @@ export class HostRuntimeStore {
       listener();
     }
   }
+
+  private emitGlobal(): void {
+    this.version += 1;
+    for (const listener of this.globalListeners) {
+      listener();
+    }
+  }
 }
 
 let singletonHostRuntimeStore: HostRuntimeStore | null = null;
@@ -2471,6 +2496,15 @@ export function useHostRegistryLoaded(): boolean {
     (onStoreChange) => store.subscribeHostList(onStoreChange),
     () => store.isHostRegistryLoaded(),
     () => store.isHostRegistryLoaded(),
+  );
+}
+
+export function useInitialConnectionHintAuthentication(): HostConnection | null {
+  const store = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => store.subscribeAll(onStoreChange),
+    () => store.getInitialConnectionHintAuthentication(),
+    () => store.getInitialConnectionHintAuthentication(),
   );
 }
 
