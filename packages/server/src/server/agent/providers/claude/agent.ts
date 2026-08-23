@@ -4571,9 +4571,23 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options,
   ): Promise<PermissionResult> => {
-    const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
     const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);
+
+    // Supplying canUseTool gives Paseo a host UI for interactive modes, but the SDK can
+    // still call it for ordinary tools while bypassPermissions is active. Honor the mode
+    // contract here so a Bypass session never turns Write/Bash into a blocking UI card.
+    // A human steer keeps precedence: tools from the superseded turn must be denied until
+    // Claude consumes the steer instead of being allowed to race it.
+    if (
+      kind === "tool" &&
+      this.currentMode === "bypassPermissions" &&
+      this.permissionClearingSteerUuids.size === 0
+    ) {
+      return { behavior: "allow", updatedInput: input };
+    }
+
+    const requestId = `permission-${randomUUID()}`;
     const metadata: AgentMetadata = {};
     if (options.toolUseID) {
       metadata.toolUseId = options.toolUseID;

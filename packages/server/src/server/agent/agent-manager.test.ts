@@ -8465,6 +8465,99 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   expect(resolvedIndex).toBeGreaterThan(refreshedStateIndex);
 });
 
+test("respondToPermission coalesces concurrent duplicates and replays recent resolutions", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-permission-idempotency-"));
+  const releaseResponse = deferred<void>();
+
+  class IdempotentPermissionSession extends TestAgentSession {
+    respondCalls = 0;
+    private pending = [
+      {
+        id: "perm-idempotent-1",
+        provider: "codex" as const,
+        name: "Write",
+        kind: "tool" as const,
+        input: { file_path: "NOTES.md" },
+      },
+    ];
+
+    override getPendingPermissions() {
+      return this.pending;
+    }
+
+    override async respondToPermission(
+      requestId: string,
+      response: import("./agent-sdk-types.js").AgentPermissionResponse,
+    ): Promise<void> {
+      this.respondCalls += 1;
+      await releaseResponse.promise;
+      this.pending = [];
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: this.provider,
+        requestId,
+        resolution: response,
+      });
+    }
+  }
+
+  const session = new IdempotentPermissionSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = snapshot.id;
+    const resolved: string[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.event.type === "permission_resolved") {
+          resolved.push(event.event.requestId);
+        }
+      },
+      { agentId, replayState: false },
+    );
+
+    const response = { behavior: "allow" as const };
+    const first = manager.respondToPermission(agentId, "perm-idempotent-1", response);
+    const duplicate = manager.respondToPermission(agentId, "perm-idempotent-1", response);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    try {
+      expect(session.respondCalls).toBe(1);
+    } finally {
+      releaseResponse.resolve();
+    }
+    await Promise.all([first, duplicate]);
+    expect(session.respondCalls).toBe(1);
+    expect(resolved).toEqual(["perm-idempotent-1"]);
+
+    await manager.respondToPermission(agentId, "perm-idempotent-1", response);
+    expect(session.respondCalls).toBe(1);
+    expect(resolved).toEqual(["perm-idempotent-1", "perm-idempotent-1"]);
+
+    await expect(
+      manager.respondToPermission(agentId, "never-observed-permission", response),
+    ).rejects.toThrow("No pending permission request");
+  } finally {
+    releaseResponse.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("close during in-flight stream does not clear persistence sessionId", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

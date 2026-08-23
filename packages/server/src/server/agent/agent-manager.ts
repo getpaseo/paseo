@@ -80,6 +80,7 @@ import {
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const RECENT_PERMISSION_RESOLUTION_LIMIT = 128;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -367,6 +368,11 @@ interface ManagedAgentBase {
     Extract<AgentStreamEvent, { type: "permission_resolved" }>
   >;
   inFlightPermissionResponses: Set<string>;
+  inFlightPermissionResponseOperations: Map<string, Promise<AgentPermissionResult | void>>;
+  recentPermissionResolutions: Map<
+    string,
+    Extract<AgentStreamEvent, { type: "permission_resolved" }>
+  >;
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
@@ -388,6 +394,8 @@ interface ManagedAgentBase {
    */
   labels: Record<string, string>;
 }
+
+type PermissionResolvedEvent = Extract<AgentStreamEvent, { type: "permission_resolved" }>;
 
 type ManagedAgentWithSession = ManagedAgentBase & {
   session: AgentSession;
@@ -1674,6 +1682,8 @@ export class AgentManager {
         pendingPermissions: new Map(),
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
+        inFlightPermissionResponseOperations: new Map(),
+        recentPermissionResolutions: new Map(),
         pendingReplacement: false,
         activeForegroundTurnId: null,
         activeTurnId: null,
@@ -2651,6 +2661,38 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+
+    const recentResolution = agent.recentPermissionResolutions.get(requestId);
+    if (recentResolution) {
+      this.dispatchStream(agent.id, recentResolution, { timestamp: new Date().toISOString() });
+      return;
+    }
+
+    const existingOperation = agent.inFlightPermissionResponseOperations.get(requestId);
+    if (existingOperation) {
+      return existingOperation;
+    }
+
+    if (!agent.pendingPermissions.has(requestId)) {
+      throw new Error(`No pending permission request with id ${requestId}`);
+    }
+
+    const operation = this.respondToPermissionOnce(agent, requestId, response);
+    agent.inFlightPermissionResponseOperations.set(requestId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (agent.inFlightPermissionResponseOperations.get(requestId) === operation) {
+        agent.inFlightPermissionResponseOperations.delete(requestId);
+      }
+    }
+  }
+
+  private async respondToPermissionOnce(
+    agent: ActiveManagedAgent,
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void> {
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
@@ -2671,12 +2713,36 @@ export class AgentManager {
       if (bufferedResolution) {
         agent.bufferedPermissionResolutions.delete(requestId);
         this.dispatchStream(agent.id, bufferedResolution, { timestamp: new Date().toISOString() });
+      } else {
+        const resolution: PermissionResolvedEvent = {
+          type: "permission_resolved",
+          provider: agent.provider,
+          requestId,
+          resolution: response,
+        };
+        this.rememberPermissionResolution(agent, resolution);
+        this.dispatchStream(agent.id, resolution, { timestamp: new Date().toISOString() });
       }
 
       return result;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
+    }
+  }
+
+  private rememberPermissionResolution(
+    agent: ManagedAgentBase,
+    event: PermissionResolvedEvent,
+  ): void {
+    agent.recentPermissionResolutions.delete(event.requestId);
+    agent.recentPermissionResolutions.set(event.requestId, event);
+    while (agent.recentPermissionResolutions.size > RECENT_PERMISSION_RESOLUTION_LIMIT) {
+      const oldestRequestId = agent.recentPermissionResolutions.keys().next().value;
+      if (oldestRequestId === undefined) {
+        break;
+      }
+      agent.recentPermissionResolutions.delete(oldestRequestId);
     }
   }
 
@@ -3273,6 +3339,8 @@ export class AgentManager {
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
+      inFlightPermissionResponseOperations: new Map(),
+      recentPermissionResolutions: new Map(),
       pendingReplacement: false,
       activeForegroundTurnId: null,
       activeTurnId: null,
@@ -3335,6 +3403,8 @@ export class AgentManager {
       pendingPermissions: new Map(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
+      inFlightPermissionResponseOperations: new Map(),
+      recentPermissionResolutions: new Map(),
       pendingReplacement: false,
       foregroundTurnWaiters: new Set(),
       finalizedForegroundTurnIds: new Set(),
@@ -4198,6 +4268,13 @@ export class AgentManager {
   }): void {
     const { agent, event, options, flags } = params;
     agent.pendingPermissions.delete(event.requestId);
+    if (agent.recentPermissionResolutions.has(event.requestId)) {
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      this.emitState(agent);
+      return;
+    }
+    this.rememberPermissionResolution(agent, event);
     if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
       agent.bufferedPermissionResolutions.set(event.requestId, event);
       flags.shouldDispatchEvent = false;
@@ -4215,12 +4292,14 @@ export class AgentManager {
     for (const [requestId] of agent.pendingPermissions) {
       agent.pendingPermissions.delete(requestId);
       if (!options?.fromHistory) {
-        this.dispatchStream(agent.id, {
+        const resolution: PermissionResolvedEvent = {
           type: "permission_resolved",
           provider,
           requestId,
           resolution: { behavior: "deny", message },
-        });
+        };
+        this.rememberPermissionResolution(agent, resolution);
+        this.dispatchStream(agent.id, resolution);
       }
     }
   }

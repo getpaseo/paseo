@@ -981,6 +981,56 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("bypass mode auto-allows ordinary tools without surfacing a permission", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "bypassPermissions",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+
+    try {
+      const input = { file_path: "NOTES.md", content: "saved" };
+      const resultPromise = internal.handlePermissionRequest("Write", input, {
+        toolUseID: "tool-bypass-write",
+      });
+
+      // Old versions incorrectly parked this callback in pendingPermissions. Resolve it so
+      // the regression fails immediately instead of leaking a hanging Promise into the test.
+      const legacyPending = session.getPendingPermissions()[0];
+      if (legacyPending) {
+        await session.respondToPermission(legacyPending.id, {
+          behavior: "deny",
+          message: "legacy regression cleanup",
+        });
+      }
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: input,
+      });
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(events.filter((event) => event.type === "permission_requested")).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],

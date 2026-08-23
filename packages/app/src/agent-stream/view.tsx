@@ -138,6 +138,7 @@ function BottomOverlayInset({ height }: { height: number }) {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  toast?: ToastApi | null;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -145,7 +146,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          toast={input.toast}
+        />
       ))}
     </View>
   );
@@ -902,8 +908,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          toast,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, toast],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1309,9 +1316,11 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  toast,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  toast?: ToastApi | null;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1410,9 +1419,18 @@ function PermissionRequestCard({
         response,
       }).catch((error) => {
         console.error("[PermissionRequestCard] Failed to respond to permission:", error);
+        setRespondingActionId(null);
+        resetPermissionMutation();
+        toast?.error(error instanceof Error ? error.message : String(error));
       });
     },
-    [permission.agentId, permission.request.id, respondToPermission],
+    [
+      permission.agentId,
+      permission.request.id,
+      resetPermissionMutation,
+      respondToPermission,
+      toast,
+    ],
   );
   const handleActionPress = useCallback(
     (action: AgentPermissionAction) => {
