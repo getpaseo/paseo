@@ -1,7 +1,10 @@
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
-import { openNewWorkspaceComposer } from "../support/helpers/new-workspace";
+import {
+  expectNewWorkspaceProjectSelected,
+  openNewWorkspaceComposer,
+} from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
@@ -156,6 +159,7 @@ test.describe("Pin workspace shortcut", () => {
       await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
 
       await openNewWorkspaceComposer(page, workspace);
+      await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
     } finally {
       await workspace.cleanup();
     }
