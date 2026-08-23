@@ -46,6 +46,13 @@ function screencastResult(
   throw new Error(`Unexpected command ${command.command}`);
 }
 
+function startCommand(size: { maxWidth: number; maxHeight: number }, slot = 0) {
+  return {
+    command: "screencast_start",
+    args: { browserId: BROWSER_ID, slot, quality: 90, ...size, everyNthFrame: 1 },
+  };
+}
+
 function createViewer(): BrowserScreencastViewer & { frames: Uint8Array[] } {
   const frames: Uint8Array[] = [];
   return { frames, sendFrame: (frame) => frames.push(frame) };
@@ -72,19 +79,130 @@ describe("BrowserScreencastRegistry", () => {
 
     expect(firstSubscription).toEqual({ ok: true, slot: 0, replay: null });
     expect(secondSubscription).toEqual({ ok: true, slot: 0, replay: null });
+    expect(broker.commands).toEqual([startCommand({ maxWidth: 2560, maxHeight: 1600 })]);
+  });
+
+  test("runs the stream at the largest size across viewers", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const phone = createViewer();
+    const desktop = createViewer();
+
+    await registry.subscribe({
+      viewer: phone,
+      browserId: BROWSER_ID,
+      maxWidth: 960,
+      maxHeight: 1920,
+    });
+    await registry.subscribe({
+      viewer: desktop,
+      browserId: BROWSER_ID,
+      maxWidth: 3840,
+      maxHeight: 1280,
+    });
+
+    // Width and height climb independently: the box has to cover both panes.
     expect(broker.commands).toEqual([
-      {
-        command: "screencast_start",
-        args: {
-          browserId: BROWSER_ID,
-          slot: 0,
-          quality: 90,
-          maxWidth: 2560,
-          maxHeight: 1600,
-          everyNthFrame: 1,
-        },
-      },
+      startCommand({ maxWidth: 960, maxHeight: 1920 }),
+      startCommand({ maxWidth: 3840, maxHeight: 1920 }),
     ]);
+  });
+
+  test("keeps the stream as it is when a smaller viewer joins", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const large = createViewer();
+    const small = createViewer();
+
+    await registry.subscribe({
+      viewer: large,
+      browserId: BROWSER_ID,
+      maxWidth: 3840,
+      maxHeight: 2160,
+    });
+    await registry.subscribe({
+      viewer: small,
+      browserId: BROWSER_ID,
+      maxWidth: 640,
+      maxHeight: 480,
+    });
+
+    // Re-arming costs a visible frame, and the small viewer is already covered.
+    expect(broker.commands).toEqual([startCommand({ maxWidth: 3840, maxHeight: 2160 })]);
+  });
+
+  test("shrinks the stream when the largest viewer leaves", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const large = createViewer();
+    const small = createViewer();
+    await registry.subscribe({
+      viewer: large,
+      browserId: BROWSER_ID,
+      maxWidth: 3840,
+      maxHeight: 2160,
+    });
+    await registry.subscribe({
+      viewer: small,
+      browserId: BROWSER_ID,
+      maxWidth: 640,
+      maxHeight: 480,
+    });
+
+    await registry.unsubscribe({ viewer: large, browserId: BROWSER_ID });
+
+    expect(broker.commands).toEqual([
+      startCommand({ maxWidth: 3840, maxHeight: 2160 }),
+      startCommand({ maxWidth: 640, maxHeight: 480 }),
+    ]);
+  });
+
+  test("a viewer that declares no size holds the stream at the default", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const declaring = createViewer();
+    const silent = createViewer();
+
+    await registry.subscribe({ viewer: declaring, browserId: BROWSER_ID, maxWidth: 640 });
+    await registry.subscribe({ viewer: silent, browserId: BROWSER_ID });
+
+    // An app old enough to send no size still gets what it always got.
+    expect(broker.commands).toEqual([
+      startCommand({ maxWidth: 640, maxHeight: 1600 }),
+      startCommand({ maxWidth: 2560, maxHeight: 1600 }),
+    ]);
+
+    await registry.unsubscribe({ viewer: declaring, browserId: BROWSER_ID });
+    expect(broker.commands).toHaveLength(2);
+  });
+
+  test("re-subscribing resizes the running stream on the same slot", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const viewer = createViewer();
+    await registry.subscribe({
+      viewer,
+      browserId: BROWSER_ID,
+      maxWidth: 1280,
+      maxHeight: 800,
+    });
+    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+
+    const resized = await registry.subscribe({
+      viewer,
+      browserId: BROWSER_ID,
+      maxWidth: 1600,
+      maxHeight: 800,
+    });
+
+    // No replay: the viewer already shows that frame, and the re-armed stream
+    // sends a fresh one, so a resize costs exactly one frame.
+    expect(resized).toEqual({ ok: true, slot: 0, replay: null });
+    expect(broker.commands).toEqual([
+      startCommand({ maxWidth: 1280, maxHeight: 800 }),
+      startCommand({ maxWidth: 1600, maxHeight: 800 }),
+    ]);
+    expect(broker.commandNames()).not.toContain("screencast_stop");
   });
 
   test("stops the host only once the last viewer unsubscribes", async () => {

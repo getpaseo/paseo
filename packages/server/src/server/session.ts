@@ -2594,6 +2594,8 @@ export class Session {
     const subscription = await this.browserScreencast.subscribe({
       viewer: this.screencastViewer,
       browserId: msg.browserId,
+      maxWidth: msg.maxWidth,
+      maxHeight: msg.maxHeight,
     });
     this.emit({
       type: "browser.screencast.subscribe.response",

@@ -3,16 +3,23 @@ import {
   type BrowserScreencastFrame,
 } from "@getpaseo/protocol/binary-frames/screencast";
 import type { BrowserToolsBroker } from "./broker.js";
+import type { BrowserToolsResponsePayload } from "./errors.js";
 
 const SCREENCAST_SLOT_COUNT = 256;
 // One quality for every frame: a viewer that sees motion drop to a cheaper tier
 // and climb back reads as flicker, which is worse than the bandwidth it saves.
 const SCREENCAST_QUALITY = 90;
-const SCREENCAST_MAX_WIDTH = 2560;
-const SCREENCAST_MAX_HEIGHT = 1600;
+// What a viewer that declares no size gets: an app old enough to not send caps.
+const DEFAULT_SCREENCAST_SIZE: BrowserScreencastSize = { maxWidth: 2560, maxHeight: 1600 };
 
 export interface BrowserScreencastViewer {
   sendFrame(frame: Uint8Array): void;
+}
+
+/** Device pixels a viewer can display. */
+export interface BrowserScreencastSize {
+  maxWidth: number;
+  maxHeight: number;
 }
 
 export type BrowserScreencastSubscription =
@@ -22,7 +29,9 @@ export type BrowserScreencastSubscription =
 interface BrowserScreencastStream {
   browserId: string;
   slot: number;
-  viewers: Set<BrowserScreencastViewer>;
+  viewers: Map<BrowserScreencastViewer, BrowserScreencastSize>;
+  /** What the host is capturing at: the largest size across `viewers`. */
+  size: BrowserScreencastSize;
   /** Settles when `screencast_start` has been answered, so a stop cannot race it. */
   started: Promise<unknown>;
   /** Chrome only emits on damage, so a late viewer needs the last frame replayed. */
@@ -46,13 +55,23 @@ export class BrowserScreencastRegistry {
   public async subscribe(params: {
     viewer: BrowserScreencastViewer;
     browserId: string;
+    maxWidth?: number;
+    maxHeight?: number;
   }): Promise<BrowserScreencastSubscription> {
+    const size: BrowserScreencastSize = {
+      maxWidth: params.maxWidth ?? DEFAULT_SCREENCAST_SIZE.maxWidth,
+      maxHeight: params.maxHeight ?? DEFAULT_SCREENCAST_SIZE.maxHeight,
+    };
     const existing = this.streams.get(params.browserId);
     if (existing) {
-      existing.viewers.add(params.viewer);
+      // A viewer already on the stream is re-declaring its size, and is still
+      // showing the last frame, so replaying it would only repeat what it has.
+      const isNewViewer = !existing.viewers.has(params.viewer);
+      existing.viewers.set(params.viewer, size);
+      this.resize(existing);
       // The caller sends this after the subscribe response: a frame that beats
       // the response arrives before the viewer has mapped the slot, and is dropped.
-      return { ok: true, slot: existing.slot, replay: existing.lastFrame };
+      return { ok: true, slot: existing.slot, replay: isNewViewer ? existing.lastFrame : null };
     }
 
     const slot = this.allocateSlot();
@@ -60,23 +79,12 @@ export class BrowserScreencastRegistry {
       return { ok: false, error: "All browser screencast slots are in use." };
     }
 
-    const started = this.broker.execute({
-      command: {
-        command: "screencast_start",
-        args: {
-          browserId: params.browserId,
-          slot,
-          quality: SCREENCAST_QUALITY,
-          maxWidth: SCREENCAST_MAX_WIDTH,
-          maxHeight: SCREENCAST_MAX_HEIGHT,
-          everyNthFrame: 1,
-        },
-      },
-    });
+    const started = this.start({ browserId: params.browserId, slot, size });
     const stream: BrowserScreencastStream = {
       browserId: params.browserId,
       slot,
-      viewers: new Set([params.viewer]),
+      viewers: new Map([[params.viewer, size]]),
+      size,
       started,
       lastFrame: null,
     };
@@ -101,6 +109,7 @@ export class BrowserScreencastRegistry {
     }
     stream.viewers.delete(params.viewer);
     if (stream.viewers.size > 0) {
+      this.resize(stream);
       return;
     }
     this.release(stream);
@@ -126,9 +135,43 @@ export class BrowserScreencastRegistry {
     }
     const bytes = encodeBrowserScreencastFrame(frame);
     stream.lastFrame = bytes;
-    for (const viewer of stream.viewers) {
+    for (const viewer of stream.viewers.keys()) {
       viewer.sendFrame(bytes);
     }
+  }
+
+  private start(params: {
+    browserId: string;
+    slot: number;
+    size: BrowserScreencastSize;
+  }): Promise<BrowserToolsResponsePayload> {
+    return this.broker.execute({
+      command: {
+        command: "screencast_start",
+        args: {
+          browserId: params.browserId,
+          slot: params.slot,
+          quality: SCREENCAST_QUALITY,
+          maxWidth: params.size.maxWidth,
+          maxHeight: params.size.maxHeight,
+          everyNthFrame: 1,
+        },
+      },
+    });
+  }
+
+  /**
+   * One capture serves every viewer, so it runs at the largest one. Re-arming
+   * costs a frame, so only a changed size re-issues; the host stops the running
+   * stream before starting the new one, which keeps the slot valid throughout.
+   */
+  private resize(stream: BrowserScreencastStream): void {
+    const size = largestSize(stream.viewers);
+    if (size.maxWidth === stream.size.maxWidth && size.maxHeight === stream.size.maxHeight) {
+      return;
+    }
+    stream.size = size;
+    stream.started = this.start({ browserId: stream.browserId, slot: stream.slot, size });
   }
 
   private allocateSlot(): number | null {
@@ -147,4 +190,16 @@ export class BrowserScreencastRegistry {
     this.streams.delete(stream.browserId);
     this.streamsBySlot.delete(stream.slot);
   }
+}
+
+function largestSize(
+  viewers: Map<BrowserScreencastViewer, BrowserScreencastSize>,
+): BrowserScreencastSize {
+  let maxWidth = 0;
+  let maxHeight = 0;
+  for (const size of viewers.values()) {
+    maxWidth = Math.max(maxWidth, size.maxWidth);
+    maxHeight = Math.max(maxHeight, size.maxHeight);
+  }
+  return { maxWidth, maxHeight };
 }

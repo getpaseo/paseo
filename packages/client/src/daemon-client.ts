@@ -514,6 +514,13 @@ type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type BrowserScreencastSubscribePayload = BrowserScreencastSubscribeResponse["payload"];
+
+/** `maxWidth`/`maxHeight` are the device pixels the viewer can display. */
+export interface BrowserScreencastSubscribeOptions {
+  maxWidth?: number;
+  maxHeight?: number;
+  requestId?: string;
+}
 type BrowserClientCommandPayload = BrowserClientCommandResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
@@ -4763,15 +4770,17 @@ export class DaemonClient {
 
   async subscribeBrowserScreencast(
     browserId: string,
-    requestId?: string,
+    options?: BrowserScreencastSubscribeOptions,
   ): Promise<BrowserScreencastSubscribePayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
+    const resolvedRequestId = this.createRequestId(options?.requestId);
     const payload = await this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: SessionInboundMessageSchema.parse({
         type: "browser.screencast.subscribe.request",
         requestId: resolvedRequestId,
         browserId,
+        maxWidth: options?.maxWidth,
+        maxHeight: options?.maxHeight,
       }),
       responseType: "browser.screencast.subscribe.response",
       options: { skipQueue: true },

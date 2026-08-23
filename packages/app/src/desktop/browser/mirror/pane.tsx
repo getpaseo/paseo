@@ -29,8 +29,12 @@ export function BrowserMirrorPane({
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const { tab, run } = useRemoteBrowserTab(serverId, workspaceId, browserId);
-  const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(serverId, browserId);
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
+  const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(
+    serverId,
+    browserId,
+    paneSize,
+  );
   const keyboardRef = useRef<EditingTextInputHandle>(null);
   const urlInputRef = useRef<EditingTextInputHandle>(null);
 

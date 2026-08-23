@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { PixelRatio } from "react-native";
 import { Buffer } from "buffer";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import type { PaneSize } from "./viewport";
 
 export interface BrowserScreencastView {
   uri: string | null;
@@ -21,6 +23,13 @@ const EMPTY_VIEW: BrowserScreencastView = {
   error: null,
 };
 
+// Every distinct size the pane reports re-arms the host capture, so the request
+// climbs in steps: a drag across a whole step costs one re-arm, not one a pixel.
+const SCREENCAST_SIZE_STEP = 320;
+
+/** The displayed frame plus the one behind it, which may still be decoding. */
+const FRAME_RETENTION = 2;
+
 /**
  * Object URLs keep the JPEG bytes out of JavaScript strings on web and Electron.
  * React Native has no Blob URL, so it pays a base64 copy per frame.
@@ -36,10 +45,26 @@ function createFrameSource(data: Uint8Array): FrameSource {
   };
 }
 
-export function useBrowserScreencast(serverId: string, browserId: string): BrowserScreencastView {
+function requestedPixels(layoutSize: number): number {
+  const devicePixels = layoutSize * PixelRatio.get();
+  return Math.max(1, Math.ceil(devicePixels / SCREENCAST_SIZE_STEP)) * SCREENCAST_SIZE_STEP;
+}
+
+/**
+ * The pane is the only party that knows how many pixels it can show, so it
+ * declares them. `paneSize` is null until layout, and nothing is subscribed
+ * until then: subscribing with a placeholder would re-arm the host immediately.
+ */
+export function useBrowserScreencast(
+  serverId: string,
+  browserId: string,
+  paneSize: PaneSize | null,
+): BrowserScreencastView {
   const client = useHostRuntimeClient(serverId);
   const [view, setView] = useState<BrowserScreencastView>(EMPTY_VIEW);
-  const frameRef = useRef<FrameSource | null>(null);
+  const framesRef = useRef<FrameSource[]>([]);
+  const maxWidth = paneSize ? requestedPixels(paneSize.width) : null;
+  const maxHeight = paneSize ? requestedPixels(paneSize.height) : null;
 
   useEffect(() => {
     if (!client) {
@@ -47,9 +72,11 @@ export function useBrowserScreencast(serverId: string, browserId: string): Brows
     }
 
     let active = true;
-    const releaseFrame = () => {
-      frameRef.current?.release();
-      frameRef.current = null;
+    const releaseFrames = () => {
+      for (const frame of framesRef.current) {
+        frame.release();
+      }
+      framesRef.current = [];
     };
 
     const unsubscribeFrames = client.onBrowserScreencastFrame((event) => {
@@ -57,8 +84,12 @@ export function useBrowserScreencast(serverId: string, browserId: string): Brows
         return;
       }
       const next = createFrameSource(event.data);
-      releaseFrame();
-      frameRef.current = next;
+      // Revoking the URL the <img> is still decoding paints a broken image, and
+      // the swap is a React render behind this callback. Keep one frame of slack.
+      framesRef.current.push(next);
+      while (framesRef.current.length > FRAME_RETENTION) {
+        framesRef.current.shift()?.release();
+      }
       setView({
         uri: next.uri,
         deviceWidth: event.metadata.deviceWidth,
@@ -67,21 +98,32 @@ export function useBrowserScreencast(serverId: string, browserId: string): Brows
       });
     });
 
-    void (async () => {
-      const payload = await client.subscribeBrowserScreencast(browserId);
-      if (active && payload.error !== null) {
-        setView({ ...EMPTY_VIEW, error: payload.error });
-      }
-    })();
-
     return () => {
       active = false;
       unsubscribeFrames();
       client.unsubscribeBrowserScreencast(browserId);
-      releaseFrame();
+      releaseFrames();
       setView(EMPTY_VIEW);
     };
   }, [browserId, client]);
+
+  useEffect(() => {
+    if (!client || maxWidth === null || maxHeight === null) {
+      return;
+    }
+    // Re-subscribing rather than unsubscribing first: the daemon keys viewers by
+    // session, so this updates the declared size on the stream already running.
+    let active = true;
+    void (async () => {
+      const payload = await client.subscribeBrowserScreencast(browserId, { maxWidth, maxHeight });
+      if (active && payload.error !== null) {
+        setView({ ...EMPTY_VIEW, error: payload.error });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [browserId, client, maxHeight, maxWidth]);
 
   return view;
 }
