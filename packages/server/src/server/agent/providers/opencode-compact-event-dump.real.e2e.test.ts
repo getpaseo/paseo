@@ -19,34 +19,6 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "opencode-compact-dump-"));
 }
 
-function waitForTurnToFinish(session: {
-  subscribe: (callback: (event: AgentStreamEvent) => void) => () => void;
-}): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let unsubscribe: () => void = () => undefined;
-    const timeout = setTimeout(() => {
-      unsubscribe();
-      reject(new Error("Timed out waiting for OpenCode compact turn to finish"));
-    }, 60_000);
-    unsubscribe = session.subscribe((event) => {
-      if (
-        event.type !== "turn_completed" &&
-        event.type !== "turn_failed" &&
-        event.type !== "turn_canceled"
-      ) {
-        return;
-      }
-      clearTimeout(timeout);
-      unsubscribe();
-      if (event.type === "turn_failed") {
-        reject(new Error(event.error));
-        return;
-      }
-      resolve();
-    });
-  });
-}
-
 function dumpCompactEvents(events: AgentStreamEvent[]): void {
   console.info(
     "OPENCODE_COMPACT_EVENT_DUMP",
@@ -80,7 +52,7 @@ describe("OpenCode compact event dump (real)", () => {
     await OpenCodeServerManager.getInstance(logger).shutdown();
   });
 
-  test("dumps live events emitted by a real /compact turn", async () => {
+  test("compacts the existing native session through the provider API", async () => {
     const cwd = tmpCwd();
     const client = createRealProviderClient("opencode", logger);
 
@@ -92,29 +64,34 @@ describe("OpenCode compact event dump (real)", () => {
         modeId: "build",
       });
 
-      await session.run("Reply with exactly: COMPACT_SEED_OK");
-
-      const compactEvents: AgentStreamEvent[] = [];
-      const unsubscribe = session.subscribe((event) => {
-        compactEvents.push(event);
-      });
-      const compactFinished = waitForTurnToFinish(session);
-
       try {
-        await session.startTurn("/compact");
-        await compactFinished;
+        const seed = await session.run("Reply with exactly: COMPACT_SEED_OK");
+        const nativeSessionId = seed.sessionId;
+
+        const compactEvents: AgentStreamEvent[] = [];
+        const unsubscribe = session.subscribe((event) => {
+          compactEvents.push(event);
+        });
+        try {
+          await session.compact?.();
+        } finally {
+          unsubscribe();
+        }
+
+        dumpCompactEvents(compactEvents);
+
+        expect(session.describePersistence?.()?.sessionId).toBe(nativeSessionId);
+        expect(
+          compactEvents.some(
+            (event) =>
+              event.type === "timeline" &&
+              event.item.type === "compaction" &&
+              event.item.status === "completed",
+          ),
+        ).toBe(true);
       } finally {
-        unsubscribe();
+        await session.close();
       }
-
-      dumpCompactEvents(compactEvents);
-
-      expect(compactEvents.some((event) => event.type === "turn_completed")).toBe(true);
-      expect(
-        compactEvents.filter(
-          (event) => event.type === "timeline" && event.item.type === "assistant_message",
-        ),
-      ).toEqual([]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

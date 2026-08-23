@@ -4325,6 +4325,46 @@ test("detaches an agent through the namespaced detach RPC", async () => {
   await expect(promise).resolves.toBeUndefined();
 });
 
+test("compacts an agent through the namespaced compact RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.compactAgent("agent-1");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({ type: "agent.compact.request", agentId: "agent-1" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.compact.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-1",
+        provider: "codex",
+        status: "confirmed",
+        nativeSessionIdBefore: "native-1",
+        nativeSessionIdAfter: "native-1",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toMatchObject({
+    status: "confirmed",
+    nativeSessionIdBefore: "native-1",
+    nativeSessionIdAfter: "native-1",
+  });
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

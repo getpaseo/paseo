@@ -4719,6 +4719,31 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("compact waits for native completion", async () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async () => ({})),
+    };
+
+    const compact = session.compact?.();
+    await vi.waitFor(() => {
+      expect(session.client?.request).toHaveBeenCalledWith("thread/compact/start", {
+        threadId: "test-thread",
+      });
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "rpc-compact" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "rpc-compact" },
+    });
+
+    await expect(compact).resolves.toBeUndefined();
+  });
+
   test("maps question responses from headers back to question ids and completes the tool call", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

@@ -77,6 +77,10 @@ const agent = await client.agents.create({
     provider: "claude/claude-sonnet-5",
     options: {
       disallowedTools: ["WebFetch"],
+      settings: {
+        autoCompactEnabled: true,
+        autoCompactWindow: 400_000,
+      },
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
@@ -108,9 +112,11 @@ await client.close();
 | `disallowedTools`       | Tool names the agent may never use                                                                      |
 | `additionalDirectories` | Extra directories the agent may access                                                                  |
 | `sandbox`               | `enabled`, `failIfUnavailable`, `allowUnsandboxedCommands`, `excludedCommands`, `filesystem`, `network` |
-| `settings`              | `permissions` (`allow`/`ask`/`deny` rule lists) and a nested `sandbox`                                  |
+| `settings`              | `autoCompactEnabled`, `autoCompactWindow` (100,000–1,000,000), `permissions`, and a nested `sandbox`    |
 
 `failIfUnavailable: true` makes agent startup fail when the sandbox cannot be established. Leave it off and Claude runs unsandboxed instead.
+
+`autoCompactWindow` is Claude's effective context capacity for that session. Claude derives an earlier compaction trigger from it, so it is a working-window ceiling rather than an exact trigger token.
 
 `sandbox.filesystem` takes `allowWrite`, `denyWrite`, `allowRead`, and `denyRead`. `sandbox.network` takes `allowedDomains`, `deniedDomains`, `strictAllowlist`, and proxy settings.
 

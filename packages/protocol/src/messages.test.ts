@@ -330,19 +330,47 @@ describe("agent detach RPC", () => {
     expect(parsed.features?.agentDetach).toBe(true);
   });
 
-  test("parses the Codex auto-compaction server feature gate", () => {
+  test("parses the context-management server feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",
       serverId: "srv-test",
       features: {
-        codexAutoCompactTokenLimit: true,
+        contextManagement: true,
       },
     });
 
     if (!parsed) {
       throw new Error("Expected server info payload to parse");
     }
-    expect(parsed.features?.codexAutoCompactTokenLimit).toBe(true);
+    expect(parsed.features?.contextManagement).toBe(true);
+  });
+
+  test("parses a same-session compact request and confirmed response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.compact.request",
+        agentId: "agent-1",
+        requestId: "compact-1",
+      }),
+    ).toEqual({
+      type: "agent.compact.request",
+      agentId: "agent-1",
+      requestId: "compact-1",
+    });
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "agent.compact.response",
+      payload: {
+        requestId: "compact-1",
+        agentId: "agent-1",
+        provider: "codex",
+        status: "confirmed",
+        nativeSessionIdBefore: "native-1",
+        nativeSessionIdAfter: "native-1",
+        error: null,
+      },
+    });
+    expect(response.type).toBe("agent.compact.response");
   });
 
   test("parses the workspace-targeted session import feature gate", () => {

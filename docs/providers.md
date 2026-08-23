@@ -24,7 +24,8 @@ This Paseo version accepts these keys:
   The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
   unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
   weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
-  `permissions.{allow,ask,deny}` and sandbox settings. See the
+  `autoCompactEnabled`, `autoCompactWindow` (100,000–1,000,000),
+  `permissions.{allow,ask,deny}`, and sandbox settings. See the
   [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
   and [Claude settings reference](https://code.claude.com/docs/en/settings).
 - **OpenCode:** `permission`, either one `ask`/`allow`/`deny` action or the native per-tool rule
@@ -85,6 +86,19 @@ OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prom
 `AgentManager` owns the one canonical timeline row for a foreground prompt carrying a Paseo `clientMessageId`. It records that row when `startTurn` accepts, with the wire `messageId` set to the same value. Provider adapters still emit their native user-message echo with the same `clientMessageId` when available; the manager records its provider identity on the internal row without changing or redispatching the wire item. If an adapter emits the echo before `startTurn` resolves, the manager records the provider identity with the row at acceptance. Provider adapters continue to own externally initiated user rows that have no Paseo client identity. Do not perform global transcript text dedupe.
 
 Active-turn steering is an optional `AgentSession.steerActiveTurn` operation. The manager owns admission against its exact foreground turn, canonical user-message creation, echo reconciliation, and falls back to the normal interrupt-and-replace path only when the adapter reports `unavailable`. An adapter error leaves the steer's fate ambiguous and must surface without an interrupt or retry. Codex calls `turn/steer` with the native expected turn and Paseo client user-message ID. Claude pushes an admitted steer into the exact active SDK query input; isolated control commands remain unavailable. OpenCode calls `session/prompt_async` with an OpenCode-generated message ID; the server queues the prompt while busy and the next LLM call in the same Paseo turn includes it. A missing session reports `unavailable` and uses the normal interrupt fallback.
+
+Context management is provider-capability driven. Provider snapshots publish `supportsContextWindowPolicy` only when a provider has a per-session native working-window control, and `supportsSameSessionCompaction` only when `AgentSession.compact` can wait for native completion without replacing the session. `agent.compact.request` returns `confirmed` only when the native session id reads back unchanged; unavailable identity, provider failure, or an id change returns `failed`, while an unmapped provider returns `unsupported`.
+
+| Provider                        | Per-session context policy                                                                      | Same-session compact       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------- |
+| Codex                           | Exact native trigger through `model_auto_compact_token_limit`                                   | `thread/compact/start`     |
+| Claude                          | Effective native window through `settings.autoCompactWindow`; Claude derives an earlier trigger | Not exposed by the SDK     |
+| OpenCode                        | Not supported; model-relative automatic compaction is not an absolute token policy              | Native `session.summarize` |
+| Pi                              | Not supported as an absolute token policy                                                       | Native compact RPC         |
+| OMP                             | Not supported as an absolute token policy                                                       | Native compact RPC         |
+| ACP providers, including Cursor | Not supported                                                                                   | Not supported              |
+
+Do not infer one capability from the other, send slash commands as prompt text, or emulate compaction by creating or reloading a session.
 
 A steering adapter also owes its interrupt: stopping a turn must discard the steers the provider has not read yet, or one of them resumes the turn the user just stopped. Codex clears pending input when it aborts a turn; Claude does not, so its adapter cancels the SDK messages it queued before calling `query.interrupt()`.
 

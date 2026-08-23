@@ -3,7 +3,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Query,
+  SDKControlGetContextUsageResponse,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import type {
   AgentSession,
@@ -143,8 +147,8 @@ function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelin
     .find((item) => item.status === "completed" && item.name.toLowerCase() === "bash");
 }
 
-function getInternalQuery(session: AgentSession): unknown {
-  return (session as AgentSession & { query?: unknown }).query ?? null;
+function getInternalQuery(session: AgentSession): Query | null {
+  return (session as AgentSession & { query?: Query }).query ?? null;
 }
 
 async function createSession(params?: {
@@ -217,6 +221,50 @@ describe("ClaudeAgentSession integration", () => {
       await cleanupSession(handle);
     }
   }, 60_000);
+
+  test("auto-compacts inside the configured window without replacing the native session", async () => {
+    const cwd = tmpCwd("claude-auto-compact-");
+    const session = await client.createSession({
+      ...getRealProviderConfig("claude"),
+      cwd,
+      providerOptions: {
+        settings: { autoCompactEnabled: true, autoCompactWindow: 100_000 },
+      },
+    });
+
+    try {
+      const first = await session.run("Reply exactly: AUTO_COMPACT_READY");
+      const nativeSessionId = first.sessionId;
+      const query = getInternalQuery(session);
+      if (!query) throw new Error("Claude query was not initialized");
+
+      const configured = await query.getContextUsage();
+      expect(configured.isAutoCompactEnabled).toBe(true);
+      expect(configured.autoCompactThreshold).toBeGreaterThan(0);
+      expect(configured.autoCompactThreshold).toBeLessThanOrEqual(100_000);
+
+      const chunk = Array.from({ length: 18_000 }, (_, index) => `f${index % 997}`).join(" ");
+      let compacted = false;
+      let beforeCompaction: SDKControlGetContextUsageResponse = configured;
+      for (let turn = 0; turn < 8 && !compacted; turn += 1) {
+        beforeCompaction = await query.getContextUsage();
+        const result = await session.run(
+          `Keep this synthetic context for this test, then reply exactly ACK_${turn}: ${chunk}`,
+        );
+        expect(result.sessionId).toBe(nativeSessionId);
+        compacted = result.timeline.some(
+          (item) => item.type === "compaction" && item.status === "completed",
+        );
+      }
+
+      expect(compacted).toBe(true);
+      expect(session.describePersistence()?.sessionId).toBe(nativeSessionId);
+      const afterCompaction = await query.getContextUsage();
+      expect(afterCompaction.totalTokens).toBeLessThan(beforeCompaction.totalTokens);
+    } finally {
+      await cleanupSession({ cwd, session });
+    }
+  }, 360_000);
 
   test("keeps bypassPermissions available after a thinking-option restart", async () => {
     const handle = await createSession({

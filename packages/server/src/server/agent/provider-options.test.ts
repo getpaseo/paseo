@@ -73,10 +73,28 @@ describe("provider-owned option schemas", () => {
             allowUnixSockets: ["/var/run/docker.sock"],
           },
         },
-        settings: { permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] } },
+        settings: {
+          autoCompactEnabled: true,
+          autoCompactWindow: 256_000,
+          permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] },
+        },
       }),
-    ).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true } });
+    ).toMatchObject({
+      sandbox: { enabled: true, failIfUnavailable: true },
+      settings: { autoCompactEnabled: true, autoCompactWindow: 256_000 },
+    });
   });
+
+  test.each([99_999, 1_000_001, 128_000.5])(
+    "rejects invalid Claude auto-compaction window %s",
+    (window) => {
+      expect(() =>
+        validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+          settings: { autoCompactWindow: window },
+        }),
+      ).toThrow("providerOptions.settings.autoCompactWindow");
+    },
+  );
 
   test("reports the exact invalid Claude option path", () => {
     expect(() =>

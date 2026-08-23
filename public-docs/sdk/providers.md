@@ -59,6 +59,8 @@ const snapshot = await client.providers.waitForReady({
 for (const entry of snapshot.entries) {
   if (entry.status !== "ready") continue;
 
+  console.log(entry.provider, entry.capabilities?.supportsContextWindowPolicy);
+
   for (const model of entry.models ?? []) {
     console.log(`${entry.provider}/${model.id}`);
   }
@@ -66,6 +68,8 @@ for (const entry of snapshot.entries) {
 ```
 
 An entry finishes as `ready`, `unavailable`, or `error`. `snapshot()` returns immediately and can include `loading` entries.
+
+`entry.capabilities` reports provider operations that the running daemon can actually perform. Context-window policy and same-session compaction are separate flags; do not infer one from the other.
 
 ## Select a discovered model
 

@@ -131,7 +131,18 @@ describe("OMP agent client and session", () => {
     expect(omp.capabilities()).toMatchObject({
       supportsMcpServers: false,
       supportsNativePaseoTools: true,
+      supportsSameSessionCompaction: true,
     });
+  });
+
+  test("compacts through the native RPC without prompt text", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(omp.compact()).resolves.toBeUndefined();
+
+    expect(omp.runtime().compactRequests).toEqual([{}]);
+    expect(omp.runtime().prompts).toEqual([]);
   });
 
   test("preserves max as the selected thinking option", async () => {

@@ -177,6 +177,18 @@ The answer comes from the running session, not from a directory scan, so it incl
 
 A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
 
+## Compact an existing session
+
+```ts
+const receipt = await agent.compact();
+if (receipt.status !== "confirmed") {
+  throw new Error(receipt.error ?? "Compaction was not confirmed");
+}
+console.log(receipt.nativeSessionIdBefore === receipt.nativeSessionIdAfter); // true
+```
+
+Paseo returns `confirmed` only after the provider completes compaction and the native session ID reads back unchanged. Providers without a native same-session operation return `unsupported`; provider errors or an identity change return `failed`.
+
 ## Archive or detach
 
 ```ts

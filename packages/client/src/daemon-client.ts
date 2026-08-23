@@ -87,6 +87,7 @@ import type {
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
+  AgentCompactResponseMessage,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -2592,6 +2593,12 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "detachAgent rejected");
     }
+  }
+
+  async compactAgent(agentId: string): Promise<AgentCompactResponseMessage["payload"]> {
+    return await this.sendNamespacedCorrelatedSessionRequest<"agent.compact.response">({
+      message: { type: "agent.compact.request", agentId },
+    });
   }
 
   async updateAgent(

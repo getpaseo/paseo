@@ -737,6 +737,28 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await timelinePromise;
   expect(agent.current()).toEqual(timelineAgent);
 
+  const compactPromise = agent.compact();
+  const compactRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(compactRequest).toMatchObject({
+    type: "agent.compact.request",
+    agentId: "agent_sdk",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.compact.response",
+      payload: {
+        requestId: compactRequest.requestId,
+        agentId: "agent_sdk",
+        provider: "codex",
+        status: "confirmed",
+        nativeSessionIdBefore: "native-sdk",
+        nativeSessionIdAfter: "native-sdk",
+        error: null,
+      },
+    }),
+  );
+  await expect(compactPromise).resolves.toMatchObject({ status: "confirmed" });
+
   const archivePromise = agent.archive();
   const archiveRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(archiveRequest).toMatchObject({

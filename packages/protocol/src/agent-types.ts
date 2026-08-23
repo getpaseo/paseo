@@ -114,6 +114,7 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  capabilities?: AgentCapabilityFlags;
 }
 
 export interface AgentFeatureToggle {
@@ -151,6 +152,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsContextWindowPolicy?: boolean;
+  supportsSameSessionCompaction?: boolean;
 }
 
 export interface AgentPersistenceHandle {

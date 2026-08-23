@@ -163,6 +163,7 @@ const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsSameSessionCompaction: true,
 };
 
 const PI_THINKING_OPTIONS: ReadonlyArray<{
@@ -1548,6 +1549,17 @@ export class PiRpcAgentSession implements AgentSession {
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
+  }
+
+  async compact(): Promise<void> {
+    if (this.closed) {
+      throw new Error("Pi session is closed");
+    }
+    if (this.activeTurnId) {
+      throw new Error("Cannot compact Pi context while a turn is active");
+    }
+    await this.runtimeSession.compact();
+    await this.refreshState();
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {

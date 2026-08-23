@@ -320,7 +320,11 @@ describe("ProviderSnapshotManager public surface", () => {
     manager.on("change", listener);
     try {
       const [first] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
-      expect(first).toMatchObject({ provider: "codex", status: "ready" });
+      expect(first).toMatchObject({
+        provider: "codex",
+        status: "ready",
+        capabilities: TEST_CAPABILITIES,
+      });
       expect(isAvailable).toHaveBeenCalledTimes(1);
       expect(fetchCatalog).toHaveBeenCalledTimes(1);
 

@@ -102,4 +102,49 @@ describe("Claude spawn override", () => {
     const spawnOptions = claudeSpawnCall?.[2];
     expect(spawnOptions?.shell).toBe(false);
   });
+
+  test("forwards the native auto-compaction window to Claude settings", async () => {
+    let capturedOptions: Options | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "claude-auto-compact-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]);
+    });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      providerOptions: {
+        settings: { autoCompactEnabled: true, autoCompactWindow: 256_000 },
+      },
+    });
+
+    try {
+      await session.run("auto compact settings");
+    } finally {
+      await session.close();
+    }
+
+    expect(capturedOptions?.settings).toMatchObject({
+      autoCompactEnabled: true,
+      autoCompactWindow: 256_000,
+    });
+  });
 });
