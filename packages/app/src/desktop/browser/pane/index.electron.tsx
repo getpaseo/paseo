@@ -6,24 +6,20 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, Text, View, type ViewStyle } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import {
-  ArrowLeft,
-  ArrowRight,
   Camera,
   ChevronDown,
   Maximize,
   Monitor,
   MousePointer2,
-  RotateCw,
   Smartphone,
   Tablet,
   Wrench,
@@ -50,7 +46,7 @@ import {
 } from "@/attachments/workspace-attachments-store";
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
-import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { BrowserChrome, ToolbarButton, toolbarButtonStyle } from "@/desktop/browser/chrome";
 import { getOverlayRoot } from "@/lib/overlay-root";
 import {
   getDesktopHost,
@@ -404,13 +400,6 @@ function clearAnnotationMarkers(webview: ElectronWebview): void {
   ).catch(ignoreWebviewJavaScriptError);
 }
 
-function getTextInputNativeElement(
-  current: EditingTextInputHandle | null,
-): HTMLInputElement | null {
-  const native = current?.getNativeRef();
-  return native instanceof HTMLInputElement ? native : null;
-}
-
 function isBrowserShortcutKey(event: KeyboardEvent, key: "l" | "r"): boolean {
   if (event.altKey || event.shiftKey) {
     return false;
@@ -428,46 +417,6 @@ function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrow
   }
   const event = payload as Partial<DesktopBrowserShortcutEvent>;
   return event.action === "focus-url";
-}
-
-function ToolbarButton({
-  label,
-  children,
-  active,
-  disabled,
-  onPress,
-  style,
-}: {
-  label: string;
-  children: ReactNode;
-  active?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-  style: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
-}) {
-  const accessibilityState = useMemo(
-    () => ({ disabled: Boolean(disabled), selected: Boolean(active) }),
-    [active, disabled],
-  );
-  return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild disabled={disabled}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={label}
-          accessibilityState={accessibilityState}
-          disabled={disabled}
-          onPress={onPress}
-          style={style}
-        >
-          {children}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" align="center" offset={8}>
-        <Text style={styles.toolbarTooltipText}>{label}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
 }
 
 // Lucide icons themed via withUnistyles so their color stays theme-reactive
@@ -522,11 +471,9 @@ function DeviceSizeMenuItem({
 function DeviceSizeMenu({
   selectedId,
   onSelect,
-  triggerStyle,
 }: {
   selectedId: DeviceSizeId | null;
   onSelect: (id: DeviceSizeId) => void;
-  triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
 }) {
   const { t } = useTranslation();
   const selectedPreset =
@@ -537,7 +484,7 @@ function DeviceSizeMenu({
     <DropdownMenu>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>
-          <DropdownMenuTrigger accessibilityLabel={label} style={triggerStyle}>
+          <DropdownMenuTrigger accessibilityLabel={label} style={toolbarButtonStyle}>
             <View style={styles.deviceTrigger}>
               <SelectedIcon size={16} uniProps={deviceMutedIconMapping} />
               <ThemedChevronDown size={12} uniProps={deviceMutedIconMapping} />
@@ -650,7 +597,6 @@ function LocalBrowserPane({
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -666,16 +612,6 @@ function LocalBrowserPane({
   const subtitleStyle = useMemo(
     () => [styles.unavailableSubtitle, { color: theme.colors.foregroundMuted }],
     [theme.colors.foregroundMuted],
-  );
-  const urlInputStyle = useMemo(
-    () => [
-      styles.urlInput,
-      {
-        color: theme.colors.foreground,
-        outlineStyle: "none",
-      } as object,
-    ],
-    [theme.colors.foreground],
   );
   const errorTextStyle = useMemo(
     () => [styles.metaError, { color: theme.colors.palette.red[500] }],
@@ -693,29 +629,12 @@ function LocalBrowserPane({
   const browserErrorLabelsRef = useRef(browserErrorLabels);
   browserErrorLabelsRef.current = browserErrorLabels;
 
-  useEffect(() => {
-    const nextUrl = browser?.url ?? "https://example.com";
-    urlInputRef.current?.replaceText(nextUrl);
-    setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
-  }, [browser?.url]);
-
   const updateBrowserRef = useRef(updateBrowser);
   updateBrowserRef.current = updateBrowser;
 
-  const selectUrlBar = useCallback(() => {
-    window.setTimeout(() => {
-      getTextInputNativeElement(urlInputRef.current)?.select();
-    }, 0);
-  }, []);
-
-  const handleUrlBarFocus = useCallback(() => {
-    selectUrlBar();
-  }, [selectUrlBar]);
-
   const focusUrlBar = useCallback(() => {
     urlInputRef.current?.focus();
-    selectUrlBar();
-  }, [selectUrlBar]);
+  }, []);
 
   const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
     const webview = webviewRef.current;
@@ -810,9 +729,6 @@ function LocalBrowserPane({
         ...(normalized !== previousUrl ? { faviconUrl: null } : {}),
         lastError: null,
       });
-      setDraftUrl((current) => {
-        return current === normalized ? current : normalized;
-      });
       syncNavigationState();
     };
     const handleWillNavigate = (event: Event) => {
@@ -830,7 +746,6 @@ function LocalBrowserPane({
         ...(normalized !== browserRef.current?.url ? { faviconUrl: null } : {}),
         lastError: null,
       });
-      setDraftUrl((current) => (current === normalized ? current : normalized));
     };
     const handleTitleUpdated = (event: Event) => {
       const title =
@@ -966,7 +881,6 @@ function LocalBrowserPane({
         ...(normalizedUrl !== previousUrl ? { faviconUrl: null } : {}),
         lastError: null,
       });
-      setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
       if (unsafeNavigationMessage) {
         updateBrowserRef.current(browserIdRef.current, {
           isLoading: false,
@@ -1068,10 +982,6 @@ function LocalBrowserPane({
       void unsubscribe?.then((dispose) => dispose());
     };
   }, [focusUrlBar, isInteractive]);
-
-  const handleNavigateDraftUrl = useCallback(() => {
-    navigate(draftUrl);
-  }, [draftUrl, navigate]);
 
   const addElementAttachment = useCallback(
     (
@@ -1345,46 +1255,6 @@ function LocalBrowserPane({
       });
   }, []);
 
-  const baseIconButtonStyle = useCallback(
-    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
-      styles.iconButton,
-      (hovered || pressed) && styles.iconButtonHovered,
-    ],
-    [],
-  );
-  const backIconButtonStyle = useCallback(
-    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
-      styles.iconButton,
-      (hovered || pressed) && styles.iconButtonHovered,
-      !browser?.canGoBack && styles.iconButtonDisabled,
-    ],
-    [browser?.canGoBack],
-  );
-  const forwardIconButtonStyle = useCallback(
-    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
-      styles.iconButton,
-      (hovered || pressed) && styles.iconButtonHovered,
-      !browser?.canGoForward && styles.iconButtonDisabled,
-    ],
-    [browser?.canGoForward],
-  );
-  const annotateIconButtonStyle = useCallback(
-    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
-      styles.iconButton,
-      selectorMode === "annotate" && styles.selectorActiveButton,
-      (hovered || pressed) && styles.iconButtonHovered,
-    ],
-    [selectorMode],
-  );
-  const screenshotIconButtonStyle = useCallback(
-    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
-      styles.iconButton,
-      selectorMode === "screenshot" && styles.selectorActiveButton,
-      (hovered || pressed) && styles.iconButtonHovered,
-    ],
-    [selectorMode],
-  );
-
   const selectedDeviceSizeId = useMemo(
     () => deviceSizeIdForViewport(browserViewport),
     [browserViewport],
@@ -1434,6 +1304,61 @@ function LocalBrowserPane({
     [isResponsiveDevice],
   );
 
+  const webviewActions = useMemo(
+    () => (
+      <>
+        <DeviceSizeMenu selectedId={selectedDeviceSizeId} onSelect={handleSelectDeviceSize} />
+        <ToolbarButton
+          label={t("workspace.browser.controls.openDevTools")}
+          onPress={handleOpenDevTools}
+        >
+          <Wrench size={16} color={theme.colors.foregroundMuted} />
+        </ToolbarButton>
+        <ToolbarButton
+          label={
+            selectorMode === "annotate"
+              ? t("workspace.browser.controls.cancelSelector")
+              : t("workspace.browser.controls.annotateElement")
+          }
+          active={selectorMode === "annotate"}
+          onPress={handleToggleElementSelector}
+        >
+          <MousePointer2
+            size={16}
+            color={selectorMode === "annotate" ? theme.colors.accent : theme.colors.foregroundMuted}
+          />
+        </ToolbarButton>
+        <ToolbarButton
+          label={
+            selectorMode === "screenshot"
+              ? t("workspace.browser.controls.cancelSelector")
+              : t("workspace.browser.controls.screenshotElement")
+          }
+          active={selectorMode === "screenshot"}
+          onPress={handleToggleScreenshot}
+        >
+          <Camera
+            size={16}
+            color={
+              selectorMode === "screenshot" ? theme.colors.accent : theme.colors.foregroundMuted
+            }
+          />
+        </ToolbarButton>
+      </>
+    ),
+    [
+      handleOpenDevTools,
+      handleSelectDeviceSize,
+      handleToggleElementSelector,
+      handleToggleScreenshot,
+      selectedDeviceSizeId,
+      selectorMode,
+      t,
+      theme.colors.accent,
+      theme.colors.foregroundMuted,
+    ],
+  );
+
   const setWebviewHostNode = useCallback((node: HTMLDivElement | null) => {
     webviewHostRef.current = node;
   }, []);
@@ -1453,100 +1378,18 @@ function LocalBrowserPane({
 
   return (
     <View style={styles.container}>
-      <View style={styles.chromeRow}>
-        <View style={styles.chromeLeft}>
-          <ToolbarButton
-            label={t("workspace.browser.controls.back")}
-            disabled={!browser?.canGoBack}
-            onPress={handleBack}
-            style={backIconButtonStyle}
-          >
-            <ArrowLeft size={16} color={theme.colors.foregroundMuted} />
-          </ToolbarButton>
-          <ToolbarButton
-            label={t("workspace.browser.controls.forward")}
-            disabled={!browser?.canGoForward}
-            onPress={handleForward}
-            style={forwardIconButtonStyle}
-          >
-            <ArrowRight size={16} color={theme.colors.foregroundMuted} />
-          </ToolbarButton>
-          <ToolbarButton
-            label={
-              browser?.isLoading
-                ? t("workspace.browser.controls.stopLoading")
-                : t("workspace.browser.controls.refresh")
-            }
-            onPress={handleRefresh}
-            style={baseIconButtonStyle}
-          >
-            <RotateCw size={16} color={theme.colors.foregroundMuted} />
-          </ToolbarButton>
-        </View>
-        <View style={styles.urlBarWrap}>
-          <TextInput
-            accessibilityLabel={t("workspace.browser.controls.browserUrl")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={setDraftUrl}
-            onFocus={handleUrlBarFocus}
-            onSubmitEditing={handleNavigateDraftUrl}
-            placeholder={t("workspace.browser.controls.enterUrl")}
-            placeholderTextColor={theme.colors.foregroundMuted}
-            ref={urlInputRef}
-            style={urlInputStyle}
-            initialValue={draftUrl}
-          />
-        </View>
-        <View style={styles.chromeRight}>
-          <DeviceSizeMenu
-            selectedId={selectedDeviceSizeId}
-            onSelect={handleSelectDeviceSize}
-            triggerStyle={baseIconButtonStyle}
-          />
-          <ToolbarButton
-            label={t("workspace.browser.controls.openDevTools")}
-            onPress={handleOpenDevTools}
-            style={baseIconButtonStyle}
-          >
-            <Wrench size={16} color={theme.colors.foregroundMuted} />
-          </ToolbarButton>
-          <ToolbarButton
-            label={
-              selectorMode === "annotate"
-                ? t("workspace.browser.controls.cancelSelector")
-                : t("workspace.browser.controls.annotateElement")
-            }
-            active={selectorMode === "annotate"}
-            onPress={handleToggleElementSelector}
-            style={annotateIconButtonStyle}
-          >
-            <MousePointer2
-              size={16}
-              color={
-                selectorMode === "annotate" ? theme.colors.accent : theme.colors.foregroundMuted
-              }
-            />
-          </ToolbarButton>
-          <ToolbarButton
-            label={
-              selectorMode === "screenshot"
-                ? t("workspace.browser.controls.cancelSelector")
-                : t("workspace.browser.controls.screenshotElement")
-            }
-            active={selectorMode === "screenshot"}
-            onPress={handleToggleScreenshot}
-            style={screenshotIconButtonStyle}
-          >
-            <Camera
-              size={16}
-              color={
-                selectorMode === "screenshot" ? theme.colors.accent : theme.colors.foregroundMuted
-              }
-            />
-          </ToolbarButton>
-        </View>
-      </View>
+      <BrowserChrome
+        url={browser?.url ?? "https://example.com"}
+        canGoBack={Boolean(browser?.canGoBack)}
+        canGoForward={Boolean(browser?.canGoForward)}
+        isLoading={Boolean(browser?.isLoading)}
+        onBack={handleBack}
+        onForward={handleForward}
+        onReload={handleRefresh}
+        onNavigate={navigate}
+        urlInputRef={urlInputRef}
+        trailing={webviewActions}
+      />
       {browser?.lastError ? (
         <View style={styles.errorRow}>
           <Text numberOfLines={1} style={errorTextStyle}>
@@ -1706,63 +1549,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface0,
-  },
-  chromeRow: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-  },
-  chromeLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  chromeRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  iconButton: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  selectorActiveButton: {
-    backgroundColor: `${String(theme.colors.accent)}20`,
-  },
-  iconButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  iconButtonDisabled: {
-    opacity: 0.45,
-  },
-  urlBarWrap: {
-    flex: 1,
-    minWidth: 0,
-    height: 28,
-    borderRadius: theme.borderRadius.md,
-    paddingHorizontal: theme.spacing[2],
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: theme.colors.surface1,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  urlInput: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.base,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
   },
   errorRow: {
     paddingHorizontal: theme.spacing[2],

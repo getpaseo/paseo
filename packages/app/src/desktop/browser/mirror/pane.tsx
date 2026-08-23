@@ -1,22 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { NativeSyntheticEvent, TextInputKeyPressEventData } from "react-native";
-import {
-  Pressable,
-  Text,
-  View,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
-} from "react-native";
-import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react-native";
-
-const ThemedArrowLeft = withUnistyles(ArrowLeft, (theme) => ({ color: theme.colors.foreground }));
-const ThemedArrowRight = withUnistyles(ArrowRight, (theme) => ({ color: theme.colors.foreground }));
-const ThemedRotateCw = withUnistyles(RotateCw, (theme) => ({ color: theme.colors.foreground }));
+import { Text, View, type GestureResponderEvent, type LayoutChangeEvent } from "react-native";
 import { Image } from "expo-image";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
+import { BrowserChrome } from "@/desktop/browser/chrome";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useBrowserScreencast } from "./use-screencast";
 import { useRemoteBrowserTab } from "./use-remote-tab";
@@ -48,6 +38,7 @@ export function BrowserMirrorPane({
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
   const gestureRef = useRef<{ x: number; y: number; scrolled: boolean } | null>(null);
   const keyboardRef = useRef<EditingTextInputHandle>(null);
+  const urlInputRef = useRef<EditingTextInputHandle>(null);
 
   const hasFrame = uri !== null && deviceWidth > 0 && deviceHeight > 0;
   const frameSource = useMemo(() => (uri === null ? null : { uri }), [uri]);
@@ -97,13 +88,8 @@ export function BrowserMirrorPane({
     [sendInput],
   );
 
-  const submitUrl = useCallback(
-    (event: NativeSyntheticEvent<{ text: string }>) => {
-      const url = event.nativeEvent.text.trim();
-      if (url) {
-        run({ command: "navigate", args: { browserId, url } });
-      }
-    },
+  const navigate = useCallback(
+    (url: string) => run({ command: "navigate", args: { browserId, url } }),
     [browserId, run],
   );
 
@@ -167,37 +153,17 @@ export function BrowserMirrorPane({
 
   return (
     <View style={styles.root}>
-      <View style={styles.toolbar}>
-        <ToolbarButton
-          label={t("workspace.browser.controls.back")}
-          icon={ThemedArrowLeft}
-          disabled={!tab?.canGoBack}
-          onPress={goBack}
-        />
-        <ToolbarButton
-          label={t("workspace.browser.controls.forward")}
-          icon={ThemedArrowRight}
-          disabled={!tab?.canGoForward}
-          onPress={goForward}
-        />
-        <ToolbarButton
-          label={t("workspace.browser.controls.refresh")}
-          icon={ThemedRotateCw}
-          onPress={reload}
-        />
-        <EditingTextInput
-          key={tab?.url ?? ""}
-          initialValue={tab?.url ?? ""}
-          onSubmitEditing={submitUrl}
-          style={styles.url}
-          accessibilityLabel={t("workspace.browser.controls.browserUrl")}
-          placeholder={t("workspace.browser.controls.enterUrl")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="go"
-          submitBehavior="submit"
-        />
-      </View>
+      <BrowserChrome
+        url={tab?.url ?? ""}
+        canGoBack={Boolean(tab?.canGoBack)}
+        canGoForward={Boolean(tab?.canGoForward)}
+        isLoading={tab?.isLoading ?? false}
+        onBack={goBack}
+        onForward={goForward}
+        onReload={reload}
+        onNavigate={navigate}
+        urlInputRef={urlInputRef}
+      />
       <View
         style={styles.container}
         onLayout={handleLayout}
@@ -234,29 +200,6 @@ export function BrowserMirrorPane({
   );
 }
 
-interface ToolbarButtonProps {
-  label: string;
-  icon: typeof ThemedArrowLeft;
-  disabled?: boolean;
-  onPress: () => void;
-}
-
-function ToolbarButton({ label, icon: Icon, disabled = false, onPress }: ToolbarButtonProps) {
-  const accessibilityState = useMemo(() => ({ disabled }), [disabled]);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={accessibilityState}
-      disabled={disabled}
-      onPress={onPress}
-      style={disabled ? styles.toolbarButtonDisabled : styles.toolbarButton}
-    >
-      <Icon size={16} />
-    </Pressable>
-  );
-}
-
 type BrowserMirrorInput =
   | { kind: "mouse"; x: number; y: number; button: "left"; clickCount: number }
   | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
@@ -278,28 +221,6 @@ function buildInputCommand(browserId: string, event: BrowserMirrorInput): Browse
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
-  },
-  toolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  toolbarButton: {
-    padding: 4,
-  },
-  toolbarButtonDisabled: {
-    padding: 4,
-    opacity: 0.4,
-  },
-  url: {
-    flex: 1,
-    marginLeft: 4,
-    fontSize: 12,
-    color: theme.colors.foregroundMuted,
   },
   container: {
     flex: 1,

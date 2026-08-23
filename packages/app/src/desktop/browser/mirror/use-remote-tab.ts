@@ -10,6 +10,7 @@ export interface RemoteBrowserTab {
   url: string;
   title: string;
   hostLabel: string | null;
+  isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
 }
@@ -40,6 +41,7 @@ export function useRemoteBrowserTab(
       url: match.url,
       title: match.title,
       hostLabel: match.hostLabel ?? null,
+      isLoading: match.isLoading,
       canGoBack: match.canGoBack ?? false,
       canGoForward: match.canGoForward ?? false,
     };
