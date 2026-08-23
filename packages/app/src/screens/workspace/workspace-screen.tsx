@@ -2301,21 +2301,20 @@ function WorkspaceScreenContent({
       if (!client) {
         return;
       }
-      void client
-        .runBrowserCommand({
+      void (async () => {
+        const payload = await client.runBrowserCommand({
           command: { command: "new_tab", args: url ? { url } : {} },
           workspaceId: normalizedWorkspaceId,
-        })
-        .then((payload) => {
-          if (!payload.ok || payload.result.command !== "new_tab") {
-            return;
-          }
-          const { browserId } = payload.result;
-          if (useBrowserStore.getState().browsersById[browserId]) {
-            return;
-          }
-          openTarget({ kind: "browser", browserId });
         });
+        if (!payload.ok || payload.result.command !== "new_tab") {
+          return;
+        }
+        const { browserId } = payload.result;
+        if (useBrowserStore.getState().browsersById[browserId]) {
+          return;
+        }
+        openTarget({ kind: "browser", browserId });
+      })();
     },
     [client, normalizedWorkspaceId],
   );

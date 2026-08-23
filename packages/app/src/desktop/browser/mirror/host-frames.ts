@@ -34,20 +34,19 @@ export function mountBrowserScreencastForwarder(
   let disposed = false;
   let unsubscribe: (() => void) | null = null;
 
-  void Promise.resolve(
-    subscribe("browser-screencast-frame", (payload) => {
+  void (async () => {
+    const off = await subscribe("browser-screencast-frame", (payload) => {
       const frame = HostScreencastFramePayloadSchema.safeParse(payload);
       if (frame.success) {
         client.sendBrowserScreencastFrame(frame.data);
       }
-    }),
-  ).then((off) => {
+    });
     if (disposed) {
       off();
       return;
     }
     unsubscribe = off;
-  });
+  })();
 
   return () => {
     disposed = true;

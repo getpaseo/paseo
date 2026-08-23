@@ -67,11 +67,12 @@ export function useBrowserScreencast(serverId: string, browserId: string): Brows
       });
     });
 
-    void client.subscribeBrowserScreencast(browserId).then((payload) => {
+    void (async () => {
+      const payload = await client.subscribeBrowserScreencast(browserId);
       if (active && payload.error !== null) {
         setView({ ...EMPTY_VIEW, error: payload.error });
       }
-    });
+    })();
 
     return () => {
       active = false;

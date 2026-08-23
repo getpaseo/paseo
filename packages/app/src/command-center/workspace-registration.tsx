@@ -184,6 +184,7 @@ export function useWorkspaceCommandCenterActions(): void {
       activeTabKind,
       focusedTabs.length,
       gitActions,
+      hasBrowserHost,
       isCompact,
       isGit,
       keyboardActionDispatcher,
