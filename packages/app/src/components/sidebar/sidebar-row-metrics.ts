@@ -25,8 +25,8 @@ export function resolveSidebarRowDensity({
     : { minHeight: 36, paddingVertical: spacing[2] };
 }
 
-export function comfortableSidebarRowDensity(theme: Theme): SidebarRowDensity {
-  return resolveSidebarRowDensity({ compact: false, spacing: theme.spacing });
+export function comfortableSidebarRowDensity(theme: Theme): Record<string, number> {
+  return { ...resolveSidebarRowDensity({ compact: false, spacing: theme.spacing }) };
 }
 
 export function compactSidebarRowDensity(theme: Theme): SidebarRowDensity {
