@@ -1464,7 +1464,9 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
-  test("input_at sends a control key with a virtual key code and no text", async () => {
+  // Enter carries a carriage return because Chromium hangs newline insertion and
+  // implicit form submit off the char, not off keydown.
+  test("input_at sends a control key with its virtual key code", async () => {
     const browser = new BrowserAutomationHarness();
 
     await browser.execute({
@@ -1482,6 +1484,7 @@ describe("executeAutomationCommand", () => {
           code: "Enter",
           windowsVirtualKeyCode: 13,
           modifiers: 0,
+          text: "\r",
         },
       },
       {

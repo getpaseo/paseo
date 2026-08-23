@@ -213,6 +213,8 @@ export async function dispatchTrustedText(send: CdpCommandSender, text: string):
 interface CdpControlKey {
   code: string;
   windowsVirtualKeyCode: number;
+  /** Chromium hangs newline insertion and implicit form submit off the char. */
+  text?: string;
 }
 
 const CDP_CONTROL_KEYS: Record<string, CdpControlKey> = {
@@ -223,12 +225,12 @@ const CDP_CONTROL_KEYS: Record<string, CdpControlKey> = {
   Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
   Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
   End: { code: "End", windowsVirtualKeyCode: 35 },
-  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
   Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
   Home: { code: "Home", windowsVirtualKeyCode: 36 },
   PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 },
   PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
-  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9, text: "\t" },
 };
 
 // A held Alt, Control or Meta produces a shortcut, not a character; carrying
@@ -255,8 +257,8 @@ export async function dispatchTrustedKeyEvent(
 ): Promise<void> {
   const fields = cdpKeyFields(key, modifierMask(modifiers));
   const isShortcut = (fields.modifiers & SHORTCUT_MODIFIER_MASK) !== 0;
-  const typesText = key.length === 1 && !isShortcut;
-  const textFields = typesText ? { text: key } : {};
+  const text = CDP_CONTROL_KEYS[key]?.text ?? (key.length === 1 ? key : undefined);
+  const textFields = isShortcut || text === undefined ? {} : { text };
   await send("Input.dispatchKeyEvent", { type: "keyDown", ...fields, ...textFields });
   await send("Input.dispatchKeyEvent", { type: "keyUp", ...fields });
 }
