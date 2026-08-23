@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,6 +22,7 @@ import {
   submitNewWorkspaceEmpty,
 } from "../support/helpers/new-workspace";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { killProcessTree, spawnTsx } from "../support/helpers/spawn-node";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
@@ -226,21 +226,6 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
   );
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  const timeout = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-    }
-  }, 5000);
-  try {
-    await once(child, "exit");
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function startRestartDaemon(input: {
   paseoHome: string;
   origin: string;
@@ -251,8 +236,7 @@ async function startRestartDaemon(input: {
   }
 
   const serverDir = path.resolve(__dirname, "../../../server");
-  const tsxBin = execSync("which tsx").toString().trim();
-  const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
+  const child = spawnTsx("scripts/supervisor-entrypoint.ts", ["--dev"], {
     cwd: serverDir,
     env: withDisabledE2ESpeechEnv({
       ...process.env,
@@ -276,7 +260,7 @@ async function startRestartDaemon(input: {
   try {
     await waitForServer(port, child);
   } catch (error) {
-    await stopProcess(child);
+    await killProcessTree(child);
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}\nDaemon stderr:\n${stderr}`,
       { cause: error },
@@ -285,7 +269,7 @@ async function startRestartDaemon(input: {
 
   return {
     port,
-    close: () => stopProcess(child),
+    close: () => killProcessTree(child),
   };
 }
 

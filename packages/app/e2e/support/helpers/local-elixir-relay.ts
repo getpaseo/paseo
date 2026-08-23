@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import { existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { killProcessTree } from "./spawn-node";
 
 export interface LocalElixirRelay {
   endpoint: string;
@@ -27,19 +27,6 @@ async function availablePort(): Promise<number> {
   });
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  const force = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-  }, 5_000);
-  try {
-    await once(child, "exit");
-  } finally {
-    clearTimeout(force);
-  }
-}
-
 async function waitUntilReady(
   port: number,
   child: ChildProcess,
@@ -48,9 +35,9 @@ async function waitUntilReady(
   const deadline = Date.now() + 60_000;
   let lastError: unknown;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Elixir relay exited before becoming ready (exit ${child.exitCode}).\n${recentOutput()}`,
+        `Elixir relay exited before becoming ready (code ${String(child.exitCode)}, signal ${String(child.signalCode)}).\n${recentOutput()}`,
       );
     }
     try {
@@ -70,6 +57,12 @@ async function waitUntilReady(
 }
 
 export async function startLocalElixirRelay(): Promise<LocalElixirRelay> {
+  if (process.platform === "win32") {
+    throw new Error(
+      "The local Elixir relay requires asdf, which is not available on Windows; the relay-deployment Playwright project is POSIX-only.",
+    );
+  }
+
   const relayRoot =
     process.env.PASEO_RELAY_CHECKOUT ?? path.resolve(__dirname, "../../../../../..", "paseo-relay");
   if (!existsSync(path.join(relayRoot, "mix.exs"))) {
@@ -107,14 +100,14 @@ export async function startLocalElixirRelay(): Promise<LocalElixirRelay> {
     try {
       await waitUntilReady(port, child, () => output.join("\n"));
     } catch (error) {
-      await stopProcess(child);
+      await killProcessTree(child);
       throw error;
     }
   };
 
   const stop = async () => {
     if (!child) return;
-    await stopProcess(child);
+    await killProcessTree(child);
     child = null;
   };
 
