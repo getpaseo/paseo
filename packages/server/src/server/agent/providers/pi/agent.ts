@@ -30,6 +30,8 @@ import {
   type AgentSlashCommandKind,
   type AgentStreamEvent,
   type FetchCatalogOptions,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -214,6 +216,17 @@ function capabilitiesForSession(hasMcpConfig: boolean): AgentCapabilityFlags {
 
 interface StartTurnResult {
   turnId: string;
+}
+
+interface PiPendingSteerSubmission {
+  text: string;
+  clientMessageId: string | null;
+}
+
+// COMPAT(piSteerFallback): added in v0.5.0, remove after 2027-03-01 once the pi floor
+// supports the steer RPC. Older binaries answer with "Unknown command: steer".
+function isPiDefinitiveSteerRejection(error: unknown): boolean {
+  return toDiagnosticErrorMessage(error) === "Unknown command: steer";
 }
 
 interface PiRpcAgentSessionOptions {
@@ -1212,6 +1225,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
+  private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1304,6 +1318,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
@@ -1337,6 +1352,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
           this.emit({
@@ -1357,6 +1373,63 @@ export class PiRpcAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    // Pi rejects steer RPCs that are extension commands, so slash inputs keep the
+    // interrupt-and-replace fallback where they can run directly.
+    if (this.parseSlashCommandInput(payload.text)) {
+      return { status: "unavailable" };
+    }
+
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      if (isPiDefinitiveSteerRejection(error)) {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+    // The steer is already queued inside pi; if the turn moved on meanwhile its fate
+    // is ambiguous, so surface it instead of replacing the wrong turn.
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    this.pendingSteerSubmissions.push({
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    });
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = Array.from(this.pendingExtensionUiRequests.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  private takePendingSteerClientMessageId(text: string): string | null {
+    const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
+    if (index < 0) {
+      return null;
+    }
+    const [submission] = this.pendingSteerSubmissions.splice(index, 1);
+    return submission?.clientMessageId ?? null;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1467,6 +1540,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.emit({
           type: "turn_failed",
@@ -1485,6 +1559,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnStartedEmitted = false;
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
+      this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -1878,6 +1953,8 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
+    const clientMessageId =
+      this.takePendingSteerClientMessageId(entry.text) ?? this.activeClientMessageId;
     this.emit({
       type: "timeline",
       provider: this.provider,
@@ -1886,7 +1963,7 @@ export class PiRpcAgentSession implements AgentSession {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
       },
     });
     return true;
@@ -2061,6 +2138,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2361,6 +2439,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {

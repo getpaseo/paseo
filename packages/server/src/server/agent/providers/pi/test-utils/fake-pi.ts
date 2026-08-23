@@ -94,6 +94,8 @@ export class FakePi implements PiRuntime {
 
 export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -198,6 +200,16 @@ export class FakePiSession implements PiRuntimeSession {
     }
     heldPrompt.reject(error);
     await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    this.steerCalls.push({ message, imageCount: images?.length ?? 0 });
+    if (this.steerError) {
+      throw this.steerError;
+    }
   }
 
   async compact(customInstructions?: string): Promise<void> {
