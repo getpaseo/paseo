@@ -1257,24 +1257,23 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "input_at", browserId: BROWSER_A },
     });
-    expect(browser.tab.inputEvents).toEqual([
-      {
-        type: "mouseDown",
-        x: 120,
-        y: 80,
-        button: "right",
-        clickCount: 2,
-        modifiers: ["control", "shift"],
-      },
-      {
-        type: "mouseUp",
-        x: 120,
-        y: 80,
-        button: "right",
-        clickCount: 2,
-        modifiers: ["control", "shift"],
-      },
+    // Pointer input goes through the same trusted CDP path as ref-based clicks:
+    // Electron's sendInputEvent wheels do not scroll a guest.
+    expect(browser.tab.inputEvents).toEqual([]);
+    const mouseEvents = browser.tab.debugCommands.filter(
+      (entry) => entry.command === "Input.dispatchMouseEvent",
+    );
+    expect(mouseEvents.map((entry) => entry.params?.type)).toEqual([
+      "mouseMoved",
+      "mousePressed",
+      "mouseReleased",
+      "mousePressed",
+      "mouseReleased",
     ]);
+    for (const entry of mouseEvents) {
+      expect(entry.params).toMatchObject({ x: 120, y: 80 });
+    }
+    expect(mouseEvents.at(-1)?.params).toMatchObject({ button: "right", clickCount: 2 });
   });
 
   test("input_at sends a wheel event to viewport coordinates", async () => {
@@ -1288,8 +1287,12 @@ describe("executeAutomationCommand", () => {
       },
     });
 
-    expect(browser.tab.inputEvents).toEqual([
-      { type: "mouseWheel", x: 240, y: 160, deltaX: -12, deltaY: 48 },
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: { type: "mouseWheel", x: 240, y: 160, deltaX: -12, deltaY: 48 },
+      },
     ]);
   });
 

@@ -19,7 +19,6 @@ import {
   dispatchTrustedKey,
   dispatchTrustedScroll,
   dispatchTrustedText,
-  electronInputModifiers,
   type BrowserInputEvent,
   type ClickInputOptions,
 } from "./trusted-input.js";
@@ -549,35 +548,36 @@ interface ResolvedTabTarget {
   contents: TabContents;
 }
 
-function executeInputAt(
+async function executeInputAt(
   requestId: string,
   workspaceId: string | undefined,
   browserId: string,
   event: BrowserAutomationInputAtEvent,
   registry: BrowserRegistry,
-): AutomationCommandPayload {
+): Promise<AutomationCommandPayload> {
   const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
   if ("ok" in target) {
     return target;
   }
   if (event.kind === "mouse") {
-    const input = {
-      x: event.x,
-      y: event.y,
-      button: event.button,
-      clickCount: event.clickCount,
-      modifiers: electronInputModifiers(event.modifiers),
-    };
-    target.contents.sendInputEvent({ type: "mouseDown", ...input });
-    target.contents.sendInputEvent({ type: "mouseUp", ...input });
+    // Same trusted CDP path as ref-based click; sendInputEvent mouse wheels do
+    // not scroll a guest, so pointer input stays on one mechanism.
+    await dispatchTrustedClick(
+      cdpSender(target.contents),
+      { x: event.x, y: event.y },
+      {
+        button: event.button,
+        doubleClick: event.clickCount >= 2,
+        modifiers: event.modifiers,
+      },
+    );
   } else if (event.kind === "wheel") {
-    target.contents.sendInputEvent({
-      type: "mouseWheel",
-      x: event.x,
-      y: event.y,
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-    });
+    await dispatchTrustedScroll(
+      cdpSender(target.contents),
+      { x: event.x, y: event.y },
+      event.deltaX,
+      event.deltaY,
+    );
   } else {
     dispatchTrustedKey(
       (input) => target.contents.sendInputEvent(input),
