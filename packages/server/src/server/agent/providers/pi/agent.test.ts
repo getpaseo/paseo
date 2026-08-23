@@ -1629,6 +1629,41 @@ describe("PiRpcAgentSession", () => {
       usage: { contextWindowUsedTokens: 160 },
     });
   });
+
+  test("refreshes context usage when compaction ends so the meter is not stale", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.stats = { contextUsage: { contextWindow: 200_000, tokens: 93_000 } };
+
+    // Turn completes; the last usage snapshot is pre-compaction (93k).
+    const first = await session.startTurn("hello");
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    expect(events.usageUpdatedEvents()).toHaveLength(1);
+    expect(events.usageUpdatedEvents()[0]).toMatchObject({
+      turnId: first.turnId,
+      usage: { contextWindowUsedTokens: 93_000 },
+    });
+
+    // Auto-compaction runs after agent_end and shrinks the context. Pi then
+    // reports the reduced size, so the meter must follow instead of staying
+    // stuck at the pre-compaction value.
+    fakeSession.stats = { contextUsage: { contextWindow: 200_000, tokens: 26_000 } };
+    fakeSession.emit({ type: "compaction_start", reason: "auto" });
+    fakeSession.emit({ type: "compaction_end", reason: "auto" });
+    await flushTurnScheduling();
+
+    expect(events.usageUpdatedEvents()).toHaveLength(2);
+    expect(events.usageUpdatedEvents()[1]).toMatchObject({
+      usage: { contextWindowUsedTokens: 26_000 },
+    });
+    expect(events.timelineItems()).toEqual(
+      expect.arrayContaining([
+        { type: "compaction", status: "loading", trigger: "auto" },
+        { type: "compaction", status: "completed", trigger: "auto" },
+      ]),
+    );
+  });
 });
 
 describe("PiRpcAgentClient", () => {

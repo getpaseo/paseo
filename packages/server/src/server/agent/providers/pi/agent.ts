@@ -2149,6 +2149,13 @@ export class PiRpcAgentSession implements AgentSession {
             trigger: event.reason === "manual" ? "manual" : "auto",
           },
         });
+        // Pi runs auto-compaction after agent_end, so the last usage snapshot
+        // predates the compaction and the context meter would stay stale. Re-read
+        // stats so the meter reflects the post-compaction state. Pi reports
+        // contextUsage.tokens=null until the next assistant response, so the
+        // meter shows unknown, then the reduced size on the next turn. Manual
+        // /compact emits the same events and is covered by this path too.
+        void this.usagePoller.completeTurn(turnId);
         return;
       case "auto_retry_start":
         this.emit({
