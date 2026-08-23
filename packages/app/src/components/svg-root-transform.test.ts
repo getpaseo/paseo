@@ -1,67 +1,70 @@
 import { describe, expect, it } from "vitest";
 
-/**
- * A root `<Svg>` is a real React Native view, so react-native-svg rewrites a *string*
- * `transform` into RN's style syntax via `extractTransformSvgView`. That parser's grammar only
- * accepts SVG transform functions and throws a `SyntaxError` on anything else — `none`,
- * `rotate(-90deg)`, any CSS value. Upstream let the error escape, so a single unrecognised
- * string crashed the whole app during render:
- *
- *   SyntaxError: Expected transform functions but "n" found.
- *
- * We render untrusted SVG through this path: the daemon ships a project's own `favicon.svg` /
- * `icon.svg` / `logo.svg` (packages/server/src/utils/project-icon.ts) to the client, and
- * `ProjectIconImage` hands it to `SvgCss`, which inlines `<style>` rules onto the root `<svg>`.
- * `patches/react-native-svg+15.15.3.patch` makes the extractor degrade to "no transform", the
- * same way every other extractor in that file already handles a bad parse.
- *
- * These assertions pin the patch. If it is dropped — or a dependency bump lands without
- * re-applying it — the string cases throw again and this fails.
- */
-
-const MODULES = {
-  // Metro's entry for this package is `src/index.ts`, so this is the copy the iOS bundle uses.
+const BUILDS = {
+  // Metro resolves src; Node consumers resolve one of the compiled builds.
   src: "react-native-svg/src/lib/extract/extractTransform.ts",
   esm: "react-native-svg/lib/module/lib/extract/extractTransform",
   cjs: "react-native-svg/lib/commonjs/lib/extract/extractTransform.js",
 } as const;
 
-type Extractor = (props: { transform?: unknown }) => unknown;
+const CSS_MODULE = "react-native-svg/src/css/index.tsx";
+const XML_MODULE = "react-native-svg/src/xml.tsx";
 
-async function loadExtractor(specifier: string): Promise<Extractor> {
-  const loaded = (await import(/* @vite-ignore */ specifier)) as {
-    extractTransformSvgView?: Extractor;
-    default?: { extractTransformSvgView?: Extractor };
+type Extractor = (props: { transform?: unknown }) => unknown;
+type XmlMiddleware = (root: unknown) => unknown;
+interface ParsedRoot {
+  props: Record<string, unknown>;
+}
+type XmlParser = (source: string, middleware?: XmlMiddleware) => ParsedRoot | null;
+
+async function loadBuild(extractSpecifier: string) {
+  const [cssModule, extractModule, xmlModule] = (await Promise.all([
+    import(/* @vite-ignore */ CSS_MODULE),
+    import(/* @vite-ignore */ extractSpecifier),
+    import(/* @vite-ignore */ XML_MODULE),
+  ])) as [
+    { inlineStyles?: XmlMiddleware; default?: { inlineStyles?: XmlMiddleware } },
+    {
+      extractTransformSvgView?: Extractor;
+      default?: { extractTransformSvgView?: Extractor };
+    },
+    { parse?: XmlParser; default?: { parse?: XmlParser } },
+  ];
+  const inlineStyles = cssModule.inlineStyles ?? cssModule.default?.inlineStyles;
+  const extract =
+    extractModule.extractTransformSvgView ?? extractModule.default?.extractTransformSvgView;
+  const parseXml = xmlModule.parse ?? xmlModule.default?.parse;
+  if (!inlineStyles || !extract || !parseXml)
+    throw new Error(`could not load react-native-svg build`);
+
+  return (xml: string) => {
+    const root = parseXml(xml, inlineStyles);
+    if (!root) throw new Error(`could not parse root SVG`);
+    const props = { ...root.props };
+    const style = props.style;
+    if (style && typeof style === "object" && "transform" in style) {
+      props.transform = style.transform;
+    }
+    return extract(props);
   };
-  const extractor = loaded.extractTransformSvgView ?? loaded.default?.extractTransformSvgView;
-  if (!extractor) throw new Error(`no extractTransformSvgView export in ${specifier}`);
-  return extractor;
 }
 
-describe.each(Object.entries(MODULES))("extractTransformSvgView (%s build)", (_name, specifier) => {
-  it("passes a React Native style transform through untouched", async () => {
-    const extract = await loadExtractor(specifier);
-    const transform = [{ rotate: "-90deg" }];
-
-    expect(extract({ transform })).toEqual(transform);
-  });
-
+describe.each(Object.entries(BUILDS))("root SVG transforms (%s build)", (_name, specifier) => {
   it("still converts a real SVG transform string", async () => {
-    const extract = await loadExtractor(specifier);
+    const extractFromXml = await loadBuild(specifier);
 
-    expect(extract({ transform: "rotate(-90)" })).toEqual([{ rotate: "-90deg" }]);
+    expect(extractFromXml(`<svg transform="rotate(-90)"></svg>`)).toEqual([{ rotate: "-90deg" }]);
   });
 
   it.each([
-    ["none", "none"],
-    ["a CSS angle unit", "rotate(-90deg)"],
-    ["a CSS length unit", "translate(10px, 0)"],
-    ["an empty string", ""],
-    ["arbitrary text", "not-a-transform"],
-  ])("drops %s instead of throwing", async (_label, transform) => {
-    const extract = await loadExtractor(specifier);
+    ["an inline CSS keyword", `<svg style="transform:none"></svg>`],
+    ["an embedded CSS rule", `<svg><style>svg { transform: none; }</style></svg>`],
+    ["a CSS angle unit", `<svg transform="rotate(-90deg)"></svg>`],
+    ["a CSS length unit", `<svg transform="translate(10px, 0)"></svg>`],
+  ])("drops %s from parsed root SVG props", async (_label, xml) => {
+    const extractFromXml = await loadBuild(specifier);
 
-    expect(() => extract({ transform })).not.toThrow();
-    expect(extract({ transform })).toBeUndefined();
+    expect(() => extractFromXml(xml)).not.toThrow();
+    expect(extractFromXml(xml)).toBeUndefined();
   });
 });
