@@ -261,6 +261,7 @@ interface CreateServiceTestOptions {
   runGitCommand?: ReturnType<typeof vi.fn>;
   getWorkspaceGitSelfHealPhaseMs?: (cwd: string) => number;
   now?: () => Date;
+  backgroundFetchIntervalMs?: number;
 }
 
 function buildDefaultTestServiceDeps() {
@@ -319,6 +320,7 @@ function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
+    backgroundFetchIntervalMs: options?.backgroundFetchIntervalMs ?? 180_000,
     deps,
   });
 }
@@ -916,6 +918,42 @@ describe("WorkspaceGitServiceImpl", () => {
     second.unsubscribe();
     service.dispose();
   });
+
+  test.each([
+    { name: "zero", intervalMs: 0 },
+    { name: "NaN", intervalMs: Number.NaN },
+  ])(
+    "a $name background fetch interval never fetches or probes for an origin remote",
+    async ({ intervalMs }) => {
+      const runGitFetch = vi.fn(async () => ({ changes: [], error: null }));
+      const hasOriginRemote = vi.fn(async () => true);
+      const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+        ...createCheckoutSnapshotFacts(cwd),
+        gitCommonDir: join(REPO_CWD, ".git"),
+        absoluteGitDir: join(REPO_CWD, ".git"),
+      }));
+
+      const service = createService({
+        backgroundFetchIntervalMs: intervalMs,
+        getCheckoutSnapshotFacts,
+        hasOriginRemote,
+        runGitFetch,
+      });
+
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      await vi.waitFor(() => {
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      });
+      await vi.advanceTimersByTimeAsync(600_000);
+      await flushPromises();
+
+      expect(hasOriginRemote).toHaveBeenCalledTimes(0);
+      expect(runGitFetch).toHaveBeenCalledTimes(0);
+
+      subscription.unsubscribe();
+      service.dispose();
+    },
+  );
 
   test("remote ref name drift outside the fetch interval takes the structural fallback", async () => {
     const runGitFetch = vi

@@ -99,6 +99,34 @@ function resolveGitProcessConfig(
   });
 }
 
+// setInterval truncates a delay past 2^31-1 ms to 1 ms, so an unbounded "fetch monthly"
+// value would fetch nonstop; a day is the longest cadence that stays well inside the range.
+const MAX_BACKGROUND_GIT_FETCH_INTERVAL_MINUTES = 1_440;
+
+/** Parses a background fetch interval, returning undefined when the source is absent or unusable. */
+function parseBackgroundGitFetchIntervalMinutes(
+  value: string | number | undefined,
+): number | undefined {
+  if (value === undefined) return undefined;
+  // Number("") is 0, so a blank variable would otherwise read as a deliberate "off".
+  if (typeof value === "string" && value.trim() === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return Math.min(parsed, MAX_BACKGROUND_GIT_FETCH_INTERVAL_MINUTES);
+}
+
+/** Resolves the background fetch interval; the variable wins only when it parses. */
+function resolveBackgroundGitFetchIntervalMinutes(
+  env: NodeJS.ProcessEnv,
+  persisted: PersistedConfig,
+): number {
+  return (
+    parseBackgroundGitFetchIntervalMinutes(env.PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES) ??
+    parseBackgroundGitFetchIntervalMinutes(persisted.daemon?.git?.backgroundFetchIntervalMinutes) ??
+    0
+  );
+}
+
 export type CliConfigOverrides = Partial<{
   listen: string;
   relayEnabled: boolean;
@@ -608,6 +636,7 @@ export function resolveConfigFromPersisted(
     mcpInjectIntoAgents,
     browserToolsEnabled,
     git: resolveGitProcessConfig(env, persisted),
+    backgroundGitFetchIntervalMinutes: resolveBackgroundGitFetchIntervalMinutes(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
@@ -712,6 +741,12 @@ function resolveCoreDaemonOverridePaths(
     parsePositiveGitOverride(env.PASEO_GIT_MAX_PROCESS_CONCURRENCY ?? env.PASEO_GIT_CONCURRENCY)
   ) {
     paths.push("daemon.git.maxProcessConcurrency");
+  }
+  if (
+    parseBackgroundGitFetchIntervalMinutes(env.PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES) !==
+    undefined
+  ) {
+    paths.push("daemon.git.backgroundFetchIntervalMinutes");
   }
   if (env.PASEO_APP_BASE_URL !== undefined) paths.push("app.baseUrl");
   if (env.PASEO_PASSWORD?.trim()) paths.push("daemon.auth.password");

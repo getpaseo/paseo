@@ -87,3 +87,88 @@ describe("daemon Git process config", () => {
     ).toBe(7);
   });
 });
+
+describe("daemon background Git fetch config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("stays off when neither the key nor the variable is set", async () => {
+    const home = await createHome();
+
+    expect(loadConfig(home, { env: {} }).backgroundGitFetchIntervalMinutes).toBe(0);
+  });
+
+  test("reads the persisted key", async () => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 3 } } });
+
+    expect(loadConfig(home, { env: {} }).backgroundGitFetchIntervalMinutes).toBe(3);
+  });
+
+  test("accepts an explicit persisted zero", async () => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 0 } } });
+
+    expect(loadConfig(home, { env: {} }).backgroundGitFetchIntervalMinutes).toBe(0);
+  });
+
+  test("prefers a valid environment variable over the persisted key", async () => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 3 } } });
+
+    expect(
+      loadConfig(home, { env: { PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES: "7" } })
+        .backgroundGitFetchIntervalMinutes,
+    ).toBe(7);
+  });
+
+  test("lets an environment variable of zero turn the persisted interval off", async () => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 3 } } });
+
+    expect(
+      loadConfig(home, { env: { PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES: "0" } })
+        .backgroundGitFetchIntervalMinutes,
+    ).toBe(0);
+  });
+
+  test.each([
+    { name: "blank", value: "" },
+    { name: "whitespace", value: "   " },
+    { name: "malformed", value: "three" },
+    { name: "negative", value: "-1" },
+    { name: "fractional", value: "2.5" },
+  ])("keeps the persisted interval when the variable is $name", async ({ value }) => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 3 } } });
+
+    const config = loadConfig(home, {
+      env: { PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES: value },
+    });
+
+    expect(config.backgroundGitFetchIntervalMinutes).toBe(3);
+    expect(config.configReload?.overrideControlledPaths).not.toContain(
+      "daemon.git.backgroundFetchIntervalMinutes",
+    );
+  });
+
+  test("marks the key override-controlled when the variable is valid", async () => {
+    const home = await createHome({ daemon: { git: { backgroundFetchIntervalMinutes: 3 } } });
+
+    expect(
+      loadConfig(home, { env: { PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES: "7" } }).configReload
+        ?.overrideControlledPaths,
+    ).toContain("daemon.git.backgroundFetchIntervalMinutes");
+  });
+
+  test.each([
+    { name: "the persisted key", env: {}, persisted: 40_000 },
+    { name: "the variable", env: { PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES: "40000" } },
+  ])("caps an oversized interval from $name", async ({ env, persisted }) => {
+    const home = await createHome({
+      daemon: { git: { backgroundFetchIntervalMinutes: persisted ?? 3 } },
+    });
+
+    const minutes = loadConfig(home, { env }).backgroundGitFetchIntervalMinutes;
+
+    expect(minutes).toBe(1_440);
+    // The timer delay has to survive Node's 32-bit signed truncation.
+    expect(minutes * 60_000).toBeLessThanOrEqual(2_147_483_647);
+  });
+});

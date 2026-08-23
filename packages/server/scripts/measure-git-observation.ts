@@ -122,6 +122,7 @@ function createMeasuredService(input: {
   const service = new WorkspaceGitServiceImpl({
     logger: createLogger(),
     paseoHome: input.paseoHome,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       subscribe: watcher.subscribe,
       getWorkspaceGitSelfHealPhaseMs: () => 60_000,

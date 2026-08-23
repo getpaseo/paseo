@@ -409,6 +409,7 @@ function createService(options?: CreateServiceOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as never,
     paseoHome: "/tmp/paseo-test",
+    backgroundFetchIntervalMs: 180_000,
     deps: buildServiceDeps(options),
   });
 }

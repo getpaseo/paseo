@@ -675,6 +675,7 @@ function createPaseoWorktreeForMcpTest(options: {
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createTestLogger(),
     paseoHome: options.paseoHome,
+    backgroundFetchIntervalMs: 180_000,
     deps: { forgeOverrides: { github } },
   });
   const projectRegistry: ProjectRegistry = {
@@ -2155,6 +2156,7 @@ describe("create_agent MCP tool", () => {
     const workspaceGitService = new WorkspaceGitServiceImpl({
       logger: createTestLogger(),
       paseoHome: join(tempDir, ".paseo"),
+      backgroundFetchIntervalMs: 180_000,
       deps: { github: createGitHubServiceStub() },
     });
     const workspaceAutoName = new WorkspaceAutoName({

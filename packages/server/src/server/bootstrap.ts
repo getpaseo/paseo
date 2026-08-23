@@ -397,6 +397,7 @@ export interface PaseoDaemonConfig {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
   };
+  backgroundGitFetchIntervalMinutes: number;
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
@@ -870,6 +871,7 @@ export async function createPaseoDaemon(
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    backgroundFetchIntervalMs: config.backgroundGitFetchIntervalMinutes * 60_000,
     deps: {
       forgeOverrides: { github },
     },

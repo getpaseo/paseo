@@ -181,6 +181,7 @@ async function measureFetchScenario(
   const service = new WorkspaceGitServiceImpl({
     logger: pino({ level: "silent" }),
     paseoHome: fixture.paseoHome,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       runGitFetch: async (cwd, observer) => {
         fetchStarted.resolve();
@@ -271,6 +272,7 @@ async function measureExternalFetchScenario(
   const service = new WorkspaceGitServiceImpl({
     logger: pino({ level: "silent" }),
     paseoHome: fixture.paseoHome,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       runGitFetch: async (cwd, observer) => {
         const result = await fetchWorkspaceGitRemote(cwd, observer);

@@ -173,6 +173,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
     logger: createLogger(),
     paseoHome: path.join(tempDir, "paseo-home"),
     fileObserver,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       getCheckoutSnapshotFacts,
       getCheckoutStatus,

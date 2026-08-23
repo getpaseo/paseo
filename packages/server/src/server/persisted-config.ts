@@ -258,6 +258,7 @@ export const PersistedConfigSchema = z
           .object({
             maxProcessesPerSecond: z.number().int().positive().optional(),
             maxProcessConcurrency: z.number().int().positive().optional(),
+            backgroundFetchIntervalMinutes: z.number().int().min(0).optional(),
           })
           .strict()
           .optional(),

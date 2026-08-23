@@ -76,7 +76,6 @@ import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import { createWatcherLivenessCanary } from "./watcher-liveness-canary.js";
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
-const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 const FETCH_METADATA_ECHO_TTL_MS = 5_000;
 export const WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS = 60_000;
 const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
@@ -368,6 +367,7 @@ interface WorkspaceGitServiceOptions {
   paseoHome: string;
   worktreesRoot?: string;
   fileObserver?: FileObserver;
+  backgroundFetchIntervalMs: number;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -522,6 +522,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly fileObserver: FileObserver;
+  private readonly backgroundFetchIntervalMs: number;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
   private readonly workspaceRefreshLimit = pLimit({
@@ -576,6 +577,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
     this.fileObserver = options.fileObserver ?? createFileObserver();
+    // TypeScript cannot exclude NaN from a number, and setInterval(NaN) fires every millisecond.
+    this.backgroundFetchIntervalMs = Number.isFinite(options.backgroundFetchIntervalMs)
+      ? options.backgroundFetchIntervalMs
+      : 0;
     this.deps = resolveWorkspaceGitServiceDeps(
       this.fileObserver.subscribe.bind(this.fileObserver),
       options.deps,
@@ -1809,6 +1814,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     repoTarget.cwd = fetchWorkspaceTarget.cwd;
+    if (this.backgroundFetchIntervalMs <= 0) {
+      return;
+    }
     const facts = fetchWorkspaceTarget.latestFacts;
     const hasOrigin =
       facts?.isGit === true
@@ -1822,7 +1830,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     repoTarget.intervalId = setInterval(() => {
       void this.runRepoFetch(repoTarget);
-    }, BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    }, this.backgroundFetchIntervalMs);
     void this.runRepoFetch(repoTarget);
   }
 

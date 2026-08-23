@@ -82,6 +82,10 @@
                 "maxProcessConcurrency": {
                   "type": "integer",
                   "exclusiveMinimum": 0
+                },
+                "backgroundFetchIntervalMinutes": {
+                  "type": "integer",
+                  "minimum": 0
                 }
               },
               "additionalProperties": false

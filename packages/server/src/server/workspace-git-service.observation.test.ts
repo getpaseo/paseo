@@ -163,6 +163,7 @@ function createService(
     logger,
     paseoHome: "/tmp/paseo-home",
     fileObserver,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       subscribe: watcher.subscribe,
       getCheckoutSnapshotFacts: vi.fn(async (cwd: string) => createCheckoutFacts(cwd)),

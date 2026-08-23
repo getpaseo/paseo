@@ -298,6 +298,7 @@ function createPaseoWorktreeForTest(options: {
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createLogger(),
     paseoHome: options.paseoHome,
+    backgroundFetchIntervalMs: 180_000,
     deps: {
       forgeOverrides: { github: createGitHubServiceStub() },
     },

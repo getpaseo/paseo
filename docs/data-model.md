@@ -199,7 +199,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
     trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
-    git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
+    git: { maxProcessesPerSecond: number, maxProcessConcurrency: number, backgroundFetchIntervalMinutes: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
     agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
@@ -297,17 +297,36 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
+The daemon's periodic `git fetch` is off by default. `backgroundFetchIntervalMinutes` is its period
+in whole minutes, and `0` means no timer, no startup fetch, and no origin remote probe, so a daemon
+never raises an SSH key approval prompt on its own. Explicit fetches and worktree creation still
+fetch. A value above `1440` — one day — is capped there, because a timer delay past 2^31-1 ms wraps
+to 1 ms and would fetch nonstop:
+
+```json
+{
+  "daemon": {
+    "git": {
+      "backgroundFetchIntervalMinutes": 3
+    }
+  }
+}
+```
+
 Environment variables override `config.json`:
 
-| Environment variable                 | Setting                  |
-| ------------------------------------ | ------------------------ |
-| `PASEO_GIT_MAX_PROCESSES_PER_SECOND` | `maxProcessesPerSecond`  |
-| `PASEO_GIT_MAX_PROCESS_CONCURRENCY`  | `maxProcessConcurrency`  |
-| `PASEO_GIT_CONCURRENCY`              | Legacy concurrency alias |
+| Environment variable                          | Setting                          |
+| --------------------------------------------- | -------------------------------- |
+| `PASEO_GIT_MAX_PROCESSES_PER_SECOND`          | `maxProcessesPerSecond`          |
+| `PASEO_GIT_MAX_PROCESS_CONCURRENCY`           | `maxProcessConcurrency`          |
+| `PASEO_GIT_CONCURRENCY`                       | Legacy concurrency alias         |
+| `PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES` | `backgroundFetchIntervalMinutes` |
 
 `PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
-remains authoritative during reload.
+remains authoritative during reload. `backgroundFetchIntervalMinutes` needs a restart either way,
+and a blank, malformed, negative, or fractional
+`PASEO_GIT_BACKGROUND_FETCH_INTERVAL_MINUTES` is ignored so the persisted key still applies.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
