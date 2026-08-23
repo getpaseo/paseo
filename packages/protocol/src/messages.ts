@@ -65,6 +65,10 @@ import {
   BrowserScreencastUnsubscribeRequestSchema,
 } from "./browser-automation/screencast.js";
 import {
+  BrowserTabsListRequestSchema,
+  BrowserTabsListResponseSchema,
+} from "./browser-automation/tabs.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -3111,6 +3115,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UnsubscribeTerminalRequestSchema,
   BrowserScreencastSubscribeRequestSchema,
   BrowserScreencastUnsubscribeRequestSchema,
+  BrowserTabsListRequestSchema,
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
@@ -6168,6 +6173,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
   BrowserScreencastSubscribeResponseSchema,
+  BrowserTabsListResponseSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,
