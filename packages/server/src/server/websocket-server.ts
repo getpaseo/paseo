@@ -96,6 +96,7 @@ import {
   type BrowserAutomationHostCapability,
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { BrowserScreencastRegistry } from "./browser-tools/screencast.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
@@ -597,6 +598,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
+  private readonly browserScreencast: BrowserScreencastRegistry | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
@@ -665,6 +667,9 @@ export class VoiceAssistantWebSocketServer {
     this.daemonVersion = daemonVersion.trim();
     this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.browserToolsBroker = browserToolsBroker ?? null;
+    this.browserScreencast = browserToolsBroker
+      ? new BrowserScreencastRegistry(browserToolsBroker)
+      : null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
@@ -1447,6 +1452,8 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
+      browserToolsBroker: this.browserToolsBroker ?? undefined,
+      browserScreencast: this.browserScreencast ?? undefined,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
       hubExecutionAgents: options.hubExecutionAgents,
@@ -1580,7 +1587,7 @@ export class VoiceAssistantWebSocketServer {
       this.externalSessionsByKey.set(clientId, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(connection);
+    this.syncBrowserToolsClientRegistration(connection, pending.identity.peer);
     this.sendToClient(ws, this.createServerInfoMessage());
     connection.connectionLogger.info(
       {
@@ -1619,12 +1626,12 @@ export class VoiceAssistantWebSocketServer {
       JSON.stringify(newClientCapabilities ?? null)
     ) {
       existing.clientCapabilities = newClientCapabilities;
-      this.syncBrowserToolsClientRegistration(existing);
+      this.syncBrowserToolsClientRegistration(existing, pending.identity.peer);
     }
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(existing);
+    this.syncBrowserToolsClientRegistration(existing, pending.identity.peer);
     this.sendToClient(ws, this.createServerInfoMessage());
     pending.connectionLogger.info(
       {
@@ -1650,6 +1657,9 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        // COMPAT(browserHost): added in v0.5.1, remove after 2027-09-01 once the
+        // supported client floor always gates browser tabs on this flag.
+        ...(this.hasBrowserHost() ? { browserHost: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1977,7 +1987,15 @@ export class VoiceAssistantWebSocketServer {
     await connection.session.cleanup();
   }
 
-  private syncBrowserToolsClientRegistration(connection: TrustedSessionConnection): void {
+  /** A browser host is only advertised while one is connected and able to serve tabs. */
+  private hasBrowserHost(): boolean {
+    return (this.browserToolsBroker?.getRegisteredClientCount() ?? 0) > 0;
+  }
+
+  private syncBrowserToolsClientRegistration(
+    connection: TrustedSessionConnection,
+    peer: WebSocketConnectionIdentity["peer"],
+  ): void {
     if (!this.browserToolsBroker) {
       return;
     }
@@ -1986,7 +2004,9 @@ export class VoiceAssistantWebSocketServer {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
-    const capabilitySignature = JSON.stringify(browserHostCapability);
+    const hadBrowserHost = this.hasBrowserHost();
+    const isDaemonLocal = peer === "local_ipc" || peer === "loopback";
+    const capabilitySignature = JSON.stringify({ ...browserHostCapability, isDaemonLocal });
     const existing = this.browserToolsRegistrations.get(connection.clientId);
     if (existing?.capabilitySignature === capabilitySignature) {
       return;
@@ -1999,6 +2019,8 @@ export class VoiceAssistantWebSocketServer {
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
       hostKind: browserHostCapability.hostKind,
+      label: isDaemonLocal ? getHostname() : browserHostCapability.hostKind,
+      isDaemonLocal,
       supportedCommands: browserHostCapability.supportedCommands,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
@@ -2008,6 +2030,9 @@ export class VoiceAssistantWebSocketServer {
       capabilitySignature,
       unregister,
     });
+    if (!hadBrowserHost) {
+      this.broadcastCapabilitiesUpdate();
+    }
   }
 
   private unregisterBrowserToolsClient(clientId: string): void {
@@ -2017,6 +2042,9 @@ export class VoiceAssistantWebSocketServer {
     }
     this.browserToolsRegistrations.delete(clientId);
     registration.unregister();
+    if (!this.hasBrowserHost()) {
+      this.broadcastCapabilitiesUpdate();
+    }
   }
 
   private handleInvalidInboundMessage(args: {

@@ -12,6 +12,10 @@ import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.
 export interface BrowserHostClient {
   id: string;
   hostKind: string;
+  /** Human-readable machine the host runs on, shown next to its tabs. */
+  label: string;
+  /** The host runs on the daemon's own machine, so new tabs belong there. */
+  isDaemonLocal: boolean;
   supportedCommands: readonly BrowserAutomationCommandName[];
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
@@ -218,11 +222,12 @@ export class BrowserToolsBroker {
     }
 
     if (hosts.length === 1) {
-      return this.sendRequest({
+      const payload = await this.sendRequest({
         host: hosts[0],
         request: params.request,
         timeoutMs: params.timeoutMs,
       });
+      return withBrowserHostIdentity(payload, hosts[0]);
     }
 
     const hostResponses = await Promise.all(
@@ -254,9 +259,10 @@ export class BrowserToolsBroker {
       ok: true,
       result: {
         command: "list_tabs",
-        tabs: hostResponses.flatMap(({ payload }) =>
-          payload.ok && payload.result.command === "list_tabs" ? payload.result.tabs : [],
-        ),
+        tabs: hostResponses.flatMap(({ host, payload }) => {
+          const stamped = withBrowserHostIdentity(payload, host);
+          return stamped.ok && stamped.result.command === "list_tabs" ? stamped.result.tabs : [];
+        }),
       },
     };
   }
@@ -268,7 +274,7 @@ export class BrowserToolsBroker {
     | { ok: true; value: RegisteredBrowserHost }
     | { ok: false; payload: BrowserToolsResponsePayload } {
     if (command.command === "new_tab") {
-      const host = this.selectMostRecentlyRegisteredHost();
+      const host = this.selectDaemonLocalHost() ?? this.selectMostRecentlyRegisteredHost();
       return host
         ? { ok: true, value: host }
         : { ok: false, payload: this.noBrowserHostFailure(requestId) };
@@ -327,6 +333,16 @@ export class BrowserToolsBroker {
         message: `Browser tab ${browserId} is not associated with a connected browser automation host. Call browser_list_tabs and use one of the returned browserId values.`,
       }),
     };
+  }
+
+  private selectDaemonLocalHost(): RegisteredBrowserHost | null {
+    let selected: RegisteredBrowserHost | null = null;
+    for (const host of this.clients.values()) {
+      if (host.client.isDaemonLocal) {
+        selected = host;
+      }
+    }
+    return selected;
   }
 
   private selectMostRecentlyRegisteredHost(): RegisteredBrowserHost | null {
@@ -460,6 +476,21 @@ function getBrowserIdForCommand(command: BrowserAutomationCommand): string | nul
     return null;
   }
   return command.args.browserId;
+}
+
+function withBrowserHostIdentity(
+  payload: BrowserToolsResponsePayload,
+  host: RegisteredBrowserHost,
+): BrowserToolsResponsePayload {
+  if (!payload.ok || payload.result.command !== "list_tabs") {
+    return payload;
+  }
+  const tabs = payload.result.tabs.map((tab) => ({
+    ...tab,
+    hostId: host.client.id,
+    hostLabel: host.client.label,
+  }));
+  return { ...payload, result: { ...payload.result, tabs } };
 }
 
 function describeBrowserHost(host: RegisteredBrowserHost): string {

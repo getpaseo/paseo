@@ -14,16 +14,22 @@ const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
 class FakeBrowserHostClient implements BrowserHostClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
   public readonly hostKind: string;
+  public readonly label: string;
+  public readonly isDaemonLocal: boolean;
   public readonly supportedCommands: readonly BrowserAutomationCommandName[];
 
   public constructor(
     public readonly id: string,
     options: {
       hostKind?: string;
+      label?: string;
+      isDaemonLocal?: boolean;
       supportedCommands?: readonly BrowserAutomationCommandName[];
     } = {},
   ) {
     this.hostKind = options.hostKind ?? "desktop app";
+    this.label = options.label ?? `${this.id} machine`;
+    this.isDaemonLocal = options.isDaemonLocal ?? false;
     this.supportedCommands = options.supportedCommands ?? [...BROWSER_AUTOMATION_COMMAND_NAMES];
   }
 
@@ -57,6 +63,8 @@ class FakeBrowserHostClient implements BrowserHostClient {
 class FailingBrowserHostClient implements BrowserHostClient {
   public readonly id = "host-1";
   public readonly hostKind = "desktop app";
+  public readonly label = "host-1 machine";
+  public readonly isDaemonLocal = false;
   public readonly supportedCommands = [...BROWSER_AUTOMATION_COMMAND_NAMES];
 
   public sendBrowserAutomationRequest(): void {
@@ -165,6 +173,8 @@ describe("BrowserToolsBroker", () => {
         tabs: [
           {
             browserId: BROWSER_ID,
+            hostId: "host-1",
+            hostLabel: "host-1 machine",
             workspaceId: "workspace-1",
             url: "https://example.com",
             title: "Example",
@@ -370,6 +380,8 @@ describe("BrowserToolsBroker", () => {
         tabs: [
           {
             browserId: BROWSER_ID,
+            hostId: "host-1",
+            hostLabel: "host-1 machine",
             workspaceId: "workspace-1",
             url: "https://one.example",
             title: "One",
@@ -378,6 +390,8 @@ describe("BrowserToolsBroker", () => {
           },
           {
             browserId: SECOND_BROWSER_ID,
+            hostId: "host-2",
+            hostLabel: "host-2 machine",
             workspaceId: "workspace-1",
             url: "https://two.example",
             title: "Two",
@@ -940,5 +954,95 @@ describe("BrowserToolsBroker", () => {
       },
     });
     expect(broker.getPendingRequestCount()).toBe(0);
+  });
+
+  test("new tabs prefer a daemon-local host over a more recent remote host", async () => {
+    const broker = createBroker();
+    const daemonLocalHost = new FakeBrowserHostClient("host-1", { isDaemonLocal: true });
+    const remoteHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(daemonLocalHost);
+    broker.registerClient(remoteHost);
+
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: { url: "https://example.com" } },
+      workspaceId: "workspace-1",
+    });
+
+    expect(remoteHost.receivedRequests).toEqual([]);
+    expect(daemonLocalHost.receivedRequests.at(-1)?.command).toEqual({
+      command: "new_tab",
+      args: { url: "https://example.com" },
+    });
+
+    daemonLocalHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+
+    await expect(newTabPromise).resolves.toMatchObject({ ok: true });
+  });
+
+  test("new tabs fall back to the most recent host when none is daemon-local", async () => {
+    const broker = createBroker();
+    const firstHost = new FakeBrowserHostClient("host-1");
+    const recentHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(firstHost);
+    broker.registerClient(recentHost);
+
+    void broker.execute({
+      command: { command: "new_tab", args: { url: "https://example.com" } },
+      workspaceId: "workspace-1",
+    });
+
+    expect(firstHost.receivedRequests).toEqual([]);
+    expect(recentHost.receivedRequests).toHaveLength(1);
+  });
+
+  test("listed tabs carry the identity of the host that owns them", async () => {
+    const broker = createBroker();
+    const daemonLocalHost = new FakeBrowserHostClient("host-1", {
+      isDaemonLocal: true,
+      label: "daemon-machine.local",
+    });
+    const remoteHost = new FakeBrowserHostClient("host-2", { label: "laptop.local" });
+    broker.registerClient(daemonLocalHost);
+    broker.registerClient(remoteHost);
+
+    const listPromise = broker.execute({ command: { command: "list_tabs", args: {} } });
+
+    daemonLocalHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-1",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, url: "https://one.example", title: "One" }],
+      },
+    });
+    remoteHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-2",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: SECOND_BROWSER_ID, url: "https://two.example", title: "Two" }],
+      },
+    });
+
+    const payload = await listPromise;
+    expect(payload).toMatchObject({
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          { browserId: BROWSER_ID, hostId: "host-1", hostLabel: "daemon-machine.local" },
+          { browserId: SECOND_BROWSER_ID, hostId: "host-2", hostLabel: "laptop.local" },
+        ],
+      },
+    });
   });
 });

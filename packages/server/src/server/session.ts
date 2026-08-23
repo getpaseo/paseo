@@ -29,6 +29,16 @@ import type {
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import type { BrowserClientCommandRequest } from "@getpaseo/protocol/browser-automation/client-command";
+import type {
+  BrowserScreencastSubscribeRequest,
+  BrowserScreencastUnsubscribeRequest,
+} from "@getpaseo/protocol/browser-automation/screencast";
+import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import type {
+  BrowserScreencastRegistry,
+  BrowserScreencastViewer,
+} from "./browser-tools/screencast.js";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { describeAgentHistoryMatches, rankAgentHistoryCandidates } from "./agent-history-search.js";
@@ -488,6 +498,8 @@ export interface SessionOptions {
   sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
+  browserToolsBroker?: BrowserToolsBroker;
+  browserScreencast?: BrowserScreencastRegistry;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
@@ -719,6 +731,11 @@ export class Session {
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
+  private readonly browserToolsBroker: BrowserToolsBroker | undefined;
+  private readonly browserScreencast: BrowserScreencastRegistry | undefined;
+  private readonly screencastViewer: BrowserScreencastViewer = {
+    sendFrame: (frame) => this.emitBinary(frame),
+  };
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
@@ -775,6 +792,8 @@ export class Session {
       sttLanguage,
       tts,
       terminalManager,
+      browserToolsBroker,
+      browserScreencast,
       providerSnapshotManager,
       providerUsageService,
       serviceProxy,
@@ -972,6 +991,8 @@ export class Session {
       : null;
     this.daemonConfigStore = daemonConfigStore;
     this.terminalManager = terminalManager;
+    this.browserToolsBroker = browserToolsBroker;
+    this.browserScreencast = browserScreencast;
     this.terminalController = new TerminalSessionController({
       terminalManager,
       emit: (msg) => this.emit(msg),
@@ -2518,6 +2539,84 @@ export class Session {
     }
   }
 
+  private dispatchBrowserMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "browser.command.request":
+        return this.handleBrowserCommandRequest(msg);
+      case "browser.screencast.subscribe.request":
+        return this.handleBrowserScreencastSubscribeRequest(msg);
+      case "browser.screencast.unsubscribe.request":
+        return this.handleBrowserScreencastUnsubscribeRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleBrowserCommandRequest(msg: BrowserClientCommandRequest): Promise<void> {
+    if (!this.browserToolsBroker) {
+      this.emit({
+        type: "browser.command.response",
+        payload: {
+          requestId: msg.requestId,
+          ok: false,
+          error: {
+            code: "browser_disabled",
+            message: "Browser tools are disabled on this daemon.",
+            retryable: false,
+          },
+        },
+      });
+      return;
+    }
+    const payload = await this.browserToolsBroker.execute({
+      command: msg.command,
+      requestId: msg.requestId,
+      ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+      ...(msg.cwd ? { cwd: msg.cwd } : {}),
+    });
+    this.emit({ type: "browser.command.response", payload });
+  }
+
+  private async handleBrowserScreencastSubscribeRequest(
+    msg: BrowserScreencastSubscribeRequest,
+  ): Promise<void> {
+    if (!this.browserScreencast) {
+      this.emit({
+        type: "browser.screencast.subscribe.response",
+        payload: {
+          requestId: msg.requestId,
+          browserId: msg.browserId,
+          error: "Browser tools are disabled on this daemon.",
+        },
+      });
+      return;
+    }
+    const subscription = await this.browserScreencast.subscribe({
+      viewer: this.screencastViewer,
+      browserId: msg.browserId,
+    });
+    this.emit({
+      type: "browser.screencast.subscribe.response",
+      payload: subscription.ok
+        ? {
+            requestId: msg.requestId,
+            browserId: msg.browserId,
+            slot: subscription.slot,
+            error: null,
+          }
+        : { requestId: msg.requestId, browserId: msg.browserId, error: subscription.error },
+    });
+  }
+
+  private async handleBrowserScreencastUnsubscribeRequest(
+    msg: BrowserScreencastUnsubscribeRequest,
+  ): Promise<void> {
+    await this.browserScreencast?.unsubscribe({
+      viewer: this.screencastViewer,
+      browserId: msg.browserId,
+    });
+  }
+
   private dispatchTerminalMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "start_workspace_script_request":
@@ -2559,6 +2658,11 @@ export class Session {
   }
 
   private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
+    const browser = this.dispatchBrowserMessage(msg);
+    if (browser) {
+      await browser;
+      return;
+    }
     switch (msg.type) {
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);
@@ -2590,6 +2694,10 @@ export class Session {
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
+      return;
+    }
+    if (binaryFrame.kind === "browser_screencast") {
+      this.browserScreencast?.handleFrame(binaryFrame.frame);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -7464,6 +7572,8 @@ export class Session {
     await this.voiceSession.cleanup();
 
     this.terminalController.dispose();
+
+    await this.browserScreencast?.removeViewer(this.screencastViewer);
 
     this.checkoutSession.cleanup();
 
