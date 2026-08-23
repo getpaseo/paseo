@@ -19,7 +19,11 @@ import {
   type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
-import { isUnreconciledLocalUserMessage, type StreamItem } from "@/types/stream";
+import {
+  isUnreconciledLocalUserMessage,
+  type AgentToolCallData,
+  type StreamItem,
+} from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 const STORAGE_KEY = "@paseo:replica-cache";
@@ -293,6 +297,7 @@ const StoredCacheSchema = z.strictObject({
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
 type StoredHost = z.infer<typeof StoredHostSchema>;
 type StoredTimelineItem = z.infer<typeof StoredTimelineItemSchema>;
+type StoredToolCall = Extract<StoredTimelineItem, { kind: "tool_call" }>["item"];
 type StoredWorkspace = z.infer<typeof StoredWorkspaceSchema>;
 type StoredProject = z.infer<typeof StoredProjectSchema>;
 
@@ -335,6 +340,24 @@ function timelineBase(item: StreamItem) {
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
+}
+
+function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
+  const base = {
+    type: "tool_call" as const,
+    callId: data.callId,
+    name: data.name,
+    detail: data.detail,
+    ...(data.metadata ? { metadata: data.metadata } : {}),
+  };
+  switch (data.status) {
+    case "running":
+    case "completed":
+    case "canceled":
+      return { ...base, status: data.status, error: null };
+    case "failed":
+      return { ...base, status: data.status, error: data.error };
+  }
 }
 
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
@@ -384,21 +407,11 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       };
     case "tool_call":
       if (item.payload.source !== "agent") return null;
-      const storedTool = AgentTimelineItemPayloadSchema.safeParse({
-        type: "tool_call",
-        callId: item.payload.data.callId,
-        name: item.payload.data.name,
-        status: item.payload.data.status,
-        error: item.payload.data.error,
-        detail: item.payload.data.detail,
-        ...(item.payload.data.metadata ? { metadata: item.payload.data.metadata } : {}),
-      });
-      if (!storedTool.success || storedTool.data.type !== "tool_call") return null;
       return {
         ...base,
         kind: item.kind,
         provider: item.payload.data.provider,
-        item: storedTool.data,
+        item: serializeAgentToolCall(item.payload.data),
       };
   }
 }
@@ -788,11 +801,6 @@ export class ReplicaCache {
       if (host.timeline) this.lastFocusedAgentIds.set(host.serverId, host.timeline.agentId);
     }
     const bounded = this.buildBoundedPayload();
-    if (!bounded) {
-      await this.clearInvalidCache();
-      this.storedHosts.clear();
-      return;
-    }
     if (bounded.evicted) this.needsPersist = true;
     for (const host of this.storedHosts.values()) {
       useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
@@ -884,10 +892,6 @@ export class ReplicaCache {
     if (skipUnchanged && !changed && !this.needsPersist) return;
     const bounded = this.buildBoundedPayload();
     this.needsPersist = false;
-    if (!bounded) {
-      await this.clearInvalidCache();
-      return;
-    }
     const write = this.writeQueue
       .catch(() => undefined)
       .then(() => this.storage.setItem(STORAGE_KEY, bounded.payload));
@@ -934,27 +938,24 @@ export class ReplicaCache {
     return true;
   }
 
-  private buildBoundedPayload(): { payload: string; evicted: boolean } | null {
+  private buildBoundedPayload(): { payload: string; evicted: boolean } {
     let evicted = false;
     let payload = this.serialize();
-    if (payload === null) return null;
     while (Buffer.byteLength(payload, "utf8") > this.maxBytes && this.storedHosts.size > 0) {
       const oldestServerId = this.storedHosts.keys().next().value;
       if (oldestServerId === undefined) break;
       this.storedHosts.delete(oldestServerId);
       evicted = true;
       payload = this.serialize();
-      if (payload === null) return null;
     }
     return { payload, evicted };
   }
 
-  private serialize(): string | null {
-    const cache = StoredCacheSchema.safeParse({
+  private serialize(): string {
+    return JSON.stringify({
       version: CACHE_VERSION,
       hosts: Array.from(this.storedHosts.values()),
     });
-    return cache.success ? JSON.stringify(cache.data) : null;
   }
 
   private async clearInvalidCache(): Promise<void> {
