@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useBrowserScreencast } from "./use-screencast";
+import { fitViewport, toGuestPoint, type PaneSize, type ViewportFit } from "./viewport";
 
 interface BrowserMirrorPaneProps {
   browserId: string;
@@ -14,39 +15,10 @@ interface BrowserMirrorPaneProps {
   isInteractive?: boolean;
 }
 
-interface ViewportFit {
-  scale: number;
-  offsetX: number;
-  offsetY: number;
-}
-
-interface PaneSize {
-  width: number;
-  height: number;
-}
-
 const SCROLL_GESTURE_THRESHOLD_PX = 6;
 
-function fitViewport(pane: PaneSize, deviceWidth: number, deviceHeight: number): ViewportFit {
-  const scale = Math.min(pane.width / deviceWidth, pane.height / deviceHeight);
-  return {
-    scale,
-    offsetX: (pane.width - deviceWidth * scale) / 2,
-    offsetY: (pane.height - deviceHeight * scale) / 2,
-  };
-}
-
-function toGuestPoint(
-  event: GestureResponderEvent,
-  fit: ViewportFit,
-  deviceWidth: number,
-  deviceHeight: number,
-): { x: number; y: number } {
-  const { locationX, locationY } = event.nativeEvent;
-  return {
-    x: Math.min(Math.max((locationX - fit.offsetX) / fit.scale, 0), deviceWidth),
-    y: Math.min(Math.max((locationY - fit.offsetY) / fit.scale, 0), deviceHeight),
-  };
+function toPanePoint(event: GestureResponderEvent): { x: number; y: number } {
+  return { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
 }
 
 export function BrowserMirrorPane({
@@ -64,7 +36,7 @@ export function BrowserMirrorPane({
 
   const hasFrame = uri !== null && deviceWidth > 0 && deviceHeight > 0;
   const fit = useMemo(
-    () => (paneSize && hasFrame ? fitViewport(paneSize, deviceWidth, deviceHeight) : null),
+    () => (paneSize && hasFrame ? fitViewport(paneSize, { deviceWidth, deviceHeight }) : null),
     [paneSize, hasFrame, deviceWidth, deviceHeight],
   );
 
@@ -91,7 +63,7 @@ export function BrowserMirrorPane({
       if (!fit) {
         return;
       }
-      const point = toGuestPoint(event, fit, deviceWidth, deviceHeight);
+      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
       gestureRef.current = { ...point, scrolled: false };
     },
     [deviceHeight, deviceWidth, fit],
@@ -103,7 +75,7 @@ export function BrowserMirrorPane({
       if (!fit || !origin) {
         return;
       }
-      const point = toGuestPoint(event, fit, deviceWidth, deviceHeight);
+      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
       const deltaX = origin.x - point.x;
       const deltaY = origin.y - point.y;
       if (
@@ -126,7 +98,7 @@ export function BrowserMirrorPane({
       if (!fit || !origin || origin.scrolled) {
         return;
       }
-      const point = toGuestPoint(event, fit, deviceWidth, deviceHeight);
+      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
       sendInput({ kind: "mouse", x: point.x, y: point.y, button: "left", clickCount: 1 });
     },
     [deviceHeight, deviceWidth, fit, sendInput],
