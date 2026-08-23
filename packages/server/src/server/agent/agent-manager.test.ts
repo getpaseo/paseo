@@ -1060,6 +1060,7 @@ test("isolated rewind falls back from steering to the normal replacement path", 
       activeTurnBehavior: "steer",
       runOptions: { clientMessageId: "rewind-client" },
     });
+    await manager.waitForAgentRunStart(agentId);
     expect(session.interruptCount).toBe(2);
     expect(session.startPrompts).toContain("/rewind submitted-message-id");
     expect(manager.getTimeline(agentId)).toContainEqual(

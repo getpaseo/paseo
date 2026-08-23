@@ -3458,6 +3458,48 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("cancels a cold start before it can issue a native turn", async () => {
+    const threadStart = deferred<{ thread: { id: string } }>();
+    const appServer = createFakeCodexAppServer({
+      "thread/start": () => threadStart.promise,
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const resultPromise = session.run("Start after the delayed thread.");
+
+    try {
+      await appServer.waitForRequest("thread/start");
+      let interruptSettled = false;
+      const interruptPromise = session.interrupt().then(() => {
+        interruptSettled = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(interruptSettled).toBe(false);
+
+      threadStart.resolve({ thread: { id: "thread-1" } });
+      await expect(interruptPromise).resolves.toBeUndefined();
+      await expect(resultPromise).rejects.toThrow("interrupted before reaching Codex");
+      expect(appServer.requests()).not.toContainEqual(
+        expect.objectContaining({ method: "turn/start" }),
+      );
+      appServer.assertNoErrors();
+    } finally {
+      threadStart.resolve({ thread: { id: "thread-1" } });
+      const nativeStart = await appServer.waitForTurnStart().catch(() => null);
+      if (nativeStart) {
+        appServer.startsTurn({ threadId: "thread-1", turnId: "cleanup-turn" });
+        appServer.completeTurn();
+      }
+      await resultPromise.catch(() => undefined);
+      await session.close();
+    }
+  });
+
   test("interrupts an autonomous Codex turn identified by live notifications", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];
