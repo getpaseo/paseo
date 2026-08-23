@@ -105,7 +105,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -2293,19 +2293,43 @@ function WorkspaceScreenContent({
     [createTerminal],
   );
 
-  const handleCreateBrowserTab = useCallback(
-    (input?: { paneId?: string }) => {
-      if (!persistenceKey || !getIsElectron()) {
+  // The daemon opens the tab on its own machine, so every client drives the same
+  // signed-in browser. The host that owns it adds its own tab locally; anyone
+  // else opens a mirror.
+  const openBrowserTabOnHost = useCallback(
+    (url: string | undefined, openTarget: (target: WorkspaceTab["target"]) => void) => {
+      if (!client) {
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        paneLocalPlacement(input?.paneId),
+      void client
+        .runBrowserCommand({
+          command: { command: "new_tab", args: url ? { url } : {} },
+          workspaceId: normalizedWorkspaceId,
+        })
+        .then((payload) => {
+          if (!payload.ok || payload.result.command !== "new_tab") {
+            return;
+          }
+          const { browserId } = payload.result;
+          if (useBrowserStore.getState().browsersById[browserId]) {
+            return;
+          }
+          openTarget({ kind: "browser", browserId });
+        });
+    },
+    [client, normalizedWorkspaceId],
+  );
+
+  const handleCreateBrowserTab = useCallback(
+    (input?: { paneId?: string }) => {
+      if (!persistenceKey) {
+        return;
+      }
+      openBrowserTabOnHost(undefined, (target) =>
+        openWorkspaceTabFocused(persistenceKey, target, paneLocalPlacement(input?.paneId)),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openBrowserTabOnHost, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleCreateNewTab = useCallback(
@@ -2348,25 +2372,27 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openTarget({ kind: "browser", browserId });
+      openBrowserTabOnHost(undefined, openTarget);
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      openBrowserTabOnHost,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
+      if (!persistenceKey) {
         return;
       }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
+      openBrowserTabOnHost(url, (target) =>
+        openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openBrowserTabOnHost, openWorkspaceTabFocused, persistenceKey],
   );
 
   useDesktopBrowserNewTabRequests({
@@ -3683,7 +3709,11 @@ function WorkspaceScreenContent({
     () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
     [createTerminalMutation.isPending, pendingTerminalCreateInput],
   );
-  const showCreateBrowserTab = getIsElectron();
+  // Any client can open a browser tab as long as the daemon has a host that can
+  // actually run one; the tab lives there and is mirrored back here.
+  const showCreateBrowserTab = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.browserHost === true,
+  );
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
       showChanges: isGitCheckout,

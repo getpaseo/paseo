@@ -29,6 +29,7 @@ import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-over
 import { type ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import {
   collectAllTabs,
@@ -107,6 +108,9 @@ export function useWorkspaceCommandCenterActions(): void {
   const activeTabKind =
     activeTabIndex >= 0 ? (focusedTabs[activeTabIndex]?.target.kind ?? null) : null;
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
+  const hasBrowserHost = useSessionStore(
+    (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.browserHost === true,
+  );
   const isCompact = useIsCompactFormFactor();
   const { overrides } = useKeyboardShortcutOverrides();
   const { gitActions, isGit } = useGitActions({
@@ -163,7 +167,7 @@ export function useWorkspaceCommandCenterActions(): void {
         shortcuts: resolveWorkspaceShortcuts(overrides),
         capabilities: {
           canSplitPanes: supportsDesktopPaneSplits() && !isCompact,
-          canOpenBrowserTabs: getIsElectron(),
+          canOpenBrowserTabs: hasBrowserHost,
           isGit,
         },
         activeTabKind,
