@@ -68,8 +68,8 @@ test.describe("Side panel", () => {
         expect((await launcherButtonLabels(launcher)).slice(0, 4)).toEqual([
           "Changes",
           "Files",
-          "Agent",
           "Terminal",
+          "Agent",
         ]);
         await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(0);
         await capture(page, testInfo, "01-side-panel-reveals-empty");
