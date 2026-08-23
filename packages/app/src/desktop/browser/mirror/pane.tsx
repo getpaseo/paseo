@@ -53,6 +53,14 @@ export function BrowserMirrorPane({
     [paneSize, hasFrame, deviceWidth, deviceHeight],
   );
 
+  // Size the frame explicitly: expo-image wraps the <img> in its own auto-sized
+  // box, so percentage or absolute fills collapse to zero. These are the exact
+  // letterbox dimensions toGuestPoint maps against.
+  const frameStyle = useMemo(
+    () => (fit ? { width: deviceWidth * fit.scale, height: deviceHeight * fit.scale } : null),
+    [deviceHeight, deviceWidth, fit],
+  );
+
   const sendInput = useCallback(
     (event: BrowserMirrorInput) => {
       if (!client) {
@@ -169,10 +177,10 @@ export function BrowserMirrorPane({
         onResponderMove={handleResponderMove}
         onResponderRelease={handleResponderRelease}
       >
-        {hasFrame ? (
+        {hasFrame && frameStyle ? (
           <Image
             source={frameSource}
-            style={styles.frame}
+            style={frameStyle}
             contentFit="contain"
             cachePolicy="none"
             transition={0}
@@ -253,10 +261,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-  },
-  frame: {
-    width: "100%",
-    height: "100%",
   },
   message: {
     fontSize: 13,
