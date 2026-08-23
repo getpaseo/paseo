@@ -163,7 +163,10 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserScreencastSubscribeResponse } from "@getpaseo/protocol/browser-automation/screencast";
-import type { BrowserTabsListResponse } from "@getpaseo/protocol/browser-automation/tabs";
+import type {
+  BrowserClientCommandRequest,
+  BrowserClientCommandResponse,
+} from "@getpaseo/protocol/browser-automation/client-command";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -511,7 +514,7 @@ type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type BrowserScreencastSubscribePayload = BrowserScreencastSubscribeResponse["payload"];
-type BrowserTabsListPayload = BrowserTabsListResponse["payload"];
+type BrowserClientCommandPayload = BrowserClientCommandResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
@@ -4792,18 +4795,23 @@ export class DaemonClient {
     return this.browserScreencasts.onEvent(handler);
   }
 
-  async listBrowserTabs(
-    input: { workspaceId?: string; requestId?: string } = {},
-  ): Promise<BrowserTabsListPayload> {
+  async runBrowserCommand(input: {
+    command: BrowserClientCommandRequest["command"];
+    workspaceId?: string;
+    cwd?: string;
+    requestId?: string;
+  }): Promise<BrowserClientCommandPayload> {
     const resolvedRequestId = this.createRequestId(input.requestId);
     return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: SessionInboundMessageSchema.parse({
-        type: "browser.tabs.list.request",
+        type: "browser.command.request",
         requestId: resolvedRequestId,
+        command: input.command,
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.cwd ? { cwd: input.cwd } : {}),
       }),
-      responseType: "browser.tabs.list.response",
+      responseType: "browser.command.response",
       options: { skipQueue: true },
     });
   }
