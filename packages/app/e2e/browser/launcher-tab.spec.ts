@@ -230,7 +230,11 @@ test.describe("Tab creation", () => {
     try {
       await gotoWorkspace(page, workspace.workspaceId);
       await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
-      await page.getByRole("button", { name: EMPTY_PROMPT_PROFILE.name }).click();
+      await page
+        .getByTestId("workspace-new-tab-menu")
+        .filter({ visible: true })
+        .getByRole("menuitem", { name: EMPTY_PROMPT_PROFILE.name })
+        .click();
 
       await expectTerminalOutputContains(page, "prompt-args: 0");
     } finally {
