@@ -36,10 +36,6 @@ export class BrowserScreencastRouter {
     this.browserIdsBySlot.set(slot, browserId);
   }
 
-  getSlot(browserId: string): number | null {
-    return this.slotsByBrowserId.get(browserId) ?? null;
-  }
-
   removeBrowser(browserId: string): void {
     const slot = this.slotsByBrowserId.get(browserId);
     if (typeof slot !== "number") {

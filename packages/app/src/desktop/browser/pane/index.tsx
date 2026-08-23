@@ -9,12 +9,7 @@ interface BrowserPaneProps {
   onFocusPane?: () => void;
 }
 
-export function BrowserPane({
-  browserId,
-  serverId,
-  workspaceId,
-  isInteractive,
-}: BrowserPaneProps) {
+export function BrowserPane({ browserId, serverId, workspaceId, isInteractive }: BrowserPaneProps) {
   return (
     <BrowserMirrorPane
       browserId={browserId}

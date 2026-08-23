@@ -579,7 +579,6 @@ function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElem
   rememberBrowserWebviewSize({ browserId, width: bounds.width, height: bounds.height });
 }
 
-// eslint-disable-next-line complexity
 interface BrowserPaneProps {
   browserId: string;
   serverId: string;
@@ -605,6 +604,7 @@ export function BrowserPane(props: BrowserPaneProps) {
   return <LocalBrowserPane {...props} />;
 }
 
+// eslint-disable-next-line complexity
 function LocalBrowserPane({
   browserId,
   serverId,
