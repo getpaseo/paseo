@@ -35,7 +35,16 @@ be in flight.
 
 ### Cancellation
 
-Cancellation changes lifecycle state only after the provider acknowledges the interrupt or emits a terminal turn event. If the interrupt is rejected or times out, the agent remains `running` with its active foreground turn intact. Follow-up actions such as replacement, reload, rewind, and Stop must report that failure instead of accepting work they cannot perform. Synthesizing a local cancellation without provider acknowledgment creates a split-brain session: Paseo accepts a new prompt while the provider still owns the previous foreground turn.
+Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior
+foreground turn can no longer run, including when the provider reports that it is already idle. It
+rejects only when the provider may still own the turn. Provider adapters translate native errors
+into that contract; lifecycle callers do not interpret provider-specific errors.
+
+After an acknowledged interrupt, the manager settles the captured run even when no terminal event
+arrives or the run was still waiting for its provider turn id. The captured run token prevents an
+older cancellation from settling a newer turn. If interruption is rejected or times out, the agent
+keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
+Accepting new work after an ambiguous interruption would create a split-brain session.
 
 ## Relationships
 

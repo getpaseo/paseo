@@ -111,6 +111,62 @@ test("unexpected Codex app-server exit fails the active run and agent", async ()
   }
 });
 
+test("replacement self-heals when Codex reports that the tracked turn is already idle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-already-idle-replace-"));
+  const appServer = createFakeCodexAppServer({
+    "turn/interrupt": () => ({
+      __jsonRpcError: { code: -32600, message: "no active turn to interrupt" },
+    }),
+  });
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([appServer]) },
+    logger,
+  });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    const firstRun = manager.runAgent(agent.id, "keep working");
+    const firstTurnStart = await appServer.waitForTurnStart();
+    appServer.startsTurn({
+      threadId: String(firstTurnStart.threadId),
+      turnId: "native-turn-already-idle",
+    });
+    await manager.waitForAgentRunStart(agent.id);
+
+    const replacementStream = await manager.replaceAgentRun(agent.id, "replacement prompt");
+    const replacementEvents = (async () => {
+      const events = [];
+      for await (const event of replacementStream) {
+        events.push(event);
+      }
+      return events;
+    })();
+
+    await expect
+      .poll(() => appServer.requests().filter((message) => message.method === "turn/start").length)
+      .toBe(2);
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn-replacement" });
+    appServer.completeTurn({ threadId: "thread-1" });
+
+    await expect(firstRun).resolves.toMatchObject({ canceled: true });
+    await expect(replacementEvents).resolves.toContainEqual(
+      expect.objectContaining({ type: "turn_completed" }),
+    );
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("intentional agent close stays clean while a Codex turn is active", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-process-close-"));
   const appServer = createFakeCodexAppServer();

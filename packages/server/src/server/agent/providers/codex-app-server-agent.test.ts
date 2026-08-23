@@ -3354,6 +3354,34 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("treats Codex already having no active turn as an acknowledged interrupt", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => ({
+        __jsonRpcError: { code: -32600, message: "no active turn to interrupt" },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Wait for the child.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-already-idle" });
+
+      await expect(session.interrupt()).resolves.toBeUndefined();
+
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("waits for Codex to identify an accepted turn before interrupting it", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({
@@ -3386,7 +3414,7 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("does not interrupt after the accepted turn terminates before identification", async () => {
+  test("acknowledges interruption when the accepted turn terminates before identification", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({
       "turn/interrupt": async (params) => {
@@ -3407,9 +3435,7 @@ describe("Codex app-server provider", () => {
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
 
-      await expect(interruptPromise).rejects.toThrow(
-        "Cannot interrupt Codex before turn/started identifies the active turn",
-      );
+      await expect(interruptPromise).resolves.toBeUndefined();
       await resultPromise;
       expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
@@ -3418,7 +3444,7 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("rejects an interrupt before Codex initializes the thread", async () => {
+  test("acknowledges interruption before Codex initializes a thread", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
       createConfig({ cwd: "/workspace/project" }),
@@ -3427,9 +3453,7 @@ describe("Codex app-server provider", () => {
       async () => appServer.child,
     );
 
-    await expect(session.interrupt()).rejects.toThrow(
-      "Cannot interrupt Codex before the active thread is initialized",
-    );
+    await expect(session.interrupt()).resolves.toBeUndefined();
 
     await session.close();
   });
