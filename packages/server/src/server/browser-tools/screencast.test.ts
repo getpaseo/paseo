@@ -70,8 +70,8 @@ describe("BrowserScreencastRegistry", () => {
     const firstSubscription = await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
     const secondSubscription = await registry.subscribe({ viewer: second, browserId: BROWSER_ID });
 
-    expect(firstSubscription).toEqual({ ok: true, slot: 0 });
-    expect(secondSubscription).toEqual({ ok: true, slot: 0 });
+    expect(firstSubscription).toEqual({ ok: true, slot: 0, replay: null });
+    expect(secondSubscription).toEqual({ ok: true, slot: 0, replay: null });
     expect(broker.commands).toEqual([
       {
         command: "screencast_start",
@@ -112,12 +112,12 @@ describe("BrowserScreencastRegistry", () => {
 
     const first = await registry.subscribe({ viewer, browserId: BROWSER_ID });
     const second = await registry.subscribe({ viewer, browserId: SECOND_BROWSER_ID });
-    expect(first).toEqual({ ok: true, slot: 0 });
-    expect(second).toEqual({ ok: true, slot: 1 });
+    expect(first).toEqual({ ok: true, slot: 0, replay: null });
+    expect(second).toEqual({ ok: true, slot: 1, replay: null });
 
     await registry.unsubscribe({ viewer, browserId: BROWSER_ID });
     const reused = await registry.subscribe({ viewer, browserId: BROWSER_ID });
-    expect(reused).toEqual({ ok: true, slot: 0 });
+    expect(reused).toEqual({ ok: true, slot: 0, replay: null });
   });
 
   test("fans frames out to every viewer on the slot", async () => {
@@ -173,6 +173,7 @@ describe("BrowserScreencastRegistry", () => {
     await expect(registry.subscribe({ viewer, browserId: BROWSER_ID })).resolves.toEqual({
       ok: true,
       slot: 0,
+      replay: null,
     });
   });
 
@@ -202,9 +203,11 @@ describe("BrowserScreencastRegistry", () => {
 
     // Chrome only emits on damage, so a static page leaves a late viewer blank.
     const late = createViewer();
-    await registry.subscribe({ viewer: late, browserId: BROWSER_ID });
+    const subscription = await registry.subscribe({ viewer: late, browserId: BROWSER_ID });
 
-    expect(late.frames).toHaveLength(1);
-    expect(late.frames[0]).toEqual(first.frames[0]);
+    // Returned rather than pushed: the caller sends it after the subscribe
+    // response, otherwise it lands before the viewer has mapped the slot.
+    expect(subscription).toEqual({ ok: true, slot: 0, replay: first.frames[0] });
+    expect(late.frames).toHaveLength(0);
   });
 });

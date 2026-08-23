@@ -2606,6 +2606,9 @@ export class Session {
           }
         : { requestId: msg.requestId, browserId: msg.browserId, error: subscription.error },
     });
+    if (subscription.ok && subscription.replay) {
+      this.screencastViewer.sendFrame(subscription.replay);
+    }
   }
 
   private async handleBrowserScreencastUnsubscribeRequest(

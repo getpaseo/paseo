@@ -14,7 +14,7 @@ export interface BrowserScreencastViewer {
 }
 
 export type BrowserScreencastSubscription =
-  | { ok: true; slot: number }
+  | { ok: true; slot: number; replay: Uint8Array | null }
   | { ok: false; error: string };
 
 interface BrowserScreencastStream {
@@ -48,10 +48,9 @@ export class BrowserScreencastRegistry {
     const existing = this.streams.get(params.browserId);
     if (existing) {
       existing.viewers.add(params.viewer);
-      if (existing.lastFrame) {
-        params.viewer.sendFrame(existing.lastFrame);
-      }
-      return { ok: true, slot: existing.slot };
+      // The caller sends this after the subscribe response: a frame that beats
+      // the response arrives before the viewer has mapped the slot, and is dropped.
+      return { ok: true, slot: existing.slot, replay: existing.lastFrame };
     }
 
     const slot = this.allocateSlot();
@@ -87,7 +86,7 @@ export class BrowserScreencastRegistry {
       this.release(stream);
       return { ok: false, error: payload.error.message };
     }
-    return { ok: true, slot };
+    return { ok: true, slot, replay: null };
   }
 
   public async unsubscribe(params: {
