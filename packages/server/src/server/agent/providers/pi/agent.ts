@@ -85,7 +85,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
-import { mapPiTodoReminderEvent, mapPiTodoState, mapPiTodoToolResult } from "./todo-mapper.js";
+import { mapPiTodoMessages, mapPiTodoToolResult } from "./todo-mapper.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -1373,16 +1373,14 @@ export class PiRpcAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     await this.requestEntryCapture("history");
-    yield* streamPiHistory(
-      this.provider,
-      await this.runtimeSession.getMessages(),
-      this.capturedUserEntries,
-    );
-    for (const item of mapPiTodoState(this.state)) {
+    const messages = await this.runtimeSession.getMessages();
+    yield* streamPiHistory(this.provider, messages, this.capturedUserEntries);
+    const todoItem = mapPiTodoMessages(messages);
+    if (todoItem) {
       yield {
         type: "timeline",
         provider: this.provider,
-        item,
+        item: todoItem,
       };
     }
   }
@@ -2042,15 +2040,6 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
-    if (event.type === "todo_reminder") {
-      const item = mapPiTodoReminderEvent(event);
-      if (item) {
-        this.emitTodoItem(item, this.currentTurnIdForEvent());
-      } else {
-        this.logger.debug({ event }, "Dropped malformed Pi todo reminder event");
-      }
-      return;
-    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;

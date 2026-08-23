@@ -1,56 +1,57 @@
+import { z } from "zod";
+
 import type { AgentTimelineItem } from "../../agent-sdk-types.js";
-import type { PiSessionState } from "./rpc-types.js";
+import type { PiAgentMessage } from "./rpc-types.js";
 import type { PiToolResult } from "./tool-call-mapper.js";
-import {
-  PiTodoPhaseSchema,
-  PiTodoReminderEventSchema,
-  type PiTodoItem,
-  type PiTodoPhase,
-} from "./rpc-types.js";
+
+// Pi core has no todo state: todos come from the `todo` extension tool, which
+// returns details {todos: [{id, text, done}], nextId} (see pi's
+// examples/extensions/todo.ts).
+export const PiTodoExtensionItemSchema = z
+  .object({
+    id: z.number().int().optional(),
+    text: z.string(),
+    done: z.boolean(),
+  })
+  .passthrough();
+export const PiTodoDetailsSchema = z
+  .object({ todos: z.array(PiTodoExtensionItemSchema) })
+  .passthrough();
+
+export type PiTodoExtensionItem = z.infer<typeof PiTodoExtensionItemSchema>;
 
 export function mapPiTodoToolResult(result: PiToolResult): AgentTimelineItem | null {
   const details = resultDetails(result);
-  const phases = PiTodoPhaseSchema.array().safeParse(details?.phases);
-  return phases.success ? mapPiTodoPhases(phases.data) : null;
+  const todos = PiTodoDetailsSchema.safeParse(details);
+  return todos.success ? mapPiTodoItems(todos.data.todos) : null;
 }
 
-export function mapPiTodoReminderEvent(event: unknown): AgentTimelineItem | null {
-  const parsed = PiTodoReminderEventSchema.safeParse(event);
-  return parsed.success ? mapPiTodoItems(parsed.data.todos) : null;
-}
-
-export function mapPiTodoState(state: PiSessionState): AgentTimelineItem[] {
-  const phases = PiTodoPhaseSchema.array().safeParse(state.todoPhases);
-  if (!phases.success) {
-    return [];
+export function mapPiTodoMessages(messages: readonly PiAgentMessage[]): AgentTimelineItem | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "toolResult" || message.toolName !== "todo") {
+      continue;
+    }
+    const todos = PiTodoDetailsSchema.safeParse(message.details);
+    if (todos.success) {
+      return mapPiTodoItems(todos.data.todos);
+    }
   }
-  const item = mapPiTodoPhases(phases.data);
-  return item ? [item] : [];
+  return null;
 }
 
-export function mapPiTodoPhases(phases: readonly PiTodoPhase[]): AgentTimelineItem | null {
-  const todos = phases.flatMap((phase) => phase.tasks);
-  return mapPiTodoItems(todos);
-}
-
-function mapPiTodoItems(items: readonly PiTodoItem[]): AgentTimelineItem | null {
+export function mapPiTodoItems(items: readonly PiTodoExtensionItem[]): AgentTimelineItem | null {
   if (items.length === 0) {
     return null;
   }
   return {
     type: "todo",
     items: items.map((item) => ({
-      text: item.content,
-      status: normalizePiTodoStatus(item.status),
-      completed: item.status === "completed",
+      text: item.text,
+      status: item.done ? ("completed" as const) : ("pending" as const),
+      completed: item.done,
     })),
   };
-}
-
-function normalizePiTodoStatus(status: PiTodoItem["status"]) {
-  if (status === "completed") return "completed" as const;
-  if (status === "in_progress") return "in_progress" as const;
-  return "pending" as const;
 }
 
 function resultDetails(result: PiToolResult): Record<string, unknown> | null {
