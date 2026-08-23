@@ -76,6 +76,18 @@ beforeEach(() => {
 describe("compact surface", () => {
   const compact = { isCompact: true, workspaceKey: WORKSPACE_KEY, checkout: CHECKOUT };
 
+  it("opens Changes in the explorer overlay without creating a workspace tab", () => {
+    toggleSupportingTab({
+      ...compact,
+      target: { kind: "working_diff" },
+      openInSidePanelByDefault: true,
+    });
+
+    expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
+    expect(usePanelStore.getState().explorerTab).toBe("changes");
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+  });
+
   it("opens and closes the overlay without touching the layout", () => {
     openSidePanelView({ ...compact, view: "files" });
 
@@ -102,11 +114,11 @@ describe("non-compact with splits", () => {
     checkout: CHECKOUT,
   };
 
-  it("reveals an empty pane rather than seeding a view into it", () => {
+  it("reveals a New tab pane rather than seeding a supporting view into it", () => {
     toggleSidePanel(wide);
 
     expect(isSidePanelOpen(wide)).toBe(true);
-    expect(tabKinds()).toEqual([]);
+    expect(tabKinds()).toEqual(["new_tab", "new_tab"]);
     expect(collectAllPanes(layout().root).length).toBeGreaterThan(1);
   });
 
@@ -204,7 +216,7 @@ describe("non-compact with splits", () => {
     hideSidePanel(wide);
 
     expect(isSidePanelOpen(wide)).toBe(false);
-    expect(tabKinds()).toEqual(["files"]);
+    expect(tabKinds()).toEqual(["new_tab", "files"]);
   });
 
   it("toggles the visible supporting target without closing its tab", () => {

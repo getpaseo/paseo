@@ -605,7 +605,7 @@ export const zhCN: TranslationResources = {
         files: "文件",
         pullRequest: "拉取请求",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "打开侧边面板",

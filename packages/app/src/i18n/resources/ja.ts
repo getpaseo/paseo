@@ -610,7 +610,7 @@ export const ja: TranslationResources = {
         files: "ファイル",
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
-        editTerminalProfiles: "プロファイルを編集…",
+        editTerminalProfiles: "プロファイルを編集",
       },
       sidePanel: {
         open: "サイドパネルを開く",
