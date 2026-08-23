@@ -9,6 +9,7 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserScreencastMetadata } from "@getpaseo/protocol/binary-frames/screencast";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
@@ -18,9 +19,12 @@ import {
   dispatchTrustedKey,
   dispatchTrustedScroll,
   dispatchTrustedText,
+  electronInputModifiers,
+  type BrowserInputEvent,
   type ClickInputOptions,
-  type IsolatedKeyboardInputEvent,
 } from "./trusted-input.js";
+
+type DebugMessageListener = (method: string, params: Record<string, unknown>) => void;
 
 export interface TabContents {
   readonly id: number;
@@ -37,7 +41,9 @@ export interface TabContents {
   reload(): void;
   capturePage(options?: TabCapturePageOptions): Promise<TabImage>;
   invalidate(): void;
-  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  sendInputEvent(event: BrowserInputEvent): void;
+  onDebugMessage(listener: DebugMessageListener): () => void;
+  onceDestroyed(listener: () => void): void;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -62,6 +68,29 @@ export interface BrowserRegistry {
   getWorkspaceActiveBrowserId(workspaceId: string): string | null;
 }
 
+export interface BrowserScreencastFrameEvent {
+  browserId: string;
+  slot: number;
+  metadata: BrowserScreencastMetadata;
+  data: Uint8Array;
+}
+
+interface AutomationCommandOptions {
+  snapshotEngine?: BrowserSnapshotEngine;
+  emitScreencastFrame?: (frame: BrowserScreencastFrameEvent) => void;
+}
+
+interface ActiveScreencast {
+  slot: number;
+  stopListening: () => void;
+  sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
+}
+
+type BrowserAutomationInputAtEvent = Extract<
+  BrowserAutomationCommand,
+  { command: "input_at" }
+>["args"]["event"];
+
 export type AutomationCommandPayload = BrowserAutomationExecuteResponse["payload"];
 type FailurePayload = Extract<AutomationCommandPayload, { ok: false }>;
 
@@ -76,6 +105,7 @@ const MAX_EVALUATE_RESULT_JSON_LENGTH = 80_000;
 const MAX_EVALUATE_RESULT_PREVIEW_LENGTH = 79_000;
 const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
 let pixelCaptureQueue: Promise<void> = Promise.resolve();
+const activeScreencastsByContentsId = new Map<number, ActiveScreencast>();
 
 function fail(
   requestId: string,
@@ -221,14 +251,27 @@ function tabInfoFromContents(
 export function executeAutomationCommand(
   request: BrowserAutomationExecuteRequest,
   registry: BrowserRegistry,
-  options?: { snapshotEngine?: BrowserSnapshotEngine },
+  options?: AutomationCommandOptions,
 ): AutomationCommandPayload | Promise<AutomationCommandPayload> {
   const { requestId, command } = request;
   const workspaceId = request.workspaceId;
   const snapshotEngine = options?.snapshotEngine ?? defaultSnapshotEngine;
+  const emitScreencastFrame = options?.emitScreencastFrame ?? ignoreScreencastFrame;
   const handler = commandHandlers[command.command];
 
-  return handler({ request, command, requestId, workspaceId, registry, snapshotEngine });
+  return handler({
+    request,
+    command,
+    requestId,
+    workspaceId,
+    registry,
+    snapshotEngine,
+    emitScreencastFrame,
+  });
+}
+
+function ignoreScreencastFrame(frame: BrowserScreencastFrameEvent): void {
+  void frame;
 }
 
 interface CommandHandlerContext {
@@ -238,6 +281,7 @@ interface CommandHandlerContext {
   workspaceId: string | undefined;
   registry: BrowserRegistry;
   snapshotEngine: BrowserSnapshotEngine;
+  emitScreencastFrame: (frame: BrowserScreencastFrameEvent) => void;
 }
 
 type CommandHandler = (
@@ -468,11 +512,207 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
     fail(requestId, "browser_unsupported", "browser_resize is handled by the app runtime."),
   close_tab: ({ requestId }) =>
     fail(requestId, "browser_unsupported", "browser_close_tab is handled by the app runtime."),
+  input_at: ({ command, requestId, workspaceId, registry }) => {
+    const inputAtCommand = command as Extract<BrowserAutomationCommand, { command: "input_at" }>;
+    return executeInputAt(
+      requestId,
+      workspaceId,
+      inputAtCommand.args.browserId,
+      inputAtCommand.args.event,
+      registry,
+    );
+  },
+  screencast_start: ({ command, requestId, workspaceId, registry, emitScreencastFrame }) => {
+    const startCommand = command as Extract<
+      BrowserAutomationCommand,
+      { command: "screencast_start" }
+    >;
+    return executeScreencastStart(
+      requestId,
+      workspaceId,
+      startCommand.args,
+      registry,
+      emitScreencastFrame,
+    );
+  },
+  screencast_stop: ({ command, requestId, workspaceId, registry }) => {
+    const stopCommand = command as Extract<
+      BrowserAutomationCommand,
+      { command: "screencast_stop" }
+    >;
+    return executeScreencastStop(requestId, workspaceId, stopCommand.args.browserId, registry);
+  },
 };
 
 interface ResolvedTabTarget {
   browserId: string;
   contents: TabContents;
+}
+
+function executeInputAt(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  event: BrowserAutomationInputAtEvent,
+  registry: BrowserRegistry,
+): AutomationCommandPayload {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  if (event.kind === "mouse") {
+    const input = {
+      x: event.x,
+      y: event.y,
+      button: event.button,
+      clickCount: event.clickCount,
+      modifiers: electronInputModifiers(event.modifiers),
+    };
+    target.contents.sendInputEvent({ type: "mouseDown", ...input });
+    target.contents.sendInputEvent({ type: "mouseUp", ...input });
+  } else if (event.kind === "wheel") {
+    target.contents.sendInputEvent({
+      type: "mouseWheel",
+      x: event.x,
+      y: event.y,
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+    });
+  } else {
+    dispatchTrustedKey(
+      (input) => target.contents.sendInputEvent(input),
+      event.key,
+      event.modifiers,
+    );
+  }
+  return {
+    requestId,
+    ok: true,
+    result: { command: "input_at", browserId: target.browserId },
+  };
+}
+
+async function executeScreencastStart(
+  requestId: string,
+  workspaceId: string | undefined,
+  args: Extract<BrowserAutomationCommand, { command: "screencast_start" }>["args"],
+  registry: BrowserRegistry,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({
+    requestId,
+    workspaceId,
+    browserId: args.browserId,
+    registry,
+  });
+  if ("ok" in target) {
+    return target;
+  }
+  const existing = activeScreencastsByContentsId.get(target.contents.id);
+  if (existing) {
+    return {
+      requestId,
+      ok: true,
+      result: { command: "screencast_start", browserId: target.browserId, slot: existing.slot },
+    };
+  }
+  if (!target.contents.sendDebugCommand) {
+    return fail(
+      requestId,
+      "browser_unsupported",
+      "browser_screencast_start requires Chrome DevTools Protocol",
+    );
+  }
+
+  const contentsId = target.contents.id;
+  const sendDebugCommand = target.contents.sendDebugCommand.bind(target.contents);
+  const stopListening = target.contents.onDebugMessage((method, params) => {
+    if (method === "Page.screencastFrame") {
+      handleScreencastFrame(sendDebugCommand, target.browserId, args.slot, params, emitFrame);
+    }
+  });
+  const screencast = { slot: args.slot, stopListening, sendDebugCommand };
+  activeScreencastsByContentsId.set(contentsId, screencast);
+  target.contents.onceDestroyed(() => {
+    removeScreencast(contentsId, screencast);
+  });
+
+  try {
+    await sendDebugCommand("Page.startScreencast", {
+      format: "jpeg",
+      quality: args.quality,
+      maxWidth: args.maxWidth,
+      maxHeight: args.maxHeight,
+      everyNthFrame: args.everyNthFrame,
+    });
+  } catch (error) {
+    removeScreencast(contentsId, screencast);
+    throw error;
+  }
+
+  return {
+    requestId,
+    ok: true,
+    result: { command: "screencast_start", browserId: target.browserId, slot: args.slot },
+  };
+}
+
+async function executeScreencastStop(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  registry: BrowserRegistry,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  const screencast = activeScreencastsByContentsId.get(target.contents.id);
+  if (screencast) {
+    await screencast.sendDebugCommand("Page.stopScreencast");
+    removeScreencast(target.contents.id, screencast);
+  }
+  return {
+    requestId,
+    ok: true,
+    result: { command: "screencast_stop", browserId: target.browserId },
+  };
+}
+
+function handleScreencastFrame(
+  sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>,
+  browserId: string,
+  slot: number,
+  params: Record<string, unknown>,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): void {
+  const sessionId = readNumber(params.sessionId);
+  if (sessionId === null) {
+    return;
+  }
+  void sendDebugCommand("Page.screencastFrameAck", { sessionId });
+  if (typeof params.data !== "string" || !isRecord(params.metadata)) {
+    return;
+  }
+  const deviceWidth = readNumber(params.metadata.deviceWidth);
+  const deviceHeight = readNumber(params.metadata.deviceHeight);
+  if (deviceWidth === null || deviceHeight === null) {
+    return;
+  }
+  emitFrame({
+    browserId,
+    slot,
+    metadata: { deviceWidth, deviceHeight },
+    data: Buffer.from(params.data, "base64"),
+  });
+}
+
+function removeScreencast(contentsId: number, screencast: ActiveScreencast): void {
+  if (activeScreencastsByContentsId.get(contentsId) !== screencast) {
+    return;
+  }
+  screencast.stopListening();
+  activeScreencastsByContentsId.delete(contentsId);
 }
 
 function executeListTabs(
@@ -1577,6 +1817,10 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const NETWORK_PERFORMANCE_SCRIPT = String.raw`(() => {

@@ -1,4 +1,4 @@
-import type { KeyboardInputEvent } from "electron";
+import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent } from "electron";
 import type { ActionablePoint } from "./actionability.js";
 import type { CdpCommandSender } from "./cdp-session-queue.js";
 
@@ -26,7 +26,19 @@ export interface IsolatedKeyboardInputEvent extends KeyboardInputEvent {
   skipIfUnhandled: true;
 }
 
+export type BrowserInputEvent = IsolatedKeyboardInputEvent | MouseInputEvent | MouseWheelInputEvent;
+
 type KeyboardInputSender = (event: IsolatedKeyboardInputEvent) => void;
+
+const ELECTRON_MODIFIERS: Record<
+  InputModifier,
+  NonNullable<KeyboardInputEvent["modifiers"]>[number]
+> = {
+  Alt: "alt",
+  Control: "control",
+  Meta: "meta",
+  Shift: "shift",
+};
 
 const ELECTRON_KEY_CODE_ALIASES: Record<string, string> = {
   ArrowDown: "Down",
@@ -161,8 +173,14 @@ export async function dispatchTrustedText(send: CdpCommandSender, text: string):
   await send("Input.insertText", { text });
 }
 
-export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void {
+export function dispatchTrustedKey(
+  send: KeyboardInputSender,
+  key: string,
+  modifiers: InputModifier[] = [],
+): void {
   const keyCode = ELECTRON_KEY_CODE_ALIASES[key] ?? key;
+  const electronModifiers = electronInputModifiers(modifiers);
+  const modifierFields = electronModifiers.length > 0 ? { modifiers: electronModifiers } : {};
   let character: string | null = null;
   if (key === "Space") {
     character = " ";
@@ -173,19 +191,28 @@ export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void
     type: "keyDown",
     keyCode,
     skipIfUnhandled: true,
+    ...modifierFields,
   });
   if (character !== null) {
     send({
       type: "char",
       keyCode: character,
       skipIfUnhandled: true,
+      ...modifierFields,
     });
   }
   send({
     type: "keyUp",
     keyCode,
     skipIfUnhandled: true,
+    ...modifierFields,
   });
+}
+
+export function electronInputModifiers(
+  modifiers: InputModifier[],
+): NonNullable<KeyboardInputEvent["modifiers"]> {
+  return modifiers.map((modifier) => ELECTRON_MODIFIERS[modifier]);
 }
 
 function modifierMask(modifiers: InputModifier[] | undefined): number {
