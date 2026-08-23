@@ -1640,6 +1640,8 @@ export const ko: TranslationResources = {
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
+      securityWarning:
+        "이 페어링 링크는 비밀번호처럼 취급하세요. 링크를 가진 사람은 누구나 이 데몬에 접근할 수 있습니다.",
       qrUnavailable: "QR 코드를 사용할 수 없습니다.",
       qrAccessibility: "페어링 QR 코드",
       retry: "다시 시도",
