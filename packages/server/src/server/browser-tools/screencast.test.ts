@@ -78,9 +78,9 @@ describe("BrowserScreencastRegistry", () => {
         args: {
           browserId: BROWSER_ID,
           slot: 0,
-          quality: 60,
-          maxWidth: 1280,
-          maxHeight: 800,
+          quality: 90,
+          maxWidth: 2560,
+          maxHeight: 1600,
           everyNthFrame: 1,
         },
       },

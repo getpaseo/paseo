@@ -1496,7 +1496,7 @@ describe("executeAutomationCommand", () => {
     await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
   });
 
-  test("a settled page gets a full-resolution frame after motion stops", async () => {
+  test("a page that never damages still gets a first frame, at the stream's quality", async () => {
     vi.useFakeTimers();
     try {
       const browser = new BrowserAutomationHarness();
@@ -1505,38 +1505,25 @@ describe("executeAutomationCommand", () => {
         args: {
           browserId: BROWSER_A,
           slot: 4,
-          quality: 60,
-          maxWidth: 1024,
-          maxHeight: 768,
+          quality: 90,
+          maxWidth: 2560,
+          maxHeight: 1600,
           everyNthFrame: 1,
         },
       });
 
-      browser.tab.emitDebugMessage("Page.screencastFrame", {
-        sessionId: 1,
-        data: Buffer.from([1]).toString("base64"),
-        metadata: { deviceWidth: 1000, deviceHeight: 750 },
-      });
-      await vi.advanceTimersByTimeAsync(500);
-      browser.tab.emitDebugMessage("Page.screencastFrame", {
-        sessionId: 2,
-        data: Buffer.from([2]).toString("base64"),
-        metadata: { deviceWidth: 1000, deviceHeight: 750 },
-      });
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(700);
 
-      // Still moving, so the expensive capture stays deferred.
-      expect(captureQualities(browser)).toEqual([]);
-
-      await vi.advanceTimersByTimeAsync(600);
-
-      expect(captureQualities(browser)).toEqual([92]);
-      expect(browser.screencastFrames.at(-1)).toEqual({
-        browserId: BROWSER_A,
-        slot: 4,
-        metadata: { deviceWidth: 390, deviceHeight: 844 },
-        data: Buffer.from(browser.tab.fullPageScreenshotData, "base64"),
-      });
+      // Same quality as the stream, so a viewer cannot tell the two apart.
+      expect(captureQualities(browser)).toEqual([90]);
+      expect(browser.screencastFrames).toEqual([
+        {
+          browserId: BROWSER_A,
+          slot: 4,
+          metadata: { deviceWidth: 390, deviceHeight: 844 },
+          data: Buffer.from(browser.tab.fullPageScreenshotData, "base64"),
+        },
+      ]);
 
       await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
     } finally {
@@ -1544,7 +1531,7 @@ describe("executeAutomationCommand", () => {
     }
   });
 
-  test("the repaint its own settle capture causes does not restart the cycle", async () => {
+  test("a page that damages on its own is never captured directly", async () => {
     vi.useFakeTimers();
     try {
       const browser = new BrowserAutomationHarness();
@@ -1553,9 +1540,9 @@ describe("executeAutomationCommand", () => {
         args: {
           browserId: BROWSER_A,
           slot: 4,
-          quality: 60,
-          maxWidth: 1024,
-          maxHeight: 768,
+          quality: 90,
+          maxWidth: 2560,
+          maxHeight: 1600,
           everyNthFrame: 1,
         },
       });
@@ -1565,26 +1552,10 @@ describe("executeAutomationCommand", () => {
         data: Buffer.from([1]).toString("base64"),
         metadata: { deviceWidth: 1000, deviceHeight: 750 },
       });
-      await vi.advanceTimersByTimeAsync(700);
-      expect(captureQualities(browser)).toEqual([92]);
-      const settledFrames = browser.screencastFrames.length;
-
-      // Capturing repaints the page, which Chrome reports as a frame. Acting on
-      // it would swap the sharp capture back out and arm the next one forever.
-      browser.tab.emitDebugMessage("Page.screencastFrame", {
-        sessionId: 2,
-        data: Buffer.from([2]).toString("base64"),
-        metadata: { deviceWidth: 1000, deviceHeight: 750 },
-      });
       await vi.advanceTimersByTimeAsync(3000);
 
-      expect(browser.screencastFrames).toHaveLength(settledFrames);
-      expect(captureQualities(browser)).toEqual([92]);
-      // The frame is still acknowledged, or Chrome stops sending them.
-      expect(browser.tab.debugCommands).toContainEqual({
-        command: "Page.screencastFrameAck",
-        params: { sessionId: 2 },
-      });
+      expect(captureQualities(browser)).toEqual([]);
+      expect(browser.screencastFrames).toHaveLength(1);
 
       await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
     } finally {

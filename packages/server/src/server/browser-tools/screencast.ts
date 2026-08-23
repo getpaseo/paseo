@@ -5,9 +5,11 @@ import {
 import type { BrowserToolsBroker } from "./broker.js";
 
 const SCREENCAST_SLOT_COUNT = 256;
-const SCREENCAST_QUALITY = 60;
-const SCREENCAST_MAX_WIDTH = 1280;
-const SCREENCAST_MAX_HEIGHT = 800;
+// One quality for every frame: a viewer that sees motion drop to a cheaper tier
+// and climb back reads as flicker, which is worse than the bandwidth it saves.
+const SCREENCAST_QUALITY = 90;
+const SCREENCAST_MAX_WIDTH = 2560;
+const SCREENCAST_MAX_HEIGHT = 1600;
 
 export interface BrowserScreencastViewer {
   sendFrame(frame: Uint8Array): void;
