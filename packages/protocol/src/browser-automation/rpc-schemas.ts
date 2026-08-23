@@ -44,6 +44,8 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "resize",
   "close_tab",
   "input_at",
+  "screencast_start",
+  "screencast_stop",
 ] as const;
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
@@ -264,6 +266,26 @@ export const BrowserAutomationInputAtCommandSchema = z.object({
   }),
 });
 
+/**
+ * The daemon allocates one slot per mirrored browser and hands the same slot to
+ * the host and to every viewer, so frames are forwarded without re-encoding.
+ */
+export const BrowserAutomationScreencastStartCommandSchema = z.object({
+  command: z.literal("screencast_start"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    slot: z.number().int().min(0).max(255),
+    quality: z.number().int().min(1).max(100).default(60),
+    maxWidth: z.number().int().positive().default(1280),
+    maxHeight: z.number().int().positive().default(800),
+    everyNthFrame: z.number().int().min(1).max(10).default(1),
+  }),
+});
+
+export const BrowserAutomationScreencastStopCommandSchema = z.object({
+  command: z.literal("screencast_stop"),
+  args: BrowserAutomationTabTargetSchema,
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -288,6 +310,8 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationResizeCommandSchema,
   BrowserAutomationCloseTabCommandSchema,
   BrowserAutomationInputAtCommandSchema,
+  BrowserAutomationScreencastStartCommandSchema,
+  BrowserAutomationScreencastStopCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
@@ -496,6 +520,17 @@ export const BrowserAutomationInputAtResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
 });
 
+export const BrowserAutomationScreencastStartResultSchema = z.object({
+  command: z.literal("screencast_start"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  slot: z.number().int().min(0).max(255),
+});
+
+export const BrowserAutomationScreencastStopResultSchema = z.object({
+  command: z.literal("screencast_stop"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -520,6 +555,8 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationResizeResultSchema,
   BrowserAutomationCloseTabResultSchema,
   BrowserAutomationInputAtResultSchema,
+  BrowserAutomationScreencastStartResultSchema,
+  BrowserAutomationScreencastStopResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({
