@@ -39,6 +39,7 @@ test("search stays available while the initial tree listing is errored and retri
   await explorer.getByText("Retry", { exact: true }).click();
   await searchToggle.click();
   await expect(explorer.getByTestId("file-search-pane")).toBeVisible();
+  await expect(explorer.getByTestId("files-sort-trigger")).toBeHidden();
 });
 
 test("opening the same search match again recenters the file", async ({ page }) => {
