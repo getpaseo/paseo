@@ -6,14 +6,22 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const requireFromHere = createRequire(import.meta.url);
+const afterPack = requireFromHere("../../scripts/after-pack.js").default as (context: {
+  appOutDir: string;
+  arch: number;
+  electronPlatformName: string;
+}) => Promise<void>;
 
 function writeExecutable(filePath: string, contents: string): void {
   writeFileSync(filePath, contents, "utf8");
@@ -62,7 +70,93 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   return { root, shimPath };
 }
 
+function createFakeLinuxApp(): { executablePath: string; originalContents: string; root: string } {
+  const root = mkdtempSync(join(tmpdir(), "paseo-linux-launcher-test-"));
+  const appOutDir = join(root, "packaged app [test]");
+  const executablePath = join(appOutDir, "Paseo");
+  const originalContents = [
+    "#!/usr/bin/env node",
+    "process.stdout.write(JSON.stringify(process.argv.slice(2)));",
+    "",
+  ].join("\n");
+
+  mkdirSync(appOutDir, { recursive: true });
+  writeExecutable(executablePath, originalContents);
+
+  return { executablePath, originalContents, root };
+}
+
+async function runLinuxAfterPack(appOutDir: string): Promise<void> {
+  await afterPack({
+    appOutDir,
+    arch: -1,
+    electronPlatformName: "linux",
+  });
+}
+
 describe("desktop packaging", () => {
+  it("adds --no-sandbox before user arguments for AppImage launches", async () => {
+    if (process.platform === "win32") return;
+
+    const app = createFakeLinuxApp();
+    try {
+      await runLinuxAfterPack(dirname(app.executablePath));
+
+      const userArgs = ["path with spaces", "$(touch should-not-run)", "semi;colon", "*.txt"];
+      const result = spawnSync(app.executablePath, userArgs, {
+        encoding: "utf8",
+        env: { ...process.env, APPIMAGE: "/tmp/Paseo image.AppImage" },
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual(["--no-sandbox", ...userArgs]);
+    } finally {
+      rmSync(app.root, { recursive: true, force: true });
+    }
+  });
+
+  it("forwards non-AppImage Linux arguments without disabling the sandbox", async () => {
+    if (process.platform === "win32") return;
+
+    const app = createFakeLinuxApp();
+    try {
+      await runLinuxAfterPack(dirname(app.executablePath));
+      const env = { ...process.env };
+      delete env.APPIMAGE;
+
+      const userArgs = ["path with spaces", "--user-flag=value", "quote'argument"];
+      const result = spawnSync(app.executablePath, userArgs, { encoding: "utf8", env });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual(userArgs);
+    } finally {
+      rmSync(app.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the Linux launcher executable and the real executable intact when rerun", async () => {
+    if (process.platform === "win32") return;
+
+    const app = createFakeLinuxApp();
+    try {
+      const appOutDir = dirname(app.executablePath);
+      await runLinuxAfterPack(appOutDir);
+      await runLinuxAfterPack(appOutDir);
+
+      expect(readFileSync(`${app.executablePath}.bin`, "utf8")).toBe(app.originalContents);
+      expect(statSync(app.executablePath).mode & 0o111).toBe(0o111);
+
+      const result = spawnSync(app.executablePath, ["after rerun"], {
+        encoding: "utf8",
+        env: { ...process.env, APPIMAGE: "/tmp/Paseo.AppImage" },
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual(["--no-sandbox", "after rerun"]);
+    } finally {
+      rmSync(app.root, { recursive: true, force: true });
+    }
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 

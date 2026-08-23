@@ -310,13 +310,6 @@ if (forcedUserDataDir) {
   }
 }
 
-// AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
-// chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
-// sandbox only in that case; .deb/.rpm keep the sandbox on, matching VS Code.
-if (process.platform === "linux" && process.env.APPIMAGE) {
-  app.commandLine.appendSwitch("no-sandbox");
-}
-
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
