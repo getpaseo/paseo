@@ -80,7 +80,10 @@ export function useBrowserScreencast(
   const client = useHostRuntimeClient(serverId);
   const [view, setView] = useState<BrowserScreencastView>(EMPTY_VIEW);
   const framesRef = useRef<FrameSource[]>([]);
-  const requested = paneSize ? requestedSize(paneSize) : null;
+  // A zero-sized first layout would subscribe at the floor and re-arm the host
+  // the moment the real size lands, costing a stop and start per mount.
+  const hasPane = paneSize !== null && paneSize.width > 0 && paneSize.height > 0;
+  const requested = hasPane ? requestedSize(paneSize) : null;
   const maxWidth = requested?.maxWidth ?? null;
   const maxHeight = requested?.maxHeight ?? null;
 
