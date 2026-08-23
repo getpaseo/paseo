@@ -83,10 +83,11 @@ interface ActiveScreencast {
   slot: number;
   stopListening: () => void;
   sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
-  hasEmitted: boolean;
+  settleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-const SCREENCAST_IDLE_FRAME_MS = 600;
+const SCREENCAST_SETTLE_MS = 600;
+const SCREENCAST_SETTLE_QUALITY = 92;
 
 type BrowserAutomationInputAtEvent = Extract<
   BrowserAutomationCommand,
@@ -638,7 +639,7 @@ async function executeScreencastStart(
     slot: args.slot,
     stopListening,
     sendDebugCommand,
-    hasEmitted: false,
+    settleTimer: null,
   };
   activeScreencastsByContentsId.set(contentsId, screencast);
   target.contents.onceDestroyed(() => {
@@ -658,7 +659,7 @@ async function executeScreencastStart(
     throw error;
   }
 
-  void sendIdleScreencastFrame(screencast, target.browserId, emitFrame);
+  armSettleCapture(screencast, target.browserId, emitFrame);
 
   return {
     requestId,
@@ -709,34 +710,48 @@ function handleScreencastFrame(
   if (deviceWidth === null || deviceHeight === null) {
     return;
   }
-  screencast.hasEmitted = true;
   emitFrame({
     browserId,
     slot,
     metadata: { deviceWidth, deviceHeight },
     data: Buffer.from(params.data, "base64"),
   });
+  armSettleCapture(screencast, browserId, emitFrame);
 }
 
 /**
- * Chrome only emits a screencast frame when the page is damaged, so a viewer
- * that subscribes to a static page sees nothing. Capture one frame directly if
- * the stream stays silent.
+ * Screencast frames are downscaled and lightly compressed so motion stays cheap,
+ * and Chrome only emits them on damage. Once the page goes quiet, replace the
+ * last one with a full-resolution capture: that is what a viewer actually reads,
+ * and it doubles as the first frame for a page that never damages at all.
  */
-async function sendIdleScreencastFrame(
+function armSettleCapture(
+  screencast: ActiveScreencast,
+  browserId: string,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): void {
+  if (screencast.settleTimer) {
+    clearTimeout(screencast.settleTimer);
+  }
+  screencast.settleTimer = setTimeout(() => {
+    screencast.settleTimer = null;
+    void sendSettledScreencastFrame(screencast, browserId, emitFrame);
+  }, SCREENCAST_SETTLE_MS);
+}
+
+async function sendSettledScreencastFrame(
   screencast: ActiveScreencast,
   browserId: string,
   emitFrame: (frame: BrowserScreencastFrameEvent) => void,
 ): Promise<void> {
-  await delay(SCREENCAST_IDLE_FRAME_MS);
-  if (screencast.hasEmitted) {
-    return;
-  }
   const shot = await screencast
-    .sendDebugCommand("Page.captureScreenshot", { format: "jpeg", quality: 60 })
+    .sendDebugCommand("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: SCREENCAST_SETTLE_QUALITY,
+    })
     .catch(() => null);
   const metrics = await screencast.sendDebugCommand("Page.getLayoutMetrics", {}).catch(() => null);
-  if (screencast.hasEmitted || !isRecord(shot) || typeof shot.data !== "string") {
+  if (!isRecord(shot) || typeof shot.data !== "string") {
     return;
   }
   const viewport =
@@ -746,7 +761,6 @@ async function sendIdleScreencastFrame(
   if (deviceWidth === null || deviceHeight === null) {
     return;
   }
-  screencast.hasEmitted = true;
   emitFrame({
     browserId,
     slot: screencast.slot,
@@ -758,6 +772,10 @@ async function sendIdleScreencastFrame(
 function removeScreencast(contentsId: number, screencast: ActiveScreencast): void {
   if (activeScreencastsByContentsId.get(contentsId) !== screencast) {
     return;
+  }
+  if (screencast.settleTimer) {
+    clearTimeout(screencast.settleTimer);
+    screencast.settleTimer = null;
   }
   screencast.stopListening();
   activeScreencastsByContentsId.delete(contentsId);

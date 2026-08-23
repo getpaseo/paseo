@@ -76,13 +76,22 @@ function submit(input: HTMLInputElement, text: string) {
 }
 
 describe("BrowserChrome", () => {
-  it("navigates to the trimmed draft on submit", () => {
+  it("gives a scheme-less draft a scheme so the daemon accepts it", () => {
     const onNavigate = vi.fn();
     const input = renderChrome("https://a.test/", onNavigate);
 
-    submit(input, "  example.com  ");
+    submit(input, "  google.com  ");
 
-    expect(onNavigate).toHaveBeenCalledWith("example.com");
+    expect(onNavigate).toHaveBeenCalledWith("https://google.com");
+  });
+
+  it("navigates a localhost draft over http", () => {
+    const onNavigate = vi.fn();
+    const input = renderChrome("https://a.test/", onNavigate);
+
+    submit(input, "localhost:8081");
+
+    expect(onNavigate).toHaveBeenCalledWith("http://localhost:8081");
   });
 
   it("ignores a blank draft", () => {

@@ -78,6 +78,7 @@ class FakeTab implements TabContents {
   public fullPageCaptureFailuresBeforeSuccess = 0;
   public layoutMetrics = {
     cssLayoutViewport: { clientWidth: 390, clientHeight: 844 },
+    cssVisualViewport: { clientWidth: 390, clientHeight: 844 },
     cssContentSize: { width: 390, height: 1200 },
   };
   public fullPageScreenshotData = "fullPagePng";
@@ -486,6 +487,12 @@ function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness
       stats: { nodeCount: 6, refCount: 5, textLength: 187, iframeCount: 0, maxDepth: 1 },
     },
   });
+}
+
+function captureQualities(browser: BrowserAutomationHarness): unknown[] {
+  return browser.tab.debugCommands
+    .filter((entry) => entry.command === "Page.captureScreenshot")
+    .map((entry) => entry.params?.quality);
 }
 
 describe("executeAutomationCommand", () => {
@@ -1362,6 +1369,54 @@ describe("executeAutomationCommand", () => {
     ]);
 
     await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
+  });
+
+  test("a settled page gets a full-resolution frame after motion stops", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      await browser.execute({
+        command: "screencast_start",
+        args: {
+          browserId: BROWSER_A,
+          slot: 4,
+          quality: 60,
+          maxWidth: 1024,
+          maxHeight: 768,
+          everyNthFrame: 1,
+        },
+      });
+
+      browser.tab.emitDebugMessage("Page.screencastFrame", {
+        sessionId: 1,
+        data: Buffer.from([1]).toString("base64"),
+        metadata: { deviceWidth: 1000, deviceHeight: 750 },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      browser.tab.emitDebugMessage("Page.screencastFrame", {
+        sessionId: 2,
+        data: Buffer.from([2]).toString("base64"),
+        metadata: { deviceWidth: 1000, deviceHeight: 750 },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Still moving, so the expensive capture stays deferred.
+      expect(captureQualities(browser)).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(captureQualities(browser)).toEqual([92]);
+      expect(browser.screencastFrames.at(-1)).toEqual({
+        browserId: BROWSER_A,
+        slot: 4,
+        metadata: { deviceWidth: 390, deviceHeight: 844 },
+        data: Buffer.from(browser.tab.fullPageScreenshotData, "base64"),
+      });
+
+      await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("screencast_stop stops capture and removes the frame listener", async () => {
