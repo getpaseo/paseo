@@ -1,6 +1,14 @@
 import { useCallback, useMemo, useReducer } from "react";
 import { useTranslation } from "react-i18next";
-import { hasForeignAgentContextAttachments, type ComposerAttachment } from "@/attachments/types";
+import {
+  hasForeignAgentContextAttachments,
+  hasLocalAgentContextAttachments,
+  type ComposerAttachment,
+} from "@/attachments/types";
+import {
+  prepareAgentContextAttachmentsForSubmit,
+  type AgentContextSubmitRuntime,
+} from "@/attachments/agent-context-transfer";
 import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
@@ -18,10 +26,6 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
-
-function hasAgentContextAttachment(attachments: readonly ComposerAttachment[]): boolean {
-  return attachments.some((attachment) => attachment.kind === "agent_context");
-}
 
 function hasWireAgentContextAttachment(
   attachments: readonly AgentAttachment[] | undefined,
@@ -44,7 +48,10 @@ function resolveAgentContextAttachmentError(input: {
   updateHostMessage: string;
   wrongHostMessage: string;
 }): string | null {
-  if (hasAgentContextAttachment(input.attachments) && !input.supportsAgentContextAttachments) {
+  if (
+    hasLocalAgentContextAttachments(input.attachments, input.pendingServerId) &&
+    !input.supportsAgentContextAttachments
+  ) {
     return input.updateHostMessage;
   }
   if (hasForeignAgentContextAttachments(input.attachments, input.pendingServerId)) {
@@ -176,6 +183,7 @@ interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   buildDraftAgent: (attempt: CreateAttempt) => TDraftAgent;
   onCreateSuccess: (ctx: { result: TCreateResult; attempt: CreateAttempt }) => Promise<void> | void;
   onCreateError?: (error: Error) => void;
+  agentContextRuntime?: AgentContextSubmitRuntime;
 }
 
 export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
@@ -190,6 +198,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   buildDraftAgent,
   onCreateSuccess,
   onCreateError,
+  agentContextRuntime,
 }: UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult>) {
   const { t } = useTranslation();
   const [machine, dispatch] = useReducer(
@@ -353,7 +362,12 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+      const preparedAttachments = await prepareAgentContextAttachmentsForSubmit({
+        attachments,
+        destinationServerId: pendingServerId,
+        runtime: agentContextRuntime,
+      });
+      const wirePayload = splitComposerAttachmentsForSubmit(preparedAttachments, {
         format: resolveComposerAttachmentSubmitFormat({
           supportsForgeAttachments: serverFeatures?.forgeSearch === true,
         }),
@@ -395,6 +409,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     },
     [
       allowEmptyText,
+      agentContextRuntime,
       draftId,
       getPendingServerId,
       isSubmitting,

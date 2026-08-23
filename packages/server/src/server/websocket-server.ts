@@ -104,6 +104,7 @@ import {
   type DaemonPermission,
 } from "./authorization/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
+import type { AgentContextTransferCrypto } from "./agent/agent-context-transfer.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
@@ -610,6 +611,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly directorySync = new DirectorySyncService();
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
+  private readonly agentContextTransfer: AgentContextTransferCrypto | null;
 
   constructor(
     server: HTTPServer,
@@ -657,6 +659,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    agentContextTransfer?: AgentContextTransferCrypto,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -673,6 +676,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.agentContextTransfer = agentContextTransfer ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1438,6 +1442,7 @@ export class VoiceAssistantWebSocketServer {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceLabelService: this.workspaceLabelService ?? undefined,
+      agentContextTransfer: this.agentContextTransfer ?? undefined,
       directorySync: this.directorySync,
       scheduleService: this.scheduleService,
       checkoutDiffManager: this.checkoutDiffManager,
@@ -1740,6 +1745,8 @@ export class VoiceAssistantWebSocketServer {
         agentForkContextCursor: true,
         // COMPAT(agentContextAttachments): added in v0.2.0, remove gate after 2027-01-18.
         agentContextAttachments: true,
+        // COMPAT(agentContextTransfer): added in v0.5.0, remove gate after 2027-08-23.
+        ...(this.agentContextTransfer ? { agentContextTransfer: true } : {}),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: true,
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.

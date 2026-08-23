@@ -60,7 +60,10 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { i18n } from "@/i18n/i18next";
-import { hasForeignAgentContextAttachments } from "@/attachments/types";
+import {
+  hasForeignAgentContextAttachments,
+  hasLocalAgentContextAttachments,
+} from "@/attachments/types";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
@@ -2191,7 +2194,7 @@ export class HostRuntimeStore {
           useSessionStore.getState().sessions[serverId]?.serverInfo?.features
             ?.agentContextAttachments === true;
         if (
-          attachments.some((attachment) => attachment.kind === "agent_context") &&
+          hasLocalAgentContextAttachments(attachments, serverId) &&
           !supportsAgentContextAttachments
         ) {
           throw new Error(i18n.t("agentContext.status.updateHost"));
@@ -2206,6 +2209,12 @@ export class HostRuntimeStore {
           agentId,
           text,
           attachments,
+          destinationServerId: serverId,
+          agentContextRuntime: {
+            getClient: (sourceServerId) => this.getClient(sourceServerId),
+            getFeatures: (sourceServerId) =>
+              useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+          },
           attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
             supportsForgeAttachments,
           }),

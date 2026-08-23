@@ -26,4 +26,39 @@ describe("splitComposerAttachmentsForSubmit", () => {
       ],
     });
   });
+
+  it("serializes a prepared encrypted cross-host transfer", () => {
+    const attachment: ComposerAttachment = {
+      kind: "agent_context",
+      source: { serverId: "source", agentId: "agent-source", title: "Source" },
+      crossHost: { destinationServerId: "destination", mode: "secure" },
+      transfer: {
+        version: 1,
+        destinationServerId: "destination",
+        sourcePublicKeyB64: "source-key",
+        ciphertextB64: "ciphertext",
+      },
+    };
+
+    expect(splitComposerAttachmentsForSubmit([attachment]).attachments).toEqual([
+      {
+        type: "agent_context",
+        agentId: "agent-source",
+        title: "Source",
+        transfer: attachment.transfer,
+      },
+    ]);
+  });
+
+  it("rejects an unprepared cross-host reference", () => {
+    const attachment: ComposerAttachment = {
+      kind: "agent_context",
+      source: { serverId: "source", agentId: "agent-source", title: "Source" },
+      crossHost: { destinationServerId: "destination", mode: "secure" },
+    };
+
+    expect(() => splitComposerAttachmentsForSubmit([attachment])).toThrow(
+      "Cross-host agent context must be prepared before submission.",
+    );
+  });
 });

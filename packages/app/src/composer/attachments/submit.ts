@@ -66,10 +66,17 @@ export function splitComposerAttachmentsForSubmit(
     }
 
     if (attachment.kind === "agent_context") {
+      if (attachment.crossHost && !attachment.transfer) {
+        throw new Error("Cross-host agent context must be prepared before submission.");
+      }
+      if (attachment.transfer && !attachment.crossHost) {
+        throw new Error("Encrypted agent context is missing its cross-host contract.");
+      }
       agentAttachments.push({
         type: "agent_context",
         agentId: attachment.source.agentId,
         title: attachment.source.title,
+        ...(attachment.transfer ? { transfer: attachment.transfer } : {}),
       });
       continue;
     }

@@ -15,6 +15,7 @@ import {
   isAgentContextAttachment,
   isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
+  resolveAgentContextAttachmentMode,
   shouldResetAgentContextPickerState,
 } from "./agent-context-picker-view-model";
 
@@ -70,7 +71,7 @@ function groupAgentIds(groups: ReturnType<typeof buildAgentContextSourceGroups>)
 }
 
 describe("buildAgentContextSourceGroups", () => {
-  it("keeps only active top-level agents from the current host", () => {
+  it("keeps active top-level agents from every host and excludes only the current identity", () => {
     const groups = buildAgentContextSourceGroups({
       agents: [
         agent({ id: "current" }),
@@ -85,7 +86,10 @@ describe("buildAgentContextSourceGroups", () => {
       query: "",
     });
 
-    expect(groupAgentIds(groups)).toEqual([{ kind: "workspace", ids: ["eligible"] }]);
+    expect(groupAgentIds(groups)).toEqual([
+      { kind: "workspace", ids: ["eligible"] },
+      { kind: "other", ids: ["other-host"] },
+    ]);
   });
 
   it("groups sources by workspace and project, orders each group by activity, and searches labels", () => {
@@ -217,6 +221,18 @@ describe("agent context attachment admission", () => {
     ]);
   });
 
+  it("keeps an explicitly destination-bound cross-host reference", () => {
+    const attachment: UserComposerAttachment = {
+      kind: "agent_context",
+      source: { serverId: "server-a", agentId: "source-a", title: "Source A" },
+      crossHost: { destinationServerId: "server-b", mode: "secure" },
+    };
+
+    expect(hasForeignAgentContextAttachments([attachment], "server-b")).toBe(false);
+    expect(filterAgentContextAttachmentsForServer([attachment], "server-b")).toEqual([attachment]);
+    expect(hasForeignAgentContextAttachments([attachment], "server-c")).toBe(true);
+  });
+
   it("updates a duplicate reference selected through the other interface", () => {
     const picked = appendAgentContextAttachmentFromPicker({
       current: [],
@@ -291,5 +307,49 @@ describe("agent context attachment admission", () => {
     expect(
       afterLimit.filter(isAgentContextAttachment).map((entry) => entry.source.agentId),
     ).toEqual(["source-1", "source-2", "source-3", "source-4", "source-5"]);
+  });
+});
+
+describe("resolveAgentContextAttachmentMode", () => {
+  const defaults = {
+    sourceServerId: "source",
+    destinationServerId: "destination",
+    destinationSupportsLocalReferences: true,
+    sourceSupportsSecureTransfer: true,
+    destinationSupportsSecureTransfer: true,
+    sourceSupportsCompatibilityTransfer: true,
+  };
+
+  it("prefers secure transfer across hosts", () => {
+    expect(resolveAgentContextAttachmentMode(defaults)).toBe("secure");
+  });
+
+  it("uses compatibility only when secure transfer cannot be negotiated", () => {
+    expect(
+      resolveAgentContextAttachmentMode({
+        ...defaults,
+        destinationSupportsSecureTransfer: false,
+      }),
+    ).toBe("compatibility");
+  });
+
+  it("fails closed when the source cannot curate compatibility context", () => {
+    expect(
+      resolveAgentContextAttachmentMode({
+        ...defaults,
+        destinationSupportsSecureTransfer: false,
+        sourceSupportsCompatibilityTransfer: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps same-host references behind their existing feature", () => {
+    expect(
+      resolveAgentContextAttachmentMode({
+        ...defaults,
+        sourceServerId: "destination",
+        destinationSupportsLocalReferences: false,
+      }),
+    ).toBeNull();
   });
 });

@@ -1521,7 +1521,7 @@ export const es: TranslationResources = {
   },
   agentContext: {
     title: "Adjuntar agentes",
-    subtitle: "Da a este agente contexto de otro agente en este host.",
+    subtitle: "Da contexto de un agente en cualquier host conectado.",
     searchPlaceholder: "Buscar agentes...",
     groups: {
       workspace: "Este espacio de trabajo",
@@ -1530,6 +1530,11 @@ export const es: TranslationResources = {
     },
     status: {
       attached: "Ya adjunto",
+      secureTransfer: "Transferencia cifrada de extremo a extremo",
+      compatibilityTransfer: "Transferencia compatible: la app retransmite contexto legible",
+      transferUnavailable: "Actualiza el host de origen para transferir este contexto.",
+      transferChanged:
+        "Cambió la compatibilidad del host. Revisa los agentes seleccionados e inténtalo de nuevo.",
       updateHost: "Actualiza el host para adjuntar contexto de agente.",
       wrongHost: "Solo puedes adjuntar agentes del host seleccionado.",
       loading: "Cargando agentes...",
@@ -1543,7 +1548,14 @@ export const es: TranslationResources = {
       attach: "Adjuntar",
       loadMore: "Cargar más",
     },
-    sameHostNote: "El contexto del agente se captura al enviar el mensaje.",
+    compatibility: {
+      title: "¿Usar transferencia compatible?",
+      message:
+        "Uno o más hosts no admiten la transferencia cifrada. Durante este envío, Paseo retransmitirá en memoria el contexto preparado por el origen como texto legible. No se guardará en el borrador ni en la cola.",
+      confirm: "Usar transferencia compatible",
+    },
+    transferNote:
+      "El contexto entre hosts usa cifrado de extremo a extremo cuando ambos daemons lo admiten. Los daemons antiguos requieren una transferencia compatible explícita.",
   },
   loadOlderHistory: {
     failed: "No se pudo cargar el historial anterior",

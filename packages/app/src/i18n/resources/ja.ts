@@ -1492,7 +1492,7 @@ export const ja: TranslationResources = {
   },
   agentContext: {
     title: "エージェントを添付",
-    subtitle: "このホスト上の別のエージェントからコンテキストを追加します。",
+    subtitle: "接続中の任意のホストにあるエージェントからコンテキストを追加します。",
     searchPlaceholder: "エージェントを検索...",
     groups: {
       workspace: "このワークスペース",
@@ -1501,6 +1501,11 @@ export const ja: TranslationResources = {
     },
     status: {
       attached: "すでに添付済み",
+      secureTransfer: "エンドツーエンド暗号化転送",
+      compatibilityTransfer: "互換転送 — アプリが読み取り可能なコンテキストを中継",
+      transferUnavailable: "このコンテキストを転送するには送信元ホストを更新してください。",
+      transferChanged:
+        "ホストの互換性が変更されました。選択したエージェントを確認して再試行してください。",
       updateHost: "エージェントコンテキストを添付するにはホストを更新してください。",
       wrongHost: "選択中のホストのエージェントのみ添付できます。",
       loading: "エージェントを読み込み中...",
@@ -1514,7 +1519,14 @@ export const ja: TranslationResources = {
       attach: "添付",
       loadMore: "さらに読み込む",
     },
-    sameHostNote: "エージェントコンテキストはプロンプト送信時に取得されます。",
+    compatibility: {
+      title: "互換転送を使用しますか？",
+      message:
+        "暗号化転送に対応していないホストがあります。この送信中、Paseo は送信元が整理したコンテキストを読み取り可能なテキストとしてメモリ内で中継します。下書きやキューには保存しません。",
+      confirm: "互換転送を使用",
+    },
+    transferNote:
+      "両方のデーモンが対応している場合、ホスト間コンテキストはエンドツーエンドで暗号化されます。古いデーモンでは明示的な互換転送が必要です。",
   },
   loadOlderHistory: {
     failed: "古い履歴を読み込めませんでした",

@@ -12,19 +12,23 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerAgentContextPill, ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
 import { AgentContextPicker } from "@/components/agent-context-picker";
-import { appendAgentContextAttachmentFromPicker } from "@/components/agent-context-picker-view-model";
+import { appendAgentContextAttachment } from "@/components/agent-context-picker-view-model";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
@@ -38,7 +42,7 @@ import {
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { UserComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
@@ -431,8 +435,8 @@ export function WorkspaceDraftAgentTab({
     setIsAgentContextPickerOpen(false);
   }, []);
   const handleAddAgentContext = useCallback(
-    (source: AggregatedAgent) => {
-      setDraftAttachments((current) => appendAgentContextAttachmentFromPicker({ current, source }));
+    (attachment: Extract<UserComposerAttachment, { kind: "agent_context" }>) => {
+      setDraftAttachments((current) => appendAgentContextAttachment(current, attachment));
     },
     [setDraftAttachments],
   );
@@ -515,6 +519,11 @@ export function WorkspaceDraftAgentTab({
     getPendingServerId: () => serverId,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,
+    agentContextRuntime: {
+      getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+      getFeatures: (sourceServerId) =>
+        useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+    },
     validateBeforeSubmit: ({ text, attachments }) => {
       const allowsEmptyDraftText = shouldAllowEmptyDraftText({
         allowsEmptyAutoSubmit,

@@ -53,6 +53,8 @@ import {
 } from "../services/github-service.js";
 import type { CheckDetails, ForgeService } from "../services/forge-service.js";
 import type { GitHubPullRequestStatusFacts } from "../services/github-facts.js";
+import { generateKeyPair } from "@getpaseo/relay/e2ee";
+import { createAgentContextTransferCrypto } from "./agent/agent-context-transfer.js";
 
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -330,6 +332,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  agentContextTransfer?: SessionOptions["agentContextTransfer"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -433,6 +436,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
+    agentContextTransfer: options.agentContextTransfer,
   };
   return new Session(sessionOptions);
 }
@@ -1439,6 +1443,68 @@ test("resolves an agent reference from retained history without loading the prov
     direction: "tail",
     limit: 25_000,
   });
+});
+
+test("exports curated encrypted context that only the destination session resolves", async () => {
+  const sourceMessages: SessionOutboundMessage[] = [];
+  const sourceTransfer = createAgentContextTransferCrypto({
+    serverId: "source-host",
+    keyPair: generateKeyPair(),
+  });
+  const destinationTransfer = createAgentContextTransferCrypto({
+    serverId: "destination-host",
+    keyPair: generateKeyPair(),
+  });
+  const sourceSession = createSessionForTest({
+    serverId: "source-host",
+    messages: sourceMessages,
+    agentContextTransfer: sourceTransfer,
+    agentManager: {
+      getAgent: vi.fn(() => null),
+      fetchRetainedTimeline: vi.fn(() => retainedTimelineWithAssistant("Private source answer.")),
+    },
+    agentStorage: {
+      get: vi.fn(async () =>
+        createStoredAgentRecord({
+          id: "source-agent",
+          cwd: "/tmp/source",
+          title: "Source session",
+        }),
+      ),
+    },
+  });
+
+  await sourceSession.handleMessage({
+    type: "agent.context.export_transfer.request",
+    requestId: "export-request",
+    agentId: "source-agent",
+    destinationServerId: "destination-host",
+    destinationPublicKeyB64: destinationTransfer.getRecipient().publicKeyB64,
+  });
+
+  const response = sourceMessages.find(
+    (message) => message.type === "agent.context.export_transfer.response",
+  );
+  if (response?.type !== "agent.context.export_transfer.response" || !response.payload.transfer) {
+    throw new Error("expected an encrypted agent context transfer");
+  }
+  expect(JSON.stringify(response.payload.transfer)).not.toContain("Private source answer");
+
+  const destinationSession = createSessionForTest({
+    serverId: "destination-host",
+    agentContextTransfer: destinationTransfer,
+  });
+  const resolved = await asSessionInternals(destinationSession).resolveAgentContextAttachments([
+    {
+      type: "agent_context",
+      agentId: "source-agent",
+      transfer: response.payload.transfer,
+    },
+  ]);
+
+  expect(resolved?.[0]).toMatchObject({ type: "text", contextKind: "chat_history" });
+  const attachment = resolved?.[0];
+  expect(attachment?.type === "text" ? attachment.text : "").toContain("Private source answer.");
 });
 
 test("rejects unsafe agent context references before reading retained history", async () => {

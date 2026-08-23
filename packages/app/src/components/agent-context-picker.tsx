@@ -5,6 +5,7 @@ import { Bot, Check, History } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
+  buildAgentContextAttachment,
   buildAgentContextSourceGroups,
   getAgentContextAttachmentKey,
   getAgentContextPickerSearchResetKey,
@@ -14,7 +15,9 @@ import {
   isAgentContextAttachment,
   isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
+  resolveAgentContextAttachmentMode,
   shouldResetAgentContextPickerState,
+  type AgentContextAttachmentMode,
   type AgentContextSourceGroupKind,
 } from "@/components/agent-context-picker-view-model";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -23,7 +26,9 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useAgentHistory } from "@/hooks/use-agent-history";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostFeatureMap } from "@/runtime/host-features";
+import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatTimeAgo } from "@/utils/time";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
@@ -46,7 +51,7 @@ interface AgentContextPickerProps {
   attachments: readonly UserComposerAttachment[];
   supported: boolean;
   onClose: () => void;
-  onAdd: (source: AggregatedAgent) => void;
+  onAdd: (attachment: Extract<UserComposerAttachment, { kind: "agent_context" }>) => void;
 }
 
 function groupLabel(
@@ -77,20 +82,29 @@ function AgentContextSourceRow({
   source,
   selected,
   attached,
+  mode,
   disabled,
   onPress,
 }: {
   source: AggregatedAgent;
   selected: boolean;
   attached: boolean;
+  mode: AgentContextAttachmentMode | null;
   disabled: boolean;
   onPress: (source: AggregatedAgent) => void;
 }) {
   const { t } = useTranslation();
   const title = getAgentContextSourceTitle(source);
   const workspace = getAgentContextSourceWorkspaceLabel(source);
-  const meta = [source.provider, workspace].filter(Boolean).join(" · ");
-  const notice = attached ? t("agentContext.status.attached") : null;
+  const meta = [source.serverLabel, source.provider, workspace].filter(Boolean).join(" · ");
+  let notice = t("agentContext.status.transferUnavailable");
+  if (attached) {
+    notice = t("agentContext.status.attached");
+  } else if (mode === "secure") {
+    notice = t("agentContext.status.secureTransfer");
+  } else if (mode === "compatibility") {
+    notice = t("agentContext.status.compatibilityTransfer");
+  }
   const handlePress = useCallback(() => onPress(source), [onPress, source]);
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -155,7 +169,6 @@ function AgentContextSourceRow({
 }
 
 function AgentContextPickerStatus({
-  supported,
   isConnected,
   isInitialLoad,
   isError,
@@ -164,7 +177,6 @@ function AgentContextPickerStatus({
   hasQuery,
   onRetry,
 }: {
-  supported: boolean;
   isConnected: boolean;
   isInitialLoad: boolean;
   isError: boolean;
@@ -174,9 +186,6 @@ function AgentContextPickerStatus({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
-  if (!supported) {
-    return <Text style={styles.statusText}>{t("agentContext.status.updateHost")}</Text>;
-  }
   if (!isConnected) {
     return <Text style={styles.statusText}>{t("workspace.terminal.hostDisconnected")}</Text>;
   }
@@ -226,12 +235,17 @@ export function AgentContextPicker({
 }: AgentContextPickerProps) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const hosts = useHosts();
+  const hostIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const secureTransferByHost = useHostFeatureMap(hostIds, "agentContextTransfer");
+  const compatibilityTransferByHost = useHostFeatureMap(hostIds, "agentForkContext");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<readonly AggregatedAgent[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const previousServerIdRef = useRef(serverId);
   const history = useAgentHistory({
-    serverId,
-    enabled: visible && supported && isConnected,
+    enabled: visible && isConnected,
     search: query,
   });
 
@@ -246,6 +260,8 @@ export function AgentContextPicker({
     if (!shouldReset) return;
     setQuery("");
     setSelection([]);
+    setIsAdding(false);
+    setAddError(null);
   }, [serverId, visible]);
 
   const existingKeys = useMemo(
@@ -284,6 +300,28 @@ export function AgentContextPicker({
     () => new Set(selection.map((source) => getAgentContextSourceKey(source))),
     [selection],
   );
+  const resolveMode = useCallback(
+    (source: AggregatedAgent) =>
+      resolveAgentContextAttachmentMode({
+        sourceServerId: source.serverId,
+        destinationServerId: serverId,
+        destinationSupportsLocalReferences: supported,
+        sourceSupportsSecureTransfer: secureTransferByHost.get(source.serverId) === true,
+        destinationSupportsSecureTransfer: secureTransferByHost.get(serverId) === true,
+        sourceSupportsCompatibilityTransfer:
+          compatibilityTransferByHost.get(source.serverId) === true,
+      }),
+    [compatibilityTransferByHost, secureTransferByHost, serverId, supported],
+  );
+  const modeByKey = useMemo(
+    () =>
+      new Map(
+        groups
+          .flatMap((group) => group.agents)
+          .map((source) => [getAgentContextSourceKey(source), resolveMode(source)] as const),
+      ),
+    [groups, resolveMode],
+  );
   const existingCount = existingKeys.size;
   const remainingSlots = Math.max(0, MAX_AGENT_CONTEXT_ATTACHMENTS - existingCount);
   const selectionLimitReached =
@@ -293,6 +331,9 @@ export function AgentContextPicker({
     (source: AggregatedAgent) => {
       const key = getAgentContextSourceKey(source);
       if (existingKeys.has(key)) {
+        return;
+      }
+      if (!modeByKey.get(key)) {
         return;
       }
       setSelection((current) => {
@@ -305,14 +346,54 @@ export function AgentContextPicker({
         return [...current, source];
       });
     },
-    [existingKeys, remainingSlots],
+    [existingKeys, modeByKey, remainingSlots],
   );
-  const handleAdd = useCallback(() => {
-    for (const source of selection) {
-      onAdd(source);
+  const handleAdd = useCallback(async () => {
+    if (isAdding) {
+      return;
     }
-    onClose();
-  }, [onAdd, onClose, selection]);
+    const selectedSources = selection.flatMap((source) => {
+      const mode = resolveMode(source);
+      return mode ? [{ source, mode }] : [];
+    });
+    if (selectedSources.length !== selection.length) {
+      setAddError(t("agentContext.status.transferChanged"));
+      return;
+    }
+    if (selectedSources.some(({ mode }) => mode === "compatibility")) {
+      const confirmed = await confirmDialog({
+        title: t("agentContext.compatibility.title"),
+        message: t("agentContext.compatibility.message"),
+        confirmLabel: t("agentContext.compatibility.confirm"),
+        cancelLabel: t("common.actions.cancel"),
+      });
+      if (!confirmed) {
+        return;
+      }
+    }
+    setIsAdding(true);
+    setAddError(null);
+    try {
+      for (const { source, mode } of selectedSources) {
+        const attachment = buildAgentContextAttachment(source);
+        if (mode === "local") {
+          onAdd(attachment);
+        } else if (mode === "secure") {
+          onAdd({ ...attachment, crossHost: { destinationServerId: serverId, mode } });
+        } else {
+          onAdd({
+            ...attachment,
+            crossHost: { destinationServerId: serverId, mode, userConfirmed: true },
+          });
+        }
+      }
+      onClose();
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsAdding(false);
+    }
+  }, [isAdding, onAdd, onClose, resolveMode, selection, serverId, t]);
   const { refreshAll } = history;
   const handleRetry = useCallback(() => {
     void refreshAll();
@@ -333,26 +414,29 @@ export function AgentContextPicker({
     [serverId, t, visible],
   );
   const isEmpty = isConnected && groups.length === 0 && !history.isInitialLoad;
-  const isConfirmDisabled = selection.length === 0 || !supported;
+  const isConfirmDisabled = selection.length === 0 || isAdding;
   const footer = useMemo(
-    () =>
-      supported ? (
-        <View style={styles.footer}>
+    () => (
+      <View style={styles.footer}>
+        <View>
           <Text style={styles.footerText}>
             {t("agentContext.selectionCount", { count: selection.length })}
           </Text>
-          <Button
-            variant="default"
-            size="xs"
-            onPress={handleAdd}
-            disabled={isConfirmDisabled}
-            testID="agent-context-confirm"
-          >
-            {t("agentContext.actions.attach")}
-          </Button>
+          {addError ? <Text style={styles.errorText}>{addError}</Text> : null}
         </View>
-      ) : undefined,
-    [handleAdd, isConfirmDisabled, selection.length, supported, t],
+        <Button
+          variant="default"
+          size="xs"
+          onPress={handleAdd}
+          loading={isAdding}
+          disabled={isConfirmDisabled}
+          testID="agent-context-confirm"
+        >
+          {t("agentContext.actions.attach")}
+        </Button>
+      </View>
+    ),
+    [addError, handleAdd, isAdding, isConfirmDisabled, selection.length, t],
   );
 
   return (
@@ -366,7 +450,6 @@ export function AgentContextPicker({
       snapPoints={AGENT_CONTEXT_PICKER_SNAP_POINTS}
     >
       <AgentContextPickerStatus
-        supported={supported}
         isConnected={isConnected}
         isInitialLoad={history.isInitialLoad}
         isError={history.isError}
@@ -375,34 +458,37 @@ export function AgentContextPicker({
         hasQuery={Boolean(query.trim())}
         onRetry={handleRetry}
       />
-      {supported
-        ? groups.map((group) => (
-            <View key={group.kind} style={styles.group}>
-              <Text style={styles.groupTitle}>{groupLabel(group.kind, t)}</Text>
-              {group.agents.map((source) => {
-                const key = getAgentContextSourceKey(source);
-                const attached = existingKeys.has(key);
-                const selected = selectionKeys.has(key);
-                return (
-                  <AgentContextSourceRow
-                    key={key}
-                    source={source}
-                    selected={selected}
-                    attached={attached}
-                    disabled={isAgentContextSourceSelectionDisabled({
-                      attached,
-                      selected,
-                      selectionCount: selection.length,
-                      remainingSlots,
-                    })}
-                    onPress={handleToggle}
-                  />
-                );
-              })}
-            </View>
-          ))
-        : null}
-      {supported && history.hasMore ? (
+      {groups.map((group) => (
+        <View key={group.kind} style={styles.group}>
+          <Text style={styles.groupTitle}>{groupLabel(group.kind, t)}</Text>
+          {group.agents.map((source) => {
+            const key = getAgentContextSourceKey(source);
+            const attached = existingKeys.has(key);
+            const selected = selectionKeys.has(key);
+            const mode = modeByKey.get(key) ?? null;
+            return (
+              <AgentContextSourceRow
+                key={key}
+                source={source}
+                selected={selected}
+                attached={attached}
+                mode={mode}
+                disabled={
+                  !mode ||
+                  isAgentContextSourceSelectionDisabled({
+                    attached,
+                    selected,
+                    selectionCount: selection.length,
+                    remainingSlots,
+                  })
+                }
+                onPress={handleToggle}
+              />
+            );
+          })}
+        </View>
+      ))}
+      {history.hasMore ? (
         <View style={styles.loadMore}>
           <Button
             size="sm"
@@ -417,7 +503,7 @@ export function AgentContextPicker({
       ) : null}
       <View style={styles.sourceNote}>
         <ThemedHistory size={14} uniProps={mutedColorMapping} />
-        <Text style={styles.sourceNoteText}>{t("agentContext.sameHostNote")}</Text>
+        <Text style={styles.sourceNoteText}>{t("agentContext.transferNote")}</Text>
       </View>
     </AdaptiveModalSheet>
   );
@@ -542,6 +628,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
   footerText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  errorText: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
   },
   loadMore: {
     alignItems: "center",

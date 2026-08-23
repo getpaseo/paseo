@@ -1487,7 +1487,7 @@ export const ko: TranslationResources = {
   },
   agentContext: {
     title: "에이전트 첨부",
-    subtitle: "이 호스트의 다른 에이전트에서 이 에이전트에 컨텍스트를 추가하세요.",
+    subtitle: "연결된 모든 호스트의 에이전트에서 컨텍스트를 추가하세요.",
     searchPlaceholder: "에이전트 검색...",
     groups: {
       workspace: "이 워크스페이스",
@@ -1496,6 +1496,11 @@ export const ko: TranslationResources = {
     },
     status: {
       attached: "이미 첨부됨",
+      secureTransfer: "종단 간 암호화 전송",
+      compatibilityTransfer: "호환 전송 — 앱이 읽을 수 있는 컨텍스트를 중계",
+      transferUnavailable: "이 컨텍스트를 전송하려면 원본 호스트를 업데이트하세요.",
+      transferChanged:
+        "호스트 호환성이 변경되었습니다. 선택한 에이전트를 검토하고 다시 시도하세요.",
       updateHost: "에이전트 컨텍스트를 첨부하려면 호스트를 업데이트하세요.",
       wrongHost: "선택한 호스트의 에이전트만 첨부할 수 있습니다.",
       loading: "에이전트 불러오는 중...",
@@ -1509,7 +1514,14 @@ export const ko: TranslationResources = {
       attach: "첨부",
       loadMore: "더 불러오기",
     },
-    sameHostNote: "프롬프트를 전송할 때 에이전트 컨텍스트가 수집됩니다.",
+    compatibility: {
+      title: "호환 전송을 사용하시겠습니까?",
+      message:
+        "하나 이상의 호스트가 암호화 전송을 지원하지 않습니다. 이 전송 중 Paseo는 원본에서 정리한 컨텍스트를 읽을 수 있는 텍스트로 메모리에서 중계합니다. 초안이나 대기열에는 저장하지 않습니다.",
+      confirm: "호환 전송 사용",
+    },
+    transferNote:
+      "두 데몬이 모두 지원하면 호스트 간 컨텍스트가 종단 간 암호화됩니다. 이전 데몬에서는 명시적인 호환 전송이 필요합니다.",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",

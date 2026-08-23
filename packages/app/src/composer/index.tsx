@@ -85,6 +85,7 @@ import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete, type AgentMentionSelection } from "@/hooks/use-agent-autocomplete";
 import {
+  getHostRuntimeStore,
   useHostRuntimeAgentDirectoryStatus,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
@@ -117,7 +118,10 @@ import type {
   WorkspaceFileComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
-import { hasForeignAgentContextAttachments } from "@/attachments/types";
+import {
+  hasForeignAgentContextAttachments,
+  hasLocalAgentContextAttachments,
+} from "@/attachments/types";
 import type { PickedFile } from "@/attachments/picked-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
@@ -151,12 +155,11 @@ import {
 } from "@/attachments/workspace-file-drag";
 import { AgentContextPicker } from "@/components/agent-context-picker";
 import {
+  appendAgentContextAttachment,
   appendAgentContextAttachmentFromMention,
-  appendAgentContextAttachmentFromPicker,
   isAgentContextAttachment,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
 } from "@/components/agent-context-picker-view-model";
-import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useHostFeature } from "@/runtime/host-features";
 
 const composerImageAttachmentPersister: Pick<
@@ -228,10 +231,6 @@ function resolveMessagePlaceholder(
   return isDesktopWebBreakpoint
     ? t("composer.placeholders.desktop")
     : t("composer.placeholders.mobile");
-}
-
-function hasAgentContextAttachment(attachments: readonly ComposerAttachment[]): boolean {
-  return attachments.some((attachment) => attachment.kind === "agent_context");
 }
 
 function resolveGithubSearchEnabled(
@@ -1366,10 +1365,8 @@ function ComposerContentImpl({
     setIsAgentContextPickerOpen(false);
   }, []);
   const handleAddAgentContext = useCallback(
-    (source: AggregatedAgent) => {
-      setSelectedAttachments((current) =>
-        appendAgentContextAttachmentFromPicker({ current, source }),
-      );
+    (attachment: Extract<UserComposerAttachment, { kind: "agent_context" }>) => {
+      setSelectedAttachments((current) => appendAgentContextAttachment(current, attachment));
     },
     [setSelectedAttachments],
   );
@@ -1530,7 +1527,10 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
-      if (!supportsAgentContextAttachments && hasAgentContextAttachment(submitAttachments)) {
+      if (
+        !supportsAgentContextAttachments &&
+        hasLocalAgentContextAttachments(submitAttachments, serverId)
+      ) {
         throw new Error(t("agentContext.status.updateHost"));
       }
       if (hasForeignAgentContextAttachments(submitAttachments, serverId)) {
@@ -1573,6 +1573,12 @@ function ComposerContentImpl({
         agentId: targetAgentId,
         text,
         attachments: sendAttachments,
+        destinationServerId: serverId,
+        agentContextRuntime: {
+          getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+          getFeatures: (sourceServerId) =>
+            useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+        },
         attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
           supportsForgeAttachments: supportsForgeSearch,
         }),

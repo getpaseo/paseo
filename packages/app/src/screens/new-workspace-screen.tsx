@@ -41,6 +41,7 @@ import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/t
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
+  getHostRuntimeStore,
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
   useHostRuntimeIsConnected,
@@ -88,6 +89,7 @@ import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-att
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
+import { prepareAgentContextAttachmentsForSubmit } from "@/attachments/agent-context-transfer";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -932,9 +934,10 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
   });
-  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments, {
-    format: attachmentSubmitFormat,
-  });
+  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(
+    attachments.filter((attachment) => attachment.kind !== "agent_context"),
+    { format: attachmentSubmitFormat },
+  );
   const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
   const ensuredWorkspace = await ensureWorkspace({
     cwd,
@@ -948,7 +951,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     provider,
     composerState,
   });
-  submitWorkspaceDraft({
+  await submitWorkspaceDraft({
     serverId,
     clearDraft,
     draftId: input.draftId,
@@ -1024,7 +1027,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   };
 }
 
-function submitWorkspaceDraft(input: SubmitDraftInput): void {
+async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<void> {
   const {
     serverId,
     clearDraft,
@@ -1040,7 +1043,16 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const draftId = draftIdInput?.trim() || generateDraftId();
   const clientMessageId = generateMessageId();
   const timestamp = Date.now();
-  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+  const preparedAttachments = await prepareAgentContextAttachmentsForSubmit({
+    attachments,
+    destinationServerId: serverId,
+    runtime: {
+      getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+      getFeatures: (sourceServerId) =>
+        useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+    },
+  });
+  const wirePayload = splitComposerAttachmentsForSubmit(preparedAttachments, {
     format: resolveComposerAttachmentSubmitFormat({
       supportsForgeAttachments: input.supportsForgeSearch,
     }),

@@ -1459,7 +1459,7 @@ export const zhCN: TranslationResources = {
   },
   agentContext: {
     title: "附加 Agent",
-    subtitle: "为此 Agent 添加此主机上另一个 Agent 的上下文。",
+    subtitle: "为此 Agent 添加任意已连接主机上的 Agent 上下文。",
     searchPlaceholder: "搜索 Agent...",
     groups: {
       workspace: "此工作区",
@@ -1468,6 +1468,10 @@ export const zhCN: TranslationResources = {
     },
     status: {
       attached: "已附加",
+      secureTransfer: "端到端加密传输",
+      compatibilityTransfer: "兼容传输 — 应用会中继可读上下文",
+      transferUnavailable: "请更新源主机以传输此上下文。",
+      transferChanged: "主机兼容性已更改。请检查所选 Agent 后重试。",
       updateHost: "请更新主机以附加 Agent 上下文。",
       wrongHost: "只能附加所选主机上的 Agent。",
       loading: "正在加载 Agent...",
@@ -1481,7 +1485,14 @@ export const zhCN: TranslationResources = {
       attach: "附加",
       loadMore: "加载更多",
     },
-    sameHostNote: "发送提示时会获取 Agent 上下文。",
+    compatibility: {
+      title: "使用兼容传输？",
+      message:
+        "一个或多个主机不支持加密传输。本次发送期间，Paseo 会在内存中将源端整理的上下文作为可读文本中继。它不会保存到草稿或队列中。",
+      confirm: "使用兼容传输",
+    },
+    transferNote:
+      "当两个守护进程都支持时，跨主机上下文使用端到端加密。旧版守护进程需要明确选择兼容传输。",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",

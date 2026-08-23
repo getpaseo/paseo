@@ -1507,7 +1507,7 @@ export const ptBR: TranslationResources = {
   },
   agentContext: {
     title: "Anexar agentes",
-    subtitle: "Dê a este agente contexto de outro agente neste host.",
+    subtitle: "Dê contexto de um agente em qualquer host conectado.",
     searchPlaceholder: "Buscar agentes...",
     groups: {
       workspace: "Este workspace",
@@ -1516,6 +1516,11 @@ export const ptBR: TranslationResources = {
     },
     status: {
       attached: "Já anexado",
+      secureTransfer: "Transferência criptografada de ponta a ponta",
+      compatibilityTransfer: "Transferência compatível — o app retransmite contexto legível",
+      transferUnavailable: "Atualize o host de origem para transferir este contexto.",
+      transferChanged:
+        "A compatibilidade do host mudou. Revise os agentes selecionados e tente novamente.",
       updateHost: "Atualize o host para anexar contexto de agente.",
       wrongHost: "Você só pode anexar agentes do host selecionado.",
       loading: "Carregando agentes...",
@@ -1529,7 +1534,14 @@ export const ptBR: TranslationResources = {
       attach: "Anexar",
       loadMore: "Carregar mais",
     },
-    sameHostNote: "O contexto do agente é capturado ao enviar o prompt.",
+    compatibility: {
+      title: "Usar transferência compatível?",
+      message:
+        "Um ou mais hosts não oferecem transferência criptografada. Durante este envio, o Paseo retransmitirá em memória o contexto preparado pela origem como texto legível. Ele não será salvo no rascunho nem na fila.",
+      confirm: "Usar transferência compatível",
+    },
+    transferNote:
+      "O contexto entre hosts usa criptografia de ponta a ponta quando ambos os daemons oferecem suporte. Daemons antigos exigem transferência compatível explícita.",
   },
   loadOlderHistory: {
     failed: "Não foi possível carregar o histórico mais antigo",

@@ -122,6 +122,10 @@ import {
   buildAgentContextAttachment,
   buildAgentForkContextAttachment,
 } from "./agent/activity-curator.js";
+import {
+  AGENT_CONTEXT_TRANSFER_ATTACHMENT_MAX_BYTES,
+  type AgentContextTransferCrypto,
+} from "./agent/agent-context-transfer.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
@@ -486,6 +490,7 @@ export interface SessionOptions {
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  agentContextTransfer?: AgentContextTransferCrypto;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -768,6 +773,7 @@ export class Session {
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
+  private readonly agentContextTransfer: AgentContextTransferCrypto | undefined;
 
   constructor(options: SessionOptions) {
     const {
@@ -793,6 +799,7 @@ export class Session {
       workspaceRegistry,
       directorySync,
       workspaceLabelService,
+      agentContextTransfer,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -828,6 +835,7 @@ export class Session {
     } = options;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
+    this.agentContextTransfer = agentContextTransfer;
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
@@ -2280,6 +2288,10 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.context.get_transfer_recipient.request":
+        return this.handleAgentContextGetTransferRecipientRequest(msg);
+      case "agent.context.export_transfer.request":
+        return this.handleAgentContextExportTransferRequest(msg);
       default:
         return undefined;
     }
@@ -3424,6 +3436,69 @@ export class Session {
     }
   }
 
+  private async handleAgentContextGetTransferRecipientRequest(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "agent.context.get_transfer_recipient.request" }
+    >,
+  ): Promise<void> {
+    const recipient = this.agentContextTransfer?.getRecipient() ?? null;
+    this.emit({
+      type: "agent.context.get_transfer_recipient.response",
+      payload: {
+        requestId: request.requestId,
+        recipient,
+        error: recipient ? null : "Update this host to receive cross-host agent context.",
+      },
+    });
+  }
+
+  private async handleAgentContextExportTransferRequest(
+    request: Extract<SessionInboundMessage, { type: "agent.context.export_transfer.request" }>,
+  ): Promise<void> {
+    try {
+      if (!this.agentContextTransfer) {
+        throw new Error("Update this host to export encrypted agent context.");
+      }
+      const attachment = await this.resolveLocalAgentContextAttachment(
+        { type: "agent_context", agentId: request.agentId },
+        { maxBytes: AGENT_CONTEXT_TRANSFER_ATTACHMENT_MAX_BYTES },
+      );
+      const transfer = this.agentContextTransfer.seal({
+        destination: {
+          serverId: request.destinationServerId,
+          publicKeyB64: request.destinationPublicKeyB64,
+        },
+        sourceAgentId: request.agentId,
+        attachment,
+      });
+      this.emit({
+        type: "agent.context.export_transfer.response",
+        payload: {
+          requestId: request.requestId,
+          agentId: request.agentId,
+          transfer,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = getErrorMessageOr(error, "Failed to export cross-host agent context");
+      this.sessionLogger.warn(
+        { err: error, agentId: request.agentId, requestId: request.requestId },
+        "session: agent.context.export_transfer.request rejected",
+      );
+      this.emit({
+        type: "agent.context.export_transfer.response",
+        payload: {
+          requestId: request.requestId,
+          agentId: request.agentId,
+          transfer: null,
+          error: message,
+        },
+      });
+    }
+  }
+
   /**
    * Resolve daemon-local agent references immediately before the operation
    * consumes attachments. Only retained timeline rows are read: this must not
@@ -3438,12 +3513,16 @@ export class Session {
     }
 
     const uniqueReferences: Extract<AgentAttachment, { type: "agent_context" }>[] = [];
-    const seenAgentIds = new Set<string>();
+    const seenReferences = new Set<string>();
     for (const attachment of attachments) {
-      if (attachment.type !== "agent_context" || seenAgentIds.has(attachment.agentId)) {
+      if (attachment.type !== "agent_context") {
         continue;
       }
-      seenAgentIds.add(attachment.agentId);
+      const referenceKey = this.getAgentContextReferenceKey(attachment);
+      if (seenReferences.has(referenceKey)) {
+        continue;
+      }
+      seenReferences.add(referenceKey);
       uniqueReferences.push(attachment);
     }
     if (uniqueReferences.length > MAX_AGENT_CONTEXT_ATTACHMENTS) {
@@ -3458,10 +3537,10 @@ export class Session {
       AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
       Math.floor(MAX_AGENT_CONTEXT_ATTACHMENTS_TOTAL_BYTES / uniqueReferences.length),
     );
-    const resolvedByAgentId = new Map<string, Extract<AgentAttachment, { type: "text" }>>();
+    const resolvedByReference = new Map<string, Extract<AgentAttachment, { type: "text" }>>();
     for (const reference of uniqueReferences) {
-      resolvedByAgentId.set(
-        reference.agentId,
+      resolvedByReference.set(
+        this.getAgentContextReferenceKey(reference),
         await this.resolveAgentContextAttachment(reference, {
           targetAgentId: options?.targetAgentId,
           maxBytes: maxBytesPerAttachment,
@@ -3470,17 +3549,18 @@ export class Session {
     }
 
     const resolved: AgentAttachment[] = [];
-    const emittedAgentIds = new Set<string>();
+    const emittedReferences = new Set<string>();
     for (const attachment of attachments) {
       if (attachment.type !== "agent_context") {
         resolved.push(attachment);
         continue;
       }
-      if (emittedAgentIds.has(attachment.agentId)) {
+      const referenceKey = this.getAgentContextReferenceKey(attachment);
+      if (emittedReferences.has(referenceKey)) {
         continue;
       }
-      emittedAgentIds.add(attachment.agentId);
-      const context = resolvedByAgentId.get(attachment.agentId);
+      emittedReferences.add(referenceKey);
+      const context = resolvedByReference.get(referenceKey);
       if (!context) {
         throw new Error(`Agent context unavailable: ${attachment.agentId}`);
       }
@@ -3489,14 +3569,39 @@ export class Session {
     return resolved;
   }
 
+  private getAgentContextReferenceKey(
+    reference: Extract<AgentAttachment, { type: "agent_context" }>,
+  ): string {
+    return reference.transfer
+      ? `transfer:${reference.transfer.sourcePublicKeyB64}:${reference.agentId}`
+      : `local:${reference.agentId}`;
+  }
+
   private async resolveAgentContextAttachment(
     reference: Extract<AgentAttachment, { type: "agent_context" }>,
     options: { targetAgentId?: string; maxBytes: number },
   ): Promise<Extract<AgentAttachment, { type: "text" }>> {
+    if (reference.transfer) {
+      if (!this.agentContextTransfer) {
+        throw new Error("Update this host to receive cross-host agent context.");
+      }
+      return this.agentContextTransfer.open({
+        envelope: reference.transfer,
+        sourceAgentId: reference.agentId,
+        maxBytes: options.maxBytes,
+      });
+    }
     if (options.targetAgentId === reference.agentId) {
       throw new Error("An agent cannot attach its own chat history.");
     }
 
+    return this.resolveLocalAgentContextAttachment(reference, { maxBytes: options.maxBytes });
+  }
+
+  private async resolveLocalAgentContextAttachment(
+    reference: Extract<AgentAttachment, { type: "agent_context" }>,
+    options: { maxBytes: number },
+  ): Promise<Extract<AgentAttachment, { type: "text" }>> {
     const source = await this.getAgentContextSource(reference.agentId);
 
     const timeline = this.agentManager.fetchRetainedTimeline(reference.agentId, {

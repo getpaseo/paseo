@@ -1487,7 +1487,7 @@ export const en = {
   },
   agentContext: {
     title: "Attach agents",
-    subtitle: "Give this agent context from another agent on this host.",
+    subtitle: "Give this agent context from any connected host.",
     searchPlaceholder: "Search agents...",
     groups: {
       workspace: "This workspace",
@@ -1496,6 +1496,10 @@ export const en = {
     },
     status: {
       attached: "Already attached",
+      secureTransfer: "End-to-end encrypted transfer",
+      compatibilityTransfer: "Compatibility transfer — app relays readable context",
+      transferUnavailable: "Update the source host to transfer this context.",
+      transferChanged: "Host compatibility changed. Review the selected agents and try again.",
       updateHost: "Update the host to attach agent context.",
       wrongHost: "Attach agents from the selected host only.",
       loading: "Loading agents...",
@@ -1509,7 +1513,14 @@ export const en = {
       attach: "Attach",
       loadMore: "Load more",
     },
-    sameHostNote: "Agent context is captured when you send the prompt.",
+    compatibility: {
+      title: "Use compatibility transfer?",
+      message:
+        "One or more hosts do not support encrypted transfer. Paseo will relay source-curated context as readable text in memory during this send. It will not be saved in the draft or queue.",
+      confirm: "Use compatibility transfer",
+    },
+    transferNote:
+      "Cross-host context uses end-to-end encryption when both daemons support it. Older daemons require explicit compatibility transfer.",
   },
   loadOlderHistory: {
     failed: "Couldn't load older history",

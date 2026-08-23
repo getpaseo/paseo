@@ -14,6 +14,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type AgentContextTransferEnvelope,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -622,6 +623,17 @@ function normalizeListCommandsOptions(
 export interface AgentForkContextOptions {
   boundaryCursor?: FetchAgentTimelineCursor;
   boundaryMessageId?: string;
+  requestId?: string;
+}
+
+export interface AgentContextTransferRecipient {
+  serverId: string;
+  publicKeyB64: string;
+}
+
+export interface ExportAgentContextTransferInput {
+  agentId: string;
+  destination: AgentContextTransferRecipient;
   requestId?: string;
 }
 
@@ -3062,6 +3074,41 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  async getAgentContextTransferRecipient(
+    requestId?: string,
+  ): Promise<AgentContextTransferRecipient> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.context.get_transfer_recipient.response">(
+        {
+          ...(requestId ? { requestId } : {}),
+          message: { type: "agent.context.get_transfer_recipient.request" },
+        },
+      );
+    if (payload.error || !payload.recipient) {
+      throw new Error(payload.error ?? "Host cannot receive cross-host agent context.");
+    }
+    return payload.recipient;
+  }
+
+  async exportAgentContextTransfer(
+    input: ExportAgentContextTransferInput,
+  ): Promise<AgentContextTransferEnvelope> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.context.export_transfer.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "agent.context.export_transfer.request",
+          agentId: input.agentId,
+          destinationServerId: input.destination.serverId,
+          destinationPublicKeyB64: input.destination.publicKeyB64,
+        },
+      });
+    if (payload.error || !payload.transfer) {
+      throw new Error(payload.error ?? "Host could not export cross-host agent context.");
+    }
+    return payload.transfer;
   }
 
   // ============================================================================

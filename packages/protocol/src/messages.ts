@@ -1131,16 +1131,20 @@ export const TextAttachmentSchema = z
     ...(contextKind === "chat_history" ? { contextKind } : {}),
   }));
 
-/**
- * A daemon-local reference to an existing Paseo agent. The client deliberately
- * sends only identity/display metadata: the destination daemon resolves and
- * curates retained history at submission time, so transcript bodies never
- * travel through the client.
- */
+/** A destination-bound, source-curated context capsule relayed as ciphertext. */
+export const AgentContextTransferEnvelopeSchema = z.object({
+  version: z.literal(1),
+  destinationServerId: z.string().min(1).max(256),
+  sourcePublicKeyB64: z.string().min(1).max(128),
+  ciphertextB64: z.string().min(1).max(180_000),
+});
+
 export const AgentContextAttachmentSchema = z.object({
   type: z.literal("agent_context"),
   agentId: z.string().min(1),
   title: z.string().optional(),
+  // COMPAT(agentContextTransfer): added in v0.5.0, remove optional parsing after 2027-08-23.
+  transfer: AgentContextTransferEnvelopeSchema.optional(),
 });
 
 export const ReviewAttachmentContextLineSchema = z.object({
@@ -1827,6 +1831,19 @@ export const AgentForkContextRequestMessageSchema = z.object({
   boundaryCursor: AgentTimelineCursorSchema.optional(),
   boundaryMessageId: z.string().optional(),
   requestId: z.string(),
+});
+
+export const AgentContextGetTransferRecipientRequestSchema = z.object({
+  type: z.literal("agent.context.get_transfer_recipient.request"),
+  requestId: z.string(),
+});
+
+export const AgentContextExportTransferRequestSchema = z.object({
+  type: z.literal("agent.context.export_transfer.request"),
+  requestId: z.string(),
+  agentId: z.string().min(1),
+  destinationServerId: z.string().min(1).max(256),
+  destinationPublicKeyB64: z.string().min(1).max(128),
 });
 
 export const SetAgentModeRequestMessageSchema = z.object({
@@ -3104,6 +3121,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
+  AgentContextGetTransferRecipientRequestSchema,
+  AgentContextExportTransferRequestSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -3466,6 +3485,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(agentContextAttachments): added in v0.2.0, remove gate after 2027-01-18.
         agentContextAttachments: z.boolean().optional(),
+        // COMPAT(agentContextTransfer): added in v0.5.0, remove gate after 2027-08-23.
+        agentContextTransfer: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
@@ -4528,6 +4549,30 @@ export const AgentForkContextResponseMessageSchema = z.object({
     itemCount: z.number().int().nonnegative(),
     boundaryMessageId: z.string().nullable(),
     boundaryCursor: AgentTimelineCursorSchema.nullable().optional(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentContextGetTransferRecipientResponseSchema = z.object({
+  type: z.literal("agent.context.get_transfer_recipient.response"),
+  payload: z.object({
+    requestId: z.string(),
+    recipient: z
+      .object({
+        serverId: z.string().min(1),
+        publicKeyB64: z.string().min(1),
+      })
+      .nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentContextExportTransferResponseSchema = z.object({
+  type: z.literal("agent.context.export_transfer.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    transfer: AgentContextTransferEnvelopeSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -6407,6 +6452,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentContextGetTransferRecipientResponseSchema,
+  AgentContextExportTransferResponseSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -6734,6 +6781,7 @@ export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishM
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type AgentContextTransferEnvelope = z.infer<typeof AgentContextTransferEnvelopeSchema>;
 export type AgentContextAttachment = z.infer<typeof AgentContextAttachmentSchema>;
 export type ForgeChangeRequestAttachment = z.infer<typeof ForgeChangeRequestAttachmentSchema>;
 export type ForgeIssueAttachment = z.infer<typeof ForgeIssueAttachmentSchema>;

@@ -1525,7 +1525,7 @@ export const fr: TranslationResources = {
   },
   agentContext: {
     title: "Joindre des agents",
-    subtitle: "Donnez à cet agent le contexte d’un autre agent sur cet hôte.",
+    subtitle: "Donnez le contexte d’un agent sur n’importe quel hôte connecté.",
     searchPlaceholder: "Rechercher des agents...",
     groups: {
       workspace: "Cet espace de travail",
@@ -1534,6 +1534,11 @@ export const fr: TranslationResources = {
     },
     status: {
       attached: "Déjà joint",
+      secureTransfer: "Transfert chiffré de bout en bout",
+      compatibilityTransfer: "Transfert compatible — l’app relaie un contexte lisible",
+      transferUnavailable: "Mettez à jour l’hôte source pour transférer ce contexte.",
+      transferChanged:
+        "La compatibilité de l’hôte a changé. Vérifiez les agents sélectionnés et réessayez.",
       updateHost: "Mettez l’hôte à jour pour joindre le contexte d’un agent.",
       wrongHost: "Vous ne pouvez joindre que des agents de l’hôte sélectionné.",
       loading: "Chargement des agents...",
@@ -1547,7 +1552,14 @@ export const fr: TranslationResources = {
       attach: "Joindre",
       loadMore: "Charger plus",
     },
-    sameHostNote: "Le contexte de l’agent est capturé lors de l’envoi du message.",
+    compatibility: {
+      title: "Utiliser le transfert compatible ?",
+      message:
+        "Un ou plusieurs hôtes ne prennent pas en charge le transfert chiffré. Pendant cet envoi, Paseo relaiera en mémoire le contexte préparé par la source sous forme de texte lisible. Il ne sera pas enregistré dans le brouillon ni la file.",
+      confirm: "Utiliser le transfert compatible",
+    },
+    transferNote:
+      "Le contexte entre hôtes est chiffré de bout en bout lorsque les deux démons le permettent. Les anciens démons exigent un transfert compatible explicite.",
   },
   loadOlderHistory: {
     failed: "Impossible de charger l'ancien historique",

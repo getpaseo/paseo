@@ -91,7 +91,7 @@ export function buildAgentContextAttachmentFromMetadata(input: {
   };
 }
 
-function appendAgentContextAttachment(
+export function appendAgentContextAttachment(
   current: readonly UserComposerAttachment[],
   attachment: Extract<UserComposerAttachment, { kind: "agent_context" }>,
 ): UserComposerAttachment[] {
@@ -149,6 +149,7 @@ function searchableText(source: AggregatedAgent): string {
     source.title,
     source.cwd,
     source.provider,
+    source.serverLabel,
     source.projectPlacement?.workspaceName,
     source.projectPlacement?.projectName,
   ]
@@ -166,10 +167,29 @@ function compareByActivity(left: AggregatedAgent, right: AggregatedAgent): numbe
   return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
 }
 
+export type AgentContextAttachmentMode = "local" | "secure" | "compatibility";
+
+/** Secure transfer wins. Compatibility is an explicit, source-curated downgrade. */
+export function resolveAgentContextAttachmentMode(input: {
+  sourceServerId: string;
+  destinationServerId: string;
+  destinationSupportsLocalReferences: boolean;
+  sourceSupportsSecureTransfer: boolean;
+  destinationSupportsSecureTransfer: boolean;
+  sourceSupportsCompatibilityTransfer: boolean;
+}): AgentContextAttachmentMode | null {
+  if (input.sourceServerId === input.destinationServerId) {
+    return input.destinationSupportsLocalReferences ? "local" : null;
+  }
+  if (input.sourceSupportsSecureTransfer && input.destinationSupportsSecureTransfer) {
+    return "secure";
+  }
+  return input.sourceSupportsCompatibilityTransfer ? "compatibility" : null;
+}
+
 /**
- * Agent references are resolved by the destination daemon, so sources must
- * belong to that daemon. The picker deliberately does not infer cross-host
- * eligibility from checkout paths or git remotes.
+ * Cross-host sessions can share a project identity, but a workspace id belongs
+ * to one daemon. The transfer mode is resolved separately from grouping.
  */
 export function buildAgentContextSourceGroups(input: {
   agents: readonly AggregatedAgent[];
@@ -195,9 +215,8 @@ export function buildAgentContextSourceGroups(input: {
   for (const source of input.agents) {
     const key = getAgentContextSourceKey(source);
     if (
-      source.serverId !== input.serverId ||
       source.archivedAt ||
-      source.id === input.currentAgentId ||
+      (source.serverId === input.serverId && source.id === input.currentAgentId) ||
       isDelegatedAgent(source) ||
       seen.has(key) ||
       !matchesQuery(source, input.query)
@@ -206,7 +225,11 @@ export function buildAgentContextSourceGroups(input: {
     }
     seen.add(key);
 
-    if (input.workspaceId && source.workspaceId === input.workspaceId) {
+    if (
+      source.serverId === input.serverId &&
+      input.workspaceId &&
+      source.workspaceId === input.workspaceId
+    ) {
       workspace.push(source);
       continue;
     }

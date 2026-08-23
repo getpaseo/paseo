@@ -1,5 +1,6 @@
 import type {
   AgentAttachment,
+  AgentContextTransferEnvelope,
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
@@ -118,6 +119,11 @@ export interface AgentContextAttachmentSource {
 export interface AgentContextAttachment {
   kind: "agent_context";
   source: AgentContextAttachmentSource;
+  crossHost?:
+    | { destinationServerId: string; mode: "secure" }
+    | { destinationServerId: string; mode: "compatibility"; userConfirmed: true };
+  /** Submit-time ciphertext. Never persisted for compatibility transfers. */
+  transfer?: AgentContextTransferEnvelope;
 }
 
 export type UserComposerAttachment =
@@ -160,13 +166,37 @@ export function isAgentContextAttachment<T extends ComposerAttachment>(
   return attachment.kind === "agent_context";
 }
 
-/** A daemon-local reference must not silently follow a draft to another host. */
+function isAgentContextAttachmentUsableOnServer(
+  attachment: AgentContextAttachment,
+  serverId: string,
+): boolean {
+  return (
+    attachment.source.serverId === serverId ||
+    attachment.crossHost?.destinationServerId === serverId
+  );
+}
+
+/** A local reference or destination-bound transfer must not follow a draft to another host. */
 export function hasForeignAgentContextAttachments(
   attachments: readonly ComposerAttachment[],
   serverId: string,
 ): boolean {
   return attachments.some(
-    (attachment) => isAgentContextAttachment(attachment) && attachment.source.serverId !== serverId,
+    (attachment) =>
+      isAgentContextAttachment(attachment) &&
+      !isAgentContextAttachmentUsableOnServer(attachment, serverId),
+  );
+}
+
+export function hasLocalAgentContextAttachments(
+  attachments: readonly ComposerAttachment[],
+  serverId: string,
+): boolean {
+  return attachments.some(
+    (attachment) =>
+      isAgentContextAttachment(attachment) &&
+      attachment.source.serverId === serverId &&
+      attachment.crossHost === undefined,
   );
 }
 
@@ -176,7 +206,8 @@ export function filterAgentContextAttachmentsForServer<T extends ComposerAttachm
 ): T[] {
   return attachments.filter(
     (attachment) =>
-      !isAgentContextAttachment(attachment) || attachment.source.serverId === serverId,
+      !isAgentContextAttachment(attachment) ||
+      isAgentContextAttachmentUsableOnServer(attachment, serverId),
   );
 }
 

@@ -4434,6 +4434,72 @@ test("fetches paginated agent history separately from active agents", async () =
   });
 });
 
+test("negotiates and exports encrypted cross-host agent context", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const recipientPromise = client.getAgentContextTransferRecipient("recipient-request");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.context.get_transfer_recipient.request",
+    requestId: "recipient-request",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.context.get_transfer_recipient.response",
+      payload: {
+        requestId: "recipient-request",
+        recipient: { serverId: "destination", publicKeyB64: "destination-key" },
+        error: null,
+      },
+    }),
+  );
+  const recipient = await recipientPromise;
+
+  const exportPromise = client.exportAgentContextTransfer({
+    requestId: "export-request",
+    agentId: "source-agent",
+    destination: recipient,
+  });
+  expect(parseSentFrame(mock.sent[1])).toEqual({
+    type: "agent.context.export_transfer.request",
+    requestId: "export-request",
+    agentId: "source-agent",
+    destinationServerId: "destination",
+    destinationPublicKeyB64: "destination-key",
+  });
+  const transfer = {
+    version: 1 as const,
+    destinationServerId: "destination",
+    sourcePublicKeyB64: "source-key",
+    ciphertextB64: "opaque-ciphertext",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.context.export_transfer.response",
+      payload: {
+        requestId: "export-request",
+        agentId: "source-agent",
+        transfer,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(exportPromise).resolves.toEqual(transfer);
+});
+
 test("fetches scoped recent provider sessions", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
