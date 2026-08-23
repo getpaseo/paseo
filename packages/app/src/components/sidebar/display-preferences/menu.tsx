@@ -11,6 +11,7 @@ import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ArrowDownAZ,
+  GripVertical,
   Captions,
   Circle,
   CircleCheck,
@@ -22,7 +23,6 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
-  GripVertical,
   Server,
   Settings2,
   Tag,
