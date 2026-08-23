@@ -14,12 +14,14 @@ import {
   clampNormalizedSizes,
   closePaneInLayout,
   closeTabInLayout,
+  CLOSED_ENTITY_SUPPRESSION_MS,
   collectAllPanes,
   collectAllTabs,
   convertDraftToAgentInLayout,
   createTabInLayout,
   createDefaultLayout,
   DEFAULT_PANE_ID,
+  EMPTY_CLOSED_ENTITY_IDS,
   AMBIENT_PLACEMENT,
   createWorkspaceLayoutWithSidePanel,
   FOCUSED_PANE_PLACEMENT,
@@ -31,6 +33,7 @@ import {
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
+  mirroredEntityIdOf,
   moveTabToPaneInLayout,
   normalizeLayout,
   openTabInLayoutBackground,
@@ -103,6 +106,8 @@ interface WorkspaceLayoutStore {
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  /** Terminals and browsers closed here, mapped to the time their suppression expires. */
+  closedEntityIdsByWorkspace: Record<string, ReadonlyMap<string, number>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   sidePanelPaneIdByWorkspace: Record<string, string | null>;
   openTab: (input: OpenWorkspaceTabInput) => string | null;
@@ -303,6 +308,27 @@ function addAgentIdToWorkspaceSet(
   };
 }
 
+/**
+ * Records a closed terminal or browser so the next reconcile does not adopt it back
+ * while its host still lists it. Reconcile drops the entry once the host agrees.
+ */
+function rememberClosedEntity(input: {
+  state: Record<string, ReadonlyMap<string, number>>;
+  workspaceKey: string;
+  target: WorkspaceTabTarget | null;
+}): Record<string, ReadonlyMap<string, number>> {
+  const entityId = input.target ? mirroredEntityIdOf(input.target) : null;
+  if (!entityId) {
+    return input.state;
+  }
+  const nextEntityIds = new Map(input.state[input.workspaceKey] ?? []);
+  nextEntityIds.set(entityId, Date.now() + CLOSED_ENTITY_SUPPRESSION_MS);
+  return {
+    ...input.state,
+    [input.workspaceKey]: nextEntityIds,
+  };
+}
+
 function removeAgentIdFromWorkspaceSet(
   state: Record<string, Set<string>>,
   workspaceKey: string,
@@ -481,6 +507,7 @@ export function createWorkspaceLayoutStore(
         pinnedAgentIdsByWorkspace: {},
         pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
+        closedEntityIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         sidePanelPaneIdByWorkspace: {},
         openTab: (input) => {
@@ -653,6 +680,11 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              closedEntityIdsByWorkspace: rememberClosedEntity({
+                state: state.closedEntityIdsByWorkspace,
+                workspaceKey: normalizedWorkspaceKey,
+                target: closingTab?.target ?? null,
+              }),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -785,6 +817,9 @@ export function createWorkspaceLayoutStore(
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                closedEntityIds:
+                  state.closedEntityIdsByWorkspace[normalizedWorkspaceKey] ??
+                  EMPTY_CLOSED_ENTITY_IDS,
                 sidePanelPaneId: resolveSidePanelPaneId(
                   currentLayout,
                   state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
@@ -792,11 +827,18 @@ export function createWorkspaceLayoutStore(
               },
               snapshot,
             );
-            if (nextState.layout === currentLayout) {
+            const closedEntityIds = nextState.closedEntityIds ?? EMPTY_CLOSED_ENTITY_IDS;
+            const releasedClosedEntities =
+              closedEntityIds !==
+              (state.closedEntityIdsByWorkspace[normalizedWorkspaceKey] ?? EMPTY_CLOSED_ENTITY_IDS);
+            if (nextState.layout === currentLayout && !releasedClosedEntities) {
               return state;
             }
 
             return {
+              closedEntityIdsByWorkspace: releasedClosedEntities
+                ? { ...state.closedEntityIdsByWorkspace, [normalizedWorkspaceKey]: closedEntityIds }
+                : state.closedEntityIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextState.layout,
@@ -1267,6 +1309,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
+              normalizedWorkspaceKey in state.closedEntityIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.sidePanelPaneIdByWorkspace;
             if (!hasAny) {
@@ -1282,6 +1325,8 @@ export function createWorkspaceLayoutStore(
               state.pendingAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
+            const { [normalizedWorkspaceKey]: _closedEntities, ...closedEntityIdsByWorkspace } =
+              state.closedEntityIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
               state.focusRestorationByWorkspace;
             const { [normalizedWorkspaceKey]: _sidePanelPane, ...sidePanelPaneIdByWorkspace } =
@@ -1292,6 +1337,7 @@ export function createWorkspaceLayoutStore(
               pinnedAgentIdsByWorkspace,
               pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
+              closedEntityIdsByWorkspace,
               focusRestorationByWorkspace,
               sidePanelPaneIdByWorkspace,
             };

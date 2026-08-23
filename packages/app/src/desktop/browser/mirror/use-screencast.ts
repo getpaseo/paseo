@@ -79,6 +79,7 @@ export function useBrowserScreencast(
 ): BrowserScreencastView {
   const client = useHostRuntimeClient(serverId);
   const [view, setView] = useState<BrowserScreencastView>(EMPTY_VIEW);
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   const framesRef = useRef<FrameSource[]>([]);
   // A zero-sized first layout would subscribe at the floor and re-arm the host
   // the moment the real size lands, costing a stop and start per mount.
@@ -86,6 +87,23 @@ export function useBrowserScreencast(
   const requested = hasPane ? requestedSize(paneSize) : null;
   const maxWidth = requested?.maxWidth ?? null;
   const maxHeight = requested?.maxHeight ?? null;
+
+  // A daemon that restarted has forgotten every stream, and a socket that
+  // dropped took the subscription with it, so a reconnect has to re-subscribe or
+  // the pane sits on "connecting" until something remounts it.
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+    let wasConnected = false;
+    return client.subscribeConnectionStatus((status) => {
+      const isConnected = status.status === "connected";
+      if (isConnected && !wasConnected) {
+        setConnectionEpoch((epoch) => epoch + 1);
+      }
+      wasConnected = isConnected;
+    });
+  }, [client]);
 
   useEffect(() => {
     if (!client) {
@@ -144,7 +162,7 @@ export function useBrowserScreencast(
     return () => {
       active = false;
     };
-  }, [browserId, client, maxHeight, maxWidth]);
+  }, [browserId, client, connectionEpoch, maxHeight, maxWidth]);
 
   return view;
 }

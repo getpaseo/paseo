@@ -242,6 +242,14 @@ export interface WorkspaceTabReconcileState {
   pinnedAgentIds?: ReadonlySet<string> | null;
   pendingAgentIds?: ReadonlySet<string> | null;
   hiddenAgentIds?: ReadonlySet<string> | null;
+  /**
+   * Entities closed here, mapped to the time their suppression expires. The host
+   * keeps listing a closed terminal or browser until the close has travelled to it
+   * and its announcement has travelled back, and adopting it in that window flashes
+   * the tab into the strip again. Reconcile skips these ids and drops each one once
+   * the snapshot agrees it is gone, or once it expires if the host never confirms.
+   */
+  closedEntityIds?: ReadonlyMap<string, number> | null;
   sidePanelPaneId: string | null;
 }
 
@@ -2154,6 +2162,45 @@ interface EntityTabSync {
   targetFor(entityId: string): WorkspaceTabTarget;
 }
 
+/** How long a closed entity stays suppressed when its host never stops listing it. */
+export const CLOSED_ENTITY_SUPPRESSION_MS = 10_000;
+export const EMPTY_CLOSED_ENTITY_IDS: ReadonlyMap<string, number> = new Map();
+
+/** The host-owned entity a target mirrors, or `null` for targets that live only in the layout. */
+export function mirroredEntityIdOf(target: WorkspaceTabTarget): string | null {
+  if (target.kind === "terminal") {
+    return target.terminalId;
+  }
+  if (target.kind === "browser") {
+    return target.browserId;
+  }
+  return null;
+}
+
+/**
+ * Removes the ids closed here from adoption and returns the ones still worth
+ * suppressing. An id is released as soon as no sync lists it any more, so a later
+ * entity reusing the id is adopted normally.
+ */
+function suppressClosedEntityIds(input: {
+  entitySyncs: EntityTabSync[];
+  closedEntityIds: ReadonlyMap<string, number>;
+  now: number;
+}): ReadonlyMap<string, number> {
+  const retained = new Map<string, number>();
+  for (const [entityId, expiresAt] of input.closedEntityIds) {
+    const stillAdoptable = input.entitySyncs.some((sync) => sync.adoptableIds.has(entityId));
+    if (!stillAdoptable || input.now >= expiresAt) {
+      continue;
+    }
+    retained.set(entityId, expiresAt);
+    for (const sync of input.entitySyncs) {
+      sync.adoptableIds.delete(entityId);
+    }
+  }
+  return retained.size === input.closedEntityIds.size ? input.closedEntityIds : retained;
+}
+
 function terminalEntityIdOf(tab: WorkspaceTab): string | null {
   return tab.target.kind === "terminal" ? tab.target.terminalId : null;
 }
@@ -2393,6 +2440,11 @@ export function reconcileWorkspaceTabs(
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
   const entitySyncs = buildEntityTabSyncs(snapshot);
+  const closedEntityIds = suppressClosedEntityIds({
+    entitySyncs,
+    closedEntityIds: state.closedEntityIds ?? EMPTY_CLOSED_ENTITY_IDS,
+    now: Date.now(),
+  });
   const visibleAgentIds = applyPinnedAndHidden({
     baseAgentIds: activeAgentIds,
     pinnedAgentIds,
@@ -2481,5 +2533,6 @@ export function reconcileWorkspaceTabs(
   return {
     ...state,
     layout: nextLayout,
+    closedEntityIds,
   };
 }

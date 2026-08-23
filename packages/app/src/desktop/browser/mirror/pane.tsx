@@ -6,6 +6,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { BrowserChrome } from "@/desktop/browser/chrome";
+import {
+  DeviceSizeMenu,
+  DEVICE_SIZE_PRESETS,
+  type DeviceSizeId,
+} from "@/desktop/browser/device-size-menu";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { BrowserMirrorInputSurface } from "./input-surface";
 import type { BrowserMirrorInput } from "./input-surface.types";
@@ -30,6 +35,9 @@ export function BrowserMirrorPane({
   const client = useHostRuntimeClient(serverId);
   const { tab, run } = useRemoteBrowserTab(serverId, workspaceId, browserId);
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
+  // An announced tab carries no viewport, so the host's current size is
+  // unreadable from here; the menu reflects what this viewer picked.
+  const [deviceSizeId, setDeviceSizeId] = useState<DeviceSizeId>("responsive");
   const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(
     serverId,
     browserId,
@@ -92,6 +100,35 @@ export function BrowserMirrorPane({
     [browserId, run],
   );
 
+  const selectDeviceSize = useCallback(
+    (id: DeviceSizeId) => {
+      const preset =
+        DEVICE_SIZE_PRESETS.find((candidate) => candidate.id === id) ?? DEVICE_SIZE_PRESETS[0];
+      // "Responsive" has no remote equivalent: the host handler only sets fixed
+      // viewports and `resize` requires positive dimensions, so nothing can put
+      // the remote tab back into responsive mode. The local pane frees its
+      // webview to fill the pane; from the mirror the closest thing is sizing
+      // the remote tab to this viewer's pane, so "Responsive" means "fit my
+      // window".
+      const width = preset.width ?? paneSize?.width;
+      const height = preset.height ?? paneSize?.height;
+      if (!width || !height) {
+        return;
+      }
+      setDeviceSizeId(id);
+      run({
+        command: "resize",
+        args: { browserId, width: Math.round(width), height: Math.round(height) },
+      });
+    },
+    [browserId, paneSize, run],
+  );
+
+  const deviceActions = useMemo(
+    () => <DeviceSizeMenu selectedId={deviceSizeId} onSelect={selectDeviceSize} />,
+    [deviceSizeId, selectDeviceSize],
+  );
+
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setPaneSize({ width, height });
@@ -113,6 +150,7 @@ export function BrowserMirrorPane({
         onReload={reload}
         onNavigate={navigate}
         urlInputRef={urlInputRef}
+        trailing={deviceActions}
       />
       <BrowserMirrorInputSurface
         fit={fit}
