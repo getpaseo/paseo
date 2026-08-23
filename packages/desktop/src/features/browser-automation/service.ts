@@ -83,7 +83,10 @@ interface ActiveScreencast {
   slot: number;
   stopListening: () => void;
   sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
+  hasEmitted: boolean;
 }
+
+const SCREENCAST_IDLE_FRAME_MS = 600;
 
 type BrowserAutomationInputAtEvent = Extract<
   BrowserAutomationCommand,
@@ -608,13 +611,13 @@ async function executeScreencastStart(
   if ("ok" in target) {
     return target;
   }
+  // A previous stream can outlive the renderer that started it, leaving frames
+  // addressed to a dead window and pinned to a slot the daemon no longer routes.
+  // The daemon owns the slot, so always re-arm rather than reuse.
   const existing = activeScreencastsByContentsId.get(target.contents.id);
   if (existing) {
-    return {
-      requestId,
-      ok: true,
-      result: { command: "screencast_start", browserId: target.browserId, slot: existing.slot },
-    };
+    removeScreencast(target.contents.id, existing);
+    await existing.sendDebugCommand("Page.stopScreencast").catch(() => {});
   }
   if (!target.contents.sendDebugCommand) {
     return fail(
@@ -628,10 +631,15 @@ async function executeScreencastStart(
   const sendDebugCommand = target.contents.sendDebugCommand.bind(target.contents);
   const stopListening = target.contents.onDebugMessage((method, params) => {
     if (method === "Page.screencastFrame") {
-      handleScreencastFrame(sendDebugCommand, target.browserId, args.slot, params, emitFrame);
+      handleScreencastFrame(screencast, target.browserId, params, emitFrame);
     }
   });
-  const screencast = { slot: args.slot, stopListening, sendDebugCommand };
+  const screencast: ActiveScreencast = {
+    slot: args.slot,
+    stopListening,
+    sendDebugCommand,
+    hasEmitted: false,
+  };
   activeScreencastsByContentsId.set(contentsId, screencast);
   target.contents.onceDestroyed(() => {
     removeScreencast(contentsId, screencast);
@@ -649,6 +657,8 @@ async function executeScreencastStart(
     removeScreencast(contentsId, screencast);
     throw error;
   }
+
+  void sendIdleScreencastFrame(screencast, target.browserId, emitFrame);
 
   return {
     requestId,
@@ -680,12 +690,12 @@ async function executeScreencastStop(
 }
 
 function handleScreencastFrame(
-  sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>,
+  screencast: ActiveScreencast,
   browserId: string,
-  slot: number,
   params: Record<string, unknown>,
   emitFrame: (frame: BrowserScreencastFrameEvent) => void,
 ): void {
+  const { sendDebugCommand, slot } = screencast;
   const sessionId = readNumber(params.sessionId);
   if (sessionId === null) {
     return;
@@ -699,11 +709,49 @@ function handleScreencastFrame(
   if (deviceWidth === null || deviceHeight === null) {
     return;
   }
+  screencast.hasEmitted = true;
   emitFrame({
     browserId,
     slot,
     metadata: { deviceWidth, deviceHeight },
     data: Buffer.from(params.data, "base64"),
+  });
+}
+
+/**
+ * Chrome only emits a screencast frame when the page is damaged, so a viewer
+ * that subscribes to a static page sees nothing. Capture one frame directly if
+ * the stream stays silent.
+ */
+async function sendIdleScreencastFrame(
+  screencast: ActiveScreencast,
+  browserId: string,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): Promise<void> {
+  await delay(SCREENCAST_IDLE_FRAME_MS);
+  if (screencast.hasEmitted) {
+    return;
+  }
+  const shot = await screencast
+    .sendDebugCommand("Page.captureScreenshot", { format: "jpeg", quality: 60 })
+    .catch(() => null);
+  const metrics = await screencast.sendDebugCommand("Page.getLayoutMetrics", {}).catch(() => null);
+  if (screencast.hasEmitted || !isRecord(shot) || typeof shot.data !== "string") {
+    return;
+  }
+  const viewport =
+    isRecord(metrics) && isRecord(metrics.cssVisualViewport) ? metrics.cssVisualViewport : null;
+  const deviceWidth = viewport ? readNumber(viewport.clientWidth) : null;
+  const deviceHeight = viewport ? readNumber(viewport.clientHeight) : null;
+  if (deviceWidth === null || deviceHeight === null) {
+    return;
+  }
+  screencast.hasEmitted = true;
+  emitFrame({
+    browserId,
+    slot: screencast.slot,
+    metadata: { deviceWidth, deviceHeight },
+    data: Buffer.from(shot.data, "base64"),
   });
 }
 

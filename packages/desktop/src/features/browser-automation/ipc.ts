@@ -150,7 +150,14 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         listener(method, params ?? {});
       }
       contents.debugger.on("message", debugMessageListener);
-      return () => contents.debugger.removeListener("message", debugMessageListener);
+      return () => {
+        // The teardown also runs from the "destroyed" event, where touching the
+        // debugger throws and would crash the main process.
+        if (contents.isDestroyed()) {
+          return;
+        }
+        contents.debugger.removeListener("message", debugMessageListener);
+      };
     },
     onceDestroyed: (listener) => contents.once("destroyed", listener),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],

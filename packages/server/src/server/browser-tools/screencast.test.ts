@@ -190,4 +190,21 @@ describe("BrowserScreencastRegistry", () => {
       error: "All browser screencast slots are in use.",
     });
   });
+
+  test("replays the last frame to a viewer that joins an existing stream", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker);
+    const first = createViewer();
+    await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
+
+    registry.handleFrame(jpegFrame(0, "hello"));
+    expect(first.frames).toHaveLength(1);
+
+    // Chrome only emits on damage, so a static page leaves a late viewer blank.
+    const late = createViewer();
+    await registry.subscribe({ viewer: late, browserId: BROWSER_ID });
+
+    expect(late.frames).toHaveLength(1);
+    expect(late.frames[0]).toEqual(first.frames[0]);
+  });
 });

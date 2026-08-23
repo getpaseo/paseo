@@ -23,6 +23,8 @@ interface BrowserScreencastStream {
   viewers: Set<BrowserScreencastViewer>;
   /** Settles when `screencast_start` has been answered, so a stop cannot race it. */
   started: Promise<unknown>;
+  /** Chrome only emits on damage, so a late viewer needs the last frame replayed. */
+  lastFrame: Uint8Array | null;
 }
 
 /**
@@ -46,6 +48,9 @@ export class BrowserScreencastRegistry {
     const existing = this.streams.get(params.browserId);
     if (existing) {
       existing.viewers.add(params.viewer);
+      if (existing.lastFrame) {
+        params.viewer.sendFrame(existing.lastFrame);
+      }
       return { ok: true, slot: existing.slot };
     }
 
@@ -72,6 +77,7 @@ export class BrowserScreencastRegistry {
       slot,
       viewers: new Set([params.viewer]),
       started,
+      lastFrame: null,
     };
     this.streams.set(params.browserId, stream);
     this.streamsBySlot.set(slot, stream);
@@ -118,6 +124,7 @@ export class BrowserScreencastRegistry {
       return;
     }
     const bytes = encodeBrowserScreencastFrame(frame);
+    stream.lastFrame = bytes;
     for (const viewer of stream.viewers) {
       viewer.sendFrame(bytes);
     }

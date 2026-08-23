@@ -1400,7 +1400,7 @@ describe("executeAutomationCommand", () => {
     expect(browser.screencastFrames).toEqual([]);
   });
 
-  test("screencast_start is a no-op when the guest is already casting", async () => {
+  test("screencast_start re-arms an existing stream on the daemon's new slot", async () => {
     const browser = new BrowserAutomationHarness();
     await browser.execute({
       command: "screencast_start",
@@ -1426,14 +1426,26 @@ describe("executeAutomationCommand", () => {
       },
     });
 
+    // Reusing the old stream pins frames to a slot the daemon no longer routes
+    // and to the renderer that started it, which may be gone.
     expect(result).toEqual({
       requestId: "req-screencast_start",
       ok: true,
-      result: { command: "screencast_start", browserId: BROWSER_A, slot: 6 },
+      result: { command: "screencast_start", browserId: BROWSER_A, slot: 7 },
     });
     expect(
       browser.tab.debugCommands.filter((entry) => entry.command === "Page.startScreencast"),
+    ).toHaveLength(2);
+    expect(
+      browser.tab.debugCommands.filter((entry) => entry.command === "Page.stopScreencast"),
     ).toHaveLength(1);
+
+    browser.tab.emitDebugMessage("Page.screencastFrame", {
+      sessionId: 9,
+      data: Buffer.from("second").toString("base64"),
+      metadata: { deviceWidth: 800, deviceHeight: 600 },
+    });
+    expect(browser.screencastFrames.at(-1)?.slot).toBe(7);
 
     await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
   });
