@@ -17,11 +17,13 @@ import {
   dispatchTrustedDrag,
   dispatchTrustedHover,
   dispatchTrustedKey,
+  dispatchTrustedMousePhase,
   dispatchTrustedScroll,
   dispatchTrustedText,
   type BrowserInputEvent,
   type ClickInputOptions,
 } from "./trusted-input.js";
+import type { CdpCommandSender } from "./cdp-session-queue.js";
 
 type DebugMessageListener = (method: string, params: Record<string, unknown>) => void;
 
@@ -566,15 +568,7 @@ async function executeInputAt(
   if (event.kind === "mouse") {
     // Same trusted CDP path as ref-based click; sendInputEvent mouse wheels do
     // not scroll a guest, so pointer input stays on one mechanism.
-    await dispatchTrustedClick(
-      cdpSender(target.contents),
-      { x: event.x, y: event.y },
-      {
-        button: event.button,
-        doubleClick: event.clickCount >= 2,
-        modifiers: event.modifiers,
-      },
-    );
+    await dispatchMouseInput(cdpSender(target.contents), event);
   } else if (event.kind === "wheel") {
     await dispatchTrustedScroll(
       cdpSender(target.contents),
@@ -594,6 +588,26 @@ async function executeInputAt(
     ok: true,
     result: { command: "input_at", browserId: target.browserId },
   };
+}
+
+function dispatchMouseInput(
+  send: CdpCommandSender,
+  event: Extract<BrowserAutomationInputAtEvent, { kind: "mouse" }>,
+): Promise<void> {
+  const point = { x: event.x, y: event.y };
+  if (event.phase) {
+    return dispatchTrustedMousePhase(send, point, {
+      phase: event.phase,
+      button: event.button,
+      clickCount: event.clickCount,
+      modifiers: event.modifiers,
+    });
+  }
+  return dispatchTrustedClick(send, point, {
+    button: event.button,
+    doubleClick: event.clickCount >= 2,
+    modifiers: event.modifiers,
+  });
 }
 
 async function executeScreencastStart(

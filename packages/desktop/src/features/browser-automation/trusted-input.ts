@@ -47,6 +47,14 @@ const ELECTRON_KEY_CODE_ALIASES: Record<string, string> = {
   ArrowUp: "Up",
 };
 
+export type MousePhase = "down" | "move" | "up";
+
+const CDP_MOUSE_PHASE_TYPES: Record<MousePhase, string> = {
+  down: "mousePressed",
+  move: "mouseMoved",
+  up: "mouseReleased",
+};
+
 export async function dispatchTrustedClick(
   send: CdpCommandSender,
   point: ActionablePoint,
@@ -93,6 +101,35 @@ async function dispatchTrustedMouseClick(
     buttons: 0,
     clickCount,
     modifiers,
+  });
+}
+
+export interface MousePhaseInputOptions {
+  phase: MousePhase;
+  button: MouseButton;
+  clickCount: number;
+  modifiers: InputModifier[];
+}
+
+/**
+ * One half of a mouse gesture. A viewer that owns a real pointer sends the
+ * phases itself, so a press followed by moves is a drag in the guest rather
+ * than the isolated click dispatchTrustedClick produces.
+ */
+export async function dispatchTrustedMousePhase(
+  send: CdpCommandSender,
+  point: ActionablePoint,
+  options: MousePhaseInputOptions,
+): Promise<void> {
+  const heldButtons = options.phase === "up" ? 0 : mouseButtonMask(options.button);
+  await send("Input.dispatchMouseEvent", {
+    type: CDP_MOUSE_PHASE_TYPES[options.phase],
+    x: point.x,
+    y: point.y,
+    button: options.button,
+    buttons: heldButtons,
+    clickCount: options.clickCount,
+    modifiers: modifierMask(options.modifiers),
   });
 }
 

@@ -1,28 +1,23 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { NativeSyntheticEvent, TextInputKeyPressEventData } from "react-native";
-import { Text, View, type GestureResponderEvent, type LayoutChangeEvent } from "react-native";
+import { Text, View, type LayoutChangeEvent } from "react-native";
 import { Image } from "expo-image";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { BrowserChrome } from "@/desktop/browser/chrome";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { BrowserMirrorInputSurface } from "./input-surface";
+import type { BrowserMirrorInput } from "./input-surface.types";
 import { useBrowserScreencast } from "./use-screencast";
 import { useRemoteBrowserTab } from "./use-remote-tab";
-import { fitViewport, toGuestPoint, type PaneSize } from "./viewport";
+import { fitViewport, type PaneSize } from "./viewport";
 
 interface BrowserMirrorPaneProps {
   browserId: string;
   serverId: string;
   workspaceId: string;
   isInteractive?: boolean;
-}
-
-const SCROLL_GESTURE_THRESHOLD_PX = 6;
-
-function toPanePoint(event: GestureResponderEvent): { x: number; y: number } {
-  return { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
 }
 
 export function BrowserMirrorPane({
@@ -36,15 +31,15 @@ export function BrowserMirrorPane({
   const { tab, run } = useRemoteBrowserTab(serverId, workspaceId, browserId);
   const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(serverId, browserId);
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
-  const gestureRef = useRef<{ x: number; y: number; scrolled: boolean } | null>(null);
   const keyboardRef = useRef<EditingTextInputHandle>(null);
   const urlInputRef = useRef<EditingTextInputHandle>(null);
 
   const hasFrame = uri !== null && deviceWidth > 0 && deviceHeight > 0;
   const frameSource = useMemo(() => (uri === null ? null : { uri }), [uri]);
+  const guest = useMemo(() => ({ deviceWidth, deviceHeight }), [deviceHeight, deviceWidth]);
   const fit = useMemo(
-    () => (paneSize && hasFrame ? fitViewport(paneSize, { deviceWidth, deviceHeight }) : null),
-    [paneSize, hasFrame, deviceWidth, deviceHeight],
+    () => (paneSize && hasFrame ? fitViewport(paneSize, guest) : null),
+    [guest, hasFrame, paneSize],
   );
 
   // Size the frame explicitly: expo-image wraps the <img> in its own auto-sized
@@ -61,7 +56,7 @@ export function BrowserMirrorPane({
         return;
       }
       void client.runBrowserCommand({
-        command: buildInputCommand(browserId, event),
+        command: { command: "input_at", args: { browserId, event } },
         workspaceId,
       });
     },
@@ -82,7 +77,7 @@ export function BrowserMirrorPane({
     (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
       const { key } = event.nativeEvent;
       if (key) {
-        sendInput({ kind: "key", key });
+        sendInput({ kind: "key", key, modifiers: [] });
       }
     },
     [sendInput],
@@ -98,58 +93,9 @@ export function BrowserMirrorPane({
     setPaneSize({ width, height });
   }, []);
 
-  const handleResponderGrant = useCallback(
-    (event: GestureResponderEvent) => {
-      if (!fit) {
-        return;
-      }
-      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
-      gestureRef.current = { ...point, scrolled: false };
-    },
-    [deviceHeight, deviceWidth, fit],
-  );
-
-  const handleResponderMove = useCallback(
-    (event: GestureResponderEvent) => {
-      const origin = gestureRef.current;
-      if (!fit || !origin) {
-        return;
-      }
-      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
-      const deltaX = origin.x - point.x;
-      const deltaY = origin.y - point.y;
-      if (
-        !origin.scrolled &&
-        Math.abs(deltaX) < SCROLL_GESTURE_THRESHOLD_PX &&
-        Math.abs(deltaY) < SCROLL_GESTURE_THRESHOLD_PX
-      ) {
-        return;
-      }
-      gestureRef.current = { x: point.x, y: point.y, scrolled: true };
-      sendInput({ kind: "wheel", x: point.x, y: point.y, deltaX, deltaY });
-    },
-    [deviceHeight, deviceWidth, fit, sendInput],
-  );
-
-  const handleResponderRelease = useCallback(
-    (event: GestureResponderEvent) => {
-      const origin = gestureRef.current;
-      gestureRef.current = null;
-      if (!fit || !origin || origin.scrolled) {
-        return;
-      }
-      const point = toGuestPoint(toPanePoint(event), fit, { deviceWidth, deviceHeight });
-      sendInput({ kind: "mouse", x: point.x, y: point.y, button: "left", clickCount: 1 });
-      // Tapping the page is what arms typing, mirroring how a real click focuses it.
-      keyboardRef.current?.focus();
-    },
-    [deviceHeight, deviceWidth, fit, sendInput],
-  );
-
-  const shouldCaptureResponder = useCallback(
-    () => isInteractive && fit !== null,
-    [fit, isInteractive],
-  );
+  const focusKeyboard = useCallback(() => {
+    keyboardRef.current?.focus();
+  }, []);
 
   return (
     <View style={styles.root}>
@@ -164,14 +110,13 @@ export function BrowserMirrorPane({
         onNavigate={navigate}
         urlInputRef={urlInputRef}
       />
-      <View
-        style={styles.container}
+      <BrowserMirrorInputSurface
+        fit={fit}
+        guest={guest}
+        isInteractive={isInteractive}
+        onInput={sendInput}
+        onFocusKeyboard={focusKeyboard}
         onLayout={handleLayout}
-        onStartShouldSetResponder={shouldCaptureResponder}
-        onMoveShouldSetResponder={shouldCaptureResponder}
-        onResponderGrant={handleResponderGrant}
-        onResponderMove={handleResponderMove}
-        onResponderRelease={handleResponderRelease}
       >
         {hasFrame && frameStyle ? (
           <Image
@@ -195,37 +140,14 @@ export function BrowserMirrorPane({
           autoCorrect={false}
           spellCheck={false}
         />
-      </View>
+      </BrowserMirrorInputSurface>
     </View>
   );
-}
-
-type BrowserMirrorInput =
-  | { kind: "mouse"; x: number; y: number; button: "left"; clickCount: number }
-  | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
-  | { kind: "key"; key: string };
-
-function buildInputCommand(browserId: string, event: BrowserMirrorInput): BrowserAutomationCommand {
-  if (event.kind === "wheel") {
-    return { command: "input_at", args: { browserId, event } };
-  }
-  if (event.kind === "key") {
-    return { command: "input_at", args: { browserId, event: { ...event, modifiers: [] } } };
-  }
-  return {
-    command: "input_at",
-    args: { browserId, event: { ...event, modifiers: [] } },
-  };
 }
 
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
-  },
-  container: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
   },
   keyboardCapture: {
     position: "absolute",

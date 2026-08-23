@@ -1283,6 +1283,131 @@ describe("executeAutomationCommand", () => {
     expect(mouseEvents.at(-1)?.params).toMatchObject({ button: "right", clickCount: 2 });
   });
 
+  test("input_at mouse phases press, drag, and release without a synthetic click", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "input_at",
+      args: {
+        browserId: BROWSER_A,
+        event: {
+          kind: "mouse",
+          phase: "down",
+          x: 10,
+          y: 20,
+          button: "left",
+          clickCount: 1,
+          modifiers: ["Shift"],
+        },
+      },
+    });
+    await browser.execute({
+      command: "input_at",
+      args: {
+        browserId: BROWSER_A,
+        event: {
+          kind: "mouse",
+          phase: "move",
+          x: 90,
+          y: 24,
+          button: "left",
+          clickCount: 1,
+          modifiers: [],
+        },
+      },
+    });
+    await browser.execute({
+      command: "input_at",
+      args: {
+        browserId: BROWSER_A,
+        event: {
+          kind: "mouse",
+          phase: "up",
+          x: 90,
+          y: 24,
+          button: "left",
+          clickCount: 1,
+          modifiers: [],
+        },
+      },
+    });
+
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mousePressed",
+          x: 10,
+          y: 20,
+          button: "left",
+          buttons: 1,
+          clickCount: 1,
+          modifiers: 8,
+        },
+      },
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mouseMoved",
+          x: 90,
+          y: 24,
+          button: "left",
+          buttons: 1,
+          clickCount: 1,
+          modifiers: 0,
+        },
+      },
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mouseReleased",
+          x: 90,
+          y: 24,
+          button: "left",
+          buttons: 0,
+          clickCount: 1,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
+  test("input_at carries the viewer's click count into the pressed phase", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "input_at",
+      args: {
+        browserId: BROWSER_A,
+        event: {
+          kind: "mouse",
+          phase: "down",
+          x: 32,
+          y: 48,
+          button: "left",
+          clickCount: 2,
+          modifiers: [],
+        },
+      },
+    });
+
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mousePressed",
+          x: 32,
+          y: 48,
+          button: "left",
+          buttons: 1,
+          clickCount: 2,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
   test("input_at sends a wheel event to viewport coordinates", async () => {
     const browser = new BrowserAutomationHarness();
 

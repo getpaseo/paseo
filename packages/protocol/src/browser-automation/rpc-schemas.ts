@@ -64,6 +64,7 @@ const BrowserAutomationTabTargetSchema = z
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
 const BrowserAutomationMouseButtonSchema = z.enum(["left", "right", "middle"]);
 const BrowserAutomationInputModifierSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
+const BrowserAutomationMousePhaseSchema = z.enum(["down", "move", "up"]);
 const BrowserAutomationHttpUrlSchema = z
   .string()
   .url()
@@ -249,6 +250,9 @@ export const BrowserAutomationInputAtCommandSchema = z.object({
         button: BrowserAutomationMouseButtonSchema.default("left"),
         clickCount: z.number().int().min(1).max(3).default(1),
         modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+        // Absent means a complete press and release, which is what native
+        // viewers send. A desktop viewer splits a real drag into its phases.
+        phase: BrowserAutomationMousePhaseSchema.optional(),
       }),
       z.object({
         kind: z.literal("wheel"),
