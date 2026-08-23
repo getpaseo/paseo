@@ -140,6 +140,30 @@ const assessment = JSON.parse(result.lastMessage) as {
 
 Validate the parsed value in your application before using it as trusted input.
 
+## Read the current state of an agent
+
+```ts
+const agent = client.agents.ref("agent_01H8X...");
+await agent.refresh();
+
+if (agent.pendingPermissions?.length) {
+  console.log(`Waiting on ${agent.pendingPermissions.length} permission request(s)`);
+}
+console.log(agent.lastUsage?.totalCostUsd, agent.runtimeInfo?.sessionId);
+```
+
+The handle exposes `status`, `capabilities`, `availableModes`, `pendingPermissions`, `activeTurn`, `lastUsage`, `lastError`, `features`, `runtimeInfo`, `archivedAt`, `workspaceId`, and `cwd` as properties. All of them read the last snapshot the handle observed and never fetch.
+
+A handle from `ref()` has observed nothing, so every one of them is `null` until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Treat `null` as "not observed yet", not as "the daemon reported nothing". Use `current()` when you want the whole snapshot rather than one field.
+
+`subscribe()` keeps the properties current, so a long-lived handle can poll them without another RPC:
+
+```ts
+const unsubscribe = agent.subscribe(() => {
+  if (agent.status === "error") console.error(agent.lastError);
+});
+```
+
 ## List the commands a session loaded
 
 ```ts

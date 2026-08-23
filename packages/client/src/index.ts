@@ -254,9 +254,25 @@ export interface PaseoAgentTimelineHandle {
 
 export interface PaseoAgentHandle {
   readonly id: string;
+  /**
+   * `workspaceId` through `archivedAt` mirror the last snapshot this handle
+   * observed, and are `null` until one arrives. A handle from `ref()` reads
+   * `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a
+   * timeline refetch, or `subscribe()` delivers a snapshot, so `null` means
+   * "not observed yet" rather than "the daemon reported nothing".
+   */
   readonly workspaceId: string | null;
   readonly cwd: string | null;
   readonly status: PaseoAgent["status"] | null;
+  readonly capabilities: PaseoAgent["capabilities"] | null;
+  readonly availableModes: PaseoAgent["availableModes"] | null;
+  readonly pendingPermissions: PaseoAgent["pendingPermissions"] | null;
+  readonly activeTurn: NonNullable<PaseoAgent["activeTurn"]> | null;
+  readonly lastUsage: NonNullable<PaseoAgent["lastUsage"]> | null;
+  readonly lastError: NonNullable<PaseoAgent["lastError"]> | null;
+  readonly features: NonNullable<PaseoAgent["features"]> | null;
+  readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
+  readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
@@ -596,6 +612,33 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       get status() {
         return current?.status ?? null;
+      },
+      get capabilities() {
+        return current?.capabilities ?? null;
+      },
+      get availableModes() {
+        return current?.availableModes ?? null;
+      },
+      get pendingPermissions() {
+        return current?.pendingPermissions ?? null;
+      },
+      get activeTurn() {
+        return current?.activeTurn ?? null;
+      },
+      get lastUsage() {
+        return current?.lastUsage ?? null;
+      },
+      get lastError() {
+        return current?.lastError ?? null;
+      },
+      get features() {
+        return current?.features ?? null;
+      },
+      get runtimeInfo() {
+        return current?.runtimeInfo ?? null;
+      },
+      get archivedAt() {
+        return current?.archivedAt ?? null;
       },
       current: () => current,
       refresh: async (requestId) => {

@@ -78,6 +78,15 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | `workspaceId`               | `string \| null`                  | Current workspace placement.                                                                            |
 | `cwd`                       | `string \| null`                  | Current working directory.                                                                              |
 | `status`                    | Agent status or `null`            | Current lifecycle status.                                                                               |
+| `capabilities`              | Capability flags or `null`        | What the provider session supports.                                                                     |
+| `availableModes`            | Agent modes or `null`             | Modes the session can switch to.                                                                        |
+| `pendingPermissions`        | Permission requests or `null`     | Requests waiting on an answer.                                                                          |
+| `activeTurn`                | Active turn or `null`             | The turn in flight, with `turnId` and `startedAt`.                                                      |
+| `lastUsage`                 | Usage or `null`                   | Token counts, cost, and context-window use from the last turn.                                          |
+| `lastError`                 | `string \| null`                  | Last error the daemon recorded for the agent.                                                           |
+| `features`                  | Agent features or `null`          | Provider feature toggles and selects with their current values.                                         |
+| `runtimeInfo`               | Runtime info or `null`            | Live provider, session ID, model, thinking option, and mode.                                            |
+| `archivedAt`                | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
 | `current()`                 | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
 | `refresh(requestId?)`       | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
 | `send(text, options?)`      | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
@@ -87,6 +96,8 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | `subscribe(handler)`        | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
 | `archive()`                 | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
 | `detach()`                  | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
+
+`workspaceId` through `archivedAt` mirror the last snapshot the handle observed and are `null` until one arrives. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot, so `null` means "not observed yet" rather than "the daemon reported nothing". Call `current()` when you want the whole snapshot instead of one field.
 
 `PaseoAgentRunResult` contains `status`, `final`, `error`, and `lastMessage`. `final` refreshes the handle when present.
 
