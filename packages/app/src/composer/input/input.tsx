@@ -6,6 +6,7 @@ import {
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
+  TextInputScrollEventData,
   TextInputSelectionChangeEventData,
 } from "react-native";
 import {
@@ -55,8 +56,7 @@ import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
-import { useComposerHeightMirror } from "./height-mirror";
-import { resolveComposerInputHeightStyle, shouldScrollComposerInput } from "./height-style";
+import { useComposerHeight } from "./height";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
@@ -641,6 +641,7 @@ interface ComposerTextSurfaceProps {
   scrollEnabled: boolean;
   autoFocus: boolean;
   onContentSizeChange: (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => void;
+  onScroll: (event: NativeSyntheticEvent<TextInputScrollEventData>) => void;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
   onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
@@ -680,6 +681,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         multiline
         scrollEnabled={props.scrollEnabled}
         onContentSizeChange={props.onContentSizeChange}
+        onScroll={props.onScroll}
         editable={props.editable}
         onKeyPress={props.onKeyPress}
         onSelectionChange={props.onSelectionChange}
@@ -1200,7 +1202,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
     const dictationToggleKeys = useShortcutKeys("dictation-toggle");
     const focusInputKeys = useShortcutKeys("focus-message-input");
-    const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
     // Web text is DOM-owned between deferred draft publications. The action button only needs
     // this boundary, so publish empty/non-empty transitions without rerendering for every key.
@@ -1214,6 +1215,21 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const valueRef = useRef(value);
     const selectionRef = useRef({ start: value.length, end: value.length });
     const appliedTextReplacementKeyRef = useRef(textReplacementKey);
+    const webTextareaRef = useRef<HTMLElement | null>(null);
+    const {
+      style: composerHeightStyle,
+      scrollEnabled: isComposerScrollEnabled,
+      onTextChange: updateComposerHeightForText,
+      onContentSizeChange: handleComposerContentSizeChange,
+      onScroll: handleComposerScroll,
+      reset: resetComposerHeight,
+    } = useComposerHeight({
+      value,
+      textareaRef: webTextareaRef,
+      minHeight: MIN_INPUT_HEIGHT,
+      maxHeight: maxInputHeight,
+      onHeightChange,
+    });
 
     const updateLiveTextPresence = useCallback((text: string) => {
       const nextHasLiveText = text.trim().length > 0;
@@ -1224,13 +1240,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const replaceText = useCallback(
       (nextText: string, selection?: { start: number; end: number }) => {
+        updateComposerHeightForText(valueRef.current, nextText);
         valueRef.current = nextText;
         updateLiveTextPresence(nextText);
         selectionRef.current = selection ?? { start: nextText.length, end: nextText.length };
         textInputRef.current?.replaceText(nextText, selection);
         onChangeText(nextText);
       },
-      [onChangeText, updateLiveTextPresence],
+      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     useImperativeHandle(ref, () => ({
@@ -1260,7 +1277,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         }),
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
-    const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
     const sendAfterTranscriptRef = useRef(false);
     const serverInfo = useSessionStore(
       useCallback(
@@ -1277,10 +1293,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     useEffect(() => {
       if (appliedTextReplacementKeyRef.current === textReplacementKey) return;
       appliedTextReplacementKeyRef.current = textReplacementKey;
+      updateComposerHeightForText(valueRef.current, value);
       valueRef.current = value;
       updateLiveTextPresence(value);
       textInputRef.current?.replaceText(value);
-    }, [textReplacementKey, updateLiveTextPresence, value]);
+    }, [textReplacementKey, updateComposerHeightForText, updateLiveTextPresence, value]);
 
     useEffect(() => {
       return () => {
@@ -1477,10 +1494,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ]);
 
     const minimizeInputHeight = useCallback(() => {
-      inputHeightRef.current = MIN_INPUT_HEIGHT;
-      setInputHeight(MIN_INPUT_HEIGHT);
-      onHeightChange?.(MIN_INPUT_HEIGHT);
-    }, [onHeightChange]);
+      resetComposerHeight();
+    }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;
@@ -1548,8 +1563,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [],
     );
 
-    const webTextareaRef = useRef<HTMLElement | null>(null);
-
     useLayoutEffect(() => {
       if (isWeb) {
         webTextareaRef.current = getWebTextArea() as HTMLElement | null;
@@ -1564,37 +1577,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
     });
-
-    const setBoundedInputHeight = useCallback(
-      (nextHeight: number) => {
-        const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(maxInputHeight, nextHeight));
-        if (Math.abs(inputHeightRef.current - bounded) < 1) return;
-        inputHeightRef.current = bounded;
-        setInputHeight(bounded);
-        onHeightChange?.(bounded);
-      },
-      [maxInputHeight, onHeightChange],
-    );
-
-    useEffect(() => {
-      setBoundedInputHeight(inputHeightRef.current);
-    }, [setBoundedInputHeight]);
-
-    const measureComposerHeight = useComposerHeightMirror({
-      value,
-      textareaRef: webTextareaRef,
-      minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: maxInputHeight,
-      onHeight: setBoundedInputHeight,
-    });
-
-    const handleContentSizeChange = useCallback(
-      (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-        if (isWeb) return;
-        setBoundedInputHeight(event.nativeEvent.contentSize.height);
-      },
-      [setBoundedInputHeight],
-    );
 
     const handleSelectionChange = useCallback(
       (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
@@ -1682,12 +1664,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const handleInputChange = useCallback(
       (nextValue: string) => {
+        updateComposerHeightForText(valueRef.current, nextValue);
         valueRef.current = nextValue;
-        measureComposerHeight(nextValue);
         updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [measureComposerHeight, onChangeText, updateLiveTextPresence],
+      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {
@@ -1748,17 +1730,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // `fontFamily` here is silently dropped while every other property lands.
     // An inline style outranks both classes. See docs/unistyles.md.
     const textInputStyle = useMemo(
-      () => [
-        styles.textInput,
-        mode.isMonospace && styles.textInputMonospace,
-        resolveComposerInputHeightStyle({
-          inputHeight,
-          minInputHeight: MIN_INPUT_HEIGHT,
-          maxInputHeight,
-          applyMeasuredHeight: isWeb,
-        }),
-      ],
-      [inputHeight, maxInputHeight, mode.isMonospace],
+      () => [styles.textInput, mode.isMonospace && styles.textInputMonospace, composerHeightStyle],
+      [composerHeightStyle, mode.isMonospace],
     );
     // Static content has no textarea to mirror, so it grows with its own text
     // instead of the measured input height.
@@ -1830,9 +1803,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
-              scrollEnabled={shouldScrollComposerInput({ inputHeight, maxInputHeight })}
+              scrollEnabled={isComposerScrollEnabled}
               autoFocus={false}
-              onContentSizeChange={handleContentSizeChange}
+              onContentSizeChange={handleComposerContentSizeChange}
+              onScroll={handleComposerScroll}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
               onSelectionChange={handleSelectionChange}
               onPasteImages={onPasteImages}
