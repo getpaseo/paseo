@@ -62,7 +62,7 @@ export async function getActiveTabTestId(page: Page): Promise<string | null> {
 
 // ─── Tab actions ───────────────────────────────────────────────────────────
 
-/** Press Cmd+T (macOS) or Ctrl+T (Linux/Windows) to open the focused pane's New tab menu. */
+/** Press Cmd+T (macOS) or Ctrl+T (Linux/Windows) to create a New tab in the focused pane. */
 export async function pressNewTabShortcut(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+t`);
@@ -70,7 +70,7 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 
 export async function openNewTabMenuWithShortcut(page: Page): Promise<void> {
   await pressNewTabShortcut(page);
-  await expect(page.getByRole("menuitem", { name: /^Agent/ })).toBeVisible();
+  await expect(page.getByTestId("workspace-new-tab-panel").filter({ visible: true })).toBeVisible();
 }
 
 export async function pressDirectNewTabShortcut(page: Page, key: string): Promise<void> {
@@ -83,36 +83,30 @@ export async function pressDirectNewTabShortcut(page: Page, key: string): Promis
 /** Assert the inline plus button is visible in the tab bar. */
 export async function assertNewChatTileVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
-/** Assert the new-tab dropdown trigger is visible in the tab bar. */
+/** Assert the New tab button is visible in the tab bar. */
 export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Open the new-tab menu and click "New agent" to create a draft/chat tab. */
+/** Create a New tab and choose Agent to create a draft/chat tab. */
 export async function clickNewChat(page: Page): Promise<void> {
   await createAgentTabFromMenu(page);
 }
 
-/** Open the new-tab menu and click "New terminal". */
+/** Create a New tab and choose Terminal. */
 export async function clickNewTerminal(page: Page): Promise<void> {
-  const trigger = page
-    .getByTestId("workspace-new-tab-menu-trigger")
-    .filter({ visible: true })
-    .first();
+  const trigger = page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
-  const item = page
-    .getByTestId("workspace-new-tab-menu-terminal")
-    .filter({ visible: true })
-    .first();
+  const item = page.getByTestId("workspace-new-tab-terminal").filter({ visible: true }).first();
   await expect(item).toBeVisible({ timeout: 10_000 });
   await item.click();
 }
@@ -137,7 +131,7 @@ export async function waitForTabWithTitle(
 
 /** Assert the inline plus button is visible in the tab bar. */
 export async function assertSingleNewTabButton(page: Page): Promise<void> {
-  const buttons = page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true });
+  const buttons = page.getByTestId("workspace-new-tab-button").filter({ visible: true });
   const count = await buttons.count();
   expect(count).toBeGreaterThanOrEqual(1);
 }
@@ -224,7 +218,7 @@ export async function expectTabTitleFits(
 }
 
 export function terminalSurfaceLocator(page: Page) {
-  return page.locator('[data-testid="terminal-surface"]').first();
+  return page.locator('[data-testid="terminal-surface"]').filter({ visible: true }).first();
 }
 
 export async function expectAgentTabActive(page: Page, agentId: string): Promise<void> {

@@ -24,15 +24,9 @@ import {
   Copy,
   Pencil,
   RotateCw,
-  Globe,
-  FileDiff,
-  FolderTree,
-  GitPullRequest,
   Maximize2,
   Minimize2,
   Plus,
-  SquarePen,
-  SquareTerminal,
   X,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -44,7 +38,6 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { useTranslation } from "react-i18next";
-import { useRouter, type Href } from "expo-router";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -58,14 +51,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -87,23 +72,9 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
-import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import type { Theme } from "@/styles/theme";
 import { RenderProfile } from "@/utils/render-profiler";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@getpaseo/protocol/terminal-profiles";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
@@ -194,29 +165,12 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
-const ThemedSquarePen = withUnistyles(SquarePen);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedGlobe = withUnistyles(Globe);
 const ThemedPlus = withUnistyles(Plus);
-const ThemedFileDiff = withUnistyles(FileDiff);
-const ThemedFolderTree = withUnistyles(FolderTree);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedMaximize2 = withUnistyles(Maximize2);
 const ThemedMinimize2 = withUnistyles(Minimize2);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const extraMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
-
-const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
-const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
-const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
-const CHANGES_ICON = <ThemedFileDiff size={14} uniProps={mutedColorMapping} />;
-const FILES_ICON = <ThemedFolderTree size={14} uniProps={mutedColorMapping} />;
-const PULL_REQUEST_ICON = <ThemedGitPullRequest size={14} uniProps={mutedColorMapping} />;
-
-const CHANGES_TARGET = { kind: "working_diff" } as const;
-const FILES_TARGET = { kind: "files" } as const;
-const PULL_REQUEST_TARGET = { kind: "pull_request" } as const;
 
 function inlineAddActionButtonStyle({
   hovered,
@@ -262,193 +216,37 @@ function TabLabelMeasurement({
   );
 }
 
-interface TerminalProfileMenuItemProps {
-  profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
-  disabled?: boolean;
-  onLaunch: (profile: TerminalProfile) => void;
-}
-
-function TerminalProfileMenuItem({ profile, disabled, onLaunch }: TerminalProfileMenuItemProps) {
-  const leading = useMemo(
-    () => <TerminalProfileIcon iconKey={getTerminalProfileIcon(profile)} />,
-    [profile],
-  );
-  const handleSelect = useCallback(() => onLaunch(profile), [onLaunch, profile]);
-
-  return (
-    <DropdownMenuItem leading={leading} disabled={disabled} onSelect={handleSelect}>
-      {profile.name}
-    </DropdownMenuItem>
-  );
-}
-
-interface TabTargetLauncherOptions {
-  normalizedServerId: string;
-  onCreateAgentTab: () => void;
-  onCreateTerminal: () => void;
-  onCreateBrowser: () => void;
-  onOpenChanges: () => void;
-  onOpenFiles: () => void;
-  onOpenPullRequest: () => void;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-}
-
-interface WorkspaceNewTabButtonProps extends TabTargetLauncherOptions {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface WorkspaceNewTabButtonProps {
   shortcutKeys: ShortcutKey[][] | null;
-  onEditProfiles: () => void;
-  showCreateBrowserTab: boolean;
-  terminalDisabled: boolean;
-  isGit: boolean;
-  showPullRequest: boolean;
+  onPress: () => void;
   onLayout: (event: LayoutChangeEvent) => void;
 }
 
-function WorkspaceNewTabButton({
-  open,
-  onOpenChange,
-  shortcutKeys,
-  onCreateAgentTab,
-  onCreateTerminal,
-  onCreateBrowser,
-  onOpenChanges,
-  onOpenFiles,
-  onOpenPullRequest,
-  onCreateTerminalWithProfile,
-  onEditProfiles,
-  normalizedServerId,
-  showCreateBrowserTab,
-  terminalDisabled,
-  isGit,
-  showPullRequest,
-  onLayout,
-}: WorkspaceNewTabButtonProps) {
+function WorkspaceNewTabButton({ shortcutKeys, onPress, onLayout }: WorkspaceNewTabButtonProps) {
   const { t } = useTranslation();
-  const { config } = useDaemonConfig(normalizedServerId);
-  const profiles = useMemo(
-    () => resolveTerminalProfiles(config?.terminalProfiles),
-    [config?.terminalProfiles],
-  );
-  const agentKeys = useShortcutKeys("workspace-tab-target-agent");
-  const terminalKeys = useShortcutKeys("workspace-terminal-new");
-  const browserKeys = useShortcutKeys("workspace-tab-target-browser");
-  const changesKeys = useShortcutKeys("workspace-tab-target-changes");
-  const filesKeys = useShortcutKeys("workspace-tab-target-files");
   const tooltipText = t("workspace.tabs.actions.newTab");
-  const agentShortcut = useMemo(
-    () => (agentKeys ? <Shortcut chord={agentKeys} /> : undefined),
-    [agentKeys],
-  );
-  const terminalShortcut = useMemo(
-    () => (terminalKeys ? <Shortcut chord={terminalKeys} /> : undefined),
-    [terminalKeys],
-  );
-  const browserShortcut = useMemo(
-    () => (browserKeys ? <Shortcut chord={browserKeys} /> : undefined),
-    [browserKeys],
-  );
-  const changesShortcut = useMemo(
-    () => (changesKeys ? <Shortcut chord={changesKeys} /> : undefined),
-    [changesKeys],
-  );
-  const filesShortcut = useMemo(
-    () => (filesKeys ? <Shortcut chord={filesKeys} /> : undefined),
-    [filesKeys],
-  );
 
   return (
     <View style={styles.inlineAddButton} onLayout={onLayout}>
-      <DropdownMenu open={open} onOpenChange={onOpenChange}>
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild triggerRefProp="triggerRef">
-            <DropdownMenuTrigger
-              testID="workspace-new-tab-menu-trigger"
-              accessibilityRole="button"
-              accessibilityLabel={tooltipText}
-              style={inlineAddActionButtonStyle}
-            >
-              <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <View style={styles.newTabTooltipRow}>
-              <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
-              {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
-            </View>
-          </TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent side="bottom" align="start" offset={4} minWidth={200}>
-          <DropdownMenuItem
-            testID="workspace-new-tab-menu-agent"
-            leading={AGENT_ICON}
-            trailing={agentShortcut}
-            onSelect={onCreateAgentTab}
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild triggerRefProp="triggerRef">
+          <Pressable
+            testID="workspace-new-tab-button"
+            accessibilityRole="button"
+            accessibilityLabel={tooltipText}
+            onPress={onPress}
+            style={inlineAddActionButtonStyle}
           >
-            {t("workspace.tabs.fallback.agent")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            testID="workspace-new-tab-menu-terminal"
-            leading={TERMINAL_ICON}
-            disabled={terminalDisabled}
-            trailing={terminalShortcut}
-            onSelect={terminalDisabled ? undefined : onCreateTerminal}
-          >
-            {t("workspace.tabs.fallback.terminal")}
-          </DropdownMenuItem>
-          {showCreateBrowserTab ? (
-            <DropdownMenuItem
-              testID="workspace-new-tab-menu-browser"
-              leading={BROWSER_ICON}
-              trailing={browserShortcut}
-              onSelect={onCreateBrowser}
-            >
-              {t("workspace.tabs.fallback.browser")}
-            </DropdownMenuItem>
-          ) : null}
-          {isGit ? (
-            <DropdownMenuItem
-              testID="workspace-new-tab-menu-changes"
-              leading={CHANGES_ICON}
-              trailing={changesShortcut}
-              onSelect={onOpenChanges}
-            >
-              {t("workspace.tabs.actions.changes")}
-            </DropdownMenuItem>
-          ) : null}
-          <DropdownMenuItem
-            testID="workspace-new-tab-menu-files"
-            leading={FILES_ICON}
-            trailing={filesShortcut}
-            onSelect={onOpenFiles}
-          >
-            {t("workspace.tabs.actions.files")}
-          </DropdownMenuItem>
-          {showPullRequest ? (
-            <DropdownMenuItem
-              testID="workspace-new-tab-menu-pull-request"
-              leading={PULL_REQUEST_ICON}
-              onSelect={onOpenPullRequest}
-            >
-              {t("workspace.tabs.actions.pullRequest")}
-            </DropdownMenuItem>
-          ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
-          {profiles.map((profile) => (
-            <TerminalProfileMenuItem
-              key={profile.id}
-              profile={profile}
-              disabled={terminalDisabled}
-              onLaunch={onCreateTerminalWithProfile}
-            />
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem testID="workspace-new-tab-menu-edit-profiles" onSelect={onEditProfiles}>
-            {t("workspace.tabs.actions.editTerminalProfiles")}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <View style={styles.newTabTooltipRow}>
+            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
+            {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+          </View>
+        </TooltipContent>
+      </Tooltip>
     </View>
   );
 }
@@ -667,12 +465,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  onCreateDraftTab: (input: { paneId?: string }) => void;
-  onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfile }) => void;
-  onCreateBrowserTab: (input: { paneId?: string }) => void;
-  showCreateBrowserTab?: boolean;
-  disableCreateTerminal?: boolean;
-  isWaitingOnTerminalReadiness?: boolean;
+  onCreateNewTab: (input: { paneId?: string }) => void;
   onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
@@ -734,6 +527,7 @@ function WorkspaceDesktopTabPresentationCommit({
 function getFallbackTabLabel(
   tab: WorkspaceTabDescriptor,
   labels: {
+    newTab: string;
     newAgent: string;
     setup: string;
     terminal: string;
@@ -743,6 +537,9 @@ function getFallbackTabLabel(
     pullRequest: string;
   },
 ): string {
+  if (tab.target.kind === "new_tab") {
+    return labels.newTab;
+  }
   if (tab.target.kind === "draft") {
     return labels.newAgent;
   }
@@ -961,6 +758,8 @@ function TabChip({
   );
 
   const tabAccessibilityState = useMemo(() => ({ selected: isActive }), [isActive]);
+  const testIdentity =
+    tab.target.kind === "new_tab" ? tab.tabId : buildDeterministicWorkspaceTabId(tab.target);
   const tabLabelSkeletonStyle = styles.tabLabelSkeleton;
   const tabLabelStyle = useMemo(
     () => [styles.tabLabel, isHighlighted && styles.tabLabelActive],
@@ -980,7 +779,7 @@ function TabChip({
             <ContextMenuTrigger
               {...(dragHandleProps?.attributes as object | undefined)}
               {...(dragHandleProps?.listeners as object | undefined)}
-              testID={`workspace-tab-${buildDeterministicWorkspaceTabId(tab.target)}`}
+              testID={`workspace-tab-${testIdentity}`}
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               enabledOnMobile={false}
               style={tabChipStyle}
@@ -998,7 +797,7 @@ function TabChip({
                 backdrop={chipBackdrop}
                 tabLabelSkeletonStyle={tabLabelSkeletonStyle}
                 tabLabelStyle={tabLabelStyle}
-                modifiedTestId={`workspace-tab-modified-${buildDeterministicWorkspaceTabId(tab.target)}`}
+                modifiedTestId={`workspace-tab-modified-${testIdentity}`}
               />
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -1007,7 +806,7 @@ function TabChip({
             align="center"
             offset={8}
             maxWidth={720}
-            testID={`workspace-tab-tooltip-${buildDeterministicWorkspaceTabId(tab.target)}`}
+            testID={`workspace-tab-tooltip-${testIdentity}`}
           >
             {tab.target.kind === "agent" ? (
               <View style={styles.tooltipAgentRow}>
@@ -1151,12 +950,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
-  onCreateBrowserTab,
-  showCreateBrowserTab = false,
-  disableCreateTerminal = false,
-  isWaitingOnTerminalReadiness = false,
+  onCreateNewTab,
   onReorderTabs,
   externalDndContext = false,
   activeDragTabId = null,
@@ -1168,13 +962,11 @@ function ResolvedWorkspaceDesktopTabsRow({
   onExitFocusMode,
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
-  const router = useRouter();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [inlineAddButtonWidth, setInlineAddButtonWidth] = useState<number>(0);
   const [paneMaximizeButtonWidth, setPaneMaximizeButtonWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
-  const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const tabScrollOffset = useSharedValue(0);
   const tabScrollViewportWidth = useSharedValue(0);
   const tabScrollContentWidth = useSharedValue(0);
@@ -1182,26 +974,6 @@ function ResolvedWorkspaceDesktopTabsRow({
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
   );
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
-  const workspaceRoot = useWorkspaceDirectory(normalizedServerId, normalizedWorkspaceId) ?? "";
-  const checkoutStatus = useCheckoutStatusQuery({
-    serverId: normalizedServerId,
-    cwd: workspaceRoot,
-  });
-  const isGit = checkoutStatus.status?.isGit === true;
-  const showPullRequest = isGit;
-  const workspaceKey = buildWorkspaceTabPersistenceKey({
-    serverId: normalizedServerId,
-    workspaceId: normalizedWorkspaceId,
-  });
-  const openTab = useWorkspaceLayoutStore((state) => state.openTab);
-  const openNewTab = useCallback(
-    (
-      requestedWorkspaceKey: string,
-      target: WorkspaceTabTarget,
-      placement?: WorkspaceTabPlacement,
-    ) => openTab({ workspaceKey: requestedWorkspaceKey, target, intent: "new", placement }),
-    [openTab],
-  );
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -1278,6 +1050,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const fallbackTabLabels = useMemo(
     () => ({
+      newTab: t("workspace.tabs.actions.newTab"),
       newAgent: t("workspace.tabs.fallback.newAgent"),
       setup: t("workspace.tabs.fallback.setup"),
       terminal: t("workspace.tabs.fallback.terminal"),
@@ -1415,110 +1188,28 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [paneId]);
 
-  const handleCreateAgentTab = useCallback(() => {
-    onCreateDraftTab({ paneId });
-  }, [onCreateDraftTab, paneId]);
-
-  const handleCreateTerminal = useCallback(() => {
-    onCreateTerminalTab({ paneId });
-  }, [onCreateTerminalTab, paneId]);
-
-  const handleCreateTerminalWithProfile = useCallback(
-    (profile: TerminalProfile) => {
-      onCreateTerminalTab({ paneId, profile });
-    },
-    [onCreateTerminalTab, paneId],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
-  }, [normalizedServerId, router]);
-
-  const handleCreateBrowser = useCallback(() => {
-    onCreateBrowserTab({ paneId });
-  }, [onCreateBrowserTab, paneId]);
-
-  const openPanelTarget = useCallback(
-    (target: { kind: "working_diff" } | { kind: "files" } | { kind: "pull_request" }) => {
-      if (!workspaceKey) {
-        return;
-      }
-      // Picked from this pane's own menu, so the tab belongs here even if it is
-      // currently open somewhere else.
-      openNewTab(workspaceKey, target, paneId ? { mode: "pane", paneId } : undefined);
-    },
-    [openNewTab, paneId, workspaceKey],
-  );
-  const handleOpenChanges = useCallback(() => openPanelTarget(CHANGES_TARGET), [openPanelTarget]);
-  const handleOpenFiles = useCallback(() => openPanelTarget(FILES_TARGET), [openPanelTarget]);
-  const handleOpenPullRequest = useCallback(
-    () => openPanelTarget(PULL_REQUEST_TARGET),
-    [openPanelTarget],
-  );
-
-  const terminalDisabled = disableCreateTerminal || isWaitingOnTerminalReadiness;
-
-  useEffect(() => {
-    if (!isFocused) {
-      setNewTabMenuOpen(false);
-    }
-  }, [isFocused]);
+  const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
 
   const handleNewTabKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
       if (!isFocused) return false;
       if (action.id === "workspace.tab.menu.open") {
-        setNewTabMenuOpen(true);
+        createNewTab();
         return true;
       }
-      switch (action.id) {
-        case "workspace.tab.target.agent":
-          setNewTabMenuOpen(false);
-          handleCreateAgentTab();
-          return true;
-        case "workspace.tab.target.browser":
-          if (!showCreateBrowserTab) return true;
-          setNewTabMenuOpen(false);
-          handleCreateBrowser();
-          return true;
-        case "workspace.tab.target.changes":
-          if (!isGit) return true;
-          setNewTabMenuOpen(false);
-          handleOpenChanges();
-          return true;
-        case "workspace.tab.target.files":
-          setNewTabMenuOpen(false);
-          handleOpenFiles();
-          return true;
-        default:
-          return false;
-      }
+      return false;
     },
-    [
-      handleCreateAgentTab,
-      handleCreateBrowser,
-      handleOpenChanges,
-      handleOpenFiles,
-      isFocused,
-      isGit,
-      showCreateBrowserTab,
-    ],
+    [createNewTab, isFocused],
   );
 
   useKeyboardActionHandler({
     handlerId: buildWorkspaceKeyboardHandlerId({
-      name: "workspace-new-tab-menu",
+      name: "workspace-new-tab",
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
       paneId,
     }),
-    actions: [
-      "workspace.tab.menu.open",
-      "workspace.tab.target.agent",
-      "workspace.tab.target.browser",
-      "workspace.tab.target.changes",
-      "workspace.tab.target.files",
-    ],
+    actions: ["workspace.tab.menu.open"],
     enabled: isFocused,
     priority: 200,
     handle: handleNewTabKeyboardAction,
@@ -1656,22 +1347,8 @@ function ResolvedWorkspaceDesktopTabsRow({
           />
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
-              open={newTabMenuOpen}
-              onOpenChange={setNewTabMenuOpen}
               shortcutKeys={newTabKeys}
-              onCreateAgentTab={handleCreateAgentTab}
-              onCreateTerminal={handleCreateTerminal}
-              onCreateBrowser={handleCreateBrowser}
-              onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-              onOpenChanges={handleOpenChanges}
-              onOpenFiles={handleOpenFiles}
-              onOpenPullRequest={handleOpenPullRequest}
-              onEditProfiles={handleEditProfiles}
-              normalizedServerId={normalizedServerId}
-              showCreateBrowserTab={showCreateBrowserTab}
-              terminalDisabled={terminalDisabled}
-              isGit={isGit}
-              showPullRequest={showPullRequest}
+              onPress={createNewTab}
               onLayout={handleInlineAddButtonLayout}
             />
           ) : null}
@@ -1684,22 +1361,8 @@ function ResolvedWorkspaceDesktopTabsRow({
       </View>
       {layout.requiresHorizontalScrollFallback ? (
         <WorkspaceNewTabButton
-          open={newTabMenuOpen}
-          onOpenChange={setNewTabMenuOpen}
           shortcutKeys={newTabKeys}
-          onCreateAgentTab={handleCreateAgentTab}
-          onCreateTerminal={handleCreateTerminal}
-          onCreateBrowser={handleCreateBrowser}
-          onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-          onOpenChanges={handleOpenChanges}
-          onOpenFiles={handleOpenFiles}
-          onOpenPullRequest={handleOpenPullRequest}
-          onEditProfiles={handleEditProfiles}
-          normalizedServerId={normalizedServerId}
-          showCreateBrowserTab={showCreateBrowserTab}
-          terminalDisabled={terminalDisabled}
-          isGit={isGit}
-          showPullRequest={showPullRequest}
+          onPress={createNewTab}
           onLayout={handleInlineAddButtonLayout}
         />
       ) : null}

@@ -275,7 +275,7 @@ async function fillAgentProfileForm(page: Page, draft: AgentProfileDraft): Promi
     await chooseSelectFieldOption(page, { field: "mode", option: draft.mode });
   }
   if (draft.notes !== undefined) {
-    await modal.getByRole("textbox", { name: "Notes for agents", exact: true }).fill(draft.notes);
+    await modal.getByRole("textbox", { name: "When to use", exact: true }).fill(draft.notes);
   }
 }
 
@@ -329,11 +329,18 @@ export async function expectAgentProfileForm(
   const modal = editModal(page);
   await expect(modal).toBeVisible({ timeout: 30_000 });
   await expect(modal.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
+  const notesHint = modal.getByTestId("agent-profile-notes-field-hint");
+  await expect(notesHint).toHaveText(
+    "Helps agents choose this profile when starting another agent.",
+  );
+  expect(await notesHint.evaluate((element) => getComputedStyle(element).webkitLineClamp)).not.toBe(
+    "1",
+  );
   for (const [field, value] of Object.entries(expected)) {
     if (field === "notes") {
-      await expect(
-        modal.getByRole("textbox", { name: "Notes for agents", exact: true }),
-      ).toHaveValue(value);
+      await expect(modal.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(
+        value,
+      );
       continue;
     }
     await expect(

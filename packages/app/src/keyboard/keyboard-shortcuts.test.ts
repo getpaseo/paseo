@@ -1158,7 +1158,7 @@ describe("direct new-tab target shortcuts", () => {
   const targetCases = [
     ["a", "KeyA", "workspace.tab.target.agent"],
     ["b", "KeyB", "workspace.tab.target.browser"],
-    ["c", "KeyC", "workspace.tab.target.changes"],
+    ["g", "KeyG", "workspace.tab.target.changes"],
     ["e", "KeyE", "workspace.tab.target.files"],
   ] as const;
 
@@ -1192,9 +1192,9 @@ describe("direct new-tab target shortcuts", () => {
 
   it("uses the existing override map for target matching and display", () => {
     const bindingId = "workspace-tab-target-agent-ctrl-shift-a-non-mac";
-    const overrides = { [bindingId]: "Ctrl+Shift+G" };
+    const overrides = { [bindingId]: "Ctrl+Shift+H" };
     const rebound = resolveShortcut({
-      event: { key: "g", code: "KeyG", ctrlKey: true, shiftKey: true },
+      event: { key: "h", code: "KeyH", ctrlKey: true, shiftKey: true },
       context: { ...desktopNonMac, focusScope: "other" },
       bindings: buildEffectiveBindings(overrides),
     });
@@ -1208,6 +1208,6 @@ describe("direct new-tab target shortcuts", () => {
     expect(original.match).toBeNull();
     expect(
       resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
-    ).toEqual([["ctrl", "shift", "G"]]);
+    ).toEqual([["ctrl", "shift", "H"]]);
   });
 });

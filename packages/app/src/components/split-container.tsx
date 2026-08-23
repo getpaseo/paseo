@@ -69,7 +69,6 @@ import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -110,10 +109,7 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  onCreateDraftTab: (input: { paneId?: string }) => void;
-  onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfile }) => void;
-  onCreateBrowserTab: (input: { paneId?: string }) => void;
-  showCreateBrowserTab?: boolean;
+  onCreateNewTab: (input: { paneId?: string }) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -129,14 +125,8 @@ interface SplitContainerProps {
     position: "left" | "right" | "top" | "bottom";
   }) => void;
   onMoveTabToPane: (tabId: string, toPaneId: string) => void;
-  onClosePane: (paneId: string) => void;
   onResizeSplit: (groupId: string, sizes: number[]) => void;
   onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
-  renderPaneEmptyState?: (input: {
-    paneId: string;
-    paneIsolated: boolean;
-    onClosePane: () => void;
-  }) => ReactNode;
   focusModeEnabled?: boolean;
   onExitFocusMode: () => void;
 }
@@ -182,7 +172,6 @@ interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout" | "onMov
   sidePanelPaneId: string | null;
   maximizedPaneId: string | null;
   onTogglePaneMaximized: (paneId: string) => void;
-  paneIsolated: boolean;
   activeDragTabId: string | null;
   showDropZones: boolean;
   dropPreview: SplitDropZoneHover | null;
@@ -402,19 +391,14 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
-  onCreateBrowserTab,
-  showCreateBrowserTab,
+  onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
   onSplitPaneEmpty,
   onMoveTabToPane,
-  onClosePane,
   onResizeSplit,
   onReorderTabsInPane,
-  renderPaneEmptyState = () => null,
   focusModeEnabled,
   onExitFocusMode,
 }: SplitContainerProps) {
@@ -502,12 +486,6 @@ export function SplitContainer({
     [focusModeEnabled, layout.focusedPaneId, layout.root, maximizedPaneId],
   );
   const renderRoot = useMemo(() => wrapRootPaneForStableMount(splitRoot.root), [splitRoot.root]);
-  // Isolating a pane (focus mode, maximize) hides its siblings without removing
-  // them, so the one pane on screen is not really the last one and closing it is not
-  // what anyone means. That is all this container knows; whether the layout itself
-  // allows the dismissal is `canDismissPaneInLayout`, which the caller reads.
-  const paneIsolated = focusModeEnabled || Boolean(maximizedPaneId);
-
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const data = asWorkspaceTabDragData(event.active.data.current);
     if (!data) {
@@ -687,19 +665,13 @@ export function SplitContainer({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
-          onCreateDraftTab={onCreateDraftTab}
-          onCreateTerminalTab={onCreateTerminalTab}
-          onCreateBrowserTab={onCreateBrowserTab}
-          showCreateBrowserTab={showCreateBrowserTab}
+          onCreateNewTab={onCreateNewTab}
           buildPaneContentModel={buildPaneContentModel}
           onFocusPane={onFocusPane}
           onSplitPane={onSplitPane}
           onSplitPaneEmpty={onSplitPaneEmpty}
-          paneIsolated={paneIsolated}
-          onClosePane={onClosePane}
           onResizeSplit={onResizeSplit}
           onReorderTabsInPane={onReorderTabsInPane}
-          renderPaneEmptyState={renderPaneEmptyState}
           activeDragTabId={activeDragTabId}
           showDropZones={activeDragTabId !== null}
           dropPreview={dropPreview}
@@ -898,19 +870,13 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
-  onCreateBrowserTab,
-  showCreateBrowserTab,
+  onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
   onSplitPaneEmpty,
-  paneIsolated,
-  onClosePane,
   onResizeSplit,
   onReorderTabsInPane,
-  renderPaneEmptyState,
   activeDragTabId,
   showDropZones,
   dropPreview,
@@ -979,18 +945,12 @@ function SplitNodeView({
             onCloseTabsToLeft={onCloseTabsToLeft}
             onCloseTabsToRight={onCloseTabsToRight}
             onCloseOtherTabs={onCloseOtherTabs}
-            onCreateDraftTab={onCreateDraftTab}
-            onCreateTerminalTab={onCreateTerminalTab}
-            onCreateBrowserTab={onCreateBrowserTab}
-            showCreateBrowserTab={showCreateBrowserTab}
+            onCreateNewTab={onCreateNewTab}
             buildPaneContentModel={buildPaneContentModel}
             onFocusPane={onFocusPane}
             onSplitPane={onSplitPane}
             onSplitPaneEmpty={onSplitPaneEmpty}
-            paneIsolated={paneIsolated}
-            onClosePane={onClosePane}
             onReorderTabsInPane={onReorderTabsInPane}
-            renderPaneEmptyState={renderPaneEmptyState}
             activeDragTabId={activeDragTabId}
             showDropZones={showDropZones}
             dropPreview={dropPreview}
@@ -1033,19 +993,13 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
-              onCreateDraftTab={onCreateDraftTab}
-              onCreateTerminalTab={onCreateTerminalTab}
-              onCreateBrowserTab={onCreateBrowserTab}
-              showCreateBrowserTab={showCreateBrowserTab}
+              onCreateNewTab={onCreateNewTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
               onSplitPaneEmpty={onSplitPaneEmpty}
-              paneIsolated={paneIsolated}
-              onClosePane={onClosePane}
               onResizeSplit={onResizeSplit}
               onReorderTabsInPane={onReorderTabsInPane}
-              renderPaneEmptyState={renderPaneEmptyState}
               activeDragTabId={activeDragTabId}
               showDropZones={showDropZones}
               dropPreview={dropPreview}
@@ -1095,18 +1049,12 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onCreateDraftTab,
-  onCreateTerminalTab,
-  onCreateBrowserTab,
-  showCreateBrowserTab,
+  onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane: _onSplitPane,
   onSplitPaneEmpty: _onSplitPaneEmpty,
-  paneIsolated,
-  onClosePane,
   onReorderTabsInPane,
-  renderPaneEmptyState,
   activeDragTabId,
   showDropZones,
   dropPreview,
@@ -1218,7 +1166,6 @@ function SplitPaneView({
     () => onTogglePaneMaximized(paneId),
     [onTogglePaneMaximized, paneId],
   );
-  const handleClosePane = useCallback(() => onClosePane(paneId), [onClosePane, paneId]);
   return (
     <RenderProfile id={`SplitPaneView:${pane.id}`}>
       <View
@@ -1247,10 +1194,7 @@ function SplitPaneView({
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
-            onCreateDraftTab={onCreateDraftTab}
-            onCreateTerminalTab={onCreateTerminalTab}
-            onCreateBrowserTab={onCreateBrowserTab}
-            showCreateBrowserTab={showCreateBrowserTab}
+            onCreateNewTab={onCreateNewTab}
             onReorderTabs={handleReorderTabs}
             externalDndContext
             activeDragTabId={activeDragTabId}
@@ -1266,31 +1210,25 @@ function SplitPaneView({
         </WindowChromeSafeArea>
 
         <View style={styles.paneContent}>
-          {mountedPaneTabIds.length > 0
-            ? mountedPaneTabIds.map((tabId) => {
-                const tabDescriptor = tabDescriptorMap.get(tabId);
-                if (!tabDescriptor) {
-                  return null;
-                }
+          {mountedPaneTabIds.map((tabId) => {
+            const tabDescriptor = tabDescriptorMap.get(tabId);
+            if (!tabDescriptor) {
+              return null;
+            }
 
-                return (
-                  <MountedTabSlot
-                    key={tabId}
-                    tabDescriptor={tabDescriptor}
-                    isVisible={tabId === activeTabDescriptor?.tabId}
-                    isWorkspaceFocused={isWorkspaceFocused}
-                    isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
-                    paneId={pane.id}
-                    onFocusPane={stableOnFocusPane}
-                    buildPaneContentModel={buildPaneContentModel}
-                  />
-                );
-              })
-            : (renderPaneEmptyState?.({
-                paneId,
-                paneIsolated,
-                onClosePane: handleClosePane,
-              }) ?? null)}
+            return (
+              <MountedTabSlot
+                key={tabId}
+                tabDescriptor={tabDescriptor}
+                isVisible={tabId === activeTabDescriptor?.tabId}
+                isWorkspaceFocused={isWorkspaceFocused}
+                isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
+                paneId={pane.id}
+                onFocusPane={stableOnFocusPane}
+                buildPaneContentModel={buildPaneContentModel}
+              />
+            );
+          })}
           <SplitDropZone paneId={pane.id} active={showDropZones} preview={dropPreview} />
         </View>
       </View>
