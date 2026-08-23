@@ -32,4 +32,17 @@ describe("clearLegacyReplicaCache", () => {
     reopened.database.close();
     await clearLegacyReplicaCache();
   });
+
+  it("reports a blocked deletion so a later launch can retry", async () => {
+    const open = await openLegacyDatabase();
+
+    await expect(clearLegacyReplicaCache()).rejects.toThrow("blocked");
+    open.database.close();
+
+    await clearLegacyReplicaCache();
+    const reopened = await openLegacyDatabase();
+    expect(reopened.oldVersion).toBe(0);
+    reopened.database.close();
+    await clearLegacyReplicaCache();
+  });
 });

@@ -121,8 +121,9 @@ separate product/security decision. Agents, workspaces, and projects have indivi
 focused timeline tail and directory checkpoint each have one row per host. Writes serialize only
 rows whose in-memory identities changed. Restore validates every row before hydration; one invalid
 row clears the cache and starts cold. The 32 MiB byte budget is tracked incrementally from row
-payload lengths and evicts whole hosts in least-recently-written order. Browser and Electron builds
-use IndexedDB. Native builds use expo-sqlite.
+payload lengths and evicts whole hosts in least-recently-written order. After restart, that order is
+an approximation rebuilt from the row store's `readAll()` order. Browser and Electron builds use
+IndexedDB. Native builds use expo-sqlite.
 
 The three directory entity types have independent monotonic sequences and share one daemon
 generation. The daemon retains only the latest projection per entity and bounded tombstones, not an

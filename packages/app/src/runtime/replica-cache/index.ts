@@ -728,7 +728,7 @@ export class ReplicaCache {
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
-  private readonly evictedServerIds = new Set<string>();
+  private readonly evictedHostBytes = new Map<string, number>();
   private readonly lastFocusedAgentIds = new Map<string, string>();
   private readonly capturedInputs = new Map<string, ReplicaInput>();
   private readonly directoryCheckpoints = new Map<string, unknown>();
@@ -774,8 +774,8 @@ export class ReplicaCache {
     for (const serverId of this.checkpointInputs.keys()) {
       if (!next.has(serverId)) this.checkpointInputs.delete(serverId);
     }
-    for (const serverId of this.evictedServerIds) {
-      if (!next.has(serverId)) this.evictedServerIds.delete(serverId);
+    for (const serverId of this.evictedHostBytes.keys()) {
+      if (!next.has(serverId)) this.evictedHostBytes.delete(serverId);
     }
   }
 
@@ -878,7 +878,11 @@ export class ReplicaCache {
       this.checkpointInputs.delete(oldServerId);
       this.checkpointInputs.set(newServerId, checkpoint);
     }
-    if (this.evictedServerIds.delete(oldServerId)) this.evictedServerIds.add(newServerId);
+    const evictedBytes = this.evictedHostBytes.get(oldServerId);
+    if (evictedBytes !== undefined) {
+      this.evictedHostBytes.delete(oldServerId);
+      this.evictedHostBytes.set(newServerId, evictedBytes);
+    }
     this.renamePendingHostChanges(oldServerId, newServerId);
     if (this.activeServerIds.delete(oldServerId)) this.activeServerIds.add(newServerId);
     this.queueOperation(() => this.rowStore.renameHost(oldServerId, newServerId));
@@ -890,13 +894,13 @@ export class ReplicaCache {
 
   writeDirectoryCheckpoint(serverId: string, checkpoint: unknown): void {
     if (this.checkpointInputs.get(serverId) === checkpoint) return;
-    if (this.evictedServerIds.has(serverId)) {
-      const session = useSessionStore.getState().sessions[serverId];
-      if (!session) return;
-      this.captureHost(serverId, session);
-    }
     this.checkpointInputs.set(serverId, checkpoint);
     this.directoryCheckpoints.set(serverId, checkpoint);
+    if (this.evictedHostBytes.has(serverId)) {
+      const session = useSessionStore.getState().sessions[serverId];
+      if (!session) return;
+      this.captureHost(serverId, session, true);
+    }
     const payload = JSON.stringify(checkpoint);
     if (payload === undefined) {
       this.queueDelete({
@@ -935,18 +939,21 @@ export class ReplicaCache {
     }
     const changed = this.captureSessions();
     if (skipUnchanged && !changed && !this.hasPendingChanges()) return;
-    const changes = this.drainPendingChanges();
-    if (changes.upserts.length === 0 && changes.deletes.length === 0) return;
     const write = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
+        const changes = this.drainPendingChanges();
+        if (changes.upserts.length === 0 && changes.deletes.length === 0) return;
         try {
           await this.prepareStore();
-          await this.rowStore.apply(changes);
-          this.applyStoredChanges(changes);
-          await this.evictOverBudget();
+          const boundedChanges = await this.fitChangesToBudget(changes);
+          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
+            await this.rowStore.apply(boundedChanges);
+            this.applyStoredChanges(boundedChanges);
+          }
         } catch {
           this.restorePendingChanges(changes);
+          if (this.hasPendingChanges()) this.schedulePersist();
         }
         return undefined;
       });
@@ -965,7 +972,7 @@ export class ReplicaCache {
     return changed;
   }
 
-  private captureHost(serverId: string, session: SessionState): boolean {
+  private captureHost(serverId: string, session: SessionState, force = false): boolean {
     if (session.focusedAgentId) {
       this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
     }
@@ -984,11 +991,12 @@ export class ReplicaCache {
     } else if (hasTimelineHead) {
       input = { ...selected, timelineRange: null, timelineHasOlder: false };
     }
-    const initialInput = this.evictedServerIds.has(serverId) ? undefined : previous;
-    const changes = diffReplicaInput(initialInput, input);
+    const changes = diffReplicaInput(previous, input);
     this.capturedInputs.set(serverId, input);
-    if (!hasReplicaInputChanges(changes)) return false;
-    this.queueReplicaChanges(serverId, input, changes);
+    const isEvicted = this.evictedHostBytes.has(serverId);
+    if (!hasReplicaInputChanges(changes) && !(force && isEvicted)) return false;
+    const persistedChanges = isEvicted ? diffReplicaInput(undefined, input) : changes;
+    this.queueReplicaChanges(serverId, input, persistedChanges);
     return true;
   }
 
@@ -1036,7 +1044,7 @@ export class ReplicaCache {
     this.storedRows.clear();
     this.hostBytes.clear();
     this.hostWriteOrder.clear();
-    this.evictedServerIds.clear();
+    this.evictedHostBytes.clear();
     this.directoryCheckpoints.clear();
     this.checkpointInputs.clear();
     this.capturedInputs.clear();
@@ -1143,11 +1151,26 @@ export class ReplicaCache {
   }
 
   private restorePendingChanges(changes: ReplicaRowChanges): void {
-    const newer = this.drainPendingChanges();
-    for (const key of changes.deletes) this.queueDelete(key);
-    for (const row of changes.upserts) this.queueUpsert(row);
-    for (const key of newer.deletes) this.queueDelete(key);
-    for (const row of newer.upserts) this.queueUpsert(row);
+    for (const key of changes.deletes) {
+      const pendingKey = pendingRowKey(key);
+      if (
+        this.activeServerIds.has(key.serverId) &&
+        !this.pendingUpserts.has(pendingKey) &&
+        !this.pendingDeletes.has(pendingKey)
+      ) {
+        this.queueDelete(key);
+      }
+    }
+    for (const row of changes.upserts) {
+      const pendingKey = pendingRowKey(row);
+      if (
+        this.activeServerIds.has(row.serverId) &&
+        !this.pendingUpserts.has(pendingKey) &&
+        !this.pendingDeletes.has(pendingKey)
+      ) {
+        this.queueUpsert(row);
+      }
+    }
   }
 
   private applyStoredChanges(changes: ReplicaRowChanges): void {
@@ -1168,7 +1191,7 @@ export class ReplicaCache {
       rows.set(rowKey(row), row);
       this.storedRows.set(row.serverId, rows);
       this.adjustHostBytes(row.serverId, payloadBytes(row.payload) - previousBytes);
-      this.evictedServerIds.delete(row.serverId);
+      this.evictedHostBytes.delete(row.serverId);
       touchedServerIds.add(row.serverId);
     }
     for (const serverId of touchedServerIds) {
@@ -1194,12 +1217,62 @@ export class ReplicaCache {
     while (this.totalBytes > this.maxBytes) {
       const oldestServerId = this.hostWriteOrder.keys().next().value;
       if (oldestServerId === undefined) return;
+      const bytes = this.hostBytes.get(oldestServerId) ?? 0;
       await this.rowStore.deleteHost(oldestServerId);
       this.removeStoredHost(oldestServerId);
-      this.evictedServerIds.add(oldestServerId);
+      this.evictedHostBytes.set(oldestServerId, bytes);
       this.directoryCheckpoints.delete(oldestServerId);
       this.checkpointInputs.delete(oldestServerId);
     }
+  }
+
+  private async fitChangesToBudget(changes: ReplicaRowChanges): Promise<ReplicaRowChanges> {
+    const touchedServerIds = new Set<string>();
+    for (const key of changes.deletes) touchedServerIds.add(key.serverId);
+    for (const row of changes.upserts) touchedServerIds.add(row.serverId);
+
+    const projectedRows = new Map<string, Map<string, ReplicaRow>>();
+    const projectedBytes = new Map(this.hostBytes);
+    for (const serverId of touchedServerIds) {
+      projectedRows.set(serverId, new Map(this.storedRows.get(serverId)));
+    }
+    for (const key of changes.deletes) {
+      projectedRows.get(key.serverId)?.delete(rowKey(key));
+    }
+    for (const row of changes.upserts) {
+      projectedRows.get(row.serverId)?.set(rowKey(row), row);
+    }
+    for (const [serverId, rows] of projectedRows) {
+      projectedBytes.set(
+        serverId,
+        [...rows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0),
+      );
+    }
+
+    const writeOrder = [...this.hostWriteOrder.keys()].filter(
+      (serverId) => !touchedServerIds.has(serverId),
+    );
+    writeOrder.push(...touchedServerIds);
+    let projectedTotal = [...projectedBytes.values()].reduce((sum, bytes) => sum + bytes, 0);
+    const evicted = new Set<string>();
+    while (projectedTotal > this.maxBytes) {
+      const serverId = writeOrder.shift();
+      if (serverId === undefined) break;
+      const bytes = projectedBytes.get(serverId) ?? 0;
+      projectedTotal -= bytes;
+      projectedBytes.delete(serverId);
+      evicted.add(serverId);
+      this.evictedHostBytes.set(serverId, bytes);
+      if (this.storedRows.has(serverId)) await this.rowStore.deleteHost(serverId);
+      this.removeStoredHost(serverId);
+      this.directoryCheckpoints.delete(serverId);
+      this.checkpointInputs.delete(serverId);
+    }
+
+    return {
+      upserts: changes.upserts.filter((row) => !evicted.has(row.serverId)),
+      deletes: changes.deletes.filter((key) => !evicted.has(key.serverId)),
+    };
   }
 
   private removeStoredHost(serverId: string): void {

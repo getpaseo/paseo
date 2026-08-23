@@ -7,6 +7,8 @@ export function clearLegacyReplicaCache(): Promise<void> {
     request.addEventListener("error", () =>
       reject(request.error ?? new Error("Failed to delete legacy replica cache")),
     );
-    request.addEventListener("blocked", () => resolve());
+    request.addEventListener("blocked", () =>
+      reject(new Error("Legacy replica cache deletion was blocked")),
+    );
   });
 }

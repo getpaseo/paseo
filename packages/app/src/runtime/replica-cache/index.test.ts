@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { projectAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -9,6 +11,7 @@ import {
 } from "@/stores/session-store";
 import { createUserMessage, type StreamItem } from "@/types/stream";
 import { ReplicaCache } from ".";
+import { AgentDirectoryReplica } from "../directory-sync/agent-replica";
 import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
 
 const SERVER_ID = "cached-host";
@@ -21,6 +24,7 @@ class MemoryStorage implements ReplicaRowStore {
   readonly renamedHosts: Array<{ oldServerId: string; newServerId: string }> = [];
   writes = 0;
   clears = 0;
+  applyResults: Promise<void>[] = [];
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
     return `${row.serverId}:${row.kind}:${row.id}`;
@@ -40,6 +44,8 @@ class MemoryStorage implements ReplicaRowStore {
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
+    const result = this.applyResults.shift();
+    if (result) await result;
     this.changes.push(changes);
     for (const key of changes.deletes) this.rows.delete(this.key(key));
     for (const row of changes.upserts) this.rows.set(this.key(row), row);
@@ -64,6 +70,24 @@ class MemoryStorage implements ReplicaRowStore {
     this.clears += 1;
     this.rows.clear();
   }
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  reject: (error: Error) => void;
+} {
+  let reject = (_error: Error): void => undefined;
+  const promise = new Promise<void>((_resolve, rejectPromise) => {
+    reject = rejectPromise;
+  });
+  return { promise, reject };
+}
+
+async function waitForWrites(storage: MemoryStorage, expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 20 && storage.writes < expected; attempt += 1) {
+    await Promise.resolve();
+  }
+  expect(storage.writes).toBe(expected);
 }
 
 const NO_LEGACY_CLEANUP = { clearLegacyCache: async () => undefined };
@@ -602,6 +626,97 @@ describe("ReplicaCache", () => {
     });
   });
 
+  it("persists the focused synced timeline produced by the session store", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    const focused = agent("agent-1");
+    store.setAgents(SERVER_ID, new Map([[focused.id, focused]]));
+    store.setFocusedAgentId(SERVER_ID, focused.id);
+    store.setAgentStreamState(SERVER_ID, focused.id, {
+      tail: [message("synced-message", "Synced from daemon")],
+    });
+    store.setAgentTimelineCursor(
+      SERVER_ID,
+      new Map([[focused.id, { epoch: "epoch-1", startSeq: 1, endSeq: 12 }]]),
+    );
+    store.setAgentAuthoritativeHistoryApplied(SERVER_ID, focused.id, true);
+
+    await replicaCache.flush();
+
+    expect(storage.changes).toHaveLength(1);
+    expect(storage.changes[0]?.upserts).toContainEqual(
+      expect.objectContaining({
+        serverId: SERVER_ID,
+        kind: "timeline",
+        id: "singleton",
+      }),
+    );
+  });
+
+  it("does not persist unchanged agents after a changes-mode reconciliation", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    const directory = new AgentDirectoryReplica(SERVER_ID, () => undefined);
+    const agents = [agent("agent-1"), agent("agent-2")];
+    directory.commitSnapshot(
+      agents.map((value) => ({
+        agent: projectAgentSnapshot(value),
+        project: value.projectPlacement!,
+      })),
+      [],
+    );
+    await replicaCache.flush();
+    storage.changes.length = 0;
+
+    directory.commitChanges([], [], []);
+    await replicaCache.flush();
+
+    expect(storage.changes).toEqual([]);
+  });
+
+  it("persists only the changed agent after a changes-mode reconciliation", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    const directory = new AgentDirectoryReplica(SERVER_ID, () => undefined);
+    const agents = [agent("agent-1"), agent("agent-2")];
+    directory.commitSnapshot(
+      agents.map((value) => ({
+        agent: projectAgentSnapshot(value),
+        project: value.projectPlacement!,
+      })),
+      [],
+    );
+    await replicaCache.flush();
+    storage.changes.length = 0;
+
+    directory.commitChanges(
+      [
+        {
+          agent: { ...projectAgentSnapshot(agents[0]), title: "Updated" },
+          project: agents[0].projectPlacement!,
+        },
+      ],
+      [],
+      [],
+    );
+    await replicaCache.flush();
+
+    expect(storage.changes).toHaveLength(1);
+    expect(storage.changes[0]).toMatchObject({
+      upserts: [{ serverId: SERVER_ID, kind: "agent", id: "agent-1" }],
+      deletes: [],
+    });
+  });
+
   it("persists a checkpoint without serializing host entity rows", async () => {
     const storage = new MemoryStorage();
     const replicaCache = cache(storage);
@@ -743,6 +858,153 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
+  it("never writes an oversized host and does not retry it on every flush", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage, { maxBytes: 1_000 });
+    replicaCache.setHosts([SERVER_ID]);
+    seedTimeline(SERVER_ID, "oversized".repeat(500));
+
+    await replicaCache.flush();
+    await replicaCache.flush();
+
+    expect(storage.changes).toEqual([]);
+    expect(storage.deletedHosts).toEqual([]);
+  });
+
+  it("lets a changed evicted host displace the oldest resident host", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage, { maxBytes: 7_000 });
+    replicaCache.setHosts(LRU_SERVER_IDS.slice(0, 2));
+    seedTimeline("host-a", "A".repeat(1_200));
+    seedTimeline("host-b", "B".repeat(1_200));
+    await replicaCache.flush();
+
+    seedTimeline("host-a", "A".repeat(1_201));
+    await replicaCache.flush();
+    replicaCache.setHosts(LRU_SERVER_IDS);
+    seedTimeline("host-c", "C".repeat(1_200));
+    await replicaCache.flush();
+
+    seedTimeline("host-b", "B".repeat(1_201));
+    await replicaCache.flush();
+
+    expect(new Set([...storage.rows.values()].map((row) => row.serverId))).toEqual(
+      new Set(["host-b", "host-c"]),
+    );
+  });
+
+  it("persists an oversized host after its current input shrinks below the budget", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage, { maxBytes: 3_000 });
+    replicaCache.setHosts([SERVER_ID]);
+    seedTimeline(SERVER_ID, "oversized".repeat(500));
+    await replicaCache.flush();
+    expect(storage.rows.size).toBe(0);
+
+    seedTimeline(SERVER_ID, "small");
+    await replicaCache.flush();
+
+    expect([...storage.rows.values()]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serverId: SERVER_ID, kind: "timeline", id: "singleton" }),
+      ]),
+    );
+  });
+
+  it("keeps the newest row after two ordered write failures", async () => {
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    seedSession();
+    await replicaCache.flush();
+    storage.changes.length = 0;
+    const firstFailure = deferred();
+    const secondFailure = deferred();
+    storage.applyResults.push(firstFailure.promise, secondFailure.promise);
+
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set(current.id, { ...current, title: "v1" });
+    });
+    const firstWrite = replicaCache.flush();
+    await waitForWrites(storage, 2);
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set(current.id, { ...current, title: "v2" });
+    });
+    const secondWrite = replicaCache.flush();
+
+    firstFailure.reject(new Error("first failure"));
+    await waitForWrites(storage, 3);
+    secondFailure.reject(new Error("second failure"));
+    await Promise.all([firstWrite, secondWrite]);
+    await replicaCache.flush();
+
+    const persisted = [...storage.rows.values()].find(
+      (row) => row.serverId === SERVER_ID && row.kind === "agent" && row.id === "agent-1",
+    );
+    expect(JSON.parse(persisted?.payload ?? "null").snapshot.title).toBe("v2");
+  });
+
+  it("retries restored changes after a transient write failure", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    seedSession();
+    await replicaCache.flush();
+    const failure = deferred();
+    storage.applyResults.push(failure.promise);
+
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set(current.id, { ...current, title: "retried" });
+    });
+    const write = replicaCache.flush();
+    await waitForWrites(storage, 2);
+    failure.reject(new Error("transient failure"));
+    await write;
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitForWrites(storage, 3);
+
+    const persisted = [...storage.rows.values()].find(
+      (row) => row.serverId === SERVER_ID && row.kind === "agent" && row.id === "agent-1",
+    );
+    expect(JSON.parse(persisted?.payload ?? "null").snapshot.title).toBe("retried");
+  });
+
+  it("does not restore a failed row write after its host was removed", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID]);
+    seedSession();
+    await replicaCache.flush();
+    storage.changes.length = 0;
+    const failure = deferred();
+    storage.applyResults.push(failure.promise);
+
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("Expected seeded agent");
+      return new Map(agents).set(current.id, { ...current, title: "removed" });
+    });
+    const write = replicaCache.flush();
+    await waitForWrites(storage, 2);
+    replicaCache.setHosts([]);
+    failure.reject(new Error("failed after removal"));
+    await write;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await replicaCache.flush();
+
+    expect([...storage.rows.values()].some((row) => row.serverId === SERVER_ID)).toBe(false);
+    expect(storage.changes).toEqual([]);
+  });
+
   it("clears the whole cache when one row payload is corrupt", async () => {
     const storage = new MemoryStorage();
     storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
@@ -763,6 +1025,29 @@ describe("ReplicaCache", () => {
     await replicaCache.restore();
 
     expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
+    expect(storage.rows.size).toBe(0);
+    expect(storage.clears).toBe(1);
+  });
+
+  it("clears every host when one host contains a corrupt row", async () => {
+    const storage = new MemoryStorage();
+    storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
+      serverId: SERVER_ID,
+      kind: "agent",
+      id: "agent-1",
+      payload: "{bad",
+    });
+    storage.rows.set("second-host:checkpoint:singleton", {
+      serverId: "second-host",
+      kind: "checkpoint",
+      id: "singleton",
+      payload: JSON.stringify({ agents: { generation: "g", afterSeq: 1 } }),
+    });
+    const replicaCache = cache(storage);
+    replicaCache.setHosts([SERVER_ID, "second-host"]);
+
+    await replicaCache.restore();
+
     expect(storage.rows.size).toBe(0);
     expect(storage.clears).toBe(1);
   });
