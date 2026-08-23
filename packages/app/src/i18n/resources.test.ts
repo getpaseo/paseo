@@ -10,6 +10,7 @@ import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
+import { zhCN } from "./resources/zh-TW";
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null) {

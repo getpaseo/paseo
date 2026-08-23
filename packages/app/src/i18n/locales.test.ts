@@ -9,8 +9,8 @@ import {
 describe("parseAppLanguage", () => {
   it("accepts system and all supported language locales", () => {
     expect(
-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN", "zh-TW"].map(parseAppLanguage),
+    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN", "zh-TW"]);
   });
 
   it("returns null for unknown values", () => {
@@ -30,6 +30,7 @@ describe("parseAppLanguage", () => {
       "pt-BR",
       "ru",
       "zh-CN",
+      "zh-TW",
     ]);
   });
 });

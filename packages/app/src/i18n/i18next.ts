@@ -10,6 +10,7 @@ import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
+import { zhTW } from "./resources/zh-TW";
 
 const i18n = createInstance();
 
@@ -28,6 +29,7 @@ observeI18nInit(
       "pt-BR": { translation: ptBR },
       ru: { translation: ru },
       "zh-CN": { translation: zhCN },
+      "zh-TW": { translation: zhTW },
     },
     interpolation: {
       escapeValue: false,
