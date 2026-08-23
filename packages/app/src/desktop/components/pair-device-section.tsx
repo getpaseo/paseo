@@ -262,6 +262,7 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
       </View>
+      <Alert variant="warning" description={t("pairing.device.securityWarning")} />
     </View>
   );
 }
