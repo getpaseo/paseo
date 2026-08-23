@@ -82,6 +82,11 @@ function decodeCiphertext(text: string): ArrayBuffer {
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
 
+// Fixed transport key for an unsupported peer public key.
+const UNSUPPORTED_PEER_TRANSPORT_KEY = Uint8Array.from(
+  Buffer.from("351f86faa3b988468a850122b65b0acece9c4826806aeee63de9c0da2bd7f91e", "hex"),
+);
+
 function parseEncryptedJson(sharedKey: Uint8Array, text: string): unknown {
   const plaintext = new TextDecoder().decode(decrypt(sharedKey, decodeCiphertext(text)));
   return JSON.parse(plaintext);
@@ -161,35 +166,48 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
   throw new Error(`Relay WebSocket endpoint not ready on port ${port} within ${timeout}ms`);
 }
 
+async function waitForCapturedLog(
+  lines: string[],
+  predicate: (line: string) => boolean,
+  timeout = 1000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    if (lines.some(predicate)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for captured log. Recent logs:\n${lines.slice(-20).join("")}`);
+}
+
 (shouldRunRelayE2e ? describe : describe.skip)("Relay transport (E2EE) - daemon E2E", () => {
   let relayPort: number;
   let relayProcess: ChildProcess | null = null;
   let relayStdoutLines: string[] = [];
 
-  const startRelay = async () => {
+  const startRelay = async (options: { useLocalRelay?: boolean } = {}) => {
     relayStdoutLines = [];
     relayPort = await getAvailablePort();
     const relayDir = path.resolve(process.cwd(), "../relay");
-    relayProcess = spawn(
-      "npx",
-      [
-        "wrangler",
-        "dev",
-        "--local",
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        String(relayPort),
-        "--live-reload=false",
-        "--show-interactive-dev-session=false",
-      ],
-      {
-        cwd: relayDir,
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-      },
-    );
+    const relayArgs = [
+      "wrangler",
+      "dev",
+      "--local",
+      "--ip",
+      "127.0.0.1",
+      "--port",
+      String(relayPort),
+      "--live-reload=false",
+      "--show-interactive-dev-session=false",
+    ];
+    if (options.useLocalRelay) {
+      relayArgs.push("--var", "PASEO_RELAY_UPSTREAM:");
+    }
+    relayProcess = spawn("npx", relayArgs, {
+      cwd: relayDir,
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+    });
 
     relayProcess.stdout?.on("data", (data: Buffer) => {
       const lines = data
@@ -358,6 +376,122 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       // eslint-disable-next-line no-console
       console.error("daemon logs (tail):\n", tail);
       throw err;
+    } finally {
+      await daemon.close();
+      await stopRelay();
+    }
+  }, 90000);
+
+  test("daemon closes a relay client that sends an unsupported handshake key", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const { logger, lines } = createCapturingLogger();
+    await startRelay({ useLocalRelay: true });
+
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      logger,
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+    });
+
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
+      const { serverId } = decodeOfferFromFragmentUrl(offerUrl);
+      const ws = new WebSocket(
+        buildRelayWebSocketUrl({
+          endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
+          serverId,
+          role: "client",
+        }),
+      );
+
+      let receivedServerInfo = false;
+      const isRelayDataConnectedLog = (line: string) => line.includes("relay_data_connected");
+      const outcome = await new Promise<
+        { type: "closed"; code: number; reason: string } | { type: "errored"; error: Error }
+      >((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("timed out waiting for daemon to reject unsupported handshake key"));
+        }, 20_000);
+
+        ws.on("open", async () => {
+          try {
+            await waitForCapturedLog(lines, isRelayDataConnectedLog);
+            ws.send(
+              JSON.stringify({
+                type: "e2ee_hello",
+                key: exportPublicKey(new Uint8Array(32)),
+              }),
+            );
+            ws.send(
+              encodeCiphertext(
+                encrypt(
+                  UNSUPPORTED_PEER_TRANSPORT_KEY,
+                  JSON.stringify({
+                    type: "hello",
+                    clientId: "cid_relay_unsupported_key",
+                    clientType: "cli",
+                    protocolVersion: 1,
+                  }),
+                ),
+              ),
+            );
+          } catch (error) {
+            clearTimeout(timeout);
+            reject(error);
+          }
+        });
+
+        ws.on("message", (data) => {
+          try {
+            const parsed = WSOutboundMessageSchema.parse(
+              parseEncryptedJson(UNSUPPORTED_PEER_TRANSPORT_KEY, data.toString()),
+            );
+            if (
+              parsed.type === "session" &&
+              parsed.message.type === "status" &&
+              parsed.message.payload?.status === "server_info"
+            ) {
+              receivedServerInfo = true;
+              clearTimeout(timeout);
+              reject(
+                new Error("daemon sent server_info after accepting an unsupported handshake key"),
+              );
+            }
+          } catch {
+            // Plaintext e2ee_ready cannot be decrypted and is irrelevant to this assertion.
+          }
+        });
+        ws.on("close", (code, reason) => {
+          clearTimeout(timeout);
+          resolve({ type: "closed", code, reason: reason.toString() });
+        });
+        ws.on("error", (error) => {
+          clearTimeout(timeout);
+          resolve({ type: "errored", error });
+        });
+      });
+
+      expect(receivedServerInfo).toBe(false);
+      if (outcome.type === "closed") {
+        expect(outcome.code).toBeGreaterThan(0);
+      } else {
+        expect(outcome.error).toBeInstanceOf(Error);
+      }
+
+      const isRejectedHandshakeLog = (line: string) =>
+        line.includes("relay_e2ee_handshake_failed") && line.includes("Invalid peer public key");
+      await waitForCapturedLog(lines, isRejectedHandshakeLog);
+      expect(lines.some(isRejectedHandshakeLog)).toBe(true);
     } finally {
       await daemon.close();
       await stopRelay();

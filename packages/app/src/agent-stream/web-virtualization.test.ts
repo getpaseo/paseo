@@ -11,6 +11,7 @@ import {
   findMountedWindowStart,
   getWebMountedRecentStreamItems,
   getWebPartialVirtualizationThreshold,
+  shouldAdjustScrollForVirtualRowResize,
   splitWebVirtualizedHistory,
   type IndexedStreamItem,
 } from "./web-virtualization";
@@ -165,6 +166,55 @@ describe("estimateStreamItemHeight", () => {
     };
 
     expect(estimateStreamItemHeight(item)).toBeGreaterThan(220);
+  });
+});
+
+describe("virtual row resize anchoring", () => {
+  it("does not move the viewport when a visible row expands while detached", () => {
+    expect(
+      shouldAdjustScrollForVirtualRowResize({
+        isHistoryStartPrependActive: false,
+        rowStart: 1200,
+        scrollOffset: 1000,
+        remainingDistanceFromBottom: 5000,
+        bottomThreshold: 64,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the reading position when a row above the viewport changes size", () => {
+    expect(
+      shouldAdjustScrollForVirtualRowResize({
+        isHistoryStartPrependActive: false,
+        rowStart: 800,
+        scrollOffset: 1000,
+        remainingDistanceFromBottom: 5000,
+        bottomThreshold: 64,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves history prepend and bottom following to their existing anchors", () => {
+    const baseInput = {
+      rowStart: 800,
+      scrollOffset: 1000,
+      remainingDistanceFromBottom: 5000,
+      bottomThreshold: 64,
+    };
+
+    expect(
+      shouldAdjustScrollForVirtualRowResize({
+        ...baseInput,
+        isHistoryStartPrependActive: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAdjustScrollForVirtualRowResize({
+        ...baseInput,
+        isHistoryStartPrependActive: false,
+        remainingDistanceFromBottom: 64,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -55,11 +55,12 @@ const agentTab: WorkspaceTabDescriptor = {
   target: { kind: "agent", agentId: "agent-a" },
 };
 
-function buildContent(tab: WorkspaceTabDescriptor = agentTab) {
+function buildContent(tab: WorkspaceTabDescriptor = agentTab, isSidePanel = false) {
   return buildWorkspacePaneContentModel({
     tab,
     normalizedServerId: "server-a",
     normalizedWorkspaceId: "workspace-a",
+    isSidePanel,
     onOpenTab: vi.fn(),
     onCloseCurrentTab: vi.fn(),
     onRetargetCurrentTab: vi.fn(),
@@ -120,6 +121,24 @@ describe("WorkspacePaneContent", () => {
       isInteractive: true,
       focusPane: expect.any(Function),
     });
+  });
+
+  it("exposes whether the pane is the Side panel to its content", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent
+          content={buildContent(agentTab, true)}
+          isPaneFocused
+          isWorkspaceFocused
+        />,
+      );
+    });
+
+    expect(snapshots[0]?.paneContextValue.isSidePanel).toBe(true);
   });
 
   it("keeps pane content mounted when a draft tab is retargeted in place", () => {

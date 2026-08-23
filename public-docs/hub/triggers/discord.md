@@ -34,8 +34,14 @@ steps:
       - { type: discord.reply, max: 1, required: true }
 ```
 
-Turn on Discord Developer Mode to copy IDs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
+Discord filters use IDs, not server names, display names, or Hub connection slugs. `from_users` matches the author; `guild` and `channels` constrain where the mention arrived. `pattern` is a required prefix after the mention; `contains` is its legacy alias and has the same prefix behavior. All filters must pass.
 
 The reply posts in the triggering thread or channel. `discord.reply` grants `hub.reply`, but does not rewrite the prompt. A Discord trigger grants no GitHub credential; add a [`github` block](/docs/hub/github) to the step that needs one.
 
 Leading declared inputs follow the mention. Hub exposes the remaining text as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).
+
+## Find your Discord IDs
+
+Turn on **Settings → Advanced → Developer Mode**, then right-click to **Copy Server ID** for `guild`, **Copy Channel ID** for `channels`, and **Copy User ID** for `from_users`. All three are numeric snowflakes; quote them so YAML keeps them as strings.
+
+[Guided setup](/docs/hub/quickstart) fills `guild` from the Discord app you connected and asks you for your user ID.

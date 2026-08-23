@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0-beta.5 - 2026-08-22
+
+### Added
+
+- Added browser-style New tabs to every workspace pane
+- Added live workspace change counts above active agent composers
+- Added workspace panel and pane actions to the Command Center
+- Added guided Hub setup that connects a daemon and deploys a starter workflow
+
+### Improved
+
+- Reduced pauses while navigating and streaming by deferring replica-cache writes until idle
+- Kept large read-only source previews responsive with bounded rendering
+- Kept long-running agent timelines in memory instead of rewriting their complete transcript to disk
+
+### Fixed
+
+- Fixed the iOS composer staying one line tall as text wraps
+- Fixed compact model options becoming unreachable when profiles fill the sheet
+- Fixed OpenCode agents timing out during slow startup ([#3621](https://github.com/getpaseo/paseo/pull/3621) by [@BrianAguilarWasco](https://github.com/BrianAguilarWasco))
+- Fixed chat timeline spacing and reading-position jumps when visible tool calls expand
+
 ## 0.5.0-beta.4 - 2026-08-21
 
 ### Added

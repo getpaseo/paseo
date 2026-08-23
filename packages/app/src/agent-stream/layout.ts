@@ -49,6 +49,7 @@ interface LayoutSegmentInput {
   items: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
   auxiliaryTurnFooter: TurnFooterHost | null;
+  hasAuxiliaryFooter: boolean;
   frameOrder: StreamFrameChildOrder;
   boundaryIndex: number | null;
   boundaryAboveItem: StreamItem | null;
@@ -249,11 +250,6 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
       boundaryIndex: input.boundaryIndex,
       boundaryItem: input.boundaryBelowItem,
     });
-    const assistantSpacing = getAssistantBlockSpacing({
-      item,
-      aboveItem,
-      belowItem,
-    });
     const completedFooter = resolveCompletedFooter({
       strategy: input.strategy,
       items: input.items,
@@ -264,6 +260,12 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
       auxiliaryTurnFooter: input.auxiliaryTurnFooter,
       boundaryAboveItems: input.boundaryAboveItems,
       boundaryAboveIndex: input.boundaryAboveIndex,
+    });
+    const assistantSpacing = getAssistantBlockSpacing({
+      item,
+      aboveItem,
+      belowItem,
+      hasFooterBelow: completedFooter !== null || (input.hasAuxiliaryFooter && belowItem === null),
     });
 
     return {
@@ -294,6 +296,7 @@ const historyLayoutCache = new WeakMap<StreamItem[], Map<string, StreamLayoutIte
 
 export function layoutStream(input: StreamLayoutInput): StreamLayout {
   const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter(input);
+  const hasAuxiliaryFooter = input.isTurnActive || auxiliaryTurnFooter !== null;
   const historyBoundaryIndex = input.strategy.getHistoryLiveBoundaryIndex(input.history);
   const liveHeadBoundaryIndex = input.strategy.getLiveHeadHistoryBoundaryIndex(input.liveHead);
   const historyBoundaryItem =
@@ -313,6 +316,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
       liveHeadBoundaryItem?.kind ?? "null",
       liveHeadBoundaryItem?.turnId ?? "null",
       auxiliaryTurnFooter?.itemId ?? "null",
+      hasAuxiliaryFooter ? "footer" : "no-footer",
     ].join(":");
     let byKey = historyLayoutCache.get(input.history);
     if (!byKey) {
@@ -328,6 +332,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
         items: input.history,
         timingByAssistantId: input.timingByAssistantId,
         auxiliaryTurnFooter,
+        hasAuxiliaryFooter,
         frameOrder,
         boundaryIndex: historyBoundaryIndex,
         boundaryAboveItem: null,
@@ -347,6 +352,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     items: input.liveHead,
     timingByAssistantId: input.timingByAssistantId,
     auxiliaryTurnFooter,
+    hasAuxiliaryFooter,
     frameOrder,
     boundaryIndex: liveHeadBoundaryIndex,
     boundaryAboveItem: historyBoundaryItem,

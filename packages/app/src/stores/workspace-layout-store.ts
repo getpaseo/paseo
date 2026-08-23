@@ -36,6 +36,7 @@ import {
   openTabInLayoutBackground,
   replaceTabTargetInLayout,
   revealTargetInLayout,
+  restoreEmptyPanesInLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
@@ -174,6 +175,7 @@ const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
   featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
 });
 const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("new_tab") }),
   z.strictObject({
     kind: z.literal("draft"),
     draftId: z.string(),
@@ -605,6 +607,29 @@ export function createWorkspaceLayoutStore(
               state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
             );
             const closingPane = findPaneContainingTab(layout.root, normalizedTabId);
+            const closingTab = collectAllTabs(layout.root).find(
+              (tab) => tab.tabId === normalizedTabId,
+            );
+            if (closingPane?.tabIds.length === 1 && closingTab?.target.kind === "new_tab") {
+              const nextLayout =
+                closingPane.id === sidePanelPaneId
+                  ? setPaneHiddenInLayout({
+                      layout,
+                      paneId: closingPane.id,
+                      hidden: true,
+                    })
+                  : closePaneInLayout({ layout, paneId: closingPane.id });
+              if (!nextLayout) {
+                return state;
+              }
+              return {
+                ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+                layoutByWorkspace: {
+                  ...state.layoutByWorkspace,
+                  [normalizedWorkspaceKey]: nextLayout,
+                },
+              };
+            }
             const preserveEmptyPaneId =
               closingPane?.id === "main" || closingPane?.id === sidePanelPaneId
                 ? closingPane.id
@@ -1304,13 +1329,16 @@ export function createWorkspaceLayoutStore(
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
+            const restoredLayout = restoreEmptyPanesInLayout(
+              stripEphemeralTabsFromLayout(persistedLayout),
+            );
             const sidePanel = ensurePersistedSidePanelPane({
-              layout: normalizeLayout(persistedLayout),
+              layout: restoredLayout,
               registeredPaneId: sidePanelPaneIdByWorkspace[workspaceKey],
               ids,
             });
             if (!sidePanel) {
-              layoutByWorkspace[workspaceKey] = normalizeLayout(persistedLayout);
+              layoutByWorkspace[workspaceKey] = restoredLayout;
               continue;
             }
             layoutByWorkspace[workspaceKey] = sidePanel.layout;
