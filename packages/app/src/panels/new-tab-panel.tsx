@@ -116,11 +116,12 @@ function useNewTabDescriptor() {
 }
 
 const NewTabPanel = memo(function NewTabPanel(): ReactElement {
-  const { isSidePanel, serverId, tabId } = usePaneContext();
+  const { isSidePanel, serverId, workspaceId, tabId } = usePaneContext();
   const { isInteractive, focusPane } = usePaneFocus();
   const containerRef = useRef<View | null>(null);
   const groups = useWorkspaceTabLaunchCatalog({
     serverId,
+    workspaceId,
     purpose: isSidePanel ? "supporting" : "primary",
   });
   const itemsById = useMemo(

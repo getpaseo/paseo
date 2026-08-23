@@ -287,6 +287,8 @@ export default function contribute(plugin: PluginContext) {
 
 A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
 
+Both kinds appear in the New tab launcher — the pane's `+` menu and the persistent New tab — below the built-in destinations. An agent panel is listed only while the workspace has an open agent, since it needs one to bind to. It binds to the focused agent; when the launching pane holds the New tab itself, it falls back to an agent visible in another pane, then to the most recently opened one.
+
 Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
 
 Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.

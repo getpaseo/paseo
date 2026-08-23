@@ -3,6 +3,7 @@ import {
   findPaneById,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
+import { getWorkspaceTabAgentId } from "@/workspace-tabs/model";
 
 export function getFocusedAgentId(layout: WorkspaceLayout | null): string | null {
   if (!layout) return null;
@@ -11,8 +12,5 @@ export function getFocusedAgentId(layout: WorkspaceLayout | null): string | null
   const tab = collectAllTabs(layout.root).find(
     (candidate) => candidate.tabId === pane.focusedTabId,
   );
-  if (tab?.target.kind === "agent") return tab.target.agentId;
-  return tab?.target.kind === "plugin" && tab.target.context === "agent"
-    ? tab.target.agentId
-    : null;
+  return tab ? getWorkspaceTabAgentId(tab.target) : null;
 }

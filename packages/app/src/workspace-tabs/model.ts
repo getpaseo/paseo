@@ -65,3 +65,12 @@ export function buildWorkspaceTabPersistenceKey(input: {
   }
   return `${serverId}:${workspaceId}`;
 }
+
+/**
+ * The agent a tab is showing, if any. An agent-context plugin panel counts: it
+ * is a view onto the same agent, so focusing one must not drop agent context.
+ */
+export function getWorkspaceTabAgentId(target: WorkspaceTabTarget): string | null {
+  if (target.kind === "agent") return target.agentId;
+  return target.kind === "plugin" && target.context === "agent" ? target.agentId : null;
+}

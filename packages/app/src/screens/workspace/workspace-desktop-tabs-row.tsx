@@ -221,6 +221,7 @@ function TabLabelMeasurement({
 
 interface WorkspaceNewTabButtonProps {
   serverId: string;
+  workspaceId: string;
   paneId?: string;
   shortcutKeys: ShortcutKey[][] | null;
   onLayout: (event: LayoutChangeEvent) => void;
@@ -228,6 +229,7 @@ interface WorkspaceNewTabButtonProps {
 
 function WorkspaceNewTabButton({
   serverId,
+  workspaceId,
   paneId,
   shortcutKeys,
   onLayout,
@@ -258,6 +260,7 @@ function WorkspaceNewTabButton({
         </Tooltip>
         <WorkspaceNewTabMenuContent
           serverId={serverId}
+          workspaceId={workspaceId}
           purpose={paneId === SIDE_PANEL_PANE_ID ? "supporting" : "primary"}
           paneId={paneId}
         />
@@ -1363,6 +1366,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           {!layout.requiresHorizontalScrollFallback ? (
             <WorkspaceNewTabButton
               serverId={normalizedServerId}
+              workspaceId={normalizedWorkspaceId}
               paneId={paneId}
               shortcutKeys={newTabKeys}
               onLayout={handleInlineAddButtonLayout}
@@ -1378,6 +1382,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       {layout.requiresHorizontalScrollFallback ? (
         <WorkspaceNewTabButton
           serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
           paneId={paneId}
           shortcutKeys={newTabKeys}
           onLayout={handleInlineAddButtonLayout}

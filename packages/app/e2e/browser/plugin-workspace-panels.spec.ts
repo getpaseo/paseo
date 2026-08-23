@@ -97,6 +97,19 @@ async function openCompactSidebar(page: Page): Promise<void> {
   await expect(page.getByTestId("sidebar-command-center-search")).toBeVisible();
 }
 
+function launchItem(page: Page, panelId: string) {
+  return page
+    .getByTestId(`workspace-new-tab-menu-plugin:${PLUGIN_ID}:${panelId}`)
+    .filter({ visible: true });
+}
+
+async function openNewTabMenu(page: Page): Promise<void> {
+  const trigger = page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first();
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+  await expect(page.getByTestId("workspace-new-tab-menu").filter({ visible: true })).toBeVisible();
+}
+
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const screenshot = testInfo.outputPath(`${name}.png`);
   await page.screenshot({ path: screenshot });
@@ -113,6 +126,7 @@ test.describe("plugin workspace panels and Command Center", () => {
     const primaryClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const previousConfig = await primaryClient.getDaemonConfig();
     const primary = await seedWorkspace({ repoPrefix: "plugin-panel-primary-" });
+    const agentless = await seedWorkspace({ repoPrefix: "plugin-panel-agentless-" });
     const secondaryDaemon = await startIsolatedHostDaemon("plugin-panel-secondary");
     const secondary = await seedWorkspace({
       repoPrefix: "plugin-panel-secondary-",
@@ -139,6 +153,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       await waitForWorkspaceInSidebar(page, {
         serverId: secondaryDaemon.serverId,
         workspaceId: secondary.workspaceId,
+      });
+      await waitForWorkspaceInSidebar(page, {
+        serverId: getServerId(),
+        workspaceId: agentless.workspaceId,
       });
 
       await test.step("workspace context opens the real wide panel bridge", async () => {
@@ -196,15 +214,38 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByText("Sidebar collision surface", { exact: true })).toBeVisible();
       });
 
-      await test.step("agent context opens the compact panel with synchronous snapshots", async () => {
-        const agent = await primary.client.createAgent({
-          provider: "mock",
-          cwd: primary.repoPath,
-          workspaceId: primary.workspaceId,
-          title: "Plugin panel context agent",
-          model: "ten-second-stream",
-          modeId: "load-test",
+      await test.step("the launcher hides agent panels in a workspace with no agent", async () => {
+        await switchWorkspaceViaSidebar({
+          page,
+          serverId: getServerId(),
+          workspaceId: agentless.workspaceId,
         });
+        await openNewTabMenu(page);
+        await expect(launchItem(page, "workspace")).toBeVisible();
+        await expect(launchItem(page, "agent")).toHaveCount(0);
+        await page.keyboard.press("Escape");
+      });
+
+      const agent = await primary.client.createAgent({
+        provider: "mock",
+        cwd: primary.repoPath,
+        workspaceId: primary.workspaceId,
+        title: "Plugin panel context agent",
+        model: "ten-second-stream",
+        modeId: "load-test",
+      });
+
+      await test.step("the launcher offers an agent panel bound to the open agent", async () => {
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await openNewTabMenu(page);
+        await expect(launchItem(page, "workspace")).toBeVisible();
+        await capture(page, testInfo, "plugin-panels-in-new-tab-menu");
+        await launchItem(page, "agent").click();
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+      });
+
+      await test.step("agent context opens the compact panel with synchronous snapshots", async () => {
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await page.setViewportSize(COMPACT_VIEWPORT);
@@ -239,6 +280,7 @@ test.describe("plugin workspace panels and Command Center", () => {
         .catch(() => undefined);
       await primaryClient.close().catch(() => undefined);
       await primary.cleanup().catch(() => undefined);
+      await agentless.cleanup().catch(() => undefined);
       await secondary.cleanup().catch(() => undefined);
       await secondaryDaemon.close().catch(() => undefined);
       await rm(directory, { recursive: true, force: true });

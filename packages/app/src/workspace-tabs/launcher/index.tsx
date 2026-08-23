@@ -14,13 +14,19 @@ import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
+import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import type { PluginWorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
+import type { PluginWorkspacePanelContribution } from "@getpaseo/plugin";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
+import { resolveLauncherAgentId } from "./internal/agent-context";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
@@ -66,6 +72,41 @@ export function NewTabLauncherProvider({
   return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
 }
 
+function pluginPanelTarget(
+  pluginId: string,
+  panel: PluginWorkspacePanelContribution,
+  agentId: string | null,
+): PluginWorkspaceTabTarget | null {
+  if (panel.context === "workspace") {
+    return { kind: "plugin", pluginId, panelId: panel.id, context: "workspace" };
+  }
+  if (!agentId) return null;
+  return { kind: "plugin", pluginId, panelId: panel.id, context: "agent", agentId };
+}
+
+/**
+ * The agent an agent-context plugin panel would open against, or null when the
+ * workspace has none. Mirrors the Command Center's existence check so the
+ * launcher cannot offer a panel that `PluginPanelBody` would refuse to render.
+ */
+function useLaunchAgentId(serverId: string, workspaceId: string): string | null {
+  const workspaceKey = serverId && workspaceId ? `${serverId}:${workspaceId}` : null;
+  const layout = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
+  );
+  const agentId = resolveLauncherAgentId(layout);
+  const agentExists = useSessionStore((state) => {
+    if (!serverId || !agentId) return false;
+    const session = state.sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
+    return (
+      Boolean(agent) &&
+      normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
+    );
+  });
+  return agentExists ? agentId : null;
+}
+
 const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   agent: { kind: "agent" },
   terminal: { kind: "terminal" },
@@ -77,15 +118,17 @@ const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
 
 export function useWorkspaceTabLaunchCatalog(input: {
   serverId: string;
+  workspaceId: string;
   purpose: WorkspaceTabLaunchPurpose;
 }): readonly WorkspaceTabLaunchGroup[] {
-  const { serverId, purpose } = input;
+  const { serverId, workspaceId, purpose } = input;
   const { t } = useTranslation();
   const router = useRouter();
   const launcher = useContext(NewTabLauncherContext);
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
+  const agentId = useLaunchAgentId(serverId, workspaceId);
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {
@@ -158,17 +201,16 @@ export function useWorkspaceTabLaunchCatalog(input: {
     for (const plugin of plugins) {
       if (plugin.serverId !== serverId) continue;
       for (const panel of plugin.workspacePanels) {
-        if (panel.context !== "workspace") continue;
-        const selection: NewTabSelection = {
-          kind: "target",
-          target: { kind: "plugin", pluginId: plugin.id, panelId: panel.id, context: "workspace" },
-        };
+        const target = pluginPanelTarget(plugin.id, panel, agentId);
+        // An agent panel with no agent to bind to is skipped rather than
+        // disabled: the row would open a tab that can only say "unavailable".
+        if (!target) continue;
         tabItems.push({
           id: `plugin:${plugin.id}:${panel.id}`,
           label: panel.title,
           Icon: resolvePluginIcon(panel.icon),
           disabled: false,
-          launch: launchSelection(selection),
+          launch: launchSelection({ kind: "target", target }),
         });
       }
     }
@@ -195,6 +237,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     }
     return groups;
   }, [
+    agentId,
     config?.terminalProfiles,
     editTerminalProfiles,
     launchSelection,
