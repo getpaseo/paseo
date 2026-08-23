@@ -172,16 +172,16 @@ test.describe("Tab creation", () => {
     await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
     await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
     await expect(files).toContainText(new RegExp(`${shortcutPrefix.source}.*E`));
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
 
     await page.keyboard.press("ArrowDown");
-    await expect(files).toBeFocused();
+    await expect(terminal).toBeFocused();
     await page.keyboard.press("ArrowUp");
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
 
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await panel.click({ position: { x: 20, y: 20 } });
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
   });
 
   test("clicking new agent tab creates a draft tab", async ({ page }) => {

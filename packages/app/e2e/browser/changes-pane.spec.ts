@@ -838,24 +838,35 @@ test("desktop Changes toggles a navigation tree beside the expanded diff documen
   await testInfo.attach("changes-toolbar", { path: screenshot, contentType: "image/png" });
 });
 
-test("compact Changes keeps its options control touch-sized", async ({ page }) => {
+test("compact Changes keeps its actions compact and menu-only", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
   await page.setViewportSize({ width: 480, height: 900 });
 
+  const actions = page.getByTestId("changes-actions-menu-trigger").filter({ visible: true });
   const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
-  const [optionsBox, glyphBox] = await Promise.all([
+  const [actionsBox, optionsBox, glyphBox] = await Promise.all([
+    actions.boundingBox(),
     options.boundingBox(),
     options.locator("svg").boundingBox(),
   ]);
-  if (!optionsBox || !glyphBox) {
-    throw new Error("Compact Changes options geometry could not be measured");
+  if (!actionsBox || !optionsBox || !glyphBox) {
+    throw new Error("Compact Changes toolbar geometry could not be measured");
   }
+  expect(actionsBox.width).toBe(48);
+  expect(actionsBox.height).toBe(28);
   expect(optionsBox.width).toBe(32);
   expect(optionsBox.height).toBe(32);
   expect(glyphBox.width).toBe(18);
   expect(glyphBox.height).toBe(18);
+
+  await expect(actions).not.toContainText("Commit");
+  await expect(actions.locator("svg")).toHaveCount(2);
+  await actions.click();
+  await expect(page.getByTestId("changes-primary-cta-menu")).toBeVisible();
+  await expect(page.getByTestId("changes-menu-commit")).toContainText("Commit");
+  await page.keyboard.press("Escape");
 
   await options.click();
   const wrapLines = page.getByText("Wrap long lines", { exact: true });
