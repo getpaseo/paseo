@@ -19,6 +19,21 @@ function deriveInitialAgentTitle(prompt: string): string | null {
   return clamped.length > 0 ? clamped : null;
 }
 
+function deriveLastAgentTitle(prompt: string): string | null {
+  const lines = prompt.split(/\r?\n/).map((line) => line.trim());
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.length > 0) {
+      const normalized = line.replace(/\s+/g, " ").trim();
+      if (normalized) {
+        const clamped = normalized.slice(0, MAX_INITIAL_AGENT_TITLE_CHARS).trim();
+        return clamped.length > 0 ? clamped : null;
+      }
+    }
+  }
+  return null;
+}
+
 export function resolveCreateAgentTitles(options: {
   configTitle?: string | null;
   initialPrompt?: string | null;
@@ -35,6 +50,10 @@ export function resolveCreateAgentTitles(options: {
     explicitTitle,
     provisionalTitle,
   };
+}
+
+export function resolveLastAgentTitle(prompt: string): string | null {
+  return deriveLastAgentTitle(prompt) ?? null;
 }
 
 export function resolveFirstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
