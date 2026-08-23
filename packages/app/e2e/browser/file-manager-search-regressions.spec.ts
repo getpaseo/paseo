@@ -3,7 +3,7 @@ import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
-import { ensureSidePanel, openFilesPanel } from "../support/helpers/workspace-tabs";
+import { ensureExplorerSidebar, openFilesPanel } from "../support/helpers/workspace-tabs";
 
 let workspace: SeededWorkspace;
 
@@ -30,16 +30,15 @@ test("search stays available while the initial tree listing is errored and retri
   await gotoWorkspace(page, workspace.workspaceId);
   await chmod(workspace.repoPath, 0o000);
 
-  const sidePanel = await ensureSidePanel(page);
-  await sidePanel.getByTestId("workspace-new-tab-menu-trigger").click();
-  await page.getByTestId("workspace-new-tab-menu-files").filter({ visible: true }).click();
+  const explorer = await ensureExplorerSidebar(page);
+  await explorer.getByTestId("explorer-sidebar-tab-files").click();
 
-  const searchToggle = sidePanel.getByTestId("files-search-toggle");
+  const searchToggle = explorer.getByTestId("files-search-toggle");
   await expect(searchToggle).toBeVisible({ timeout: 30_000 });
   await chmod(workspace.repoPath, 0o755);
-  await sidePanel.getByText("Retry", { exact: true }).click();
+  await explorer.getByText("Retry", { exact: true }).click();
   await searchToggle.click();
-  await expect(sidePanel.getByTestId("file-search-pane")).toBeVisible();
+  await expect(explorer.getByTestId("file-search-pane")).toBeVisible();
 });
 
 test("opening the same search match again recenters the file", async ({ page }) => {
@@ -62,8 +61,7 @@ test("opening the same search match again recenters the file", async ({ page }) 
   });
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(0);
 
-  await page.getByTestId("files-search-toggle").filter({ visible: true }).click();
-  await page.getByTestId("files-search-input").filter({ visible: true }).fill("uniqueSearchNeedle");
+  await page.getByTestId("explorer-sidebar-tab-files").filter({ visible: true }).click();
   await expect(match).toBeVisible({ timeout: 30_000 });
   await match.click();
 
