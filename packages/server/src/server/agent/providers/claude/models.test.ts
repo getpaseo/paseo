@@ -430,24 +430,43 @@ describe("findClaudeModel", () => {
 });
 
 describe("Claude Opus 5 catalog", () => {
-  it("offers a single Opus 5 entry with a 1M context window", () => {
+  it("offers selectable 200k and 1M Opus 5 entries plus a compatibility entry for old apps", () => {
     const opus5Models = getClaudeModels()
       .filter((model) => model.id.startsWith("claude-opus-5"))
-      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+      .map(({ id, aliases, isSelectable, label, contextWindowMaxTokens }) => ({
+        id,
+        aliases,
+        isSelectable,
+        label,
+        contextWindowMaxTokens,
+      }));
 
     expect(opus5Models).toEqual([
-      { id: "claude-opus-5", label: "Opus 5", contextWindowMaxTokens: 1_000_000 },
+      {
+        id: "claude-opus-5",
+        aliases: ["claude-opus-5[1m]"],
+        isSelectable: undefined,
+        label: "Opus 5",
+        contextWindowMaxTokens: 1_000_000,
+      },
+      {
+        id: "claude-opus-5[1m]",
+        aliases: undefined,
+        isSelectable: false,
+        label: "Opus 5 1M",
+        contextWindowMaxTokens: 1_000_000,
+      },
     ]);
   });
 
-  it("resolves retired and dated Opus 5 IDs to the single catalog entry", () => {
-    expect(findClaudeModel("claude-opus-5[1m]")?.id).toBe("claude-opus-5");
+  it("resolves retired and dated Opus 5 IDs to the canonical catalog entries", () => {
+    expect(findClaudeModel("claude-opus-5[1m]")?.id).toBe("claude-opus-5[1m]");
     expect(findClaudeModel("claude-opus-5-20260724")?.id).toBe("claude-opus-5");
-    expect(findClaudeModel("claude-opus-5-20260724[1m]")?.id).toBe("claude-opus-5");
+    expect(findClaudeModel("claude-opus-5-20260724[1m]")?.id).toBe("claude-opus-5[1m]");
     expect(findClaudeModel("claude-opus-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
   });
 
-  it("keeps disabled thinking available for agents persisted on the retired 1M ID", () => {
+  it("keeps disabled thinking available for agents persisted on the 1M ID", () => {
     expect(resolveClaudeDisabledThinkingForModel("claude-opus-5[1m]")).toEqual({
       supported: true,
       fallbackThinkingOptionId: "high",

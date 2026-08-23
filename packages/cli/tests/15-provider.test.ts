@@ -58,6 +58,11 @@ const EXPECTED_CLAUDE_MODELS = [
     descriptionFragment: "Latest release",
   },
   {
+    id: "claude-opus-5[1m]",
+    model: "Opus 5 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
     id: "claude-fable-5",
     model: "Fable 5",
     descriptionFragment: "Most powerful",
