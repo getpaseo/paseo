@@ -121,12 +121,6 @@ export function splitPinnedSidebarGroups(input: {
         remainingWorkspaces.push(workspace);
       }
     }
-    // Every chat got hoisted into the Pinned section: drop the empty shell instead of
-    // leaving a duplicate project header below. A genuinely empty project (no chats to
-    // begin with) is kept so its "new workspace" row stays reachable.
-    if (remainingWorkspaces.length === 0 && project.workspaces.length > 0) {
-      continue;
-    }
     unpinnedProjects.push(
       remainingWorkspaces.length === project.workspaces.length
         ? project
