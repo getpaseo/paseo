@@ -3453,15 +3453,121 @@ describe("Codex app-server provider", () => {
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
 
-      await expect(interruptPromise).rejects.toThrow(
-        "Cannot interrupt Codex before turn/started identifies the active turn",
-      );
+      // The turn was accepted but never identified, so there is nothing to
+      // interrupt and the call resolves as a no-op rather than throwing.
+      await expect(interruptPromise).resolves.toBeUndefined();
       await resultPromise;
       expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
     } finally {
       await session.close();
     }
+  });
+
+  test("releases the foreground slot when no turn was ever identified", async () => {
+    // Codex accepted turn/start but never published a native turn id, so the
+    // interrupt no-ops. No turn-end event is coming to release the foreground
+    // slot, and holding it makes every later startTurn refuse.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+    }>(session);
+    internals.client = {};
+    internals.currentTurnId = null;
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+
+    await expect(session.interrupt()).resolves.toBeUndefined();
+
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
+  test("wakes a waiting startTurn when the interrupt releases the slot", async () => {
+    // Releasing the slot is only half the repair: a prompt already blocked on
+    // the teardown wait sleeps until its own timeout unless the release wakes
+    // it, so the wakeup this interrupt was answering still arrives 10s late.
+    const session = createSession();
+    const internals = castInternals<{
+      currentTurnId: string | null;
+      client: unknown;
+      foregroundTurnClearWaiters: Array<() => void>;
+    }>(session);
+    internals.client = {};
+    internals.currentTurnId = null;
+
+    const queued = session.startTurn("queued behind the teardown");
+    const settled = queued.then(
+      () => "settled",
+      () => "settled",
+    );
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
+
+    await session.interrupt();
+
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
+    await expect(
+      Promise.race([
+        settled,
+        new Promise((resolve) => setTimeout(resolve, 50, "still waiting")),
+      ]),
+    ).resolves.toBe("settled");
+  });
+
+  test("keeps the foreground slot when the turn was identified", async () => {
+    const session = createSession();
+    const requests: string[] = [];
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+    }>(session);
+    internals.client = {
+      request: async (method: string) => {
+        requests.push(method);
+        return {};
+      },
+    };
+    internals.currentTurnId = "native-turn";
+
+    await session.interrupt();
+
+    // A live turn is being interrupted; Codex will report its end and release
+    // the slot. Releasing it here would free the slot under a running turn.
+    expect(requests).toEqual(["turn/interrupt"]);
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("leaves the foreground slot to a newer turn that raced into it", async () => {
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+      pendingForegroundTurnIdentification: {
+        foregroundTurnId: string;
+        promise: Promise<string | null>;
+        resolve: (turnId: string | null) => void;
+      } | null;
+    }>(session);
+    internals.client = {};
+    internals.currentTurnId = null;
+    let identify!: (turnId: string | null) => void;
+    const promise = new Promise<string | null>((resolve) => {
+      identify = resolve;
+    });
+    internals.pendingForegroundTurnIdentification = {
+      foregroundTurnId: "test-turn",
+      promise,
+      resolve: identify,
+    };
+
+    const interrupted = session.interrupt();
+    internals.activeForegroundTurnId = "newer-turn";
+    identify(null);
+
+    await expect(interrupted).resolves.toBeUndefined();
+    expect(internals.activeForegroundTurnId).toBe("newer-turn");
   });
 
   test("rejects an interrupt before Codex initializes the thread", async () => {

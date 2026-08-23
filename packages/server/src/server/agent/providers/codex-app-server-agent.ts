@@ -4678,7 +4678,32 @@ export class CodexAppServerAgentSession implements AgentSession {
       turnId = await pendingIdentification.promise;
     }
     if (!turnId || (foregroundTurnId && this.activeForegroundTurnId !== foregroundTurnId)) {
-      throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
+      // Nothing identifiable to interrupt. Resolve rather than throw, matching
+      // the claude and acp providers: throwing leaves the manager reading the
+      // cancel as unacknowledged, so it refuses every later stop and replace
+      // for the rest of the session. Resolving lets the existing
+      // acknowledged-timeout force-cancel settle the orphaned run.
+      this.logger.warn(
+        {
+          agentId: this.agentId,
+          provider: CODEX_PROVIDER,
+          sessionId: this.currentThreadId,
+          turnId: this.activeForegroundTurnId ?? this.currentTurnId ?? undefined,
+        },
+        "provider.codex.interrupt.no_identified_turn_noop",
+      );
+      // The turn was never identified, so no turn-end event will arrive to
+      // release the foreground slot, and every later startTurn would refuse
+      // with "A foreground turn is already active". Release only the slot this
+      // call sampled: a newer turn that raced into it is live and keeps it.
+      if (!turnId && foregroundTurnId && this.activeForegroundTurnId === foregroundTurnId) {
+        this.activeForegroundTurnId = null;
+        this.activeClientMessageId = null;
+        this.flushForegroundTurnClearWaiters();
+        this.pendingForegroundTurnIdentification?.resolve(null);
+        this.pendingForegroundTurnIdentification = null;
+      }
+      return;
     }
     await this.client.request(
       "turn/interrupt",
