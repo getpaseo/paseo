@@ -137,6 +137,18 @@ test.describe("Tab creation", () => {
     ).toBeVisible();
   });
 
+  test("clicking + opens its menu without creating a New tab", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+    const countBefore = await countTabsOfKind(page, "new_tab");
+
+    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+
+    await expect(
+      page.getByTestId("workspace-new-tab-menu").filter({ visible: true }),
+    ).toBeVisible();
+    await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(countBefore);
+  });
+
   test("opening two New tabs creates two independent tab identities", async ({ page }) => {
     await gotoWorkspace(page, workspace.workspaceId);
 
@@ -172,16 +184,16 @@ test.describe("Tab creation", () => {
     await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
     await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
     await expect(files).toContainText(new RegExp(`${shortcutPrefix.source}.*E`));
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
 
     await page.keyboard.press("ArrowDown");
-    await expect(files).toBeFocused();
+    await expect(terminal).toBeFocused();
     await page.keyboard.press("ArrowUp");
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
 
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await panel.click({ position: { x: 20, y: 20 } });
-    await expect(changes).toBeFocused();
+    await expect(agent).toBeFocused();
   });
 
   test("clicking new agent tab creates a draft tab", async ({ page }) => {
@@ -218,7 +230,11 @@ test.describe("Tab creation", () => {
     try {
       await gotoWorkspace(page, workspace.workspaceId);
       await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
-      await page.getByRole("button", { name: EMPTY_PROMPT_PROFILE.name }).click();
+      await page
+        .getByTestId("workspace-new-tab-menu")
+        .filter({ visible: true })
+        .getByRole("menuitem", { name: EMPTY_PROMPT_PROFILE.name })
+        .click();
 
       await expectTerminalOutputContains(page, "prompt-args: 0");
     } finally {
@@ -230,10 +246,10 @@ test.describe("Tab creation", () => {
     await gotoWorkspace(page, workspace.workspaceId);
     await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
 
-    const panel = page.getByTestId("workspace-new-tab-panel").filter({ visible: true });
-    await expect(panel.getByText("Terminal profiles", { exact: true })).toBeVisible();
+    const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
+    await expect(menu.getByText("Terminal profiles", { exact: true })).toBeVisible();
 
-    const editProfiles = panel.getByTestId("workspace-new-tab-edit-terminal-profiles");
+    const editProfiles = menu.getByTestId("workspace-new-tab-menu-edit-terminal-profiles");
     await expect(editProfiles).toHaveAccessibleName("Edit profiles");
 
     await editProfiles.click();
@@ -363,7 +379,7 @@ test.describe("Tab transitions (no flash)", () => {
   }) => {
     const isolatedWorkspace = await withWorkspace({ prefix: "launcher-no-flash-" });
     await isolatedWorkspace.navigateTo();
-    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+    await pressNewTabShortcut(page);
     await expect(
       page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
     ).toBeVisible();

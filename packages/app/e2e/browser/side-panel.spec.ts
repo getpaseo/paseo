@@ -68,8 +68,8 @@ test.describe("Side panel", () => {
         expect((await launcherButtonLabels(launcher)).slice(0, 4)).toEqual([
           "Changes",
           "Files",
-          "Agent",
           "Terminal",
+          "Agent",
         ]);
         await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(0);
         await capture(page, testInfo, "01-side-panel-reveals-empty");
@@ -218,7 +218,11 @@ test.describe("Side panel", () => {
       await capture(page, testInfo, "08-changes-in-side-panel");
 
       await mainPane(page).getByTestId("workspace-new-tab-button").click();
-      await page.getByTestId("workspace-new-tab-changes").filter({ visible: true }).first().click();
+      await page
+        .getByTestId("workspace-new-tab-menu-changes")
+        .filter({ visible: true })
+        .first()
+        .click();
 
       await expect(mainPane(page).getByTestId("workspace-tab-working_diff")).toBeVisible({
         timeout: 15_000,

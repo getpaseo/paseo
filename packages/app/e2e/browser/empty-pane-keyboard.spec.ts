@@ -50,7 +50,7 @@ test.describe("New tab keyboard launcher", () => {
     }
   });
 
-  test("a new split pane focuses its launcher and wraps arrow navigation", async ({ page }) => {
+  test("a new split pane focuses its launcher and supports arrow navigation", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "empty-pane-split-keyboard-" });
 
     try {
@@ -60,8 +60,12 @@ test.describe("New tab keyboard launcher", () => {
 
       const launcher = visibleNewTabPanel(page);
       await expect(launcher).toBeVisible({ timeout: 30_000 });
-      await expectLauncherSelection(launcher, "Changes");
+      await expectLauncherSelection(launcher, "Agent");
 
+      await page.keyboard.press("ArrowDown");
+      await expectLauncherSelection(launcher, "Terminal");
+      await page.keyboard.press("ArrowDown");
+      await expectLauncherSelection(launcher, "Changes");
       await page.keyboard.press("ArrowDown");
       await expectLauncherSelection(launcher, "Files");
       await page.keyboard.press("Enter");

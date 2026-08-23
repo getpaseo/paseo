@@ -49,7 +49,7 @@ A failed catch-up or subscription reconcile retries on its own, doubling from 1s
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
 writer, say — into a request and a log line every second on an idle app. The delay resets on success,
 reconnect, delivery-mode change, and visibility change, so recovery is still immediate once the
-condition clears.
+condition clears. Republishing the same visibility set is a no-op and never bypasses backoff.
 
 Background retries are silent. The retry the user presses in the sync-error callout is a fallible
 user action and owns its pending state: `retrying` is a status the sync model publishes, not a React

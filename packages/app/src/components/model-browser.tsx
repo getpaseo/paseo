@@ -13,7 +13,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { BottomSheetFlatList } from "@gorhom/bottom-sheet";
+import { BottomSheetFlatList, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -1455,7 +1455,19 @@ function ModelBrowserContent({
   return scrolling === "independent" ? (
     <IndependentProviderList>{allProvidersContent}</IndependentProviderList>
   ) : (
-    allProvidersContent
+    <BottomSheetScrollView
+      style={styles.virtualizedModelList}
+      contentContainerStyle={[
+        styles.virtualizedModelListContent,
+        styles.virtualizedProviderListContent,
+      ]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
+      testID="compact-provider-list"
+    >
+      {allProvidersContent}
+    </BottomSheetScrollView>
   );
 }
 
