@@ -1544,6 +1544,54 @@ describe("executeAutomationCommand", () => {
     }
   });
 
+  test("the repaint its own settle capture causes does not restart the cycle", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      await browser.execute({
+        command: "screencast_start",
+        args: {
+          browserId: BROWSER_A,
+          slot: 4,
+          quality: 60,
+          maxWidth: 1024,
+          maxHeight: 768,
+          everyNthFrame: 1,
+        },
+      });
+
+      browser.tab.emitDebugMessage("Page.screencastFrame", {
+        sessionId: 1,
+        data: Buffer.from([1]).toString("base64"),
+        metadata: { deviceWidth: 1000, deviceHeight: 750 },
+      });
+      await vi.advanceTimersByTimeAsync(700);
+      expect(captureQualities(browser)).toEqual([92]);
+      const settledFrames = browser.screencastFrames.length;
+
+      // Capturing repaints the page, which Chrome reports as a frame. Acting on
+      // it would swap the sharp capture back out and arm the next one forever.
+      browser.tab.emitDebugMessage("Page.screencastFrame", {
+        sessionId: 2,
+        data: Buffer.from([2]).toString("base64"),
+        metadata: { deviceWidth: 1000, deviceHeight: 750 },
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(browser.screencastFrames).toHaveLength(settledFrames);
+      expect(captureQualities(browser)).toEqual([92]);
+      // The frame is still acknowledged, or Chrome stops sending them.
+      expect(browser.tab.debugCommands).toContainEqual({
+        command: "Page.screencastFrameAck",
+        params: { sessionId: 2 },
+      });
+
+      await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("screencast_stop stops capture and removes the frame listener", async () => {
     const browser = new BrowserAutomationHarness();
     await browser.execute({

@@ -86,10 +86,13 @@ interface ActiveScreencast {
   stopListening: () => void;
   sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
   settleTimer: ReturnType<typeof setTimeout> | null;
+  /** Epoch ms until which self-inflicted frames are ignored. */
+  settleSuppressUntil: number;
 }
 
 const SCREENCAST_SETTLE_MS = 600;
 const SCREENCAST_SETTLE_QUALITY = 92;
+const SCREENCAST_SETTLE_GRACE_MS = 250;
 
 type BrowserAutomationInputAtEvent = Extract<
   BrowserAutomationCommand,
@@ -654,6 +657,7 @@ async function executeScreencastStart(
     stopListening,
     sendDebugCommand,
     settleTimer: null,
+    settleSuppressUntil: 0,
   };
   activeScreencastsByContentsId.set(contentsId, screencast);
   target.contents.onceDestroyed(() => {
@@ -719,6 +723,12 @@ function handleScreencastFrame(
   if (typeof params.data !== "string" || !isRecord(params.metadata)) {
     return;
   }
+  // Capturing the settled frame repaints the page, and Chrome reports that
+  // repaint as a screencast frame. Forwarding it would swap the sharp capture
+  // back for a downscaled one and re-arm the timer, oscillating forever.
+  if (Date.now() < screencast.settleSuppressUntil) {
+    return;
+  }
   const deviceWidth = readNumber(params.metadata.deviceWidth);
   const deviceHeight = readNumber(params.metadata.deviceHeight);
   if (deviceWidth === null || deviceHeight === null) {
@@ -758,6 +768,7 @@ async function sendSettledScreencastFrame(
   browserId: string,
   emitFrame: (frame: BrowserScreencastFrameEvent) => void,
 ): Promise<void> {
+  screencast.settleSuppressUntil = Date.now() + SCREENCAST_SETTLE_GRACE_MS;
   const shot = await screencast
     .sendDebugCommand("Page.captureScreenshot", {
       format: "jpeg",
@@ -775,6 +786,7 @@ async function sendSettledScreencastFrame(
   if (deviceWidth === null || deviceHeight === null) {
     return;
   }
+  screencast.settleSuppressUntil = Date.now() + SCREENCAST_SETTLE_GRACE_MS;
   emitFrame({
     browserId,
     slot: screencast.slot,
