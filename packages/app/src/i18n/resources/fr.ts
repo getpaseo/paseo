@@ -517,6 +517,9 @@ export const fr: TranslationResources = {
         title: "Le navigateur est réservé au bureau",
         subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
+      mirror: {
+        connecting: "Connexion au navigateur de l'hôte…",
+      },
       session: "Session de navigateur{{browserId}}",
       controls: {
         back: "Dos",

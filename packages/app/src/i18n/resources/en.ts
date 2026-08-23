@@ -511,6 +511,9 @@ export const en = {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",
       },
+      mirror: {
+        connecting: "Connecting to the browser on the host…",
+      },
       session: "Browser session {{browserId}}",
       controls: {
         back: "Back",

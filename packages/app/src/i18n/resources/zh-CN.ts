@@ -513,6 +513,9 @@ export const zhCN: TranslationResources = {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
       },
+      mirror: {
+        connecting: "正在连接主机上的浏览器…",
+      },
       session: "浏览器会话 {{browserId}}",
       controls: {
         back: "后退",

@@ -517,6 +517,9 @@ export const es: TranslationResources = {
         title: "El navegador es solo para escritorio",
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",
       },
+      mirror: {
+        connecting: "Conectando con el navegador del host…",
+      },
       session: "Sesión de navegador{{browserId}}",
       controls: {
         back: "Atrás",

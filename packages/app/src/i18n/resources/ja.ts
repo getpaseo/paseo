@@ -517,6 +517,9 @@ export const ja: TranslationResources = {
         title: "ブラウザはデスクトップ専用です",
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",
       },
+      mirror: {
+        connecting: "ホストのブラウザに接続しています…",
+      },
       session: "ブラウザセッション{{browserId}}",
       controls: {
         back: "戻る",

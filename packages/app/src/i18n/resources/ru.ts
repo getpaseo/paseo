@@ -517,6 +517,9 @@ export const ru: TranslationResources = {
         subtitle:
           "Откройте это рабочее пространство в Electron, чтобы использовать встроенный браузер.",
       },
+      mirror: {
+        connecting: "Подключение к браузеру на хосте…",
+      },
       session: "Сеанс браузера {{browserId}}",
       controls: {
         back: "Назад",

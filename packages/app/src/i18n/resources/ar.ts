@@ -513,6 +513,9 @@ export const ar: TranslationResources = {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
+      mirror: {
+        connecting: "جارٍ الاتصال بالمتصفح على المضيف…",
+      },
       session: "جلسة المتصفح{{browserId}}",
       controls: {
         back: "خلف",

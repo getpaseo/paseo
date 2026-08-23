@@ -64,6 +64,7 @@ import {
   RESPONSIVE_BROWSER_VIEWPORT,
   useBrowserStore,
 } from "@/desktop/browser/store";
+import { BrowserMirrorPane } from "@/desktop/browser/mirror/pane";
 import {
   applyInactiveBrowserWebviewViewport,
   prepareBrowserWebview,
@@ -579,21 +580,39 @@ function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElem
 }
 
 // eslint-disable-next-line complexity
-export function BrowserPane({
-  browserId,
-  serverId,
-  workspaceId,
-  cwd,
-  isInteractive,
-  onFocusPane,
-}: {
+interface BrowserPaneProps {
   browserId: string;
   serverId: string;
   workspaceId: string;
   cwd: string | null;
   isInteractive?: boolean;
   onFocusPane?: () => void;
-}) {
+}
+
+/** A tab absent from this client's store lives on another host, so mirror it. */
+export function BrowserPane(props: BrowserPaneProps) {
+  const isLocal = useBrowserStore((state) => Boolean(state.browsersById[props.browserId]));
+  if (!isLocal) {
+    return (
+      <BrowserMirrorPane
+        browserId={props.browserId}
+        serverId={props.serverId}
+        workspaceId={props.workspaceId}
+        isInteractive={props.isInteractive}
+      />
+    );
+  }
+  return <LocalBrowserPane {...props} />;
+}
+
+function LocalBrowserPane({
+  browserId,
+  serverId,
+  workspaceId,
+  cwd,
+  isInteractive,
+  onFocusPane,
+}: BrowserPaneProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);

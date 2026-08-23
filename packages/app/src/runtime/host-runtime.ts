@@ -53,6 +53,7 @@ import {
   mountServerDataPushRouter,
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
+import { mountBrowserScreencastForwarder } from "@/desktop/browser/mirror/host-frames";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -550,7 +551,9 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
         serverId: host.serverId,
       });
+      const unmountScreencastFrames = mountBrowserScreencastForwarder(client);
       return () => {
+        unmountScreencastFrames();
         unmountBrowserAutomation();
         unmountServerData();
       };

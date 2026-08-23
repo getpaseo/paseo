@@ -517,6 +517,9 @@ export const ptBR: TranslationResources = {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",
       },
+      mirror: {
+        connecting: "Conectando ao navegador no host…",
+      },
       session: "Sessão do navegador {{browserId}}",
       controls: {
         back: "Voltar",

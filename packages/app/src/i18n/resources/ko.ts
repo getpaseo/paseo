@@ -514,6 +514,9 @@ export const ko: TranslationResources = {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
       },
+      mirror: {
+        connecting: "호스트의 브라우저에 연결하는 중…",
+      },
       session: "브라우저 세션 {{browserId}}",
       controls: {
         back: "뒤로",
