@@ -60,6 +60,11 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  BrowserScreencastSubscribeRequestSchema,
+  BrowserScreencastSubscribeResponseSchema,
+  BrowserScreencastUnsubscribeRequestSchema,
+} from "./browser-automation/screencast.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -3104,6 +3109,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceScriptStopRequestSchema,
   SubscribeTerminalRequestSchema,
   UnsubscribeTerminalRequestSchema,
+  BrowserScreencastSubscribeRequestSchema,
+  BrowserScreencastUnsubscribeRequestSchema,
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
@@ -6160,6 +6167,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
+  BrowserScreencastSubscribeResponseSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,

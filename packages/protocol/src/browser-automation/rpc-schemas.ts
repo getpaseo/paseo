@@ -43,6 +43,7 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "scroll",
   "resize",
   "close_tab",
+  "input_at",
 ] as const;
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
@@ -231,6 +232,38 @@ export const BrowserAutomationCloseTabCommandSchema = z.object({
   args: BrowserAutomationTabTargetSchema,
 });
 
+/**
+ * Viewport-coordinate input, used when a viewer drives a mirrored tab it cannot
+ * snapshot for refs. Coordinates are in guest viewport pixels.
+ */
+export const BrowserAutomationInputAtCommandSchema = z.object({
+  command: z.literal("input_at"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    event: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("mouse"),
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        button: BrowserAutomationMouseButtonSchema.default("left"),
+        clickCount: z.number().int().min(1).max(3).default(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+      }),
+      z.object({
+        kind: z.literal("wheel"),
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        deltaX: z.number().default(0),
+        deltaY: z.number().default(0),
+      }),
+      z.object({
+        kind: z.literal("key"),
+        key: z.string().min(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+      }),
+    ]),
+  }),
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -254,10 +287,13 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationScrollCommandSchema,
   BrowserAutomationResizeCommandSchema,
   BrowserAutomationCloseTabCommandSchema,
+  BrowserAutomationInputAtCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
+  hostId: z.string().min(1).optional(),
+  hostLabel: z.string().min(1).optional(),
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
@@ -455,6 +491,11 @@ export const BrowserAutomationCloseTabResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
 });
 
+export const BrowserAutomationInputAtResultSchema = z.object({
+  command: z.literal("input_at"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -478,6 +519,7 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationScrollResultSchema,
   BrowserAutomationResizeResultSchema,
   BrowserAutomationCloseTabResultSchema,
+  BrowserAutomationInputAtResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({
