@@ -2337,6 +2337,36 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
   }
 });
 
+test("cancelAgentRun force-cancels an acknowledged interrupt whose run never settles", async () => {
+  // The session lost its turn while the manager still tracked a run, so
+  // nothing would ever settle it. With interrupt() resolving as a no-op, the
+  // acknowledged-timeout force-cancel must settle the orphaned run instead of
+  // leaving stop and replace refused for the rest of the session.
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-orphaned",
+    agentId: "00000000-0000-4000-8000-000000000305",
+    turnId: "orphaned-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptCalled).toBe(true);
+    await expect
+      .poll(() => fixture.manager.getAgent(fixture.agentId)?.lifecycle)
+      .not.toBe("running");
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "not_running",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("cancelAgentRun preserves the active turn when the provider rejects the interrupt", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-rejected",
