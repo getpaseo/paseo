@@ -123,25 +123,29 @@ function createModelIdSchema<T extends string>(modelIds: readonly T[]): z.ZodTyp
 export const LocalSttModelIdSchema = createModelIdSchema(LOCAL_STT_MODEL_IDS);
 export const LocalTtsModelIdSchema = createModelIdSchema(LOCAL_TTS_MODEL_IDS);
 
-export interface SherpaOnnxModelSpec extends SherpaOnnxCatalogEntryBase {
-  kind: SherpaOnnxModelKind;
-  architecture?: SherpaOnnxSttArchitecture;
+export interface SherpaOnnxSttModelSpec extends SherpaOnnxSttCatalogEntry {
   id: SherpaOnnxModelId;
 }
 
+export interface SherpaOnnxTtsModelSpec extends SherpaOnnxTtsCatalogEntry {
+  id: SherpaOnnxModelId;
+}
+
+export type SherpaOnnxModelSpec = SherpaOnnxSttModelSpec | SherpaOnnxTtsModelSpec;
+
 export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
-  return ALL_MODEL_IDS.map((id) => Object.assign({ id }, SHERPA_ONNX_MODEL_CATALOG[id]));
+  return ALL_MODEL_IDS.map((id) => getSherpaOnnxModelSpec(id));
 }
 
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {
-  const spec = SHERPA_ONNX_MODEL_CATALOG[id];
-  if (!spec) {
+  const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+  if (!entry) {
     throw new Error(`Unknown local speech model id: ${id}`);
   }
-  return {
-    id,
-    ...spec,
-  };
+  if (entry.kind === "stt-offline") {
+    return { id, ...entry };
+  }
+  return { id, ...entry };
 }
 
 export function getSherpaOnnxSttArchitecture(id: LocalSttModelId): SherpaOnnxSttArchitecture {

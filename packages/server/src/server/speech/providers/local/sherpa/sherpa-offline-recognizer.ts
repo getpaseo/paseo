@@ -1,6 +1,12 @@
 import { existsSync } from "node:fs";
+import path from "node:path";
 import type pino from "pino";
 
+import {
+  getSherpaOnnxSttArchitecture,
+  type LocalSttModelId,
+  type SherpaOnnxSttArchitecture,
+} from "./model-catalog.js";
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
 function assertFileExists(filePath: string, label: string): void {
@@ -24,6 +30,31 @@ export interface SherpaParaformerModel {
 }
 
 export type SherpaOfflineRecognizerModel = SherpaNemoTransducerModel | SherpaParaformerModel;
+
+const STT_MODEL_FILES: Record<
+  SherpaOnnxSttArchitecture,
+  (modelDir: string) => SherpaOfflineRecognizerModel
+> = {
+  nemo_transducer: (modelDir) => ({
+    kind: "nemo_transducer",
+    encoder: path.join(modelDir, "encoder.int8.onnx"),
+    decoder: path.join(modelDir, "decoder.int8.onnx"),
+    joiner: path.join(modelDir, "joiner.int8.onnx"),
+    tokens: path.join(modelDir, "tokens.txt"),
+  }),
+  paraformer: (modelDir) => ({
+    kind: "paraformer",
+    model: path.join(modelDir, "model.int8.onnx"),
+    tokens: path.join(modelDir, "tokens.txt"),
+  }),
+};
+
+export function createOfflineRecognizerModel(
+  modelId: LocalSttModelId,
+  modelDir: string,
+): SherpaOfflineRecognizerModel {
+  return STT_MODEL_FILES[getSherpaOnnxSttArchitecture(modelId)](modelDir);
+}
 
 export interface SherpaOfflineRecognizerConfig {
   model: SherpaOfflineRecognizerModel;

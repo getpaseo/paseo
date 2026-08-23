@@ -9,7 +9,10 @@ import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloade
 import { createDaemonTestContext } from "../../../../test-utils/index.js";
 import { parsePcm16MonoWav, wordSimilarity } from "../../../../test-utils/dictation-e2e.js";
 import { SherpaOnnxTTS } from "./sherpa-tts.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa-offline-recognizer.js";
+import {
+  createOfflineRecognizerModel,
+  SherpaOfflineRecognizerEngine,
+} from "./sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa-parakeet-stt.js";
 
 async function readFixtureWav(): Promise<Buffer> {
@@ -204,13 +207,7 @@ test(
       const sttModelDir = getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v2-int8");
       const engine = new SherpaOfflineRecognizerEngine(
         {
-          model: {
-            kind: "nemo_transducer",
-            encoder: `${sttModelDir}/encoder.int8.onnx`,
-            decoder: `${sttModelDir}/decoder.int8.onnx`,
-            joiner: `${sttModelDir}/joiner.int8.onnx`,
-            tokens: `${sttModelDir}/tokens.txt`,
-          },
+          model: createOfflineRecognizerModel("parakeet-tdt-0.6b-v2-int8", sttModelDir),
           numThreads: 2,
           debug: 0,
         },
