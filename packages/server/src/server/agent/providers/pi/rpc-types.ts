@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface PiImageContent {
@@ -198,6 +200,23 @@ export type PiAgentSessionEvent =
     }
   | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
+export const PiTodoItemSchema = z
+  .object({
+    content: z.string(),
+    status: z.enum(["pending", "in_progress", "completed", "abandoned"]),
+  })
+  .passthrough();
+export const PiTodoPhaseSchema = z
+  .object({ name: z.string(), tasks: z.array(PiTodoItemSchema) })
+  .passthrough();
+export const PiTodoReminderEventSchema = z
+  .object({ type: z.literal("todo_reminder"), todos: z.array(PiTodoItemSchema) })
+  .passthrough();
+
+export type PiTodoItem = z.infer<typeof PiTodoItemSchema>;
+export type PiTodoPhase = z.infer<typeof PiTodoPhaseSchema>;
+export type PiTodoReminderEvent = z.infer<typeof PiTodoReminderEventSchema>;
+
 export type PiRuntimeEvent =
   | PiAgentSessionEvent
   | {
@@ -214,6 +233,7 @@ export type PiRuntimeEvent =
       type: "process_exit";
       error: string;
     }
+  | PiTodoReminderEvent
   | {
       type: string;
       [key: string]: unknown;

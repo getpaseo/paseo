@@ -85,6 +85,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { mapPiTodoReminderEvent, mapPiTodoState, mapPiTodoToolResult } from "./todo-mapper.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -1213,6 +1214,10 @@ export class PiRpcAgentSession implements AgentSession {
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private lastKnownThinkingOptionId: string | null;
+  private lastTodoItem: Extract<
+    import("../../agent-sdk-types.js").AgentTimelineItem,
+    { type: "todo" }
+  > | null = null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
   private readonly capturedUserEntriesById = new Map<string, PiCapturedEntry>();
@@ -1373,6 +1378,13 @@ export class PiRpcAgentSession implements AgentSession {
       await this.runtimeSession.getMessages(),
       this.capturedUserEntries,
     );
+    for (const item of mapPiTodoState(this.state)) {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item,
+      };
+    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2011,7 +2023,34 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
+  private emitTodoItem(
+    item: import("../../agent-sdk-types.js").AgentTimelineItem,
+    turnId?: string,
+  ): void {
+    if (item.type === "todo") {
+      const previous = this.lastTodoItem;
+      const isDuplicate =
+        previous?.items.length === item.items.length &&
+        previous.items.every((prev, index) => {
+          const next = item.items[index];
+          return next?.text === prev.text && next.completed === prev.completed;
+        });
+      if (isDuplicate) return;
+      this.lastTodoItem = item;
+    }
+    this.emit({ type: "timeline", provider: this.provider, turnId, item });
+  }
+
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
+    if (event.type === "todo_reminder") {
+      const item = mapPiTodoReminderEvent(event);
+      if (item) {
+        this.emitTodoItem(item, this.currentTurnIdForEvent());
+      } else {
+        this.logger.debug({ event }, "Dropped malformed Pi todo reminder event");
+      }
+      return;
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -2203,6 +2242,14 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     const result = parseToolResult(event.result);
+    if (event.toolName === "todo") {
+      const item = mapPiTodoToolResult(result);
+      if (item) {
+        this.emitTodoItem(item, this.currentTurnIdForEvent());
+        return;
+      }
+      this.logger.debug({ event }, "Dropped malformed Pi todo tool result");
+    }
     const error = event.isError ? event.result : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
