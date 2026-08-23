@@ -3,6 +3,7 @@ import type {
   ProviderUsageFetcherFactoryOptions,
   ProviderUsageFetcherManifestEntry,
 } from "./provider.js";
+import { AntigravityQuotaProvider } from "./providers/antigravity.js";
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
 import { CopilotQuotaProvider } from "./providers/copilot.js";
@@ -13,6 +14,13 @@ import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 
 export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry[] = [
+  {
+    providerId: "antigravity",
+    create: (options) =>
+      new AntigravityQuotaProvider({
+        logger: options.logger,
+      }),
+  },
   {
     providerId: "claude",
     create: (options) =>
