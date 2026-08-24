@@ -379,6 +379,21 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+export interface ACPExtensionNotificationContext {
+  sessionId: string | null;
+}
+
+/**
+ * Provider-owned ACP extension notification to timeline items. Return null
+ * when the method is not owned by this handler, or an empty array when the
+ * method is owned but the payload should be ignored.
+ */
+export type ACPExtensionNotificationHandler = (
+  method: string,
+  params: Record<string, unknown>,
+  context: ACPExtensionNotificationContext,
+) => AgentTimelineItem[] | null;
+
 /**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
@@ -432,6 +447,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -462,6 +478,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -822,6 +839,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -850,6 +868,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
   }
 
   async createSession(
@@ -880,6 +899,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        extensionNotificationHandler: this.extensionNotificationHandler,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -931,6 +951,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      extensionNotificationHandler: this.extensionNotificationHandler,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1454,6 +1475,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1494,6 +1516,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
   }
 
   get id(): string | null {
@@ -2336,6 +2359,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.applyResolvedCommands(parsedCommands, {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
+    }
+
+    const timelineItems = this.extensionNotificationHandler?.(method, params, {
+      sessionId: this.sessionId,
+    });
+    if (timelineItems) {
+      this.deliverTranslatedEvents(timelineItems.map((item) => this.wrapTimeline(item)));
     }
   }
 
