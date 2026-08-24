@@ -1744,6 +1744,50 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+export const AgentQueueListRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.list.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentQueueCreateRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.create.request"),
+  agentId: z.string(),
+  text: z.string(),
+  attachments: z.array(AgentAttachmentSchema).optional(),
+  requestId: z.string(),
+});
+
+export const AgentQueueUpdateRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.update.request"),
+  agentId: z.string(),
+  promptId: z.string(),
+  text: z.string(),
+  attachments: z.array(AgentAttachmentSchema).optional(),
+  requestId: z.string(),
+});
+
+export const AgentQueueReorderRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.reorder.request"),
+  agentId: z.string(),
+  promptIds: z.array(z.string()),
+  requestId: z.string(),
+});
+
+export const AgentQueueDeleteRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.delete.request"),
+  agentId: z.string(),
+  promptId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentQueueSendNowRequestMessageSchema = z.object({
+  type: z.literal("agent.queue.send_now.request"),
+  agentId: z.string(),
+  promptId: z.string(),
+  requestId: z.string(),
+});
+
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
@@ -3021,6 +3065,12 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  AgentQueueListRequestMessageSchema,
+  AgentQueueCreateRequestMessageSchema,
+  AgentQueueUpdateRequestMessageSchema,
+  AgentQueueReorderRequestMessageSchema,
+  AgentQueueDeleteRequestMessageSchema,
+  AgentQueueSendNowRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -3373,6 +3423,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(agentQueue): added in v0.5.x.
+        agentQueue: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -4295,6 +4347,19 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
   updatedAt: z.string(),
   toolCallId: z.string().nullable(),
   cwd: z.string().nullable().optional(),
+  // Provider adapters emit these only when native ancestry is explicit.
+  parentSubagentId: z.string().nullable().optional(),
+  depth: z.number().int().nonnegative().nullable().optional(),
+  capabilities: z
+    .object({
+      canOpen: z.boolean(),
+      canPrompt: z.boolean(),
+      canQueue: z.boolean(),
+      canSteer: z.boolean(),
+      canStop: z.boolean(),
+    })
+    .nullable()
+    .optional(),
   // Compact provider-owned context for the shared track. Providers choose what belongs here and
   // format it for display; clients must not parse provider-specific facts out of this string.
   subtitle: z.string().nullable().optional(),
@@ -4303,6 +4368,61 @@ export const ProviderSubagentDescriptorPayloadSchema = z.object({
 export type ProviderSubagentDescriptorPayload = z.infer<
   typeof ProviderSubagentDescriptorPayloadSchema
 >;
+
+export const AgentQueuedPromptPayloadSchema = z.object({
+  id: z.string(),
+  agentId: z.string(),
+  text: z.string(),
+  attachments: z.array(AgentAttachmentSchema),
+  createdAt: z.string(),
+  createdByClientId: z.string(),
+});
+
+const AgentQueueOperationPayloadSchema = z.object({
+  requestId: z.string(),
+  agentId: z.string(),
+  prompts: z.array(AgentQueuedPromptPayloadSchema),
+  prompt: AgentQueuedPromptPayloadSchema.nullable().optional(),
+  error: z.string().nullable(),
+});
+
+export const AgentQueueListResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.list.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueCreateResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.create.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueUpdateResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.update.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueReorderResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.reorder.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueDeleteResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.delete.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueSendNowResponseMessageSchema = z.object({
+  type: z.literal("agent.queue.send_now.response"),
+  payload: AgentQueueOperationPayloadSchema,
+});
+
+export const AgentQueueUpdateMessageSchema = z.object({
+  type: z.literal("agent.queue.update"),
+  payload: z.object({
+    agentId: z.string(),
+    prompts: z.array(AgentQueuedPromptPayloadSchema),
+  }),
+});
 
 export const ProviderSubagentListResponseMessageSchema = z.object({
   type: z.literal("agent.provider_subagents.list.response"),
@@ -6227,6 +6347,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
+  AgentQueueListResponseMessageSchema,
+  AgentQueueCreateResponseMessageSchema,
+  AgentQueueUpdateResponseMessageSchema,
+  AgentQueueReorderResponseMessageSchema,
+  AgentQueueDeleteResponseMessageSchema,
+  AgentQueueSendNowResponseMessageSchema,
+  AgentQueueUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
@@ -6424,6 +6551,13 @@ export type WorkspaceScriptStartResponseMessage = z.infer<
 export type WorkspaceScriptStopResponseMessage = z.infer<
   typeof WorkspaceScriptStopResponseMessageSchema
 >;
+export type AgentQueuedPromptPayload = z.infer<typeof AgentQueuedPromptPayloadSchema>;
+export type AgentQueueListRequestMessage = z.infer<typeof AgentQueueListRequestMessageSchema>;
+export type AgentQueueCreateRequestMessage = z.infer<typeof AgentQueueCreateRequestMessageSchema>;
+export type AgentQueueUpdateRequestMessage = z.infer<typeof AgentQueueUpdateRequestMessageSchema>;
+export type AgentQueueReorderRequestMessage = z.infer<typeof AgentQueueReorderRequestMessageSchema>;
+export type AgentQueueDeleteRequestMessage = z.infer<typeof AgentQueueDeleteRequestMessageSchema>;
+export type AgentQueueSendNowRequestMessage = z.infer<typeof AgentQueueSendNowRequestMessageSchema>;
 export type LegacyListAvailableEditorsResponseMessage = z.infer<
   typeof LegacyListAvailableEditorsResponseMessageSchema
 >;
@@ -6830,6 +6964,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
+      [CLIENT_CAPS.agentQueue]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

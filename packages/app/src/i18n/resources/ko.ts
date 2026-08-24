@@ -1704,6 +1704,10 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
+    stopAction: "Stop {{label}}",
+    stopAllAction: "Stop all active",
+    stopAllConfirmTitle: "Stop all active work?",
+    stopAllConfirmMessage: "This will interrupt {{count}} active subagent(s): {{names}}.",
   },
   panels: {
     draft: {

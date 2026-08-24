@@ -39,6 +39,7 @@ import type {
   ServerCapabilities,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
+  AgentQueuedPromptPayload,
 } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceOpaqueId,
@@ -446,6 +447,8 @@ export interface SessionState {
     string,
     Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
   >;
+  // Capability-gated daemon queue; survives reconnects and other devices.
+  agentQueuePrompts: Map<string, AgentQueuedPromptPayload[]>;
 }
 
 // Global store state
@@ -634,6 +637,11 @@ interface SessionStoreActions {
           prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
         ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
+  setAgentQueuePrompts: (
+    serverId: string,
+    agentId: string,
+    prompts: AgentQueuedPromptPayload[],
+  ) => void;
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
@@ -687,6 +695,7 @@ function createInitialSessionState(
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
+    agentQueuePrompts: new Map(),
   };
 }
 
@@ -1929,6 +1938,22 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, queuedMessages: nextValue },
+            },
+          };
+        });
+      },
+
+      setAgentQueuePrompts: (serverId, agentId, prompts) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const nextPrompts = new Map(session.agentQueuePrompts);
+          nextPrompts.set(agentId, prompts);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentQueuePrompts: nextPrompts },
             },
           };
         });

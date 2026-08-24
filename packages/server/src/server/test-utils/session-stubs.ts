@@ -45,6 +45,10 @@ export function asAgentStorage(stub: {
   return createStub<SessionOptions["agentStorage"]>({
     listByProviderSession: async () => [],
     listByWorkspace: async () => [],
+    queueStore: {
+      subscribe: () => () => {},
+      clear: async () => {},
+    },
     ...stub,
   });
 }

@@ -738,6 +738,7 @@ test("advertises client capabilities in hello", async () => {
     protocolVersion: 1,
     capabilities: {
       compact_provider_snapshots: true,
+      agent_queue: true,
       custom_mode_icons: true,
       project_updates: true,
       provider_subagents: true,

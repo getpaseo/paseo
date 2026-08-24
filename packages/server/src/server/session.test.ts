@@ -151,6 +151,54 @@ test("cancel_agent_request reports refusal only through its response", async () 
   ]);
 });
 
+test("agent queue RPC persists a prompt and returns the canonical snapshot", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const prompt = {
+    id: "prompt-1",
+    agentId: "agent-1",
+    text: "continue with tests",
+    attachments: [],
+    createdAt: "2026-08-24T12:00:00.000Z",
+    createdByClientId: "test-client",
+  };
+  const queueStore = {
+    subscribe: vi.fn(() => () => {}),
+    enqueue: vi.fn(async () => prompt),
+    list: vi.fn(async () => [prompt]),
+  };
+  const session = createSessionForTest({
+    messages,
+    agentStorage: {
+      get: vi.fn(async () => ({ id: "agent-1" })),
+      queueStore,
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.queue.create.request",
+    agentId: "agent-1",
+    text: "continue with tests",
+    requestId: "queue-create",
+  });
+
+  expect(queueStore.enqueue).toHaveBeenCalledWith({
+    agentId: "agent-1",
+    text: "continue with tests",
+    attachments: undefined,
+    createdByClientId: "test-client",
+  });
+  expect(messages).toContainEqual({
+    type: "agent.queue.create.response",
+    payload: {
+      requestId: "queue-create",
+      agentId: "agent-1",
+      prompts: [prompt],
+      prompt,
+      error: null,
+    },
+  });
+});
+
 test("legacy cancel_agent_request reports refusal through the activity log", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";
   const messages: SessionOutboundMessage[] = [];

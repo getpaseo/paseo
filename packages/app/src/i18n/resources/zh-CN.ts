@@ -1673,6 +1673,10 @@ export const zhCN: TranslationResources = {
     archiveTooltip: "归档 subagent",
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
+    stopAction: "Stop {{label}}",
+    stopAllAction: "Stop all active",
+    stopAllConfirmTitle: "Stop all active work?",
+    stopAllConfirmMessage: "This will interrupt {{count}} active subagent(s): {{names}}.",
   },
   panels: {
     draft: {

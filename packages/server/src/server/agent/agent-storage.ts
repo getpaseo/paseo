@@ -9,6 +9,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { AgentQueueStore } from "./agent-queue-store.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -106,10 +107,12 @@ export class AgentStorage {
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
+  readonly queueStore: AgentQueueStore;
 
   constructor(baseDir: string, logger: Logger) {
     this.baseDir = baseDir;
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
+    this.queueStore = new AgentQueueStore(baseDir);
   }
 
   async initialize(): Promise<void> {

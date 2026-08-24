@@ -22,6 +22,15 @@ export interface ProviderSubagentDescriptor {
   toolCallId: string | null;
   cwd: string | null;
   subtitle: string | null;
+  parentSubagentId: string | null;
+  depth: number | null;
+  capabilities: {
+    canOpen: boolean;
+    canPrompt: boolean;
+    canQueue: boolean;
+    canSteer: boolean;
+    canStop: boolean;
+  } | null;
 }
 
 export type ProviderSubagentInputEvent =
@@ -38,6 +47,9 @@ export type ProviderSubagentInputEvent =
       toolCallId?: string | null;
       cwd?: string | null;
       subtitle?: string | null;
+      parentSubagentId?: string | null;
+      depth?: number | null;
+      capabilities?: ProviderSubagentDescriptor["capabilities"];
       timestamp?: string;
     }
   | {
@@ -123,6 +135,9 @@ export class ProviderSubagentStore {
       toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
       cwd: stickyField(event.cwd, previous?.cwd),
       subtitle: stickyField(event.subtitle, previous?.subtitle),
+      parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
+      depth: stickyField(event.depth, previous?.depth),
+      capabilities: stickyField(event.capabilities, previous?.capabilities),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };

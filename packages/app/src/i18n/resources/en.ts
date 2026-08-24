@@ -1704,6 +1704,10 @@ export const en = {
     archiveTooltip: "Archive subagent",
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedRetry: "Retry ({{failed}}/{{total}})",
+    stopAction: "Stop {{label}}",
+    stopAllAction: "Stop all active",
+    stopAllConfirmTitle: "Stop all active work?",
+    stopAllConfirmMessage: "This will interrupt {{count}} active subagent(s): {{names}}.",
   },
   panels: {
     draft: {

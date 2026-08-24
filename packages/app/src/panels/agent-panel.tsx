@@ -98,7 +98,11 @@ import { openSidePanelView } from "@/workspace-tabs/side-panel";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem, TodoEntry } from "@/types/stream";
-import { useArchiveFinishedSubagents, useSubagentsForParent } from "@/subagents";
+import {
+  useArchiveFinishedSubagents,
+  useSubagentTreeForParent,
+  useSubagentsForParent,
+} from "@/subagents";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -1251,6 +1255,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 }) {
   const { t } = useTranslation();
   const subagentRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
+  const subagentTree = useSubagentTreeForParent({ serverId, parentAgentId: agentId });
   const tasks = useSessionStore((state): TodoEntry[] | undefined =>
     state.sessions[serverId]?.agentTasks.get(agentId),
   );
@@ -1352,6 +1357,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           workspaceId={workspaceId}
           cwd={cwd}
           subagentRows={subagentRows}
+          subagentTree={subagentTree}
           tasks={tasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
           onArchiveFinished={archiveFinishedSubagents.archiveFinished}

@@ -2966,6 +2966,49 @@ export class DaemonClient {
     return payload;
   }
 
+  async listAgentQueue(
+    agentId: string,
+    requestId?: string,
+  ): Promise<Extract<SessionOutboundMessage, { type: "agent.queue.list.response" }>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.queue.list.request", agentId },
+      responseType: "agent.queue.list.response",
+    });
+  }
+
+  async createAgentQueuePrompt(input: {
+    agentId: string;
+    text: string;
+    attachments?: import("@getpaseo/protocol/messages").AgentAttachment[];
+    requestId?: string;
+  }): Promise<Extract<SessionOutboundMessage, { type: "agent.queue.create.response" }>["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "agent.queue.create.request",
+        agentId: input.agentId,
+        text: input.text,
+        ...(input.attachments ? { attachments: input.attachments } : {}),
+      },
+      responseType: "agent.queue.create.response",
+    });
+  }
+
+  async sendAgentQueuePromptNow(
+    agentId: string,
+    promptId: string,
+    requestId?: string,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "agent.queue.send_now.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.queue.send_now.request", agentId, promptId },
+      responseType: "agent.queue.send_now.response",
+    });
+  }
+
   async setAgentTimelineSubscription(agentIds: string[]): Promise<void> {
     // COMPAT(selectiveAgentTimeline): added in v0.1.106. Old daemons keep their
     // legacy global stream and do not understand this RPC. Remove after
@@ -5558,6 +5601,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.agentQueue]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

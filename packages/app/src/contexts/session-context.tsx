@@ -354,6 +354,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
+  const setAgentQueuePrompts = useSessionStore((state) => state.setAgentQueuePrompts);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
@@ -799,6 +800,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
     });
 
+    const unsubAgentQueueUpdate = client.on("agent.queue.update", (message) => {
+      if (message.type !== "agent.queue.update") return;
+      setAgentQueuePrompts(serverId, message.payload.agentId, message.payload.prompts);
+    });
+
     const unsubScriptStatusUpdate = client.on("script_status_update", (message) => {
       if (message.type !== "script_status_update") return;
       setWorkspaces(serverId, (prev) => patchWorkspaceScripts(prev, message.payload));
@@ -992,6 +998,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentStream();
       unsubAgentTimeline();
       unsubProviderSubagentUpdate();
+      unsubAgentQueueUpdate();
       unsubAgentAttention();
       unsubScriptStatusUpdate();
       unsubCheckoutStatusUpdate();
@@ -1022,6 +1029,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setAgents,
     setWorkspaces,
     setPendingPermissions,
+    setAgentQueuePrompts,
     notifyAgentAttention,
     recoverTimelineGap,
     applyWorkspaceSetupProgress,

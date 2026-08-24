@@ -1726,6 +1726,10 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
+    stopAction: "Stop {{label}}",
+    stopAllAction: "Stop all active",
+    stopAllConfirmTitle: "Stop all active work?",
+    stopAllConfirmMessage: "This will interrupt {{count}} active subagent(s): {{names}}.",
   },
   panels: {
     draft: {

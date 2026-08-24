@@ -23,6 +23,7 @@ export interface ProviderSubagentRow {
   kind: "provider";
   id: string;
   parentAgentId: string;
+  parentSubagentId?: string | null;
   provider: ProviderSubagentDescriptorPayload["provider"];
   // `title` is the subagent type ("Explore", "general-purpose") and repeats across a fan-out;
   // `description` is the task it was given. Both are carried so presentation can choose which
@@ -38,6 +39,13 @@ export interface ProviderSubagentRow {
 
 export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
 
+export interface SubagentTreeNode {
+  key: string;
+  row: SubagentRow;
+  depth: number;
+  children: SubagentTreeNode[];
+}
+
 type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
 type ProviderSubagentStoreSnapshot = ReturnType<typeof useProviderSubagentStore.getState>;
 
@@ -49,7 +57,7 @@ interface SelectSubagentsParams {
 const EMPTY_SUBAGENT_ROWS: SubagentRow[] = [];
 const EMPTY_PROVIDER_SUBAGENT_ROWS: ProviderSubagentRow[] = [];
 
-function toSubagentRow(agent: Agent): SubagentRow {
+function toSubagentRow(agent: Agent): PaseoSubagentRow {
   return {
     kind: "paseo",
     id: agent.id,
@@ -61,6 +69,72 @@ function toSubagentRow(agent: Agent): SubagentRow {
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
   };
+}
+
+function treeKey(row: SubagentRow): string {
+  return row.kind === "paseo" ? `agent:${row.id}` : `provider:${row.parentAgentId}:${row.id}`;
+}
+
+function sortRows(rows: SubagentRow[]): SubagentRow[] {
+  return rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+}
+
+export function buildSubagentTree(
+  state: SessionStoreSnapshot,
+  providerState: ProviderSubagentStoreSnapshot,
+  params: SelectSubagentsParams,
+  pendingArchiveIds: ReadonlySet<string>,
+  providerSubagentsSupported: boolean,
+): SubagentTreeNode[] {
+  const agents = state.sessions[params.serverId]?.agents;
+  if (!agents) return [];
+  const buildForParent = (parentAgentId: string, depth: number, ancestors: ReadonlySet<string>) => {
+    const managed = Array.from(agents.values())
+      .filter(
+        (agent) =>
+          !agent.archivedAt &&
+          !pendingArchiveIds.has(agent.id) &&
+          agent.parentAgentId === parentAgentId &&
+          !ancestors.has(agent.id),
+      )
+      .map(toSubagentRow);
+    const provider = selectProviderSubagentsForParent(
+      providerState,
+      { serverId: params.serverId, parentAgentId },
+      providerSubagentsSupported,
+    );
+    const buildProviderNode = (
+      row: ProviderSubagentRow,
+      providerDepth: number,
+      providerAncestors: ReadonlySet<string>,
+    ): SubagentTreeNode => {
+      const key = treeKey(row);
+      const nextAncestors = new Set(providerAncestors);
+      nextAncestors.add(key);
+      const children = provider
+        .filter(
+          (candidate) =>
+            candidate.parentSubagentId === row.id && !nextAncestors.has(treeKey(candidate)),
+        )
+        .map((candidate) => buildProviderNode(candidate, providerDepth + 1, nextAncestors));
+      return { key, row, depth: providerDepth, children };
+    };
+    const providerRoots = provider.filter((row) => (row.parentSubagentId ?? null) === null);
+    return sortRows([...managed, ...providerRoots]).map((row): SubagentTreeNode => {
+      const nextAncestors = new Set(ancestors);
+      if (row.kind === "paseo") nextAncestors.add(row.id);
+      return {
+        key: treeKey(row),
+        row,
+        depth,
+        children:
+          row.kind === "paseo"
+            ? buildForParent(row.id, depth + 1, nextAncestors)
+            : buildProviderNode(row, depth, new Set()).children,
+      };
+    });
+  };
+  return buildForParent(params.parentAgentId, 0, new Set([params.parentAgentId]));
 }
 
 export function selectSubagentsForParent(
@@ -107,6 +181,7 @@ export function selectProviderSubagentsForParent(
       kind: "provider",
       id: subagent.id,
       parentAgentId: subagent.parentAgentId,
+      parentSubagentId: subagent.parentSubagentId ?? null,
       provider: subagent.provider,
       title: subagent.title,
       description: subagent.description,
@@ -150,4 +225,27 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
     rows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
     return rows;
   }, [paseoRows, providerRows]);
+}
+
+export function useSubagentTreeForParent(params: SelectSubagentsParams): SubagentTreeNode[] {
+  const pendingArchiveIds = usePendingArchiveAgentIds(params.serverId);
+  const supported = useSessionStore(
+    (state) => state.sessions[params.serverId]?.serverInfo?.features?.providerSubagents === true,
+  );
+  const providerState = useProviderSubagentStore();
+  const tree = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => buildSubagentTree(state, providerState, params, pendingArchiveIds, supported),
+    equal,
+  );
+  const client = useSessionStore((state) => state.sessions[params.serverId]?.client ?? null);
+
+  useEffect(() => {
+    if (!client || !supported) return;
+    void refreshProviderSubagents(client, params.serverId, params.parentAgentId).catch(
+      () => undefined,
+    );
+  }, [client, params.parentAgentId, params.serverId, supported]);
+
+  return tree;
 }

@@ -24,6 +24,9 @@ export const CLIENT_CAPS = {
   // provider catalogs with shared thinking sets and may revalidate by content hash.
   // Remove the legacy snapshot encoding after 2027-02-04.
   compactProviderSnapshots: "compact_provider_snapshots",
+  // COMPAT(agentQueue): added in v0.5.x. Capable clients receive daemon-owned
+  // queue snapshots instead of renderer-local queued prompts.
+  agentQueue: "agent_queue",
   browserHost: "browser_host",
 } as const;
 
