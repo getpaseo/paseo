@@ -66,4 +66,31 @@ describe("assistant image metadata", () => {
     expect(imageOnlyHeight).toBeGreaterThan(220);
     expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);
   });
+
+  it("estimates multiple image-only outputs as one horizontal gallery", () => {
+    const markdown = [
+      "![First](https://example.com/first.png)",
+      "![Second](https://example.com/second.png)",
+      "![Third](https://example.com/third.png)",
+    ].join("");
+
+    expect(estimateAssistantMessageHeightFromCache(markdown)).toBe(224);
+  });
+
+  it("uses the tallest constrained image for a mixed gallery estimate", () => {
+    const images = [
+      { source: "https://example.com/wide.png", width: 1200, height: 600 },
+      { source: "https://example.com/tall.png", width: 390, height: 844 },
+      { source: "https://example.com/small.png", width: 100, height: 50 },
+    ];
+    for (const image of images) {
+      setAssistantImageMetadata(
+        { source: image.source },
+        { width: image.width, height: image.height },
+      );
+    }
+
+    const markdown = images.map((image, index) => `![Mixed ${index}](${image.source})`).join("");
+    expect(estimateAssistantMessageHeightFromCache(markdown)).toBe(384);
+  });
 });

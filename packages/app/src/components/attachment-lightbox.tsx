@@ -16,18 +16,28 @@ interface AttachmentLightboxProps {
 }
 
 export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
+  const url = useAttachmentPreviewUrl(metadata);
+  return <ImageLightbox visible={metadata !== null} uri={url} onClose={onClose} />;
+}
+
+interface ImageLightboxProps {
+  visible: boolean;
+  uri: string | null;
+  onClose: () => void;
+}
+
+export function ImageLightbox({ visible, uri, onClose }: ImageLightboxProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const url = useAttachmentPreviewUrl(metadata);
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
     setErrored(false);
-  }, [metadata?.id]);
+  }, [uri]);
 
   useEffect(() => {
-    if (!isWeb || !metadata) return;
+    if (!isWeb || !visible) return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -37,7 +47,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [metadata, onClose]);
+  }, [onClose, visible]);
 
   const closeButtonRowStyle = useMemo(
     () => [
@@ -55,13 +65,13 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
 
   const handleImageError = useCallback(() => setErrored(true), []);
   const noopPress = useCallback(() => {}, []);
-  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
+  const imageSource = useMemo(() => ({ uri: uri ?? "" }), [uri]);
 
-  if (!metadata) {
+  if (!visible) {
     return null;
   }
 
-  const hasError = errored || !url;
+  const hasError = errored || !uri;
 
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
