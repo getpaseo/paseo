@@ -157,10 +157,15 @@ export interface DesktopBrowserBridge {
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;
-  /** Capture a PNG screenshot of the guest viewport cropped to `rect`. */
+  /**
+   * Capture a PNG screenshot of the guest viewport cropped to `rect` (CSS
+   * pixels). `selector` lets main re-measure the element at capture time so a
+   * scroll between selection and capture cannot skew the crop.
+   */
   captureElement?: (
     browserId: string,
     rect: { x: number; y: number; width: number; height: number },
+    selector?: string | null,
   ) => Promise<string | null>;
   /** Copy element text and/or an image to the system clipboard from main. */
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;

@@ -121,7 +121,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     captureElement: (
       browserId: string,
       rect: { x: number; y: number; width: number; height: number },
-    ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
+      selector?: string | null,
+    ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect, selector ?? null),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },
