@@ -62,8 +62,16 @@ export class BrowserScreencastRouter {
       metadata: frame.metadata,
       data: frame.payload,
     };
+    this.emit(event);
+  }
+
+  private emit(event: BrowserScreencastEvent): void {
     for (const listener of this.listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // One pane throwing must not stop the frame reaching the others.
+      }
     }
   }
 }
