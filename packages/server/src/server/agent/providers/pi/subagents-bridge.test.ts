@@ -106,6 +106,117 @@ describe("PiSubagentsBridge", () => {
     });
   });
 
+  test("keeps parallel and nested children distinct and reconciles absent nodes", () => {
+    const bridge = new PiSubagentsBridge();
+    const first = bridge.handleExtensionUiRequest(
+      widget(
+        makeSnapshot({
+          runs: [
+            {
+              id: "workflow-1",
+              kind: "workflow",
+              label: "parallel review",
+              state: "running",
+              children: [
+                { id: "step:0", kind: "step", label: "worker", state: "running" },
+                {
+                  id: "step:1",
+                  kind: "step",
+                  label: "reviewer",
+                  state: "running",
+                  children: [
+                    {
+                      id: "nested-1",
+                      kind: "subagent",
+                      label: "nested tester",
+                      state: "running",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    const upserts = first.events.filter(
+      (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+    );
+    expect(upserts).toHaveLength(4);
+    expect(new Set(upserts.map((event) => event.event.id)).size).toBe(4);
+
+    const second = bridge.handleExtensionUiRequest(
+      widget(
+        makeSnapshot({
+          runs: [
+            {
+              id: "workflow-1",
+              kind: "workflow",
+              label: "parallel review",
+              state: "running",
+              children: [{ id: "step:0", kind: "step", label: "worker", state: "complete" }],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(
+      second.events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "remove",
+      ),
+    ).toHaveLength(2);
+  });
+
+  test("does not duplicate timeline rows across live and terminal inspections", () => {
+    const bridge = new PiSubagentsBridge();
+    const status = bridge.handleExtensionUiRequest(
+      widget(
+        makeSnapshot({
+          runs: [{ id: "run", kind: "subagent", label: "worker", state: "running" }],
+        }),
+      ),
+    );
+    const target = status.inspectionTargets[0];
+    if (!target) throw new Error("Expected inspection target");
+    const reply = {
+      kind: "pi-subagents.inspect-reply",
+      version: 1,
+      asyncId: "run",
+      status: "running",
+      messages: [{ role: "assistant", kind: "text", text: "same output" }],
+    };
+
+    bridge.beginInspection("live", target.descriptorId);
+    const live = bridge.handleExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "live",
+      method: "setWidget",
+      widgetKey: "subagent-inspect",
+      widgetLines: [`PI_SUBAGENT_INSPECT_JSON:${JSON.stringify({ ...reply, requestId: "live" })}`],
+    });
+    bridge.beginInspection("terminal", target.descriptorId);
+    const terminal = bridge.handleExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "terminal",
+      method: "setWidget",
+      widgetKey: "subagent-inspect",
+      widgetLines: [
+        `PI_SUBAGENT_INSPECT_JSON:${JSON.stringify({ ...reply, requestId: "terminal", status: "complete", finalOutput: "same output" })}`,
+      ],
+    });
+
+    expect(
+      live.events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+      ),
+    ).toHaveLength(1);
+    expect(
+      terminal.events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+      ),
+    ).toHaveLength(0);
+  });
+
   test("ignores unrelated extension widgets", () => {
     const bridge = new PiSubagentsBridge();
     expect(
