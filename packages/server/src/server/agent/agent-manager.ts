@@ -2716,6 +2716,16 @@ export class AgentManager {
         reason: "interrupted",
         turnId: run.turnId,
       });
+      // The dispatch above settles this manager's run record only, and the
+      // session clears its foreground slot only on a turn end that a
+      // force-cancel means is never coming. Release it here, before awaiting
+      // settlement so a settle that never arrives cannot strand the slot.
+      if (agent.session.releaseForegroundTurn?.(run.turnId)) {
+        this.logger.warn(
+          { agentId, provider: agent.provider, turnId: run.turnId },
+          "cancelAgentRun.force_cancel_released_foreground",
+        );
+      }
       await run.settledPromise;
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
