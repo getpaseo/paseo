@@ -4,7 +4,7 @@ import type { BrowserAutomationTabInfo } from "@getpaseo/protocol/browser-automa
 import { useReplicaQuery } from "@/data/query";
 import { workspaceBrowsersQueryKey, type WorkspaceBrowserTabs } from "@/data/browsers";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useBrowserMirror } from "@/desktop/browser/capability";
 
 const NO_BROWSER_TABS: WorkspaceBrowserTabs = [];
 
@@ -17,8 +17,8 @@ export interface WorkspaceBrowsersView {
 
 /**
  * The browser tabs of one workspace, wherever they are hosted. Seeded by a
- * `list_tabs` fan-out and kept current by the daemon's `browsers_changed` push,
- * which is how a tab opened on the host reaches every other client.
+ * `list_tabs` fan-out and kept current by the daemon's `browser.tabs.changed`
+ * push, which is how a tab opened on the host reaches every other client.
  */
 export function useWorkspaceBrowsers(input: {
   serverId: string;
@@ -26,18 +26,16 @@ export function useWorkspaceBrowsers(input: {
 }): WorkspaceBrowsersView {
   const { serverId, workspaceId } = input;
   const client = useHostRuntimeClient(serverId);
-  const hasBrowserHost = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.browserHost === true,
-  );
-  const enabled = Boolean(client) && hasBrowserHost && workspaceId.length > 0;
+  const hasBrowserMirror = useBrowserMirror(serverId);
+  const enabled = Boolean(client) && hasBrowserMirror && workspaceId.length > 0;
 
   const query = useReplicaQuery({
     queryKey: workspaceBrowsersQueryKey(serverId, workspaceId),
     enabled,
-    pushEvent: "browsers_changed",
+    pushEvent: "browser.tabs.changed",
     queryFn: async (): Promise<WorkspaceBrowserTabs> => {
       if (!client) {
-        throw new Error("Browser host is not connected");
+        throw new Error("Browser mirror host is not connected");
       }
       const payload = await client.runBrowserCommand({
         command: { command: "list_tabs", args: {} },

@@ -34,9 +34,12 @@ export const BrowserScreencastSubscribeResponseSchema = z.object({
   ]),
 });
 
+/**
+ * One-way: dropping a viewer cannot fail and the viewer has nothing to wait for,
+ * so there is no `requestId` and no matching `.response`.
+ */
 export const BrowserScreencastUnsubscribeRequestSchema = z.object({
   type: z.literal("browser.screencast.unsubscribe.request"),
-  requestId: z.string(),
   browserId: BrowserAutomationBrowserIdSchema,
 });
 

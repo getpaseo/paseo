@@ -25,14 +25,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
-type BrowsersChangedMessage = Extract<SessionOutboundMessage, { type: "browsers_changed" }>;
+type BrowserTabsChangedMessage = Extract<SessionOutboundMessage, { type: "browser.tabs.changed" }>;
 type RouterMessage =
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
   | StatusMessage
   | TerminalsChangedMessage
-  | BrowsersChangedMessage;
+  | BrowserTabsChangedMessage;
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
 type RouterClient = Parameters<typeof mountServerDataPushRouter>[0]["client"];
@@ -66,7 +66,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscribe_checkout_diff_response: [],
     status: [],
     terminals_changed: [],
-    browsers_changed: [],
+    "browser.tabs.changed": [],
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
@@ -537,7 +537,7 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
   });
 
-  it("routes browsers_changed into the workspace browser tab list", () => {
+  it("routes browser.tabs.changed into the workspace browser tab list", () => {
     const serverId = "server-1";
     const workspaceId = "workspace-a";
     const queryClient = new QueryClient();
@@ -554,7 +554,7 @@ describe("server data push router", () => {
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
     fake.emit({
-      type: "browsers_changed",
+      type: "browser.tabs.changed",
       payload: {
         tabs: [
           {

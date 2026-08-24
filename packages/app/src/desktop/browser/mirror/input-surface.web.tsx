@@ -4,9 +4,9 @@ import { StyleSheet } from "react-native-unistyles";
 import type { BrowserMirrorInput, BrowserMirrorInputSurfaceProps } from "./input-surface.types";
 import { toGuestPoint, type GuestPoint, type GuestViewport } from "./viewport";
 
-type MouseInput = Extract<BrowserMirrorInput, { kind: "mouse" }>;
-type MouseModifier = MouseInput["modifiers"][number];
-type MousePhase = NonNullable<MouseInput["phase"]>;
+type PointerInput = Extract<BrowserMirrorInput, { kind: "pointer" }>;
+type MouseModifier = PointerInput["modifiers"][number];
+type MousePhase = PointerInput["phase"];
 
 // Firefox reports wheel deltas in lines, and page-mode deltas scroll a viewport.
 const WHEEL_LINE_HEIGHT_PX = 16;
@@ -74,19 +74,19 @@ function attachMouseInput(element: HTMLElement, state: RefObject<SurfaceState>):
     return toGuestPoint(panePoint, fit, guest);
   }
 
-  function sendMouse(event: MouseEvent, phase: MousePhase): void {
+  function sendPointer(event: MouseEvent, phase: MousePhase): void {
     const point = guestPoint(event);
     if (!point) {
       return;
     }
     state.current.onInput({
-      kind: "mouse",
+      kind: "pointer",
+      phase,
       x: point.x,
       y: point.y,
       button: "left",
       clickCount: clickCount(event),
       modifiers: modifiers(event),
-      phase,
     });
   }
 
@@ -103,7 +103,7 @@ function attachMouseInput(element: HTMLElement, state: RefObject<SurfaceState>):
     const event = pendingMove;
     pendingMove = null;
     if (event) {
-      sendMouse(event, "move");
+      sendPointer(event, "move");
     }
   }
 
@@ -115,7 +115,7 @@ function attachMouseInput(element: HTMLElement, state: RefObject<SurfaceState>):
     // image or dragging it away as a ghost.
     event.preventDefault();
     isDragging = true;
-    sendMouse(event, "down");
+    sendPointer(event, "down");
     state.current.onFocusKeyboard();
   }
 
@@ -135,7 +135,7 @@ function attachMouseInput(element: HTMLElement, state: RefObject<SurfaceState>):
     }
     isDragging = false;
     cancelPendingMove();
-    sendMouse(event, "up");
+    sendPointer(event, "up");
   }
 
   function handleWheel(event: WheelEvent): void {

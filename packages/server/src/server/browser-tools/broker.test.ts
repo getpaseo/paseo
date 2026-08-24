@@ -583,7 +583,7 @@ describe("BrowserToolsBroker", () => {
     expect(other.receivedRequests).toEqual([]);
   });
 
-  test("failed list tabs aggregation does not seed browser id affinity", async () => {
+  test("one wedged host does not mute the tabs of the hosts that answered", async () => {
     const broker = createBroker();
     const firstHost = new FakeBrowserHostClient("host-1");
     const secondHost = new FakeBrowserHostClient("host-2");
@@ -620,32 +620,128 @@ describe("BrowserToolsBroker", () => {
       },
     });
 
-    await expect(listPromise).resolves.toEqual({
+    await expect(listPromise).resolves.toMatchObject({
       requestId: "req-1",
-      ok: false,
-      error: {
-        code: "browser_timeout",
-        message: "Host did not answer list_tabs.",
-        retryable: true,
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, hostId: "host-1" }],
       },
     });
 
-    await expect(
-      broker.execute({
-        command: { command: "snapshot", args: { browserId: BROWSER_ID } },
-        workspaceId: "workspace-1",
-      }),
-    ).resolves.toEqual({
+    // The answering host still seeds affinity; the wedged one seeds nothing.
+    const snapshotPromise = broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+      workspaceId: "workspace-1",
+    });
+    expect(firstHost.receivedRequests).toHaveLength(2);
+    expect(secondHost.receivedRequests).toHaveLength(1);
+    firstHost.resolveLatestWith(broker, {
       requestId: "req-1",
       ok: false,
-      error: {
-        code: "browser_tab_not_found",
-        message: `Browser tab ${BROWSER_ID} is not associated with a connected browser automation host. Call browser_list_tabs and use one of the returned browserId values.`,
-        retryable: false,
+      error: { code: "browser_tab_closed", message: "gone", retryable: false },
+    });
+    await snapshotPromise;
+  });
+
+  test("list tabs fails only when no host answered", async () => {
+    const broker = createBroker();
+    const firstHost = new FakeBrowserHostClient("host-1");
+    const secondHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(firstHost);
+    broker.registerClient(secondHost);
+
+    const listPromise = broker.execute({ command: { command: "list_tabs", args: {} } });
+
+    firstHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-1",
+      ok: false,
+      error: { code: "browser_timeout", message: "Host did not answer.", retryable: true },
+    });
+    secondHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-2",
+      ok: false,
+      error: { code: "browser_timeout", message: "Host did not answer.", retryable: true },
+    });
+
+    await expect(listPromise).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: { code: "browser_timeout", message: "Host did not answer.", retryable: true },
+    });
+  });
+
+  test("a host that cannot list tabs is skipped instead of failing the fan-out", async () => {
+    const broker = createBroker();
+    const incapableHost = new FakeBrowserHostClient("host-1", {
+      supportedCommands: ["input_at", "screencast_start", "screencast_stop"],
+    });
+    const capableHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(incapableHost);
+    broker.registerClient(capableHost);
+
+    const listPromise = broker.execute({ command: { command: "list_tabs", args: {} } });
+
+    expect(incapableHost.receivedRequests).toEqual([]);
+    capableHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, url: "https://one.example", title: "One" }],
       },
     });
-    expect(firstHost.receivedRequests).toHaveLength(1);
-    expect(secondHost.receivedRequests).toHaveLength(1);
+
+    await expect(listPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "list_tabs", tabs: [{ browserId: BROWSER_ID, hostId: "host-2" }] },
+    });
+  });
+
+  test("mirror scope only reaches hosts that can serve a mirror", async () => {
+    const broker = createBroker();
+    const automationOnlyHost = new FakeBrowserHostClient("host-1", {
+      isDaemonLocal: true,
+      supportedCommands: ["list_tabs", "new_tab", "navigate", "evaluate"],
+    });
+    const mirrorHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(automationOnlyHost);
+    broker.registerClient(mirrorHost);
+
+    expect(broker.getRegisteredClientCount()).toBe(2);
+    expect(broker.getMirrorCapableClientCount()).toBe(1);
+
+    void broker.execute({ command: { command: "list_tabs", args: {} }, hostScope: "mirror" });
+    expect(automationOnlyHost.receivedRequests).toEqual([]);
+    expect(mirrorHost.receivedRequests).toHaveLength(1);
+
+    // A daemon-local host still loses new tabs to an eligible remote one.
+    void broker.execute({ command: { command: "new_tab", args: {} }, hostScope: "mirror" });
+    expect(automationOnlyHost.receivedRequests).toEqual([]);
+    expect(mirrorHost.receivedRequests).toHaveLength(2);
+  });
+
+  test("agent scope still reaches a host registered for automation alone", async () => {
+    const broker = createBroker();
+    const automationOnlyHost = new FakeBrowserHostClient("host-1", {
+      supportedCommands: ["list_tabs", "evaluate"],
+    });
+    broker.registerClient(automationOnlyHost);
+
+    const listPromise = broker.execute({ command: { command: "list_tabs", args: {} } });
+    automationOnlyHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, url: "https://one.example", title: "One" }],
+      },
+    });
+
+    await expect(listPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "list_tabs", tabs: [{ browserId: BROWSER_ID, hostId: "host-1" }] },
+    });
   });
 
   test("unsupported commands are rejected before sending to the routed host", async () => {

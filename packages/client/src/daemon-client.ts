@@ -164,8 +164,8 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserScreencastSubscribeResponse } from "@getpaseo/protocol/browser-automation/screencast";
 import type {
-  BrowserClientCommandRequest,
-  BrowserClientCommandResponse,
+  BrowserTabExecuteRequest,
+  BrowserTabExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/client-command";
 
 export interface Logger {
@@ -521,7 +521,7 @@ export interface BrowserScreencastSubscribeOptions {
   maxHeight?: number;
   requestId?: string;
 }
-type BrowserClientCommandPayload = BrowserClientCommandResponse["payload"];
+type BrowserTabExecutePayload = BrowserTabExecuteResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
@@ -4793,11 +4793,7 @@ export class DaemonClient {
 
   unsubscribeBrowserScreencast(browserId: string): void {
     this.browserScreencasts.removeBrowser(browserId);
-    this.sendSessionMessage({
-      type: "browser.screencast.unsubscribe.request",
-      requestId: this.createRequestId(),
-      browserId,
-    });
+    this.sendSessionMessage({ type: "browser.screencast.unsubscribe.request", browserId });
   }
 
   onBrowserScreencastFrame(handler: (event: BrowserScreencastEvent) => void): () => void {
@@ -4805,29 +4801,29 @@ export class DaemonClient {
   }
 
   async runBrowserCommand(input: {
-    command: BrowserClientCommandRequest["command"];
+    command: BrowserTabExecuteRequest["command"];
     workspaceId?: string;
     cwd?: string;
     requestId?: string;
-  }): Promise<BrowserClientCommandPayload> {
+  }): Promise<BrowserTabExecutePayload> {
     const resolvedRequestId = this.createRequestId(input.requestId);
     return this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: SessionInboundMessageSchema.parse({
-        type: "browser.command.request",
+        type: "browser.tab.execute.request",
         requestId: resolvedRequestId,
         command: input.command,
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
       }),
-      responseType: "browser.command.response",
+      responseType: "browser.tab.execute.response",
       options: { skipQueue: true },
     });
   }
 
   /**
    * Used by a browser host to tell the daemon its tab set changed. The daemon
-   * answers by broadcasting `browsers_changed` to every connected client.
+   * answers by pushing `browser.tabs.changed` to every mirror-capable client.
    */
   announceBrowserTabs(): void {
     this.sendSessionMessage({ type: "browser.tabs.announce.request" });

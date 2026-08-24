@@ -29,7 +29,7 @@ import type {
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
-import type { BrowserClientCommandRequest } from "@getpaseo/protocol/browser-automation/client-command";
+import type { BrowserTabExecuteRequest } from "@getpaseo/protocol/browser-automation/client-command";
 import type {
   BrowserScreencastSubscribeRequest,
   BrowserScreencastUnsubscribeRequest,
@@ -2541,8 +2541,8 @@ export class Session {
 
   private dispatchBrowserMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
-      case "browser.command.request":
-        return this.handleBrowserCommandRequest(msg);
+      case "browser.tab.execute.request":
+        return this.handleBrowserTabExecuteRequest(msg);
       case "browser.screencast.subscribe.request":
         return this.handleBrowserScreencastSubscribeRequest(msg);
       case "browser.screencast.unsubscribe.request":
@@ -2552,10 +2552,10 @@ export class Session {
     }
   }
 
-  private async handleBrowserCommandRequest(msg: BrowserClientCommandRequest): Promise<void> {
+  private async handleBrowserTabExecuteRequest(msg: BrowserTabExecuteRequest): Promise<void> {
     if (!this.browserToolsBroker) {
       this.emit({
-        type: "browser.command.response",
+        type: "browser.tab.execute.response",
         payload: {
           requestId: msg.requestId,
           ok: false,
@@ -2570,11 +2570,14 @@ export class Session {
     }
     const payload = await this.browserToolsBroker.execute({
       command: msg.command,
+      // A viewer only ever reaches a host that can serve the mirror it is
+      // driving, so a tab it cannot subscribe to never reaches its UI.
+      hostScope: "mirror",
       requestId: msg.requestId,
       ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
       ...(msg.cwd ? { cwd: msg.cwd } : {}),
     });
-    this.emit({ type: "browser.command.response", payload });
+    this.emit({ type: "browser.tab.execute.response", payload });
   }
 
   private async handleBrowserScreencastSubscribeRequest(

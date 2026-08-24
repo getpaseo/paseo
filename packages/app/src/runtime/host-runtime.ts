@@ -482,6 +482,8 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     : undefined;
   const appCapabilities = {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
+    // Every build of this app parses `browser.tabs.changed`, host or not.
+    [CLIENT_CAPS.browserMirror]: true,
     ...browserAutomationCapabilities,
   };
 
@@ -553,7 +555,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         serverId: host.serverId,
       });
       const unmountScreencastFrames = mountBrowserScreencastForwarder(client);
-      const unmountTabAnnouncer = mountBrowserTabAnnouncer(client);
+      const unmountTabAnnouncer = mountBrowserTabAnnouncer(host.serverId, client);
       return () => {
         unmountTabAnnouncer();
         unmountScreencastFrames();

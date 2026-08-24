@@ -131,6 +131,20 @@ const SourceSchema = z.object({
     });
   });
 
+  it("miscompiles a boolean discriminator into a string comparison", async () => {
+    const schema = await compileInlineSchema(`
+const SourceSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), result: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+`);
+
+    // Inverted on purpose: this is the compiler bug, not the wanted behaviour.
+    // Client-inbound schemas with a boolean tag stay on `z.union` until this
+    // flips, at which point delete the note in client-command.ts with it.
+    expect(schema.safeParse({ ok: true, result: "fine" }).success).toBe(false);
+  });
+
   it("accepts a minimal valid envelope and rejects a corrupted envelope", () => {
     expect(GeneratedWSOutboundMessageSchema.safeParse({ type: "pong" }).success).toBe(true);
     expect(GeneratedWSOutboundMessageSchema.safeParse({ type: "not_a_message" }).success).toBe(

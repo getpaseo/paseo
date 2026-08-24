@@ -89,7 +89,7 @@ import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
-import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
@@ -598,7 +598,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
-  private browsersChangedSequence = 0;
+  private browserTabsChangedSequence = 0;
   private readonly browserScreencast: BrowserScreencastRegistry | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
@@ -1658,9 +1658,9 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
-        // COMPAT(browserHost): added in v0.5.1, remove after 2027-09-01 once the
+        // COMPAT(browserMirror): added in v0.5.1, remove after 2027-09-01 once the
         // supported client floor always gates browser tabs on this flag.
-        ...(this.hasBrowserHost() ? { browserHost: true } : {}),
+        ...(this.hasBrowserMirrorHost() ? { browserMirror: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1993,36 +1993,57 @@ export class VoiceAssistantWebSocketServer {
    * and push the result to every client. Announces overlap, so only the newest
    * fan-out is allowed to broadcast; a slower older one would publish stale tabs.
    */
-  private broadcastBrowsersChanged(): void {
+  private broadcastBrowserTabsChanged(): void {
     const broker = this.browserToolsBroker;
     if (!broker) {
       return;
     }
-    const sequence = ++this.browsersChangedSequence;
+    const sequence = ++this.browserTabsChangedSequence;
     void this.publishBrowserTabs(broker, sequence).catch((error: unknown) => {
-      this.logger.warn({ err: error }, "Failed to broadcast browsers_changed");
+      this.logger.warn({ err: error }, "Failed to broadcast browser.tabs.changed");
     });
   }
 
   private async publishBrowserTabs(broker: BrowserToolsBroker, sequence: number): Promise<void> {
-    const payload = await broker.execute({ command: { command: "list_tabs", args: {} } });
-    if (sequence !== this.browsersChangedSequence) {
+    const payload = await broker.execute({
+      command: { command: "list_tabs", args: {} },
+      hostScope: "mirror",
+    });
+    if (sequence !== this.browserTabsChangedSequence) {
       return;
     }
     if (!payload.ok || payload.result.command !== "list_tabs") {
       return;
     }
-    this.broadcast(
+    this.broadcastToCapableSockets(
+      CLIENT_CAPS.browserMirror,
       wrapSessionMessage({
-        type: "browsers_changed",
+        type: "browser.tabs.changed",
         payload: { tabs: payload.result.tabs },
       }),
     );
   }
 
-  /** A browser host is only advertised while one is connected and able to serve tabs. */
-  private hasBrowserHost(): boolean {
-    return (this.browserToolsBroker?.getRegisteredClientCount() ?? 0) > 0;
+  /**
+   * An older app has no branch for `browser.tabs.changed`, so the push goes only
+   * to sockets that said they understand it.
+   */
+  private broadcastToCapableSockets(
+    capability: ClientCapability,
+    message: WSOutboundMessage,
+  ): void {
+    const capableSockets = [...this.sessions]
+      .filter(
+        ([ws, connection]) =>
+          connection.kind === "trusted" && connection.session.supportsForSource(capability, ws),
+      )
+      .map(([ws]) => ws);
+    this.sendMessageToSockets(capableSockets, message);
+  }
+
+  /** A mirror is only advertised while a host that can actually serve one is connected. */
+  private hasBrowserMirrorHost(): boolean {
+    return (this.browserToolsBroker?.getMirrorCapableClientCount() ?? 0) > 0;
   }
 
   private syncBrowserToolsClientRegistration(
@@ -2037,7 +2058,7 @@ export class VoiceAssistantWebSocketServer {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
-    const hadBrowserHost = this.hasBrowserHost();
+    const hadBrowserMirror = this.hasBrowserMirrorHost();
     const isDaemonLocal = peer === "local_ipc" || peer === "loopback";
     const capabilitySignature = JSON.stringify({ ...browserHostCapability, isDaemonLocal });
     const existing = this.browserToolsRegistrations.get(connection.clientId);
@@ -2063,7 +2084,7 @@ export class VoiceAssistantWebSocketServer {
       capabilitySignature,
       unregister,
     });
-    if (!hadBrowserHost) {
+    if (hadBrowserMirror !== this.hasBrowserMirrorHost()) {
       this.broadcastCapabilitiesUpdate();
     }
   }
@@ -2073,9 +2094,10 @@ export class VoiceAssistantWebSocketServer {
     if (!registration) {
       return;
     }
+    const hadBrowserMirror = this.hasBrowserMirrorHost();
     this.browserToolsRegistrations.delete(clientId);
     registration.unregister();
-    if (!this.hasBrowserHost()) {
+    if (hadBrowserMirror !== this.hasBrowserMirrorHost()) {
       this.broadcastCapabilitiesUpdate();
     }
   }
@@ -2357,7 +2379,7 @@ export class VoiceAssistantWebSocketServer {
       activeConnection.kind === "trusted" &&
       message.message.type === "browser.tabs.announce.request"
     ) {
-      this.broadcastBrowsersChanged();
+      this.broadcastBrowserTabsChanged();
       return;
     }
 

@@ -27,14 +27,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
-type BrowsersChangedMessage = Extract<SessionOutboundMessage, { type: "browsers_changed" }>;
+type BrowserTabsChangedMessage = Extract<SessionOutboundMessage, { type: "browser.tabs.changed" }>;
 type ServerDataEventType =
   | "providers_snapshot_update"
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
   | "terminals_changed"
-  | "browsers_changed";
+  | "browser.tabs.changed";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -331,8 +331,8 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       message,
     });
   });
-  const unsubscribeBrowsersChanged = input.client.on("browsers_changed", (message) => {
-    applyBrowsersChanged({
+  const unsubscribeBrowserTabsChanged = input.client.on("browser.tabs.changed", (message) => {
+    applyBrowserTabsChanged({
       queryClient: input.queryClient,
       serverId: input.serverId,
       message,
@@ -359,7 +359,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
-    unsubscribeBrowsersChanged();
+    unsubscribeBrowserTabsChanged();
     for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
       unsubscribeCheckoutDiff(input.client, subscriptionId);
     }
@@ -559,10 +559,10 @@ function applyTerminalsChanged(input: {
  * Browser tabs are not subscription-scoped: the daemon pushes every tab it can
  * see, and each workspace query keeps the ones that belong to it.
  */
-function applyBrowsersChanged(input: {
+function applyBrowserTabsChanged(input: {
   queryClient: QueryClient;
   serverId: string;
-  message: BrowsersChangedMessage;
+  message: BrowserTabsChangedMessage;
 }): void {
   for (const query of input.queryClient.getQueryCache().getAll()) {
     const workspaceId = readWorkspaceBrowsersQueryWorkspaceId(query.queryKey, input.serverId);

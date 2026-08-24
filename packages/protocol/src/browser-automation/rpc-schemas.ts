@@ -238,21 +238,33 @@ export const BrowserAutomationCloseTabCommandSchema = z.object({
 /**
  * Viewport-coordinate input, used when a viewer drives a mirrored tab it cannot
  * snapshot for refs. Coordinates are in guest viewport pixels.
+ *
+ * `click` is a complete press and release, which is what a viewer without a real
+ * pointer sends. `pointer` is one half of a gesture, so a viewer that owns a
+ * pointer can produce a drag the guest sees as a drag.
  */
 export const BrowserAutomationInputAtCommandSchema = z.object({
   command: z.literal("input_at"),
   args: BrowserAutomationTabTargetSchema.extend({
     event: z.discriminatedUnion("kind", [
       z.object({
-        kind: z.literal("mouse"),
+        kind: z.literal("click"),
         x: z.number().nonnegative(),
         y: z.number().nonnegative(),
         button: BrowserAutomationMouseButtonSchema.default("left"),
         clickCount: z.number().int().min(1).max(3).default(1),
         modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
-        // Absent means a complete press and release, which is what native
-        // viewers send. A desktop viewer splits a real drag into its phases.
-        phase: BrowserAutomationMousePhaseSchema.optional(),
+      }),
+      z.object({
+        kind: z.literal("pointer"),
+        phase: BrowserAutomationMousePhaseSchema,
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        button: BrowserAutomationMouseButtonSchema.default("left"),
+        // Chromium derives double-click selection and triple-click line
+        // selection from the count carried by the press and the release.
+        clickCount: z.number().int().min(1).max(3).default(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
       }),
       z.object({
         kind: z.literal("wheel"),

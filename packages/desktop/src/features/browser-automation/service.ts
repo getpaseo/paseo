@@ -566,7 +566,7 @@ async function executeInputAt(
   if ("ok" in target) {
     return target;
   }
-  if (event.kind === "mouse") {
+  if (event.kind === "click" || event.kind === "pointer") {
     // Same trusted CDP path as ref-based click; sendInputEvent mouse wheels do
     // not scroll a guest, so pointer input stays on one mechanism.
     await dispatchMouseInput(cdpSender(target.contents), event);
@@ -591,10 +591,10 @@ async function executeInputAt(
 
 function dispatchMouseInput(
   send: CdpCommandSender,
-  event: Extract<BrowserAutomationInputAtEvent, { kind: "mouse" }>,
+  event: Extract<BrowserAutomationInputAtEvent, { kind: "click" | "pointer" }>,
 ): Promise<void> {
   const point = { x: event.x, y: event.y };
-  if (event.phase) {
+  if (event.kind === "pointer") {
     return dispatchTrustedMousePhase(send, point, {
       phase: event.phase,
       button: event.button,

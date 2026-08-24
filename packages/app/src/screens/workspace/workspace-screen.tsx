@@ -105,6 +105,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
+import { useCanOpenBrowserTabs } from "@/desktop/browser/capability";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { useWorkspaceBrowsers } from "@/desktop/browser/use-workspace-browsers";
 import { getDesktopHost } from "@/desktop/host";
@@ -3742,10 +3743,8 @@ function WorkspaceScreenContent({
     [createTerminalMutation.isPending, pendingTerminalCreateInput],
   );
   // Any client can open a browser tab as long as the daemon has a host that can
-  // actually run one; the tab lives there and is mirrored back here.
-  const showCreateBrowserTab = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.browserHost === true,
-  );
+  // actually mirror one; the tab lives there and is mirrored back here.
+  const showCreateBrowserTab = useCanOpenBrowserTabs(normalizedServerId);
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
       showChanges: isGitCheckout,

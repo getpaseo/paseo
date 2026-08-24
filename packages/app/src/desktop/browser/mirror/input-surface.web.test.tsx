@@ -92,9 +92,25 @@ describe("BrowserMirrorInputSurface (web)", () => {
     window.dispatchEvent(mouse("mouseup", { clientX: 900, clientY: 40, detail: 1 }));
 
     expect(inputs).toEqual([
-      { kind: "mouse", x: 10, y: 20, button: "left", clickCount: 1, modifiers: [], phase: "down" },
-      { kind: "mouse", x: 120, y: 40, button: "left", clickCount: 1, modifiers: [], phase: "move" },
-      { kind: "mouse", x: 400, y: 40, button: "left", clickCount: 1, modifiers: [], phase: "up" },
+      {
+        kind: "pointer",
+        phase: "down",
+        x: 10,
+        y: 20,
+        button: "left",
+        clickCount: 1,
+        modifiers: [],
+      },
+      {
+        kind: "pointer",
+        phase: "move",
+        x: 120,
+        y: 40,
+        button: "left",
+        clickCount: 1,
+        modifiers: [],
+      },
+      { kind: "pointer", phase: "up", x: 400, y: 40, button: "left", clickCount: 1, modifiers: [] },
     ]);
     expect(focusCount).toBe(1);
   });
@@ -108,13 +124,13 @@ describe("BrowserMirrorInputSurface (web)", () => {
 
     expect(inputs).toEqual([
       {
-        kind: "mouse",
+        kind: "pointer",
+        phase: "down",
         x: 30,
         y: 30,
         button: "left",
         clickCount: 2,
         modifiers: ["Shift"],
-        phase: "down",
       },
     ]);
   });

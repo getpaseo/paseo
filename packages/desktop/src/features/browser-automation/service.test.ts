@@ -1245,7 +1245,7 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.inputEvents).toEqual([]);
   });
 
-  test("input_at sends a mouse click to viewport coordinates", async () => {
+  test("input_at click sends a complete press and release to viewport coordinates", async () => {
     const browser = new BrowserAutomationHarness();
 
     const result = await browser.execute({
@@ -1253,7 +1253,7 @@ describe("executeAutomationCommand", () => {
       args: {
         browserId: BROWSER_A,
         event: {
-          kind: "mouse",
+          kind: "click",
           x: 120,
           y: 80,
           button: "right",
@@ -1287,7 +1287,7 @@ describe("executeAutomationCommand", () => {
     expect(mouseEvents.at(-1)?.params).toMatchObject({ button: "right", clickCount: 2 });
   });
 
-  test("input_at mouse phases press, drag, and release without a synthetic click", async () => {
+  test("input_at pointer phases press, drag, and release without a synthetic click", async () => {
     const browser = new BrowserAutomationHarness();
 
     await browser.execute({
@@ -1295,7 +1295,7 @@ describe("executeAutomationCommand", () => {
       args: {
         browserId: BROWSER_A,
         event: {
-          kind: "mouse",
+          kind: "pointer",
           phase: "down",
           x: 10,
           y: 20,
@@ -1310,7 +1310,7 @@ describe("executeAutomationCommand", () => {
       args: {
         browserId: BROWSER_A,
         event: {
-          kind: "mouse",
+          kind: "pointer",
           phase: "move",
           x: 90,
           y: 24,
@@ -1325,7 +1325,7 @@ describe("executeAutomationCommand", () => {
       args: {
         browserId: BROWSER_A,
         event: {
-          kind: "mouse",
+          kind: "pointer",
           phase: "up",
           x: 90,
           y: 24,
@@ -1385,7 +1385,7 @@ describe("executeAutomationCommand", () => {
       args: {
         browserId: BROWSER_A,
         event: {
-          kind: "mouse",
+          kind: "pointer",
           phase: "down",
           x: 32,
           y: 48,

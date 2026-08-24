@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
-import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserViewerCommand } from "@getpaseo/protocol/browser-automation/client-command";
 import type { GuestViewport, ViewportFit } from "./viewport";
 
 export type BrowserMirrorInput = Extract<
-  BrowserAutomationCommand,
+  BrowserViewerCommand,
   { command: "input_at" }
 >["args"]["event"];
 

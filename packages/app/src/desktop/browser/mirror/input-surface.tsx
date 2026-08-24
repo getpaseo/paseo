@@ -66,7 +66,7 @@ export function BrowserMirrorInputSurface({
       }
       const point = toGuestPoint(toPanePoint(event), fit, guest);
       onInput({
-        kind: "mouse",
+        kind: "click",
         x: point.x,
         y: point.y,
         button: "left",

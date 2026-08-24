@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserViewerCommand } from "@getpaseo/protocol/browser-automation/client-command";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   findWorkspaceBrowserTab,
@@ -17,7 +17,7 @@ export interface RemoteBrowserTab {
 
 export interface RemoteBrowserTabView {
   tab: RemoteBrowserTab | null;
-  run: (command: BrowserAutomationCommand) => void;
+  run: (command: BrowserViewerCommand) => void;
 }
 
 /**
@@ -48,7 +48,7 @@ export function useRemoteBrowserTab(
   }, [browserId, tabs]);
 
   const run = useCallback(
-    (command: BrowserAutomationCommand) => {
+    (command: BrowserViewerCommand) => {
       if (!client) {
         return;
       }

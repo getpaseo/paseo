@@ -8,7 +8,7 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { BrowsersChanged } from "@getpaseo/protocol/browser-automation/client-command";
+import type { BrowserTabsChanged } from "@getpaseo/protocol/browser-automation/client-command";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserScreencastEvent } from "@getpaseo/client/internal/daemon-client";
 import type pino from "pino";
@@ -32,13 +32,18 @@ interface BrowserToolsDaemonHarness {
   connectBrowserHostClient(
     options?: ConnectBrowserHostClientOptions,
   ): Promise<BrowserHostClientHandle>;
-  connectViewerClient(): Promise<DaemonClient>;
+  connectViewerClient(options?: ConnectViewerClientOptions): Promise<DaemonClient>;
   stop(): Promise<void>;
 }
 
 interface ConnectBrowserHostClientOptions {
   clientId?: string;
   capabilities?: Record<string, unknown>;
+}
+
+interface ConnectViewerClientOptions {
+  /** An app old enough to have no `browser.tabs.changed` branch. */
+  understandsBrowserMirror?: boolean;
 }
 
 interface BrowserHostClientHandle {
@@ -202,17 +207,31 @@ describe("WebSocketServer browser tools wiring", () => {
     expect(harness.broker.getPendingRequestCount()).toBe(0);
   });
 
-  it("advertises the browser host feature only while a host is registered", async () => {
+  it("advertises the browser mirror feature only while a mirror-capable host is registered", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const viewer = await harness.connectViewerClient();
 
-    expect(viewer.getLastServerInfoMessage()?.features?.browserHost).toBeUndefined();
+    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
 
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
-    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserHost === true);
+    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === true);
 
     await browserHost.disconnect();
-    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserHost === undefined);
+    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === undefined);
+  });
+
+  it("does not advertise the mirror for a host without the screencast and input commands", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const viewer = await harness.connectViewerClient();
+
+    await harness.connectBrowserHostClient({
+      clientId: "automation-only-host",
+      capabilities: browserHostCapabilities(["list_tabs", "navigate", "click", "evaluate"]),
+    });
+    await waitFor(() => harness.broker.getRegisteredClientCount() === 1);
+
+    expect(harness.broker.getMirrorCapableClientCount()).toBe(0);
+    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
   });
 
   it("runs a client browser command across every host and stamps host identity on tabs", async () => {
@@ -246,8 +265,8 @@ describe("WebSocketServer browser tools wiring", () => {
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
     const viewer = await harness.connectViewerClient();
 
-    const pushes: BrowsersChanged[] = [];
-    viewer.on("browsers_changed", (message) => {
+    const pushes: BrowserTabsChanged[] = [];
+    viewer.on("browser.tabs.changed", (message) => {
       pushes.push(message);
     });
 
@@ -256,9 +275,55 @@ describe("WebSocketServer browser tools wiring", () => {
     await waitFor(() => pushes.length === 1);
 
     expect(pushes[0]).toMatchObject({
-      type: "browsers_changed",
+      type: "browser.tabs.changed",
       payload: {
         tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1", hostLabel: hostname() }],
+      },
+    });
+  });
+
+  it("keeps the tab push away from a client that never claimed to understand it", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const legacyViewer = await harness.connectViewerClient({ understandsBrowserMirror: false });
+    const currentViewer = await harness.connectViewerClient();
+
+    const legacyPushes: BrowserTabsChanged[] = [];
+    legacyViewer.on("browser.tabs.changed", (message) => {
+      legacyPushes.push(message);
+    });
+    const currentPushes: BrowserTabsChanged[] = [];
+    currentViewer.on("browser.tabs.changed", (message) => {
+      currentPushes.push(message);
+    });
+
+    browserHost.announceBrowserTabs();
+    await respondWithTab(browserHost, { browserId: BROWSER_ID, url: "https://one.example" });
+    await waitFor(() => currentPushes.length === 1);
+
+    expect(legacyPushes).toEqual([]);
+  });
+
+  it("lists tabs from the hosts that can while one host cannot list them at all", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    await harness.connectBrowserHostClient({
+      clientId: "incapable-host",
+      capabilities: browserHostCapabilities(["input_at", "screencast_start", "screencast_stop"]),
+    });
+    const capableHost = await harness.connectBrowserHostClient({ clientId: "capable-host" });
+    const viewer = await harness.connectViewerClient();
+
+    const commandPromise = viewer.runBrowserCommand({
+      command: { command: "list_tabs", args: {} },
+      workspaceId: "workspace-1",
+    });
+    await respondWithTab(capableHost, { browserId: BROWSER_ID, url: "https://one.example" });
+
+    await expect(commandPromise).resolves.toMatchObject({
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, hostId: "capable-host" }],
       },
     });
   });
@@ -387,12 +452,16 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
         },
       };
     },
-    async connectViewerClient() {
+    async connectViewerClient(options = {}) {
+      const understandsBrowserMirror = options.understandsBrowserMirror ?? true;
       const client = new DaemonClient({
         url,
         clientType: "browser",
         connectTimeoutMs: 500,
         reconnect: { enabled: false },
+        ...(understandsBrowserMirror
+          ? { capabilities: { [CLIENT_CAPS.browserMirror]: true } }
+          : {}),
       });
       clients.add(client);
       await client.connect();
