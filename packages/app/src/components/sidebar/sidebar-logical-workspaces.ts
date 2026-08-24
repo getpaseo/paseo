@@ -24,6 +24,7 @@ export interface SidebarProjectLogicalWorkspaceRow {
   kind: "logical";
   key: string;
   groupingKey: string;
+  groupingServerIds: string[] | null;
   logicalWorkspaceRef: string;
   title: string;
   statusBucket: SidebarWorkspaceEntry["statusBucket"];
@@ -375,6 +376,7 @@ function buildLogicalRow(input: {
     kind: "logical",
     key: JSON.stringify([input.grouping.key, input.projectViewKey, input.logicalWorkspaceRef]),
     groupingKey: input.grouping.key,
+    groupingServerIds: input.grouping.serverIds ? [...input.grouping.serverIds] : null,
     logicalWorkspaceRef: input.logicalWorkspaceRef,
     title,
     statusBucket,

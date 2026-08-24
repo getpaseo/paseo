@@ -121,9 +121,12 @@ import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { resolvePluginSidebarWorkspaceGroupings } from "@/plugins/sidebar-workspace-groupings";
 import {
+  NEW_LOGICAL_WORKSPACE_OPTION_ID,
   buildInitialLogicalWorkspaceLabels,
   buildLogicalWorkspaceOptions,
+  buildLogicalWorkspaceSelectionScopeKey,
   resolveLogicalWorkspaceCreationGrouping,
+  resolveLogicalWorkspaceRefOption,
 } from "./new-workspace/logical-workspace-selection";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
@@ -1757,20 +1760,23 @@ export function NewWorkspaceScreen({
   const [selectedLogicalWorkspaceRef, setSelectedLogicalWorkspaceRef] = useState<string | null>(
     initialLogicalWorkspaceRef,
   );
-  const logicalWorkspaceProjectRef = useRef<string | null>(null);
+  const logicalWorkspaceSelectionScope = buildLogicalWorkspaceSelectionScopeKey(
+    selectedProject?.viewKey ?? null,
+    logicalWorkspaceGrouping,
+  );
+  const logicalWorkspaceSelectionScopeRef = useRef<string | null>(null);
   useEffect(() => {
-    const projectViewKey = selectedProject?.viewKey ?? null;
     if (
-      logicalWorkspaceProjectRef.current !== null &&
-      logicalWorkspaceProjectRef.current !== projectViewKey
+      logicalWorkspaceSelectionScopeRef.current !== null &&
+      logicalWorkspaceSelectionScopeRef.current !== logicalWorkspaceSelectionScope
     ) {
       setSelectedLogicalWorkspaceRef(null);
     }
-    logicalWorkspaceProjectRef.current = projectViewKey;
-  }, [selectedProject?.viewKey]);
+    logicalWorkspaceSelectionScopeRef.current = logicalWorkspaceSelectionScope;
+  }, [logicalWorkspaceSelectionScope]);
   const logicalWorkspacePickerOptions = useMemo<ComboboxOptionType[]>(
     () => [
-      { id: "new", label: t("newWorkspace.logicalWorkspace.new") },
+      { id: NEW_LOGICAL_WORKSPACE_OPTION_ID, label: t("newWorkspace.logicalWorkspace.new") },
       ...logicalWorkspaceOptions.map((option) => ({
         id: option.logicalWorkspaceRef,
         label: option.title,
@@ -2090,7 +2096,7 @@ export function NewWorkspaceScreen({
   }, []);
 
   const handleSelectLogicalWorkspace = useCallback((id: string) => {
-    setSelectedLogicalWorkspaceRef(id === "new" ? null : id);
+    setSelectedLogicalWorkspaceRef(resolveLogicalWorkspaceRefOption(id));
     setLogicalWorkspacePickerOpen(false);
   }, []);
 
@@ -2401,7 +2407,7 @@ export function NewWorkspaceScreen({
       openState: logicalWorkspacePickerOpen,
       onOpenChange: handleLogicalWorkspacePickerOpenChange,
       options: logicalWorkspacePickerOptions,
-      value: selectedLogicalWorkspaceRef ?? "new",
+      value: selectedLogicalWorkspaceRef ?? NEW_LOGICAL_WORKSPACE_OPTION_ID,
       triggerLabel: logicalWorkspaceTriggerLabel,
       onSelect: handleSelectLogicalWorkspace,
     },

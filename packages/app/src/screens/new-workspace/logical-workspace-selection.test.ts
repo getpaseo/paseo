@@ -5,9 +5,12 @@ import {
 } from "@getpaseo/protocol/workspace-labels";
 import type { PluginSidebarWorkspaceGrouping } from "@/plugins/sidebar-workspace-groupings";
 import {
+  NEW_LOGICAL_WORKSPACE_OPTION_ID,
   buildInitialLogicalWorkspaceLabels,
   buildLogicalWorkspaceOptions,
+  buildLogicalWorkspaceSelectionScopeKey,
   resolveLogicalWorkspaceCreationGrouping,
+  resolveLogicalWorkspaceRefOption,
 } from "./logical-workspace-selection";
 
 const grouping: PluginSidebarWorkspaceGrouping = {
@@ -99,5 +102,24 @@ describe("new workspace logical grouping", () => {
         selection: { kind: "existing", logicalWorkspaceRef: "invalid ref with spaces" },
       }),
     ).toBeUndefined();
+  });
+
+  it("keeps the legal logical ref 'new' distinct from the new-workspace sentinel", () => {
+    expect(resolveLogicalWorkspaceRefOption("new")).toBe("new");
+    expect(resolveLogicalWorkspaceRefOption(NEW_LOGICAL_WORKSPACE_OPTION_ID)).toBeNull();
+  });
+
+  it("scopes a selection to both the native project and plugin namespace", () => {
+    expect(buildLogicalWorkspaceSelectionScopeKey("project-a", grouping)).toBe(
+      JSON.stringify(["project-a", grouping.key]),
+    );
+    expect(
+      buildLogicalWorkspaceSelectionScopeKey("project-a", {
+        ...grouping,
+        key: "another/sidebar-workspace-grouping/logical-workspaces",
+      }),
+    ).not.toBe(buildLogicalWorkspaceSelectionScopeKey("project-a", grouping));
+    expect(buildLogicalWorkspaceSelectionScopeKey(null, grouping)).toBeNull();
+    expect(buildLogicalWorkspaceSelectionScopeKey("project-a", null)).toBeNull();
   });
 });

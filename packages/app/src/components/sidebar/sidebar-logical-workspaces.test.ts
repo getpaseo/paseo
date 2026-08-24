@@ -159,6 +159,22 @@ describe("logical workspace sidebar projection", () => {
     ).toEqual([projectB.workspaceKey]);
   });
 
+  it("carries the contributing plugin host namespace onto the logical row", () => {
+    const member = placement({ id: "member", serverId: "host-a" });
+    const projection = buildSidebarLogicalWorkspaceProjection({
+      projects: [project("project-a", [member])],
+      workspaceEntriesByKey: new Map([
+        [member.workspaceKey, entry(member, { ref: "project-a-catalog" })],
+      ]),
+      groupings: [{ ...GROUPING, serverIds: ["host-a", "host-b"] }],
+      activeWorkspaceSelection: null,
+    });
+
+    expect(
+      logicalRows(projection.rowsByProjectViewKey.get("project-a"))[0]?.groupingServerIds,
+    ).toEqual(["host-a", "host-b"]);
+  });
+
   it("applies a host contribution only to native workspaces on that installed host", () => {
     const mac = placement({ id: "mac", serverId: "host-a" });
     const remote = placement({ id: "remote", serverId: "host-b" });

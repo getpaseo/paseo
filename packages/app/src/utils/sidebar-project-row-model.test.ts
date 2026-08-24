@@ -97,6 +97,32 @@ describe("buildSidebarProjectRowModel", () => {
     ).toMatchObject({ serverId: "host-c", iconWorkingDir: "/repo/c" });
   });
 
+  it("does not target a host outside the logical grouping namespace", () => {
+    const groupedProject = project({
+      hosts: [
+        {
+          serverId: "host-a",
+          iconWorkingDir: "/repo/a",
+          worktreeSupport: "supported" as const,
+        },
+        {
+          serverId: "host-b",
+          iconWorkingDir: "/repo/b",
+          worktreeSupport: "supported" as const,
+        },
+      ],
+    });
+
+    expect(
+      resolveSidebarLogicalWorkspaceAddHostTarget({
+        project: groupedProject,
+        occupiedServerIds: new Set(["host-a"]),
+        allowedServerIds: new Set(["host-a"]),
+        supportsMultiplicityByServerId: new Map(),
+      }),
+    ).toBeNull();
+  });
+
   it("renders a non-git single-workspace project as an expandable section", () => {
     const result = buildSidebarProjectRowModel({
       project: project({

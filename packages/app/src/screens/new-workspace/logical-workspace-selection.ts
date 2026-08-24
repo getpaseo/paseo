@@ -24,6 +24,19 @@ export type LogicalWorkspaceCreationSelection =
   | { kind: "new"; logicalWorkspaceRef: string }
   | { kind: "existing"; logicalWorkspaceRef: string };
 
+export const NEW_LOGICAL_WORKSPACE_OPTION_ID = "__new-logical-workspace__";
+
+export function resolveLogicalWorkspaceRefOption(optionId: string): string | null {
+  return optionId === NEW_LOGICAL_WORKSPACE_OPTION_ID ? null : optionId;
+}
+
+export function buildLogicalWorkspaceSelectionScopeKey(
+  projectViewKey: string | null,
+  grouping: PluginSidebarWorkspaceGrouping | null,
+): string | null {
+  return projectViewKey && grouping ? JSON.stringify([projectViewKey, grouping.key]) : null;
+}
+
 export function resolveLogicalWorkspaceCreationGrouping(
   groupings: readonly PluginSidebarWorkspaceGrouping[],
   serverId: string,
