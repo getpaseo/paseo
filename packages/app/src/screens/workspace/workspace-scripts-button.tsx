@@ -26,7 +26,7 @@ import {
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { MENU_ITEM_HEIGHT } from "@/components/ui/menu";
+import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
 import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
 import {
@@ -37,7 +37,7 @@ import {
 import type { Theme } from "@/styles/theme";
 import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 

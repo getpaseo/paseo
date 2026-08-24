@@ -1,7 +1,9 @@
 import type { StyleProp, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE } from "@/styles/theme";
+
+export { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/ui/icon-color";
 
 export type IconButtonChromeSize = "large" | "small";
 
@@ -61,14 +63,6 @@ export function iconButtonChromeGlyphSize(size: IconButtonChromeSize, compact = 
 export function smallIconButtonChromeFrameSize(compact = false): number {
   return compact ? COMPACT_SMALL_ICON_BUTTON_SIZE : SMALL_ICON_BUTTON_SIZE;
 }
-
-export const mutedIconColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
-
-export const extraMutedIconColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundExtraMuted,
-});
 
 const styles = StyleSheet.create((theme) => ({
   large: {
