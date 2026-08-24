@@ -122,6 +122,7 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
   const groups = useWorkspaceTabLaunchCatalog({
     serverId,
     purpose: isSidePanel ? "supporting" : "primary",
+    host: isSidePanel ? "explorer" : "main",
   });
   const itemsById = useMemo(
     () => new Map(groups.flatMap((group) => group.items).map((item) => [item.id, item])),
@@ -251,6 +252,7 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
 
 export const newTabPanelRegistration: PanelRegistration<"new_tab"> = {
   kind: "new_tab",
+  supportedHosts: ["main"],
   resourceKey: () => "new_tab",
   component: NewTabPanel,
   useDescriptor: useNewTabDescriptor,

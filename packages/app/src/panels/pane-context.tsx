@@ -14,6 +14,7 @@ export interface PaneContextValue {
   state?: JsonValue;
   fileNavigationRevision?: number;
   openTab: (target: WorkspaceTabTarget) => void;
+  openPreviewInMain: (target: WorkspaceTabTarget) => void;
   closeCurrentTab: () => void;
   retargetCurrentTab: (target: WorkspaceTabTarget) => void;
   setCurrentTabState: (state: JsonValue) => void;

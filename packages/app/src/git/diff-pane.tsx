@@ -74,6 +74,8 @@ import {
   PaneContentToolbar,
   paneContentToolbarIconSize,
   paneContentToolbarIconButtonStyle,
+  ToolbarButton,
+  ToolbarControls,
 } from "@/components/ui/pane-content-toolbar";
 import { FOCUSED_PANE_PLACEMENT, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
@@ -167,10 +169,12 @@ interface ChangesSurfaceProps {
   cwd: string;
   enabled?: boolean;
   host: "explorer" | "panel";
+  presentation?: "combined" | "tree" | "diff";
   modeScope: string;
   focusPath?: string;
   focusRequestId?: number;
   onOpenFile?: (path: string) => void;
+  onSelectDiffFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
   state?: ChangesState;
   onStateChange?: (state: ChangesState) => void;
@@ -343,10 +347,10 @@ interface ChangesToolbarProps {
   isMobile: boolean;
   isRefreshing: boolean;
   layout: "unified" | "split";
-  overflowToggleStyle: PressableStyleFn;
   refreshSupported: boolean;
   selectedDiffStat: { additions: number; deletions: number } | null;
   serverId: string;
+  sidebarSurface: boolean;
   workspaceId?: string | null;
   wrapLines: boolean;
   onRefresh: () => void;
@@ -377,13 +381,18 @@ function ChangesToolbar(props: ChangesToolbarProps) {
     isMobile,
     selectedDiffStat,
     serverId,
+    sidebarSurface,
     workspaceId,
     onSelectBase,
     onSelectUncommitted,
     onToggleDesktopTree,
   } = props;
+  const toolbarStyle = useMemo(
+    () => [styles.changesToolbar, sidebarSurface ? styles.changesToolbarSidebar : null],
+    [sidebarSurface],
+  );
   return (
-    <PaneContentToolbar style={styles.changesToolbar} testID="changes-header">
+    <PaneContentToolbar style={toolbarStyle} testID="changes-header">
       <View style={styles.changesToolbarIdentity}>
         <DiffModeMenu
           diffMode={diffMode}
@@ -407,7 +416,7 @@ function ChangesToolbar(props: ChangesToolbarProps) {
           />
         ) : null}
       </View>
-      <View style={styles.changesToolbarControls}>
+      <ToolbarControls style={styles.changesToolbarControls}>
         {!isMobile && hasFiles ? (
           <TreeRailToggle
             visible={desktopTreeVisible}
@@ -417,7 +426,7 @@ function ChangesToolbar(props: ChangesToolbarProps) {
         ) : null}
         {isMobile ? <GitActionsSplitButton gitActions={gitActions} menuOnly /> : null}
         <ChangesOptionsMenu {...props} />
-      </View>
+      </ToolbarControls>
     </PaneContentToolbar>
   );
 }
@@ -433,7 +442,6 @@ type ChangesOptionsMenuProps = Pick<
   | "isMobile"
   | "isRefreshing"
   | "layout"
-  | "overflowToggleStyle"
   | "refreshSupported"
   | "wrapLines"
   | "onCollapseAll"
@@ -455,7 +463,6 @@ function ChangesOptionsMenu({
   isMobile,
   isRefreshing,
   layout,
-  overflowToggleStyle,
   refreshSupported,
   wrapLines,
   onCollapseAll,
@@ -498,24 +505,17 @@ function ChangesOptionsMenu({
 
   return (
     <DropdownMenu>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger
-            accessibilityRole="button"
-            accessibilityLabel={optionsLabel}
-            testID="changes-options-menu"
-            style={overflowToggleStyle}
-          >
-            <ThemedMoreHorizontal
-              size={paneContentToolbarIconSize(isMobile)}
-              uniProps={foregroundMutedIconColorMapping}
-            />
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>{optionsLabel}</Text>
-        </TooltipContent>
-      </Tooltip>
+      <ToolbarButton
+        kind="menu"
+        label={optionsLabel}
+        compact={isMobile}
+        testID="changes-options-menu"
+      >
+        <ThemedMoreHorizontal
+          size={paneContentToolbarIconSize(isMobile)}
+          uniProps={foregroundMutedIconColorMapping}
+        />
+      </ToolbarButton>
       <DropdownMenuContent align="end" width={240} testID="changes-options-menu-content">
         {hasFiles ? (
           <DropdownMenuItem
@@ -805,10 +805,6 @@ function buildDiffModeTriggerStyle(): PressableStyleFn {
   ];
 }
 
-function buildOverflowButtonStyle(isMobile: boolean): PressableStyleFn {
-  return (state) => paneContentToolbarIconButtonStyle(state, false, isMobile);
-}
-
 function buildToggleButtonStyle(
   selected: boolean,
   baseStyles?: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
@@ -982,6 +978,87 @@ function ChangesTreeRail({
   );
 }
 
+function ChangesBody({
+  presentation,
+  children,
+  desktopTreeVisible,
+  isMobile,
+  files,
+  mode,
+  onSelectFile,
+  treeWidth,
+  onTreeWidthChange,
+  collapsedFolderPaths,
+  onCollapsedFolderPathsChange,
+}: {
+  presentation: "combined" | "tree" | "diff";
+  children: ReactElement;
+  desktopTreeVisible: boolean;
+  isMobile: boolean;
+  files: ParsedDiffFile[];
+  mode: WorkingDiffMode;
+  onSelectFile: (path: string) => void;
+  treeWidth?: number;
+  onTreeWidthChange: (width: number) => void;
+  collapsedFolderPaths: string[];
+  onCollapsedFolderPathsChange: (paths: string[]) => void;
+}) {
+  if (presentation === "tree") {
+    if (files.length === 0) return children;
+    return (
+      <ChangedFilesTree
+        files={files}
+        mode={mode}
+        onSelectFile={onSelectFile}
+        collapsedFolderPaths={collapsedFolderPaths}
+        onCollapsedFolderPathsChange={onCollapsedFolderPathsChange}
+      />
+    );
+  }
+  if (presentation === "diff") return children;
+  return (
+    <ChangesTreeRail
+      shown={desktopTreeVisible && !isMobile && files.length > 0}
+      files={files}
+      mode={mode}
+      onSelectFile={onSelectFile}
+      treeWidth={treeWidth}
+      onTreeWidthChange={onTreeWidthChange}
+      collapsedFolderPaths={collapsedFolderPaths}
+      onCollapsedFolderPathsChange={onCollapsedFolderPathsChange}
+    >
+      {children}
+    </ChangesTreeRail>
+  );
+}
+
+function ChangesCommits({
+  presentation,
+  serverId,
+  cwd,
+  collapsed,
+  onCommitPress,
+  onCollapsedChange,
+}: {
+  presentation: "combined" | "tree" | "diff";
+  serverId: string;
+  cwd: string;
+  collapsed: boolean;
+  onCommitPress: (sha: string) => void;
+  onCollapsedChange: (collapsed: boolean) => void;
+}) {
+  if (presentation === "diff") return null;
+  return (
+    <CommitsSection
+      serverId={serverId}
+      cwd={cwd}
+      onCommitPress={onCommitPress}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
+    />
+  );
+}
+
 function useDiffTabNavigation({
   serverId,
   workspaceId,
@@ -1053,10 +1130,12 @@ export function ChangesSurface({
   cwd,
   enabled,
   host,
+  presentation = "combined",
   modeScope,
   focusPath,
   focusRequestId,
   onOpenFile,
+  onSelectDiffFile,
   onAddToChat,
   state: changesState,
   onStateChange,
@@ -1102,8 +1181,6 @@ export function ChangesSurface({
     });
   }, [instanceState, updateState]);
   const codeFontSize = appSettings.codeFontSize;
-
-  const overflowToggleStyle = useMemo(() => buildOverflowButtonStyle(isMobile), [isMobile]);
 
   const toast = useToast();
   const isLocalDaemon = useIsLocalDaemon(serverId);
@@ -1288,12 +1365,19 @@ export function ChangesSurface({
     (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
       ? localFocusRequest
       : externalFocusRequest;
-  const handleSelectTreeFile = useCallback((path: string) => {
-    setLocalFocusRequest((current) => ({
-      path,
-      revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
-    }));
-  }, []);
+  const handleSelectTreeFile = useCallback(
+    (path: string) => {
+      if (presentation === "tree" && onSelectDiffFile) {
+        onSelectDiffFile(path);
+        return;
+      }
+      setLocalFocusRequest((current) => ({
+        path,
+        revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
+      }));
+    },
+    [onSelectDiffFile, presentation],
+  );
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
@@ -1400,8 +1484,10 @@ export function ChangesSurface({
     </DiffBodyContent>
   );
   const bodyContent = (
-    <ChangesTreeRail
-      shown={desktopTreeVisible && !isMobile && files.length > 0}
+    <ChangesBody
+      presentation={presentation}
+      desktopTreeVisible={desktopTreeVisible}
+      isMobile={isMobile}
       files={files}
       mode={workingMode}
       onSelectFile={handleSelectTreeFile}
@@ -1411,8 +1497,9 @@ export function ChangesSurface({
       onCollapsedFolderPathsChange={updateCollapsedFolderPaths}
     >
       {diffContent}
-    </ChangesTreeRail>
+    </ChangesBody>
   );
+  const toolbarTreeVisible = presentation === "combined" ? desktopTreeVisible : false;
 
   return (
     <View
@@ -1429,7 +1516,7 @@ export function ChangesSurface({
           changesTabOpen={changesTabOpen}
           committedDescription={committedDiffDescription}
           cwd={cwd}
-          desktopTreeVisible={desktopTreeVisible}
+          desktopTreeVisible={toolbarTreeVisible}
           diffMode={diffMode}
           gitActions={gitActions}
           hasFiles={hasChanges}
@@ -1438,10 +1525,10 @@ export function ChangesSurface({
           isMobile={isMobile}
           isRefreshing={isRefreshing}
           layout={instanceState.layout}
-          overflowToggleStyle={overflowToggleStyle}
           refreshSupported={refreshSupported}
           selectedDiffStat={selectedDiffStat}
           serverId={serverId}
+          sidebarSurface={presentation === "tree"}
           workspaceId={workspaceId}
           wrapLines={wrapLines}
           onCollapseAll={handleCollapseAllFiles}
@@ -1467,7 +1554,8 @@ export function ChangesSurface({
 
       <View style={styles.diffContainer}>{bodyContent}</View>
 
-      <CommitsSection
+      <ChangesCommits
+        presentation={presentation}
         serverId={serverId}
         cwd={cwd}
         onCommitPress={handleCommitPress}
@@ -1487,9 +1575,11 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[3],
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
+  },
+  changesToolbarSidebar: {
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   changesToolbarIdentity: {
     minWidth: 0,
@@ -1502,7 +1592,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: theme.spacing[1],
     flexShrink: 0,
   },
   diffModeTrigger: {

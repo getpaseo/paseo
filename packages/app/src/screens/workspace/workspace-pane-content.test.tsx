@@ -62,6 +62,7 @@ function buildContent(tab: WorkspaceTabDescriptor = agentTab, isSidePanel = fals
     normalizedWorkspaceId: "workspace-a",
     isSidePanel,
     onOpenTab: vi.fn(),
+    onOpenPreviewInMain: vi.fn(),
     onCloseCurrentTab: vi.fn(),
     onRetargetCurrentTab: vi.fn(),
     onSetCurrentTabState: vi.fn(),

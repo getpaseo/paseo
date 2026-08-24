@@ -61,7 +61,6 @@ function source(gitActions: GitActions): {
         moveTabUp: "Move tab up",
         moveTabDown: "Move tab down",
         closePane: "Close pane",
-        togglePaneMaximization: "Toggle pane maximization",
         toggleFocusMode: "Toggle focus mode",
         toggleSidePanel: "Toggle side panel",
       },

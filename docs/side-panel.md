@@ -7,13 +7,17 @@ Everything that opens, reveals, hides, or asks about it goes through
 `packages/app/src/workspace-tabs/side-panel.ts`. Nothing else branches on which
 surface the current layout uses.
 
+Desktop panels declare `supportedHosts` in the panel registry. The launcher filters by the
+destination host, and layout moves reject unsupported destinations. The Side panel accepts Files,
+Changes, pull requests, and terminals. Files and Changes cannot move into the main workspace.
+
 ## Three renderings, two facts
 
-| Layout                 | Rendering                                       |
-| ---------------------- | ----------------------------------------------- |
-| compact                | slide-over overlay, owned by the panel store    |
-| non-compact + splits   | dedicated right pane, owned by the layout store |
-| non-compact, no splits | ordinary tabs in the focused pane               |
+| Layout                 | Rendering                                         |
+| ---------------------- | ------------------------------------------------- |
+| compact                | slide-over overlay, owned by the panel store      |
+| non-compact + splits   | full-height right dock, owned by the layout store |
+| non-compact, no splits | ordinary tabs in the focused pane                 |
 
 The third case is the one that bites. A native tablet renders one pane at a time and
 the tab row only lists the focused pane's tabs, so anything routed into a separate
@@ -51,8 +55,11 @@ every caller. Do not re-place a tab after opening it.
 
 ## Lifecycle
 
-The side panel lives in the ordinary split tree, so it is a pane like any other until
-it empties or the user dismisses it:
+The side panel is a pane in the layout model, but desktop renders it as a full-height dock outside
+the main split canvas. It divides the workspace shell above the main header and still shares the
+tab drag context with the main panes. Its dedicated tab rail uses icon-only tabs with no close or
+new-tab controls. Use the rail's context menu to choose its tabs. Its left edge uses the same
+mouse-and-touch resize handle as workspace splits.
 
 - **Close pane** on the side panel **hides** it; its tabs are waiting on the next reveal.
 - **Close pane** on any other pane **removes** it.
@@ -70,12 +77,14 @@ does not decide what it means.
 Dragging a pane's last tab into another pane collapses the source pane — except the
 side panel, which the user summons and expects to find again, split size and all.
 
-## What the side panel never does
+## Explorer toggle
 
-It does not seed itself. Revealing it opens an empty pane with the launcher; the user
-picks what goes in. Detecting a pull request makes the launcher's card available and
-opens nothing. A failed workspace setup adds a background tab to the main pane.
-Running and successful setup never seed tabs.
+The header toggle and Cmd+E hide the explorer when it is visible. Revealing it selects Changes tree
+for a Git checkout and Files tree otherwise. Tree selections open content in the last-focused main
+pane; an unmodified File or Working diff tab is reused there.
+
+Detecting a pull request still opens nothing. A failed workspace setup adds a background tab to the
+main pane. Running and successful setup never seed tabs.
 
 ## Routing preference
 

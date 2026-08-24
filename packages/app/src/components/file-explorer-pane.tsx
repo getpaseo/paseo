@@ -41,7 +41,8 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   PaneContentToolbar,
   paneContentToolbarIconSize,
-  paneContentToolbarIconButtonStyle,
+  ToolbarButton,
+  ToolbarControls,
 } from "@/components/ui/pane-content-toolbar";
 import {
   useOverlayFlatListScrollbar,
@@ -139,13 +140,6 @@ function sortTriggerStyle({
   pressed,
 }: PressableStateCallbackType & { hovered?: boolean }) {
   return [styles.sortTrigger, (Boolean(hovered) || pressed) && styles.sortTriggerHovered];
-}
-
-function iconButtonStyle(
-  isCompact: boolean,
-  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
-) {
-  return paneContentToolbarIconButtonStyle({ hovered, pressed }, false, isCompact);
 }
 
 type ExplorerListRow =
@@ -1049,11 +1043,6 @@ export function FileExplorerPane({
     });
   }, [requestDirectoryListing]);
 
-  const toolbarIconButtonStyle = useCallback(
-    (state: PressableStateCallbackType) => iconButtonStyle(isCompact, state),
-    [isCompact],
-  );
-
   if (!hasWorkspaceScope) {
     return (
       <View style={styles.centerState}>
@@ -1087,7 +1076,6 @@ export function FileExplorerPane({
         handleBackFromError={handleBackFromError}
         handleRetry={handleRetry}
         sortTriggerStyle={sortTriggerStyle}
-        iconButtonStyle={toolbarIconButtonStyle}
       />
     </View>
   );
@@ -1162,7 +1150,6 @@ interface FileExplorerPaneContentProps {
   handleBackFromError: () => void;
   handleRetry: () => void;
   sortTriggerStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
-  iconButtonStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
 }
 
 function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
@@ -1186,7 +1173,6 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     handleBackFromError,
     handleRetry,
     sortTriggerStyle: sortTriggerStyleProp,
-    iconButtonStyle: iconButtonStyleProp,
   } = props;
 
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
@@ -1204,17 +1190,6 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
   const emptyLabel = showHiddenFiles
     ? t("workspace.fileExplorer.empty.noFiles")
     : t("workspace.fileExplorer.empty.noVisibleFiles");
-  const hiddenFilesToggleStyle = useCallback(
-    (state: PressableStateCallbackType) => [
-      iconButtonStyleProp(state),
-      !showHiddenFiles && styles.iconButtonActive,
-    ],
-    [showHiddenFiles, iconButtonStyleProp],
-  );
-  const hiddenFilesToggleAccessibilityState = useMemo(
-    () => ({ selected: !showHiddenFiles }),
-    [showHiddenFiles],
-  );
 
   if (error) {
     return (
@@ -1256,45 +1231,42 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           </Text>
           <ChevronDown size={12} color={theme.colors.foregroundMuted} />
         </Pressable>
-        <View style={styles.headerActions}>
+        <ToolbarControls style={styles.headerActions}>
           {onNewEntryAtRoot ? (
             <>
-              <Pressable
-                onPress={handleNewFileAtRoot}
+              <ToolbarButton
+                label={t("workspace.fileActions.newFile")}
+                compact={isCompact}
                 hitSlop={8}
-                style={iconButtonStyleProp}
-                accessibilityRole="button"
-                accessibilityLabel={t("workspace.fileActions.newFile")}
                 testID="files-new-file"
+                onPress={handleNewFileAtRoot}
               >
                 <FilePlus
                   size={paneContentToolbarIconSize(isCompact)}
                   color={theme.colors.foregroundMuted}
                 />
-              </Pressable>
-              <Pressable
-                onPress={handleNewFolderAtRoot}
+              </ToolbarButton>
+              <ToolbarButton
+                label={t("workspace.fileActions.newFolder")}
+                compact={isCompact}
                 hitSlop={8}
-                style={iconButtonStyleProp}
-                accessibilityRole="button"
-                accessibilityLabel={t("workspace.fileActions.newFolder")}
                 testID="files-new-folder"
+                onPress={handleNewFolderAtRoot}
               >
                 <FolderPlus
                   size={paneContentToolbarIconSize(isCompact)}
                   color={theme.colors.foregroundMuted}
                 />
-              </Pressable>
+              </ToolbarButton>
             </>
           ) : null}
-          <Pressable
-            onPress={handleToggleHiddenFiles}
+          <ToolbarButton
+            label={hiddenFilesToggleAccessibilityLabel}
+            selected={!showHiddenFiles}
+            compact={isCompact}
             hitSlop={8}
-            style={hiddenFilesToggleStyle}
-            accessibilityRole="button"
-            accessibilityLabel={hiddenFilesToggleAccessibilityLabel}
-            accessibilityState={hiddenFilesToggleAccessibilityState}
             testID="files-hidden-toggle"
+            onPress={handleToggleHiddenFiles}
           >
             {showHiddenFiles ? (
               <Eye
@@ -1307,19 +1279,18 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 color={theme.colors.foregroundMuted}
               />
             )}
-          </Pressable>
-          <Pressable
-            onPress={handleRefresh}
-            disabled={isRefreshFetching}
-            hitSlop={8}
-            style={iconButtonStyleProp}
-            accessibilityRole="button"
-            accessibilityLabel={
+          </ToolbarButton>
+          <ToolbarButton
+            label={
               isRefreshFetching
                 ? t("workspace.fileExplorer.actions.refreshing")
                 : t("workspace.fileExplorer.actions.refresh")
             }
+            compact={isCompact}
+            disabled={isRefreshFetching}
+            hitSlop={8}
             testID="files-refresh"
+            onPress={handleRefresh}
           >
             <View style={styles.refreshIcon}>
               {isRefreshFetching ? (
@@ -1334,8 +1305,8 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 />
               )}
             </View>
-          </Pressable>
-        </View>
+          </ToolbarButton>
+        </ToolbarControls>
       </PaneContentToolbar>
       <ContextMenu>
         <RootCreationContextTarget enabled={Boolean(onNewEntryAtRoot)}>
@@ -1698,7 +1669,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingRight: theme.spacing[3],
+    paddingRight: theme.spacing[1],
+    backgroundColor: theme.colors.surfaceSidebar,
   },
   sortTrigger: {
     flexDirection: "row",
@@ -1711,7 +1683,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
   },
   sortTriggerHovered: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sortTriggerText: {
     fontSize: theme.fontSize.sm,
@@ -1720,7 +1692,6 @@ const styles = StyleSheet.create((theme) => ({
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
   },
   treeList: {
     flex: 1,
@@ -1835,9 +1806,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-  },
-  iconButtonActive: {
-    backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {
     width: 16,

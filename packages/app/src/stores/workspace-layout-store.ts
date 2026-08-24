@@ -57,6 +57,7 @@ import {
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import { panelSupportsHost } from "@/panels/panel-registry";
 
 export {
   AMBIENT_PLACEMENT,
@@ -189,6 +190,7 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
   z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
+  z.strictObject({ kind: z.literal("changes_tree") }),
   z.strictObject({ kind: z.literal("files") }),
   z.strictObject({ kind: z.literal("pull_request") }),
   z.strictObject({
@@ -863,8 +865,16 @@ export function createWorkspaceLayoutStore(
             return null;
           }
 
+          const currentLayout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
+          const movingTab = collectAllTabs(currentLayout.root).find(
+            (tab) => tab.tabId === normalizedTabId,
+          );
+          if (!movingTab || !panelSupportsHost(movingTab.target.kind, "main")) {
+            return null;
+          }
+
           const result = splitPaneInLayout({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            layout: currentLayout,
             tabId: normalizedTabId,
             targetPaneId: normalizedTargetPaneId,
             position: input.position,
@@ -922,8 +932,20 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const movingTab = collectAllTabs(layout.root).find(
+              (tab) => tab.tabId === normalizedTabId,
+            );
+            const sidePanelPaneId = resolveSidePanelPaneId(
+              layout,
+              state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
+            );
+            const destinationHost = normalizedToPaneId === sidePanelPaneId ? "explorer" : "main";
+            if (!movingTab || !panelSupportsHost(movingTab.target.kind, destinationHost)) {
+              return state;
+            }
             const nextLayout = moveTabToPaneInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              layout,
               tabId: normalizedTabId,
               toPaneId: normalizedToPaneId,
             });

@@ -101,9 +101,53 @@ function WorkingDiffPanel() {
         cwd={cwd}
         enabled={isActive}
         host="panel"
+        presentation="diff"
         modeScope={tabId}
         focusPath={target.focusPath}
         focusRequestId={target.focusRequestId}
+        onOpenFile={handleOpenFile}
+        onAddToChat={canAddToChat ? addFile : undefined}
+        state={changesState}
+        onStateChange={setChangesState}
+      />
+    </View>
+  );
+}
+
+function ChangesTreePanel() {
+  const { t } = useTranslation();
+  const { serverId, workspaceId, tabId, target, openPreviewInMain } = usePaneContext();
+  const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
+  const cwd = useWorkspaceDirectory(serverId, workspaceId);
+  const isActive = useRetainedPanelActive();
+  const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
+  invariant(target.kind === "changes_tree", "ChangesTreePanel requires changes_tree target");
+
+  const handleSelectDiffFile = useCallback(
+    (path: string) =>
+      openPreviewInMain({ kind: "working_diff", focusPath: path, focusRequestId: Date.now() }),
+    [openPreviewInMain],
+  );
+  const handleOpenFile = useCallback(
+    (path: string) => openPreviewInMain({ kind: "file", path }),
+    [openPreviewInMain],
+  );
+
+  if (!cwd) {
+    return <PanelState message={t("panels.diff.directoryMissing")} />;
+  }
+
+  return (
+    <View style={styles.container} testID="changes-tree-panel">
+      <ChangesSurface
+        serverId={serverId}
+        workspaceId={workspaceId}
+        cwd={cwd}
+        enabled={isActive}
+        host="explorer"
+        presentation="tree"
+        modeScope={tabId}
+        onSelectDiffFile={handleSelectDiffFile}
         onOpenFile={handleOpenFile}
         onAddToChat={canAddToChat ? addFile : undefined}
         state={changesState}
@@ -202,13 +246,23 @@ function useCommitDiffPanelDescriptor(
 
 export const workingDiffPanelRegistration: PanelRegistration<"working_diff"> = {
   kind: "working_diff",
+  supportedHosts: ["main"],
   component: WorkingDiffPanel,
   useDescriptor: useWorkingDiffPanelDescriptor,
   resourceKey: () => "working_diff",
 };
 
+export const changesTreePanelRegistration: PanelRegistration<"changes_tree"> = {
+  kind: "changes_tree",
+  supportedHosts: ["explorer"],
+  component: ChangesTreePanel,
+  useDescriptor: useWorkingDiffPanelDescriptor,
+  resourceKey: () => "changes_tree",
+};
+
 export const commitDiffPanelRegistration: PanelRegistration<"commit_diff"> = {
   kind: "commit_diff",
+  supportedHosts: ["main"],
   component: CommitDiffPanel,
   useDescriptor: useCommitDiffPanelDescriptor,
   resourceKey: (target) => target.sha,

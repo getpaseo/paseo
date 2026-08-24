@@ -33,11 +33,11 @@ import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
  */
 
 /** Tab kinds that are side panel views rather than user content. */
-const SIDE_PANEL_TAB_KINDS = ["working_diff", "files", "pull_request"] as const;
+const SIDE_PANEL_TAB_KINDS = ["changes_tree", "working_diff", "files", "pull_request"] as const;
 type SidePanelTabKind = (typeof SIDE_PANEL_TAB_KINDS)[number];
 
 const SIDE_PANEL_VIEW_TARGETS: Record<ExplorerTab, WorkspaceTabTarget> = {
-  changes: { kind: "working_diff" },
+  changes: { kind: "changes_tree" },
   files: { kind: "files" },
   pr: { kind: "pull_request" },
 };
@@ -166,6 +166,7 @@ export function toggleSupportingTab(input: ToggleSupportingTabInput): string | n
 
 function explorerViewForTarget(target: SidePanelViewTarget): ExplorerTab {
   switch (target.kind) {
+    case "changes_tree":
     case "working_diff":
       return "changes";
     case "files":
@@ -293,6 +294,10 @@ export function toggleSidePanel(input: SidePanelInput): void {
     return;
   }
 
+  const explorerTarget: WorkspaceTabTarget = input.checkout?.isGit
+    ? { kind: "changes_tree" }
+    : { kind: "files" };
+
   if (isSidePanelOpen(input)) {
     hideSidePanel(input);
     return;
@@ -302,12 +307,21 @@ export function toggleSidePanel(input: SidePanelInput): void {
   if (!canUseSidePanelPane(input)) {
     useWorkspaceLayoutStore.getState().openTab({
       workspaceKey: input.workspaceKey,
-      target: SIDE_PANEL_VIEW_TARGETS.changes,
+      target: explorerTarget,
       intent: "reveal",
     });
     return;
   }
-  showSidePanel(input);
+  const store = useWorkspaceLayoutStore.getState();
+  const paneId = store.showSidePanel(input.workspaceKey);
+  if (paneId) {
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: explorerTarget,
+      intent: "reveal",
+      placement: { mode: "pane", paneId },
+    });
+  }
 }
 
 /** Reactive "is the side panel showing" for the surface this layout uses. */

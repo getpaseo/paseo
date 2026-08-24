@@ -59,6 +59,7 @@ import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   canDismissPaneInLayout,
+  collectAllPanes,
   collectAllTabs,
   DEFAULT_PANE_ID,
   findPaneById,
@@ -194,7 +195,6 @@ import {
 import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { useHasPullRequest } from "@/panels/pull-request";
-import { fileStateForFilesView } from "@/panels/file/state";
 
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
@@ -328,7 +328,7 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
-  if (tab.target.kind === "working_diff") {
+  if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
     return labels.changes;
   }
   if (tab.target.kind === "files") {
@@ -381,7 +381,7 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "commit_diff") {
     return tab.target.sha.slice(0, 7);
   }
-  if (tab.target.kind === "working_diff") {
+  if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
     return labels.changes;
   }
   if (tab.target.kind === "files") {
@@ -1473,12 +1473,31 @@ function useWorkspaceTerminalTabActions({
 function resolveCommandCenterPanelTarget(target: WorkspacePanelTarget): WorkspaceTabTarget {
   switch (target) {
     case "changes":
-      return { kind: "working_diff" };
+      return { kind: "changes_tree" };
     case "files":
       return { kind: "files" };
     case "pull-request":
       return { kind: "pull_request" };
   }
+}
+
+function useLastMainPane(input: {
+  workspaceKey: string | null;
+  layout: WorkspaceLayout | null;
+  sidePanelPaneId: string | null;
+}) {
+  const lastMainPaneRef = useRef<{ workspaceKey: string | null; paneId: string | null }>({
+    workspaceKey: null,
+    paneId: null,
+  });
+  if (lastMainPaneRef.current.workspaceKey !== input.workspaceKey) {
+    lastMainPaneRef.current = { workspaceKey: input.workspaceKey, paneId: null };
+  }
+  const focusedPaneId = input.layout?.focusedPaneId ?? null;
+  if (focusedPaneId && focusedPaneId !== input.sidePanelPaneId) {
+    lastMainPaneRef.current.paneId = focusedPaneId;
+  }
+  return lastMainPaneRef;
 }
 
 function WorkspaceScreenContent({
@@ -1753,6 +1772,12 @@ function WorkspaceScreenContent({
   const sidePanelPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? selectSidePanelPaneId(state, persistenceKey) : null,
   );
+  const lastMainPaneRef = useLastMainPane({
+    workspaceKey: persistenceKey,
+    layout: workspaceLayout,
+    sidePanelPaneId,
+  });
+  const lastMainPaneId = lastMainPaneRef.current.paneId;
   const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
   const workspaceSetupSnapshot = useWorkspaceSetupStore((state) =>
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
@@ -3077,7 +3102,7 @@ function WorkspaceScreenContent({
             openSupportingTab({
               isCompact: isMobile,
               workspaceKey: persistenceKey,
-              target: { kind: "working_diff" },
+              target: { kind: "changes_tree" },
               openInSidePanelByDefault,
             });
           }
@@ -3392,6 +3417,44 @@ function WorkspaceScreenContent({
             navigateToTabId(tabId);
           }
         },
+        onOpenPreviewInMain: (target) => {
+          if (!persistenceKey) return;
+          const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey];
+          if (!layout) return;
+          const panes = collectAllPanes(layout.root);
+          const rememberedPane = panes.find(
+            (pane) =>
+              pane.id === lastMainPaneId && pane.id !== sidePanelPaneId && pane.hidden !== true,
+          );
+          const mainPane =
+            rememberedPane ??
+            panes.find((pane) => pane.id === DEFAULT_PANE_ID && pane.hidden !== true) ??
+            panes.find((pane) => pane.id !== sidePanelPaneId && pane.hidden !== true);
+          if (!mainPane) return;
+
+          const mainActiveTab = uiTabs.find((tab) => tab.tabId === mainPane.focusedTabId);
+          const activeFileCanPreview =
+            target.kind === "file" &&
+            mainActiveTab?.target.kind === "file" &&
+            !getPanelInstanceAttributes({
+              serverId: normalizedServerId,
+              workspaceId: normalizedWorkspaceId,
+              tabId: mainActiveTab.tabId,
+            }).modified;
+          const activeDiffCanPreview =
+            target.kind === "working_diff" && mainActiveTab?.target.kind === "working_diff";
+          let tabId: string | null;
+          if (mainActiveTab && (activeFileCanPreview || activeDiffCanPreview)) {
+            tabId = replaceWorkspaceTabTarget(persistenceKey, mainActiveTab.tabId, target);
+          } else {
+            tabId = openWorkspaceTabFocused(persistenceKey, target, {
+              mode: "pane",
+              paneId: mainPane.id,
+            });
+          }
+          if (tabId && target.kind === "file") requestFileNavigation(tabId);
+          if (tabId) navigateToTabId(tabId);
+        },
         onCloseCurrentTab: () => {
           void handleCloseTabById(input.tab.tabId);
         },
@@ -3399,16 +3462,7 @@ function WorkspaceScreenContent({
           if (!persistenceKey) {
             return;
           }
-          if (target.kind === "file" && input.tab.target.kind === "files") {
-            replaceWorkspaceTabTarget(
-              persistenceKey,
-              input.tab.tabId,
-              target,
-              fileStateForFilesView,
-            );
-          } else {
-            replaceWorkspaceTabTarget(persistenceKey, input.tab.tabId, target);
-          }
+          replaceWorkspaceTabTarget(persistenceKey, input.tab.tabId, target);
         },
         onSetCurrentTabState: (state) => {
           if (persistenceKey) {
@@ -3434,11 +3488,15 @@ function WorkspaceScreenContent({
       normalizedWorkspaceId,
       canRenderDesktopPaneSplits,
       openImportSheet,
+      openWorkspaceTabFocused,
+      requestFileNavigation,
       revealWorkspaceChildTab,
       persistenceKey,
       replaceWorkspaceTabTarget,
       setWorkspaceTabState,
       sidePanelPaneId,
+      lastMainPaneId,
+      uiTabs,
     ],
   );
   const focusedPaneId = useMemo(
@@ -3710,6 +3768,77 @@ function WorkspaceScreenContent({
       `${WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX}:${normalizedServerId}:${normalizedWorkspaceId}`,
     [normalizedServerId, normalizedWorkspaceId],
   );
+  const renderWorkspaceScreenHeader = useCallback(
+    () =>
+      showScreenHeader ? (
+        <ScreenHeader
+          left={
+            <>
+              <SidebarMenuToggle />
+              <WorkspaceHeaderTitleBar
+                isLoading={isWorkspaceHeaderLoading}
+                title={workspaceHeaderTitle}
+                subtitle={workspaceHeaderSubtitle}
+                isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
+                currentBranchName={currentBranchName}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                workspaceScripts={workspaceScripts}
+                liveTerminalIds={liveTerminalIds}
+                showWorkspaceSetup={showWorkspaceSetup}
+                showCreateBrowserTab={showCreateBrowserTab}
+                isMobile={isMobile}
+                createTerminalDisabled={createTerminalDisabled}
+                importAgentDisabled={!canOpenImportSheet}
+                copyPathDisabled={!workspaceDirectory}
+                onCreateDraftTab={handleCreateDraftTab}
+                onCreateTerminal={handleCreateTerminal}
+                onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+                onCreateBrowser={handleCreateBrowserTab}
+                onOpenImportSheet={openImportSheet}
+                onCopyWorkspacePath={handleCopyWorkspacePath}
+                onCopyBranchName={handleCopyBranchName}
+                onOpenSetupTab={handleOpenSetupTab}
+                onScriptTerminalStarted={handleScriptTerminalStarted}
+                onViewScriptTerminal={handleViewScriptTerminal}
+                onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
+              />
+            </>
+          }
+          right={headerRight}
+        />
+      ) : null,
+    [
+      canOpenImportSheet,
+      createTerminalDisabled,
+      currentBranchName,
+      handleCopyBranchName,
+      handleCopyWorkspacePath,
+      handleCreateBrowserTab,
+      handleCreateDraftTab,
+      handleCreateTerminal,
+      handleCreateTerminalWithProfile,
+      handleOpenSetupTab,
+      handleOpenUrlInBrowserTab,
+      handleScriptTerminalStarted,
+      handleViewScriptTerminal,
+      headerRight,
+      isMobile,
+      isWorkspaceHeaderLoading,
+      liveTerminalIds,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      openImportSheet,
+      showCreateBrowserTab,
+      showScreenHeader,
+      showWorkspaceSetup,
+      workspaceDirectory,
+      workspaceHeaderSubtitle,
+      workspaceHeaderTitle,
+      isWorkspaceHeaderSubtitleDistinct,
+      workspaceScripts,
+    ],
+  );
   const desktopSplitContent = useMemo(() => {
     if (!canRenderDesktopPaneSplits || !workspaceLayout || !persistenceKey) {
       return null;
@@ -3717,6 +3846,7 @@ function WorkspaceScreenContent({
     return (
       <SplitContainer
         layout={workspaceLayout}
+        renderMainHeader={renderWorkspaceScreenHeader}
         focusModeEnabled={desktopFocusModeEnabled}
         onExitFocusMode={toggleFocusMode}
         workspaceKey={persistenceKey}
@@ -3751,6 +3881,7 @@ function WorkspaceScreenContent({
   }, [
     canRenderDesktopPaneSplits,
     workspaceLayout,
+    renderWorkspaceScreenHeader,
     persistenceKey,
     desktopFocusModeEnabled,
     toggleFocusMode,
@@ -3791,44 +3922,7 @@ function WorkspaceScreenContent({
 
   const workspaceCenterColumn = (
     <View style={styles.centerColumn}>
-      {showScreenHeader && (
-        <ScreenHeader
-          left={
-            <>
-              <SidebarMenuToggle />
-              <WorkspaceHeaderTitleBar
-                isLoading={isWorkspaceHeaderLoading}
-                title={workspaceHeaderTitle}
-                subtitle={workspaceHeaderSubtitle}
-                isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
-                currentBranchName={currentBranchName}
-                normalizedServerId={normalizedServerId}
-                normalizedWorkspaceId={normalizedWorkspaceId}
-                workspaceScripts={workspaceScripts}
-                liveTerminalIds={liveTerminalIds}
-                showWorkspaceSetup={showWorkspaceSetup}
-                showCreateBrowserTab={showCreateBrowserTab}
-                isMobile={isMobile}
-                createTerminalDisabled={createTerminalDisabled}
-                importAgentDisabled={!canOpenImportSheet}
-                copyPathDisabled={!workspaceDirectory}
-                onCreateDraftTab={handleCreateDraftTab}
-                onCreateTerminal={handleCreateTerminal}
-                onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-                onCreateBrowser={handleCreateBrowserTab}
-                onOpenImportSheet={openImportSheet}
-                onCopyWorkspacePath={handleCopyWorkspacePath}
-                onCopyBranchName={handleCopyBranchName}
-                onOpenSetupTab={handleOpenSetupTab}
-                onScriptTerminalStarted={handleScriptTerminalStarted}
-                onViewScriptTerminal={handleViewScriptTerminal}
-                onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-              />
-            </>
-          }
-          right={headerRight}
-        />
-      )}
+      {desktopSplitContent ? null : renderWorkspaceScreenHeader()}
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher

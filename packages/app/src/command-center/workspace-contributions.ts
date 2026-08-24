@@ -40,7 +40,6 @@ export interface WorkspaceCommandCenterLabels {
   moveTabUp: string;
   moveTabDown: string;
   closePane: string;
-  togglePaneMaximization: string;
   toggleFocusMode: string;
   toggleSidePanel: string;
 }
@@ -62,7 +61,6 @@ export interface WorkspaceCommandCenterIcons {
   copy?: CommandCenterIcon;
   focusPane?: CommandCenterIcon;
   moveTab?: CommandCenterIcon;
-  maximize?: CommandCenterIcon;
   focusMode?: CommandCenterIcon;
   sidePanel?: CommandCenterIcon;
   git?(action: GitAction): CommandCenterIcon | undefined;
@@ -78,7 +76,6 @@ export interface WorkspaceCommandCenterShortcuts {
   nextTab?: ShortcutKey[][];
   closeCurrentTab?: ShortcutKey[][];
   closePane?: ShortcutKey[][];
-  togglePaneMaximization?: ShortcutKey[][];
   toggleFocusMode?: ShortcutKey[][];
   toggleSidePanel?: ShortcutKey[][];
 }
@@ -446,15 +443,6 @@ function buildPaneContributions(source: WorkspaceCommandCenterSource): CommandCe
       icon: source.icons.close,
       shortcutKeys: source.shortcuts.closePane,
       action: { id: "workspace.pane.close", scope: "workspace" },
-    },
-    {
-      id: "pane:maximize-toggle",
-      rank: 61,
-      title: source.labels.togglePaneMaximization,
-      keywords: ["pane", "maximize", "restore", "toggle"],
-      icon: source.icons.maximize,
-      shortcutKeys: source.shortcuts.togglePaneMaximization,
-      action: { id: "workspace.explorer.maximize.toggle", scope: "workspace" },
     },
     {
       id: "pane:focus-mode-toggle",

@@ -26,6 +26,7 @@ export interface BuildWorkspacePaneContentModelInput {
   isSidePanel: boolean;
   fileNavigationRevision?: number;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
+  onOpenPreviewInMain: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onSetCurrentTabState: (state: WorkspaceTabDescriptor["state"]) => void;
@@ -40,6 +41,7 @@ export function buildWorkspacePaneContentModel({
   isSidePanel,
   fileNavigationRevision,
   onOpenTab,
+  onOpenPreviewInMain,
   onCloseCurrentTab,
   onRetargetCurrentTab,
   onSetCurrentTabState,
@@ -61,6 +63,7 @@ export function buildWorkspacePaneContentModel({
       state: tab.state,
       fileNavigationRevision,
       openTab: onOpenTab,
+      openPreviewInMain: onOpenPreviewInMain,
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
       setCurrentTabState: onSetCurrentTabState,
@@ -85,6 +88,7 @@ export function WorkspacePaneContent({
 }: WorkspacePaneContentProps) {
   const { Component, key, paneContextValue } = content;
   const openTab = useStableEvent(paneContextValue.openTab);
+  const openPreviewInMain = useStableEvent(paneContextValue.openPreviewInMain);
   const closeCurrentTab = useStableEvent(paneContextValue.closeCurrentTab);
   const retargetCurrentTab = useStableEvent(paneContextValue.retargetCurrentTab);
   const setCurrentTabState = useStableEvent(paneContextValue.setCurrentTabState);
@@ -100,6 +104,7 @@ export function WorkspacePaneContent({
       state: paneContextValue.state,
       fileNavigationRevision: paneContextValue.fileNavigationRevision,
       openTab,
+      openPreviewInMain,
       closeCurrentTab,
       retargetCurrentTab,
       setCurrentTabState,
@@ -111,6 +116,7 @@ export function WorkspacePaneContent({
       openFileInWorkspace,
       openImportSheet,
       openTab,
+      openPreviewInMain,
       paneContextValue.serverId,
       paneContextValue.fileNavigationRevision,
       paneContextValue.tabId,

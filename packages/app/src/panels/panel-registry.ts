@@ -7,6 +7,8 @@ export interface PanelIconProps {
   color: string;
 }
 
+export type PaneHost = "main" | "explorer";
+
 export interface PanelDescriptor {
   label: string;
   subtitle: string;
@@ -26,12 +28,17 @@ export interface PanelRegistration<
   K extends WorkspaceTabTarget["kind"] = WorkspaceTabTarget["kind"],
 > {
   kind: K;
+  supportedHosts: readonly PaneHost[];
   component: ComponentType;
   useDescriptor(
     target: Extract<WorkspaceTabTarget, { kind: K }>,
     context: PanelDescriptorContext,
   ): PanelDescriptor;
   resourceKey(target: Extract<WorkspaceTabTarget, { kind: K }>): string;
+}
+
+export function panelSupportsHost(kind: WorkspaceTabTarget["kind"], host: PaneHost): boolean {
+  return getPanelRegistration(kind)?.supportedHosts.includes(host) ?? false;
 }
 
 const panelRegistry = new Map<WorkspaceTabTarget["kind"], PanelRegistration>();

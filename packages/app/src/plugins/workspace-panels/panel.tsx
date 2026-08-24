@@ -161,6 +161,7 @@ function usePluginPanelDescriptor(
 
 export const pluginPanelRegistration: PanelRegistration<"plugin"> = {
   kind: "plugin",
+  supportedHosts: ["main"],
   resourceKey: (target) => `${target.pluginId}:${target.panelId}:${target.context}`,
   component: PluginPanel,
   useDescriptor: usePluginPanelDescriptor,

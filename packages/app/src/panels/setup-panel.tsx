@@ -392,6 +392,7 @@ function SetupCommandRow({
 
 export const setupPanelRegistration: PanelRegistration<"setup"> = {
   kind: "setup",
+  supportedHosts: ["main"],
   resourceKey: (target) => target.workspaceId,
   component: SetupPanel,
   useDescriptor: useSetupPanelDescriptor,

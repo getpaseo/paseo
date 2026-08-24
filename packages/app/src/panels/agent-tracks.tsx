@@ -102,7 +102,7 @@ export const AgentTracks = memo(function AgentTracks({
       isCompact,
       workspaceKey,
       checkout: { serverId, cwd, isGit: true },
-      target: { kind: "working_diff" },
+      target: { kind: "changes_tree" },
       openInSidePanelByDefault,
     });
   }, [cwd, isCompact, openInSidePanelByDefault, serverId, workspaceKey]);

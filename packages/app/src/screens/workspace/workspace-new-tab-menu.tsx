@@ -17,6 +17,7 @@ import {
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
 import type { LucideIcon } from "lucide-react-native";
+import type { PaneHost } from "@/panels/panel-registry";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -76,13 +77,15 @@ function LaunchItemShortcut({ actionId }: { actionId: string }) {
 export function WorkspaceNewTabMenuContent({
   serverId,
   purpose,
+  host,
   paneId,
 }: {
   serverId: string;
   purpose: WorkspaceTabLaunchPurpose;
+  host: PaneHost;
   paneId?: string;
 }) {
-  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose });
+  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose, host });
 
   return (
     <DropdownMenuContent

@@ -116,6 +116,7 @@ function TerminalPanel() {
 
 export const terminalPanelRegistration: PanelRegistration<"terminal"> = {
   kind: "terminal",
+  supportedHosts: ["main", "explorer"],
   resourceKey: (target) => target.terminalId,
   component: TerminalPanel,
   useDescriptor: useTerminalPanelDescriptor,
