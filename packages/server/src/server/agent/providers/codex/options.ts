@@ -78,6 +78,7 @@ export const CodexProviderOptionsSchema = z
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
         multi_agent_v2: z.boolean().optional(),
         plugins: z.boolean().optional(),
+        realtime_conversation: z.boolean().optional(),
         recommended_plugins: z.boolean().optional(),
         remote_plugin: z.boolean().optional(),
         request_permissions_tool: z.boolean().optional(),

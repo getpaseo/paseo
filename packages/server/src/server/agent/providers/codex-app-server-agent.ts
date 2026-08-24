@@ -179,6 +179,10 @@ const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115
 // Live Voice's v3 WebRTC transport and restricted hidden-host config require
 // Codex 0.147.0+. Older binaries either lack realtime or reject the config.
 const CODEX_LIVE_VOICE_MIN_VERSION: readonly [number, number, number] = [0, 147, 0];
+// Since 2026-08-22 the ChatGPT-auth realtime backend rejects codex's built-in
+// v3 default model with a misleading "Field `session.model` is not allowed"
+// error, so every start must name this slug explicitly (openai/codex#40140).
+const CODEX_LIVE_VOICE_REALTIME_MODEL = "gpt-live-1-codex";
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -5094,6 +5098,7 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
       threadId,
       outputModality: "audio",
       version: "v3",
+      model: CODEX_LIVE_VOICE_REALTIME_MODEL,
       transport: { type: "webrtc", sdp: params.sdp },
       realtimeSessionId: params.realtimeSessionId,
       ...(params.voice ? { voice: params.voice } : {}),

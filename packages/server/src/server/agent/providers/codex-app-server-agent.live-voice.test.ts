@@ -139,6 +139,7 @@ describe("codex live voice", () => {
           threadId: THREAD_ID,
           outputModality: "audio",
           version: "v3",
+          model: "gpt-live-1-codex",
           transport: { type: "webrtc", sdp: "offer-sdp" },
           realtimeSessionId: "live-1",
         },

@@ -16,6 +16,11 @@ export const CODEX_LIVE_VOICE_PROVIDER_OPTIONS = {
     update_plan: { enabled: false },
   },
   features: {
+    // Thread-level feature overrides rebuild feature state without the
+    // `--enable realtime_conversation` CLI flag, so the host thread must
+    // re-enable it here or realtime start fails with "thread does not
+    // support realtime conversation".
+    realtime_conversation: true,
     apps: false,
     browser_use: false,
     browser_use_external: false,

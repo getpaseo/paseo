@@ -250,13 +250,16 @@ async function main(): Promise<void> {
     }
     const startedSession = (
       connectionResult.sessionStarted as {
-        session?: { model?: string; instructions?: string; initial_items?: unknown[] };
+        session?: { id?: string; status?: string };
       }
     ).session;
-    done(`state=${connectionResult.state}, model=${String(startedSession?.model)}`);
+    if (startedSession?.status !== "active") {
+      throw new Error(`session.started status is ${String(startedSession?.status)}, not active`);
+    }
+    done(`state=${connectionResult.state}, session=${String(startedSession.id)}`);
 
     done = step("checking injected Paseo context");
-    done(assertPaseoContext({ instructions: startedSession?.instructions, records }));
+    done(assertPaseoContext({ records }));
 
     const sawStartedUpdate = updates.some((update) => update.event.kind === "started");
     if (!sawStartedUpdate) {
@@ -305,22 +308,14 @@ async function main(): Promise<void> {
 }
 
 /**
- * The instructions check is the real end-to-end proof: the provider echoes them
- * on `session.started`, so seeing the Paseo prompt there means it travelled
- * daemon → codex → OpenAI and was accepted. `initial_items` is *not* echoed, so
- * the seeded snapshot is verified from the daemon's own record of what it sent —
- * a malformed or over-budget snapshot would have failed the start outright.
+ * `session.started` carries only `{id, expires_at, status}` — the backend echoes
+ * neither instructions nor `initial_items`. Both are therefore verified from the
+ * daemon's own record of what it sent: a rejected session config would have
+ * failed the start outright, so an accepted start plus a non-empty recorded
+ * prompt is the delivery proof. Prompt *content* is covered by
+ * live-voice-context.test.ts.
  */
-function assertPaseoContext(params: {
-  instructions: string | undefined;
-  records: Record<string, unknown>[];
-}): string {
-  const instructions = params.instructions ?? "";
-  if (!instructions.includes("You are the voice of Paseo")) {
-    throw new Error(
-      `session instructions are not the Paseo prompt: ${instructions.slice(0, 120)}...`,
-    );
-  }
+function assertPaseoContext(params: { records: Record<string, unknown>[] }): string {
   const host = params.records.find((record) => record.msg === "live_voice.host.started");
   if (!host?.hostAgentId) {
     throw new Error("daemon never spawned a hidden host session");
@@ -328,6 +323,9 @@ function assertPaseoContext(params: {
   const built = params.records.find((record) => record.msg === "live_voice.context.built");
   if (!built) {
     throw new Error("daemon never logged live_voice.context.built");
+  }
+  if (typeof built.promptChars !== "number" || built.promptChars === 0) {
+    throw new Error(`context did not record a prompt: ${JSON.stringify(built)}`);
   }
   // A freshly created daemon may have no sessions and no workspaces to report,
   // so an empty snapshot is legitimate here; the prompt is the real assertion.
@@ -339,10 +337,7 @@ function assertPaseoContext(params: {
   if (built.paseoToolsAvailable !== true) {
     throw new Error("Paseo MCP tools were not injected into the host session");
   }
-  if (!instructions.includes("prompt an existing agent session")) {
-    throw new Error("the prompt does not tell the model it can act on Paseo");
-  }
-  return `host ${String(host.hostAgentId)}, ${instructions.length} chars of instructions, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
+  return `host ${String(host.hostAgentId)}, ${String(built.promptChars)} chars of prompt, ${String(built.itemCount)} seeded items, ${String(built.agentCount)} sessions / ${String(built.workspaceCount)} workspaces, paseoTools=${String(built.paseoToolsAvailable)}`;
 }
 
 /**

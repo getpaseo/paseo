@@ -117,6 +117,7 @@ export class LiveVoiceDaemonContextProvider implements LiveVoiceContextProvider 
         agentCount: agents.length,
         workspaceCount: workspaces.length,
         itemCount: context.initialItems.length,
+        promptChars: context.prompt.length,
         paseoToolsAvailable,
         crossHostRoutingAvailable: options?.crossHostRoutingAvailable ?? true,
         ambientAgentReports: options?.ambientAgentReports === true,
