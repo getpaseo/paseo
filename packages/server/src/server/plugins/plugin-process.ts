@@ -8,6 +8,7 @@ import {
 } from "@getpaseo/plugin/server";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { resolveDaemonVersion } from "../daemon-version.js";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
@@ -99,6 +100,10 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
     clientId: `plugin:${message.pluginId}`,
     clientType: "cli",
+    // A plugin subprocess ships with the daemon, so it must not fall into the
+    // legacy-client provider allow-list that hides non-legacy agents from
+    // sessions that declare no version.
+    appVersion: resolveDaemonVersion(import.meta.url),
     reconnect: { enabled: false },
     transportFactory,
   });

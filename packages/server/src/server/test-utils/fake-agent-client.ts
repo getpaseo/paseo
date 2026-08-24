@@ -1281,3 +1281,14 @@ export function createTestAgentClients(
     opencode: new FakeAgentClient("opencode", options),
   };
 }
+
+/**
+ * A fake client for one provider id, so tests can cover providers outside the
+ * legacy claude/codex/opencode set.
+ */
+export function createTestAgentClient(
+  provider: string,
+  options: TestAgentClientOptions = {},
+): AgentClient {
+  return new FakeAgentClient(provider, options);
+}

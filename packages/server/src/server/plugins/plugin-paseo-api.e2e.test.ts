@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 const roots: string[] = [];
 
@@ -80,6 +81,86 @@ export default function contribute(plugin: PluginContext) {
     expect(agents.entries.map((entry) => entry.agent.id)).toContain(
       Reflect.get(created, "agentId"),
     );
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
+test("plugin sessions see agents on providers outside the legacy allow-list", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-visibility-plugin-"));
+  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-visibility-workspace-"));
+  roots.push(pluginDirectory, workspaceDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "provider-visibility" }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.tsx"),
+    `import { defineRpc, type PluginContext } from "@getpaseo/plugin";
+import { z } from "zod";
+
+const create = defineRpc({
+  name: "create",
+  input: z.object({ path: z.string() }),
+  output: z.object({ agentId: z.string() }),
+});
+
+const list = defineRpc({
+  name: "list",
+  input: z.object({}),
+  output: z.object({ agentIds: z.array(z.string()) }),
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(create, async ({ path }, { paseo }) => {
+    const workspace = await paseo.workspaces.create({
+      source: { kind: "directory", path },
+      title: "Provider visibility workspace",
+    });
+    const agent = await workspace.agents.create({
+      config: { provider: "pi/test" },
+      prompt: "Created by a plugin handler",
+    });
+    return { agentId: agent.id };
+  });
+  plugin.handle(list, async (_input, { paseo }) => {
+    const result = await paseo.agents.list({ page: { limit: 100 } });
+    return { agentIds: result.entries.map((entry) => entry.agent.id) };
+  });
+  return () => undefined;
+}`,
+  );
+
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await expect(client.installDirectoryPlugin(pluginDirectory)).resolves.toMatchObject({
+      id: "provider-visibility",
+      status: "running",
+    });
+
+    const created = await client.invokePluginRpc("provider-visibility", "create", {
+      path: workspaceDirectory,
+    });
+    if (typeof created !== "object" || created === null) {
+      throw new Error("Plugin returned an invalid creation result");
+    }
+    const agentId = Reflect.get(created, "agentId");
+
+    // The plugin's own session must not be treated as a legacy client: `pi` is
+    // outside the claude/codex/opencode allow-list, so a session that declares
+    // no version has the agent filtered out of its directory entirely.
+    const listed = await client.invokePluginRpc("provider-visibility", "list", {});
+    expect(listed).toEqual({ agentIds: expect.arrayContaining([agentId]) });
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
