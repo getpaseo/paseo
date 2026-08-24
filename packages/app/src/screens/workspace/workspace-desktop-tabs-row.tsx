@@ -2,7 +2,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -20,17 +19,14 @@ import {
   RotateCw,
   Columns2,
   Rows2,
+  Ellipsis,
+  Maximize,
+  Minimize,
   Plus,
   X,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import Animated, {
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-  type AnimatedStyle,
-} from "react-native-reanimated";
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
+import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
@@ -45,12 +41,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { DropdownMenu } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { buttonControlHeight } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
 import {
@@ -74,12 +71,27 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
-import { ToolbarButton, ToolbarControls } from "@/components/ui/pane-content-toolbar";
+import {
+  paneContentToolbarTrailingPadding,
+  ToolbarButton,
+  ToolbarControls,
+} from "@/components/ui/pane-content-toolbar";
+import { smallIconButtonChromeFrameSize } from "@/components/ui/icon-button-chrome";
+import {
+  HorizontalScrollBoundaryShades,
+  useHorizontalScrollBoundary,
+} from "@/components/ui/horizontal-scroll-boundary";
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
-const PANE_SPLIT_ACTIONS_RESERVED_WIDTH = 47;
-const PANE_SPLIT_ACTIONS_OUTER_MARGIN = 2;
+const PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING = 2;
+const PANE_SPLIT_ACTIONS_OUTER_MARGIN =
+  paneContentToolbarTrailingPadding(false) - PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING;
+const PANE_SPLIT_ACTIONS_RESERVED_WIDTH =
+  smallIconButtonChromeFrameSize(false) +
+  PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING * 2 +
+  PANE_SPLIT_ACTIONS_OUTER_MARGIN;
+const PANE_MAXIMIZE_ACTION_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false) + 1;
 // Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
 // shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
 // the wrong width. Keep them together.
@@ -96,67 +108,10 @@ const TAB_MIN_WIDTH = 96;
 const TAB_MAX_WIDTH = 160;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
-const TAB_SCROLL_SHADE_WIDTH = 24;
-const TAB_SCROLL_EDGE_EPSILON = 1;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
 const ThemedCopy = withUnistyles(Copy);
-
-function WorkspaceTabScrollShadeSvg({ side, color }: { side: "left" | "right"; color: string }) {
-  const gradientId = `workspace-tab-scroll-shade-${side}-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  return (
-    <Svg width="100%" height="100%" preserveAspectRatio="none">
-      <Defs>
-        <SvgLinearGradient
-          id={gradientId}
-          x1={side === "left" ? "100%" : "0%"}
-          y1="0%"
-          x2={side === "left" ? "0%" : "100%"}
-          y2="0%"
-        >
-          <Stop offset="0%" stopColor={color} stopOpacity={0} />
-          <Stop offset="100%" stopColor={color} stopOpacity={1} />
-        </SvgLinearGradient>
-      </Defs>
-      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
-    </Svg>
-  );
-}
-
-const ThemedWorkspaceTabScrollShadeSvg = withUnistyles(WorkspaceTabScrollShadeSvg);
-const tabScrollShadeColorMapping = (theme: Theme) => ({ color: theme.colors.surface0 });
-
-function WorkspaceTabScrollShades({
-  visible,
-  leftStyle,
-  rightStyle,
-}: {
-  visible: boolean;
-  leftStyle: AnimatedStyle<{ opacity: number }>;
-  rightStyle: AnimatedStyle<{ opacity: number }>;
-}) {
-  if (!visible) return null;
-
-  return (
-    <>
-      <Animated.View
-        pointerEvents="none"
-        testID="workspace-tabs-scroll-shade-left"
-        style={[styles.tabScrollShade, styles.tabScrollShadeLeft, leftStyle]}
-      >
-        <ThemedWorkspaceTabScrollShadeSvg side="left" uniProps={tabScrollShadeColorMapping} />
-      </Animated.View>
-      <Animated.View
-        pointerEvents="none"
-        testID="workspace-tabs-scroll-shade-right"
-        style={[styles.tabScrollShade, styles.tabScrollShadeRight, rightStyle]}
-      >
-        <ThemedWorkspaceTabScrollShadeSvg side="right" uniProps={tabScrollShadeColorMapping} />
-      </Animated.View>
-    </>
-  );
-}
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -166,6 +121,9 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
+const ThemedEllipsis = withUnistyles(Ellipsis);
+const ThemedMaximize = withUnistyles(Maximize);
+const ThemedMinimize = withUnistyles(Minimize);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const extraMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
@@ -244,25 +202,48 @@ function WorkspaceNewTabButton({
 function WorkspacePaneToolbarActions({
   showNewTabButton,
   showSplitActions,
+  showMaximizeAction,
+  paneMaximized,
   serverId,
   paneId,
   newTabShortcutKeys,
   onSplitRight,
   onSplitDown,
+  onTogglePaneMaximized,
 }: {
   showNewTabButton: boolean;
   showSplitActions: boolean;
+  showMaximizeAction: boolean;
+  paneMaximized: boolean;
   serverId: string;
   paneId?: string;
   newTabShortcutKeys: ShortcutKey[][] | null;
   onSplitRight?: () => void;
   onSplitDown?: () => void;
+  onTogglePaneMaximized?: () => void;
 }) {
   const { t } = useTranslation();
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
   const splitActionsVisible = showSplitActions && Boolean(onSplitRight && onSplitDown);
-  if (!showNewTabButton && !splitActionsVisible) return null;
+  const splitRightLeading = useMemo(
+    () => <ThemedColumns2 size={14} uniProps={extraMutedColorMapping} />,
+    [],
+  );
+  const splitDownLeading = useMemo(
+    () => <ThemedRows2 size={14} uniProps={extraMutedColorMapping} />,
+    [],
+  );
+  const splitRightTrailing = useMemo(
+    () => (splitRightKeys ? <Shortcut chord={splitRightKeys} /> : null),
+    [splitRightKeys],
+  );
+  const splitDownTrailing = useMemo(
+    () => (splitDownKeys ? <Shortcut chord={splitDownKeys} /> : null),
+    [splitDownKeys],
+  );
+  const maximizeActionVisible = showMaximizeAction && Boolean(onTogglePaneMaximized);
+  if (!showNewTabButton && !splitActionsVisible && !maximizeActionVisible) return null;
 
   return (
     <ToolbarControls style={styles.paneSplitActions}>
@@ -274,25 +255,58 @@ function WorkspacePaneToolbarActions({
           shortcutKeys={newTabShortcutKeys}
         />
       ) : null}
+      {maximizeActionVisible && onTogglePaneMaximized ? (
+        <ToolbarButton
+          label={t(
+            paneMaximized
+              ? "workspace.tabs.actions.restorePane"
+              : "workspace.tabs.actions.maximizePane",
+          )}
+          selected={paneMaximized}
+          testID={paneMaximized ? "workspace-restore-pane" : "workspace-maximize-pane"}
+          onPress={onTogglePaneMaximized}
+        >
+          {paneMaximized ? (
+            <ThemedMinimize size={14} uniProps={extraMutedColorMapping} />
+          ) : (
+            <ThemedMaximize size={14} uniProps={extraMutedColorMapping} />
+          )}
+        </ToolbarButton>
+      ) : null}
       {splitActionsVisible && onSplitRight && onSplitDown ? (
-        <>
+        <DropdownMenu>
           <ToolbarButton
-            label={t("workspace.tabs.actions.splitRight")}
-            shortcut={splitRightKeys}
-            testID="workspace-split-pane-right"
-            onPress={onSplitRight}
+            kind="menu"
+            label={t("workspace.git.actions.moreActions")}
+            testID="workspace-split-pane-menu"
           >
-            <ThemedColumns2 size={14} uniProps={extraMutedColorMapping} />
+            <ThemedEllipsis size={14} uniProps={extraMutedColorMapping} />
           </ToolbarButton>
-          <ToolbarButton
-            label={t("workspace.tabs.actions.splitDown")}
-            shortcut={splitDownKeys}
-            testID="workspace-split-pane-down"
-            onPress={onSplitDown}
+          <DropdownMenuContent
+            side="bottom"
+            align="end"
+            offset={4}
+            width={220}
+            testID="workspace-split-pane-menu-content"
           >
-            <ThemedRows2 size={14} uniProps={extraMutedColorMapping} />
-          </ToolbarButton>
-        </>
+            <DropdownMenuItem
+              leading={splitRightLeading}
+              trailing={splitRightTrailing}
+              testID="workspace-split-pane-right"
+              onSelect={onSplitRight}
+            >
+              {t("workspace.tabs.actions.splitRight")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              leading={splitDownLeading}
+              trailing={splitDownTrailing}
+              testID="workspace-split-pane-down"
+              onSelect={onSplitDown}
+            >
+              {t("workspace.tabs.actions.splitDown")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </ToolbarControls>
   );
@@ -454,6 +468,9 @@ interface WorkspaceDesktopTabsRowProps {
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
   showPaneSplitActions?: boolean;
+  showPaneMaximizeAction?: boolean;
+  paneMaximized?: boolean;
+  onTogglePaneMaximized?: () => void;
   onSplitRight?: () => void;
   onSplitDown?: () => void;
   focusModeEnabled: boolean;
@@ -939,6 +956,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   activeDragTabId = null,
   tabDropPreviewIndex = null,
   showPaneSplitActions = false,
+  showPaneMaximizeAction = false,
+  paneMaximized = false,
+  onTogglePaneMaximized,
   onSplitRight,
   onSplitDown,
   focusModeEnabled,
@@ -948,9 +968,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
-  const tabScrollOffset = useSharedValue(0);
-  const tabScrollViewportWidth = useSharedValue(0);
-  const tabScrollContentWidth = useSharedValue(0);
+  const tabScrollBoundary = useHorizontalScrollBoundary();
   const [labelMeasurements, setLabelMeasurements] = useState(
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
   );
@@ -964,36 +982,6 @@ function ResolvedWorkspaceDesktopTabsRow({
     updateMeasuredWidth(setExitFocusModeWidth, event);
   }, []);
 
-  const handleTabScrollLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      tabScrollViewportWidth.value = event.nativeEvent.layout.width;
-    },
-    [tabScrollViewportWidth],
-  );
-
-  const handleTabScrollContentSizeChange = useCallback(
-    (width: number) => {
-      tabScrollContentWidth.value = width;
-    },
-    [tabScrollContentWidth],
-  );
-
-  const handleTabScroll = useAnimatedScrollHandler((event) => {
-    tabScrollOffset.value = event.contentOffset.x;
-    tabScrollViewportWidth.value = event.layoutMeasurement.width;
-    tabScrollContentWidth.value = event.contentSize.width;
-  });
-
-  const leftTabScrollShadeStyle = useAnimatedStyle(() => ({
-    opacity: Number(tabScrollOffset.value > TAB_SCROLL_EDGE_EPSILON),
-  }));
-  const rightTabScrollShadeStyle = useAnimatedStyle(() => ({
-    opacity: Number(
-      tabScrollOffset.value + tabScrollViewportWidth.value <
-        tabScrollContentWidth.value - TAB_SCROLL_EDGE_EPSILON,
-    ),
-  }));
-
   const layoutMetrics = useMemo(
     () => ({
       rowHorizontalInset: 0,
@@ -1001,7 +989,8 @@ function ResolvedWorkspaceDesktopTabsRow({
         0,
         DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
-          (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0),
+          (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
+          (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
       ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
@@ -1012,7 +1001,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [exitFocusModeWidth, focusModeEnabled, showPaneSplitActions],
+    [exitFocusModeWidth, focusModeEnabled, showPaneMaximizeAction, showPaneSplitActions],
   );
 
   const fallbackTabLabels = useMemo(
@@ -1296,9 +1285,9 @@ function ResolvedWorkspaceDesktopTabsRow({
           style={tabsScrollStyle}
           contentContainerStyle={styles.tabsContent}
           showsHorizontalScrollIndicator={false}
-          onLayout={handleTabScrollLayout}
-          onContentSizeChange={handleTabScrollContentSizeChange}
-          onScroll={handleTabScroll}
+          onLayout={tabScrollBoundary.onLayout}
+          onContentSizeChange={tabScrollBoundary.onContentSizeChange}
+          onScroll={tabScrollBoundary.onScroll}
           scrollEventThrottle={16}
         >
           <SortableInlineList
@@ -1321,20 +1310,25 @@ function ResolvedWorkspaceDesktopTabsRow({
             />
           ) : null}
         </Animated.ScrollView>
-        <WorkspaceTabScrollShades
+        <HorizontalScrollBoundaryShades
           visible={layout.requiresHorizontalScrollFallback}
-          leftStyle={leftTabScrollShadeStyle}
-          rightStyle={rightTabScrollShadeStyle}
+          backdrop="surface"
+          testIDPrefix="workspace-tabs-scroll-shade"
+          leftStyle={tabScrollBoundary.leftShadeStyle}
+          rightStyle={tabScrollBoundary.rightShadeStyle}
         />
       </View>
       <WorkspacePaneToolbarActions
         showNewTabButton={layout.requiresHorizontalScrollFallback}
         showSplitActions={showPaneSplitActions}
+        showMaximizeAction={showPaneMaximizeAction}
+        paneMaximized={paneMaximized}
         serverId={normalizedServerId}
         paneId={paneId}
         newTabShortcutKeys={newTabKeys}
         onSplitRight={onSplitRight}
         onSplitDown={onSplitDown}
+        onTogglePaneMaximized={onTogglePaneMaximized}
       />
     </View>
   );
@@ -1495,18 +1489,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     paddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
   },
-  tabScrollShade: {
-    position: "absolute",
-    top: 0,
-    bottom: 1,
-    width: TAB_SCROLL_SHADE_WIDTH,
-  },
-  tabScrollShadeLeft: {
-    left: 0,
-  },
-  tabScrollShadeRight: {
-    right: 0,
-  },
   exitFocusModeSlot: {
     alignSelf: "stretch",
     flexDirection: "row",
@@ -1525,7 +1507,7 @@ const styles = StyleSheet.create((theme) => ({
     height: buttonControlHeight.xs,
   },
   paneSplitActions: {
-    paddingHorizontal: theme.spacing[0.5],
+    paddingHorizontal: PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING,
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
   },
   tab: {

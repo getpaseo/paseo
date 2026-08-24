@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveSplitContainerRoot } from "@/components/split-container-focus";
+import {
+  resolveSplitContainerRoot,
+  splitNodeContainsPane,
+} from "@/components/split-container-focus";
 import type { SplitNode } from "@/stores/workspace-layout-store";
 
 const pane = (id: string): SplitNode => ({
@@ -32,6 +35,14 @@ describe("split focus root", () => {
   it("keeps normal splits unclaimed", () => {
     expect(
       resolveSplitContainerRoot({ root, focusedPaneId: "right", focusModeEnabled: false }),
+    ).toEqual({ root, usesFallbackStrip: false });
+  });
+
+  it("finds the maximized pane without replacing the rendered split tree", () => {
+    expect(splitNodeContainsPane(root, "right")).toBe(true);
+    expect(splitNodeContainsPane(root, "missing")).toBe(false);
+    expect(
+      resolveSplitContainerRoot({ root, focusedPaneId: "left", focusModeEnabled: false }),
     ).toEqual({ root, usesFallbackStrip: false });
   });
 });

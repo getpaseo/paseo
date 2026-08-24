@@ -4,7 +4,7 @@ import invariant from "tiny-invariant";
 import { useTranslation } from "react-i18next";
 import { FilePane } from "@/file-pane/pane";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelRegistration } from "@/panels/panel-registry";
+import { definePanel } from "@/panels/panel-registry";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { createMaterialFileIcon } from "@/components/material-file-icon";
 
@@ -50,10 +50,7 @@ function FilePanel() {
   );
 }
 
-export const filePanelRegistration: PanelRegistration<"file"> = {
-  kind: "file",
-  supportedHosts: ["main"],
+export const filePanelRegistration = definePanel("file", {
   component: FilePanel,
   useDescriptor: useFilePanelDescriptor,
-  resourceKey: (target) => target.path,
-};
+});

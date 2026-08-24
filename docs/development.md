@@ -242,13 +242,13 @@ focused invalidation capture; React Native's generated stacks make that mode hig
 Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
 the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
-For the desktop Side panel toggle, run the app against the root checkout's daemon and use:
+For the desktop Explorer sidebar toggle, run the app against the root checkout's daemon and use:
 
 ```bash
 npm run profile:explorer-toggle --workspace=@getpaseo/app
 ```
 
-The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Side panel pane,
+The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Explorer pane,
 records an idle control, then measures settled and 50 ms burst Cmd+E toggles. It reports
 input-to-DOM and input-to-paint latency, React commits, mounts, unmounts, and DOM mutations. Set
 `PASEO_PROFILE_TRACE_PATH=/tmp/explorer-toggle.trace.json` or
@@ -277,6 +277,17 @@ Set `PASEO_PROFILE_TYPING_SCENARIO=height-growth` to alternate `Shift+Enter` and
 That report includes input and composer height changes plus React work grouped into composer,
 stream, and ancestor/root scopes. Ancestor/root timings include descendant work because the Profiler
 boundaries are nested. A printable key after an empty newline should not change either height.
+
+### Preview Windows and Linux window controls on macOS
+
+Desktop development can replace native macOS traffic lights with Paseo's custom controls:
+
+```bash
+PASEO_DESKTOP_WINDOW_CONTROLS=windows npm run dev:desktop
+PASEO_DESKTOP_WINDOW_CONTROLS=linux npm run dev:desktop
+```
+
+The override is rejected in packaged builds. Restart the desktop process when changing it.
 
 ### Desktop macOS compositor watchdog
 

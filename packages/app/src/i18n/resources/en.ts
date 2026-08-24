@@ -62,7 +62,7 @@ export const en = {
       agents: "Agents",
       newAgent: "New agent",
       open: "Open {{name}}",
-      openInSidePanel: "Open {{name}} in Side panel",
+      openInSidePane: "Open {{name}} in side pane",
       openInFocusedPane: "Open {{name}} in focused pane",
       addProject: "Add project",
       home: "Home",
@@ -414,6 +414,7 @@ export const en = {
     },
     fileActions: {
       openFile: "Open file",
+      openToSide: "Open to the side",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",
       revealIn: "Reveal in {{target}}",
@@ -605,10 +606,10 @@ export const en = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
-        open: "Open side panel",
-        close: "Close side panel",
-        toggle: "Toggle side panel",
+      explorerSidebar: {
+        open: "Open Explorer sidebar",
+        close: "Close Explorer sidebar",
+        toggle: "Toggle Explorer sidebar",
         changes: "Changes",
         files: "Files",
       },
@@ -1220,6 +1221,12 @@ export const en = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Minimize window",
+      maximize: "Maximize window",
+      restore: "Restore window",
+      close: "Close window",
+    },
     quitting: {
       title: "Quitting Paseo...",
       detail: "Stopping the local daemon.",
@@ -1848,6 +1855,7 @@ export const en = {
     sections: {
       general: "General",
       appearance: "Appearance",
+      layout: "Layout",
       editor: "Editor",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
@@ -1855,6 +1863,45 @@ export const en = {
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",
+    },
+    layout: {
+      openInSidePane: {
+        title: "Open location",
+        destinations: {
+          main: "Main panel",
+          side: "On the side",
+        },
+        sources: {
+          explorerFiles: {
+            label: "Selecting a file in Explorer",
+            description: "Open files selected in the Explorer sidebar beside your work",
+          },
+          explorerChanges: {
+            label: "Selecting a change in Explorer",
+            description: "Open diffs selected in the Explorer sidebar beside your work",
+          },
+          chatFiles: {
+            label: "Opening a file from an agent chat",
+            description: "Open file links and tool-call files beside the conversation",
+          },
+          diffFiles: {
+            label: "Opening a file from Changes",
+            description: "Open source files selected from a diff beside it",
+          },
+          subagents: {
+            label: "Opening a subagent",
+            description: "Open subagents beside their parent agent",
+          },
+          pullRequests: {
+            label: "Opening a pull request from Changes",
+            description: "Open pull request details beside Changes",
+          },
+          changesLinks: {
+            label: "Opening Changes from an agent",
+            description: "Open diff stats and review attachments beside the conversation",
+          },
+        },
+      },
     },
     editor: {
       title: "Editor",
@@ -1998,11 +2045,6 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
-      },
-      sidePanelRouting: {
-        label: "Open supporting tabs in the Side panel",
-        description:
-          "File links, pull requests, and setup progress open beside your work instead of in the focused pane",
       },
       autoExpandReasoning: {
         label: "Always expand reasoning",
@@ -2193,11 +2235,10 @@ export const en = {
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",
-        toggleRightSidebar: "Toggle side panel",
+        toggleRightSidebar: "Toggle Explorer sidebar",
         toggleBothSidebars: "Toggle both sidebars",
         toggleSettings: "Toggle settings",
         toggleFocusMode: "Toggle focus mode",
-        toggleExplorerPaneMaximization: "Toggle Side panel maximization",
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
         cycleAgentMode: "Cycle agent mode",

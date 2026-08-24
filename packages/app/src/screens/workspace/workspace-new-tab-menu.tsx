@@ -17,7 +17,7 @@ import {
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
 import type { LucideIcon } from "lucide-react-native";
-import type { PaneHost } from "@/panels/panel-registry";
+import type { PaneHost } from "@/panels/panel-manifest";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 

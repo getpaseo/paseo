@@ -38,7 +38,10 @@ async function seedChangedAgent(repoPrefix: string) {
   }
 }
 
-test("composer diff stat toggles Changes in the preferred Side panel", async ({ page }) => {
+test("composer diff stat opens Changes in the configured side pane", async ({ page }) => {
+  await page.addInitScript((settingsKey) => {
+    localStorage.setItem(settingsKey, JSON.stringify({ openInSidePane: { changesLinks: true } }));
+  }, APP_SETTINGS_KEY);
   const workspace = await seedChangedAgent("composer-diff-stat-side-");
 
   try {
@@ -54,30 +57,23 @@ test("composer diff stat toggles Changes in the preferred Side panel", async ({ 
     await expect(pill).toContainText("-0");
     await pill.click();
 
-    const sidePanel = page.getByTestId("workspace-side-panel").filter({ visible: true });
-    await expect(sidePanel.getByTestId("workspace-tab-working_diff")).toBeVisible({
+    const sidePane = page
+      .locator('[data-testid^="workspace-pane-"]')
+      .filter({ visible: true })
+      .filter({ has: page.getByTestId("working-diff-panel") });
+    await expect(sidePane.getByTestId("workspace-tab-working_diff")).toBeVisible({
       timeout: 30_000,
     });
-    await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(sidePane.getByTestId("working-diff-panel")).toBeVisible({ timeout: 30_000 });
+    await expect(visibleMainPane(page).getByTestId("working-diff-panel")).toHaveCount(0);
 
-    await test.step("switching from another Side panel view reveals Changes", async () => {
+    await test.step("Explorer navigation does not replace the side pane", async () => {
       await openFilesPanel(page);
-      await expect(sidePanel.getByTestId("file-explorer-tree-scroll")).toBeVisible();
+      await expect(page.getByTestId("workspace-explorer-sidebar")).toContainText("Files");
 
       await pill.click();
-      await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible();
-    });
-
-    await test.step("clicking visible Changes hides the panel without closing its tab", async () => {
-      await pill.click();
-      await expect(sidePanel).toHaveCount(0);
+      await expect(sidePane.getByTestId("working-diff-panel")).toBeVisible();
       await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(1);
-    });
-
-    await test.step("clicking again restores Changes", async () => {
-      await pill.click();
-      await expect(sidePanel.getByTestId("workspace-tab-working_diff")).toBeVisible();
-      await expect(sidePanel.getByTestId("working-diff-panel")).toBeVisible();
     });
   } finally {
     await workspace.cleanup();
@@ -96,19 +92,16 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
 
     await page.getByTestId("composer-diff-stat-pill").click();
 
-    await expect(page.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("changes-header").filter({ visible: true }).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByTestId("workspace-tab-working_diff")).toHaveCount(0);
   } finally {
     await workspace.cleanup();
   }
 });
 
-test("composer diff stat opens Changes in the focused pane when Side panel routing is off", async ({
-  page,
-}) => {
-  await page.addInitScript((settingsKey) => {
-    localStorage.setItem(settingsKey, JSON.stringify({ openSupportingTabsInSidePanel: false }));
-  }, APP_SETTINGS_KEY);
+test("composer diff stat opens Changes in the focused pane by default", async ({ page }) => {
   const workspace = await seedChangedAgent("composer-diff-stat-tab-");
 
   try {
@@ -125,7 +118,9 @@ test("composer diff stat opens Changes in the focused pane when Side panel routi
       timeout: 30_000,
     });
     await expect(mainPane.getByTestId("working-diff-panel")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("workspace-side-panel")).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid^="workspace-pane-"]').filter({ visible: true }),
+    ).toHaveCount(1);
   } finally {
     await workspace.cleanup();
   }

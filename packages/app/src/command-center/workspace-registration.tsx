@@ -64,12 +64,12 @@ const WORKSPACE_COMMAND_CENTER_ICONS = {
   focusPane: getCommandCenterIcon(Focus),
   moveTab: getCommandCenterIcon(Move),
   focusMode: getCommandCenterIcon(ArrowDownToLine),
-  sidePanel: getCommandCenterIcon(PanelRight),
+  explorerSidebar: getCommandCenterIcon(PanelRight),
 };
 
 const OPEN_PANEL_LABEL_KEYS = {
   supporting: "shell.commandCenter.open",
-  "side-panel": "shell.commandCenter.openInSidePanel",
+  "side-pane": "shell.commandCenter.openInSidePane",
   "focused-pane": "shell.commandCenter.openInFocusedPane",
 } as const;
 
@@ -151,7 +151,7 @@ export function useWorkspaceCommandCenterActions(): void {
           moveTabDown: t("settings.shortcuts.help.moveTabDown"),
           closePane: t("settings.shortcuts.help.closePane"),
           toggleFocusMode: t("settings.shortcuts.help.toggleFocusMode"),
-          toggleSidePanel: t("workspace.tabs.sidePanel.toggle"),
+          toggleExplorerSidebar: t("workspace.tabs.explorerSidebar.toggle"),
         },
         icons: {
           ...WORKSPACE_COMMAND_CENTER_ICONS,

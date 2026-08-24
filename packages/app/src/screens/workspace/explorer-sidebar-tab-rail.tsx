@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { Check, type LucideIcon } from "lucide-react-native";
+import { type LucideIcon } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import Animated from "react-native-reanimated";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -11,12 +12,13 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { titlebarDragSurfaceStyle } from "@/components/desktop/titlebar-drag-region";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { iconButtonChromeGlyphSize } from "@/components/ui/icon-button-chrome";
+import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import {
   WorkspaceTabIcon,
   WorkspaceTabPresentationResolver,
@@ -30,46 +32,39 @@ import {
 } from "@/workspace-tabs/launcher";
 import type { Theme } from "@/styles/theme";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
+import {
+  HorizontalScrollBoundaryShades,
+  useHorizontalScrollBoundary,
+} from "@/components/ui/horizontal-scroll-boundary";
 
-const TAB_HITBOX_WIDTH = 32;
-const TAB_ICON_SIZE = 16;
 const TAB_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
-const SIDE_PANEL_CONFIGURABLE_KINDS = new Set<WorkspaceTabDescriptor["target"]["kind"]>([
-  "files",
-  "changes_tree",
-  "pull_request",
-  "terminal",
-]);
 
-const ThemedCheck = withUnistyles(Check);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-interface SidePanelTabRailProps {
+interface ExplorerSidebarTabRailProps {
   paneId: string;
   tabs: WorkspaceDesktopTabRowItem[];
   normalizedServerId: string;
   normalizedWorkspaceId: string;
-  isFocused: boolean;
   activeDragTabId: string | null;
   tabDropPreviewIndex: number | null;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onReorderTabs: (tabs: WorkspaceTabDescriptor[]) => void;
+  trailingAccessory?: ReactNode;
 }
 
 function tabKey(item: WorkspaceDesktopTabRowItem): string {
   return `${item.tab.key}:${item.tab.kind}`;
 }
 
-function resolveSidePanelTabBackdrop(active: boolean, hovered: boolean): SurfaceBackdrop {
-  if (active) return "surfaceSidebarSelected";
-  return hovered ? "surfaceSidebarHover" : "surfaceSidebar";
+function resolveExplorerSidebarTabBackdrop(): SurfaceBackdrop {
+  return "surfaceSidebar";
 }
 
-function SidePanelTab({
+function ExplorerSidebarTab({
   item,
-  isFocused,
   isDragging,
   dragHandleProps,
   onNavigateTab,
@@ -77,7 +72,6 @@ function SidePanelTab({
   normalizedWorkspaceId,
 }: {
   item: WorkspaceDesktopTabRowItem;
-  isFocused: boolean;
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   onNavigateTab: (tabId: string) => void;
@@ -100,7 +94,7 @@ function SidePanelTab({
             {...(dragHandleProps?.attributes as object | undefined)}
             {...(dragHandleProps?.listeners as object | undefined)}
             ref={dragHandleProps?.setActivatorNodeRef as never}
-            testID={`side-panel-tab-${item.tab.tabId}`}
+            testID={`explorer-sidebar-tab-${item.tab.tabId}`}
             accessibilityRole="button"
             accessibilityLabel={presentation.tooltip}
             accessibilityState={accessibilityState}
@@ -109,18 +103,26 @@ function SidePanelTab({
             onHoverOut={handleHoverOut}
             style={[
               styles.tab,
-              item.isActive && isFocused ? styles.tabActive : null,
-              item.isActive && !isFocused ? styles.tabActiveUnfocused : null,
               hovered ? styles.tabHovered : null,
+              item.isActive ? styles.tabActive : null,
               isDragging ? styles.tabDragging : null,
             ]}
           >
             <WorkspaceTabIcon
               presentation={presentation}
-              active={(item.isActive && isFocused) || hovered}
-              size={TAB_ICON_SIZE}
-              backdrop={resolveSidePanelTabBackdrop(item.isActive && isFocused, hovered)}
+              active={item.isActive}
+              size={iconButtonChromeGlyphSize("small")}
+              strokeWidth={1.5}
+              backdrop={resolveExplorerSidebarTabBackdrop()}
             />
+            <Text
+              selectable={false}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[styles.tabLabel, item.isActive ? styles.tabLabelActive : null]}
+            >
+              {presentation.label}
+            </Text>
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="center" offset={8}>
@@ -136,7 +138,6 @@ function SidePanelTab({
       handlePress,
       hovered,
       isDragging,
-      isFocused,
       item,
     ],
   );
@@ -158,46 +159,38 @@ function CatalogIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string })
 
 const ThemedCatalogIcon = withUnistyles(CatalogIcon);
 
-function SidePanelConfigurationItem({
+function ExplorerSidebarConfigurationItem({
   item,
   paneId,
+  tab,
+  onCloseTab,
 }: {
   item: WorkspaceTabLaunchItem;
   paneId: string;
+  tab: WorkspaceTabDescriptor | null;
+  onCloseTab: (tabId: string) => Promise<void> | void;
 }) {
   const leading = useMemo(() => {
     return item.Icon ? <ThemedCatalogIcon Icon={item.Icon} uniProps={mutedColorMapping} /> : null;
   }, [item.Icon]);
-  const handleSelect = useCallback(() => item.launch({ kind: "open", paneId }), [item, paneId]);
+  const handleSelect = useCallback(() => {
+    if (tab) {
+      void onCloseTab(tab.tabId);
+      return;
+    }
+    item.launch({ kind: "open", paneId });
+  }, [item, onCloseTab, paneId, tab]);
 
   return (
-    <ContextMenuItem leading={leading} disabled={item.disabled} onSelect={handleSelect}>
+    <ContextMenuItem
+      leading={leading}
+      selected={Boolean(tab)}
+      showSelectedCheck
+      disabled={!tab && item.disabled}
+      onSelect={handleSelect}
+    >
       {item.label}
     </ContextMenuItem>
-  );
-}
-
-function CurrentSidePanelTabConfigurationItem({
-  tab,
-  serverId,
-  workspaceId,
-  onCloseTab,
-}: {
-  tab: WorkspaceTabDescriptor;
-  serverId: string;
-  workspaceId: string;
-  onCloseTab: (tabId: string) => Promise<void> | void;
-}) {
-  const leading = useMemo(() => <ThemedCheck size={14} uniProps={mutedColorMapping} />, []);
-  const handleSelect = useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]);
-  return (
-    <WorkspaceTabPresentationResolver tab={tab} serverId={serverId} workspaceId={workspaceId}>
-      {(presentation) => (
-        <ContextMenuItem leading={leading} onSelect={handleSelect}>
-          {presentation.label}
-        </ContextMenuItem>
-      )}
-    </WorkspaceTabPresentationResolver>
   );
 }
 
@@ -207,28 +200,26 @@ function catalogItemMatchesTab(item: WorkspaceTabLaunchItem, tab: WorkspaceTabDe
   return item.id === `plugin:${tab.target.pluginId}:${tab.target.panelId}`;
 }
 
-export function SidePanelTabRail({
+export function ExplorerSidebarTabRail({
   paneId,
   tabs,
   normalizedServerId,
   normalizedWorkspaceId,
-  isFocused,
   activeDragTabId,
   tabDropPreviewIndex,
   onNavigateTab,
   onCloseTab,
   onReorderTabs,
-}: SidePanelTabRailProps) {
+  trailingAccessory,
+}: ExplorerSidebarTabRailProps) {
+  const scrollBoundary = useHorizontalScrollBoundary();
   const groups = useWorkspaceTabLaunchCatalog({
     serverId: normalizedServerId,
     purpose: "supporting",
     host: "explorer",
   });
   const configurationItems = useMemo(
-    () =>
-      (groups.find((group) => group.id === "tabs")?.items ?? []).filter((item) =>
-        SIDE_PANEL_CONFIGURABLE_KINDS.has(item.panelKind),
-      ),
+    () => groups.find((group) => group.id === "tabs")?.items ?? [],
     [groups],
   );
   const handleDragEnd = useCallback(
@@ -258,9 +249,8 @@ export function SidePanelTabRail({
       return (
         <View style={styles.tabSlot}>
           {showBefore ? <View style={[styles.dropIndicator, styles.dropIndicatorBefore]} /> : null}
-          <SidePanelTab
+          <ExplorerSidebarTab
             item={item}
-            isFocused={isFocused}
             isDragging={isActive}
             dragHandleProps={dragHandleProps}
             onNavigateTab={onNavigateTab}
@@ -273,7 +263,6 @@ export function SidePanelTabRail({
     },
     [
       activeDragTabId,
-      isFocused,
       normalizedServerId,
       normalizedWorkspaceId,
       onNavigateTab,
@@ -284,34 +273,54 @@ export function SidePanelTabRail({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger style={styles.track} testID="side-panel-tab-rail">
-        <SortableInlineList
-          data={tabs}
-          keyExtractor={tabKey}
-          renderItem={renderTab}
-          onDragEnd={handleDragEnd}
-          useDragHandle
-          externalDndContext
-          activeId={activeDragTabId}
-          getItemData={getTabDragData}
-        />
+      <ContextMenuTrigger
+        contextOnly
+        style={[styles.track, titlebarDragSurfaceStyle as never]}
+        testID="explorer-sidebar-tab-rail"
+      >
+        <View style={styles.scrollContainer}>
+          <Animated.ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+            onLayout={scrollBoundary.onLayout}
+            onContentSizeChange={scrollBoundary.onContentSizeChange}
+            onScroll={scrollBoundary.onScroll}
+            scrollEventThrottle={16}
+          >
+            <SortableInlineList
+              data={tabs}
+              keyExtractor={tabKey}
+              renderItem={renderTab}
+              onDragEnd={handleDragEnd}
+              useDragHandle
+              externalDndContext
+              activeId={activeDragTabId}
+              getItemData={getTabDragData}
+            />
+          </Animated.ScrollView>
+          <HorizontalScrollBoundaryShades
+            visible
+            backdrop="sidebar"
+            testIDPrefix="explorer-sidebar-tabs-scroll-shade"
+            leftStyle={scrollBoundary.leftShadeStyle}
+            rightStyle={scrollBoundary.rightShadeStyle}
+          />
+        </View>
+        {trailingAccessory ? (
+          <View style={styles.trailingAccessory}>{trailingAccessory}</View>
+        ) : null}
       </ContextMenuTrigger>
-      <ContextMenuContent align="start" minWidth={200} testID="side-panel-tab-configuration">
-        {tabs.map(({ tab }) => (
-          <CurrentSidePanelTabConfigurationItem
-            key={tab.tabId}
-            tab={tab}
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
+      <ContextMenuContent align="start" minWidth={200} testID="explorer-sidebar-tab-configuration">
+        {configurationItems.map((item) => (
+          <ExplorerSidebarConfigurationItem
+            key={item.id}
+            item={item}
+            paneId={paneId}
+            tab={tabs.find(({ tab }) => catalogItemMatchesTab(item, tab))?.tab ?? null}
             onCloseTab={onCloseTab}
           />
         ))}
-        {tabs.length > 0 ? <ContextMenuSeparator /> : null}
-        {configurationItems
-          .filter((item) => !tabs.some(({ tab }) => catalogItemMatchesTab(item, tab)))
-          .map((item) => (
-            <SidePanelConfigurationItem key={item.id} item={item} paneId={paneId} />
-          ))}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -321,33 +330,53 @@ const styles = StyleSheet.create((theme) => ({
   track: {
     minWidth: 0,
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
     flexDirection: "row",
     alignItems: "center",
+  },
+  scrollContainer: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: "stretch",
+  },
+  scrollContent: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 4,
+  },
+  trailingAccessory: {
+    marginRight: 4,
   },
   tabSlot: {
     position: "relative",
     marginHorizontal: TAB_GAP / 2,
   },
   tab: {
-    width: TAB_HITBOX_WIDTH,
-    height: buttonControlHeight.xs,
+    height: HEADER_CONTROL_HEIGHT,
+    maxWidth: 180,
+    paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: theme.spacing[1],
     userSelect: "none",
   },
-  tabActive: {
-    backgroundColor: theme.colors.surfaceSidebarSelected,
-  },
-  tabActiveUnfocused: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
   tabHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
+    backgroundColor: theme.colors.interactionHighlight,
+  },
+  tabActive: {
+    backgroundColor: theme.colors.interactionHighlight,
+  },
+  tabLabel: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    userSelect: "none",
+  },
+  tabLabelActive: {
+    color: theme.colors.foreground,
   },
   tabDragging: {
     opacity: 0.3,

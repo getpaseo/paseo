@@ -3,7 +3,7 @@ import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
   FileDiff,
-  FolderTree,
+  Files,
   GitPullRequest,
   Globe,
   SquarePen,
@@ -18,7 +18,7 @@ import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import { panelSupportsHost, type PaneHost } from "@/panels/panel-registry";
+import { panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import {
   getTerminalProfileIcon,
@@ -104,6 +104,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
   }, [router, serverId]);
 
   return useMemo(() => {
+    const changesTarget: Extract<WorkspaceTabTarget, { kind: "changes_tree" | "working_diff" }> =
+      host === "explorer" ? { kind: "changes_tree" } : { kind: "working_diff" };
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
       agent: {
         id: "agent",
@@ -129,14 +131,14 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: FileDiff,
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
-        panelKind: "changes_tree",
+        panelKind: changesTarget.kind,
         hidden: !launcher.showChanges,
-        launch: launchSelection(BUILT_IN_SELECTIONS.changes),
+        launch: launchSelection({ kind: "target", target: changesTarget }),
       },
       files: {
         id: "files",
         label: t("workspace.tabs.actions.files"),
-        Icon: FolderTree,
+        Icon: Files,
         shortcutActionId: "workspace-tab-target-files",
         disabled: false,
         panelKind: "files",

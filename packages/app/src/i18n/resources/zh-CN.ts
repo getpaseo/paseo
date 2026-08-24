@@ -65,7 +65,7 @@ export const zhCN: TranslationResources = {
       agents: "Agents",
       newAgent: "新建 Agent",
       open: "打开{{name}}",
-      openInSidePanel: "在侧边面板中打开{{name}}",
+      openInSidePane: "在侧边面板中打开{{name}}",
       openInFocusedPane: "在当前窗格中打开{{name}}",
       addProject: "添加 project",
       home: "首页",
@@ -416,6 +416,7 @@ export const zhCN: TranslationResources = {
     },
     fileActions: {
       openFile: "打开文件",
+      openToSide: "在侧边打开",
       copyPath: "复制路径",
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",
@@ -607,7 +608,7 @@ export const zhCN: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "打开侧边面板",
         close: "关闭侧边面板",
         toggle: "切换侧边面板",
@@ -1200,6 +1201,12 @@ export const zhCN: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "最小化窗口",
+      maximize: "最大化窗口",
+      restore: "还原窗口",
+      close: "关闭窗口",
+    },
     quitting: {
       title: "正在退出 Paseo...",
       detail: "正在停止本地 daemon。",
@@ -1817,6 +1824,7 @@ export const zhCN: TranslationResources = {
     sections: {
       general: "通用",
       appearance: "外观",
+      layout: en.settings.sections.layout,
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -1825,6 +1833,7 @@ export const zhCN: TranslationResources = {
       diagnostics: "诊断",
       about: "关于",
     },
+    layout: en.settings.layout,
     editor: {
       title: "编辑器",
       vimKeybindings: "Vim 键位",
@@ -1910,10 +1919,6 @@ export const zhCN: TranslationResources = {
         label: "终端回滚",
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
-      },
-      sidePanelRouting: {
-        label: "在侧边面板中打开辅助标签页",
-        description: "文件链接、拉取请求和设置进度会在你的工作旁边打开，而不是在聚焦的窗格中",
       },
       autoExpandReasoning: {
         label: "始终展开推理过程",
@@ -2107,7 +2112,6 @@ export const zhCN: TranslationResources = {
         toggleBothSidebars: "切换两侧边栏",
         toggleSettings: "切换设置",
         toggleFocusMode: "切换专注模式",
-        toggleExplorerPaneMaximization: "切换侧边面板最大化",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",

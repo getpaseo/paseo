@@ -62,7 +62,7 @@ function source(gitActions: GitActions): {
         moveTabDown: "Move tab down",
         closePane: "Close pane",
         toggleFocusMode: "Toggle focus mode",
-        toggleSidePanel: "Toggle side panel",
+        toggleExplorerSidebar: "Toggle side panel",
       },
       icons: {},
       shortcuts: {},

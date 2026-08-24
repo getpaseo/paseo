@@ -1,7 +1,7 @@
 export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "workspace";
 
 export type WorkspacePanelTarget = "changes" | "files" | "pull-request";
-export type WorkspacePanelPlacement = "supporting" | "side-panel" | "focused-pane";
+export type WorkspacePanelPlacement = "supporting" | "side-pane" | "focused-pane";
 
 export type KeyboardActionId =
   | "agent.interrupt"

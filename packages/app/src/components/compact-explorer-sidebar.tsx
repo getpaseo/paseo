@@ -230,7 +230,7 @@ function ExplorerSidebarContent({
             <ExplorerTabButton
               tab="changes"
               active={resolvedTab === "changes"}
-              label={t("workspace.tabs.sidePanel.changes")}
+              label={t("workspace.tabs.explorerSidebar.changes")}
               onTabPress={onTabPress}
               testID="explorer-tab-changes"
             />
@@ -238,7 +238,7 @@ function ExplorerSidebarContent({
           <ExplorerTabButton
             tab="files"
             active={resolvedTab === "files"}
-            label={t("workspace.tabs.sidePanel.files")}
+            label={t("workspace.tabs.explorerSidebar.files")}
             onTabPress={onTabPress}
             testID="explorer-tab-files"
           />
@@ -268,7 +268,7 @@ function ExplorerSidebarContent({
             nativeID="explorer-close"
             accessible
             accessibilityRole="button"
-            accessibilityLabel={t("workspace.tabs.sidePanel.close")}
+            accessibilityLabel={t("workspace.tabs.explorerSidebar.close")}
             hitSlop={8}
           >
             {({ hovered, pressed }) => (
@@ -335,7 +335,6 @@ function ChangedFilesPane({
   );
   return (
     <ChangesSurface
-      host="explorer"
       serverId={serverId}
       workspaceId={workspaceId}
       cwd={workspaceRoot}

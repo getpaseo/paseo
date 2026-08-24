@@ -14,6 +14,12 @@ export function resolveSplitContainerRoot(input: {
   return { root: { kind: "pane", pane: isolatedPane }, usesFallbackStrip: false };
 }
 
+/** Whether a split subtree contains the pane currently projected full-size. */
+export function splitNodeContainsPane(node: SplitNode, paneId: string): boolean {
+  if (node.kind === "pane") return node.pane.id === paneId;
+  return node.group.children.some((child) => splitNodeContainsPane(child, paneId));
+}
+
 function findPane(node: SplitNode, paneId: string): SplitPane | null {
   if (node.kind === "pane") return node.pane.id === paneId ? node.pane : null;
   for (const child of node.group.children) {

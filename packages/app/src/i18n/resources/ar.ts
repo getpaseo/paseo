@@ -65,7 +65,7 @@ export const ar: TranslationResources = {
       agents: "الوكلاء",
       newAgent: "وكيل جديد",
       open: "فتح {{name}}",
-      openInSidePanel: "فتح {{name}} في اللوحة الجانبية",
+      openInSidePane: "فتح {{name}} في اللوحة الجانبية",
       openInFocusedPane: "فتح {{name}} في الجزء النشط",
       addProject: "إضافة مشروع",
       home: "بيت",
@@ -416,6 +416,7 @@ export const ar: TranslationResources = {
     },
     fileActions: {
       openFile: "افتح الملف",
+      openToSide: "فتح إلى الجانب",
       copyPath: "نسخ المسار",
       copyRelativePath: "نسخ المسار النسبي",
       revealIn: "إظهار في {{target}}",
@@ -607,7 +608,7 @@ export const ar: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "افتح اللوحة الجانبية",
         close: "إغلاق اللوحة الجانبية",
         toggle: "تبديل اللوحة الجانبية",
@@ -1211,6 +1212,12 @@ export const ar: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "تصغير النافذة",
+      maximize: "تكبير النافذة",
+      restore: "استعادة النافذة",
+      close: "إغلاق النافذة",
+    },
     quitting: {
       title: "جارٍ إنهاء Paseo...",
       detail: "إيقاف البرنامج الخفي المحلي.",
@@ -1838,6 +1845,7 @@ export const ar: TranslationResources = {
     sections: {
       general: "عام",
       appearance: "مظهر",
+      layout: en.settings.sections.layout,
       editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1846,6 +1854,7 @@ export const ar: TranslationResources = {
       diagnostics: "التشخيص",
       about: "عن",
     },
+    layout: en.settings.layout,
     editor: {
       title: "المحرر",
       vimKeybindings: "اختصارات Vim",
@@ -1934,11 +1943,6 @@ export const ar: TranslationResources = {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
-      },
-      sidePanelRouting: {
-        label: "فتح علامات التبويب المساعدة في اللوحة الجانبية",
-        description:
-          "تفتح روابط الملفات وطلبات السحب وتقدم الإعداد بجوار عملك بدلاً من الجزء المركّز عليه",
       },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
@@ -2134,7 +2138,6 @@ export const ar: TranslationResources = {
         toggleBothSidebars: "تبديل كلا الشريطين الجانبيين",
         toggleSettings: "تبديل الإعدادات",
         toggleFocusMode: "تبديل وضع التركيز",
-        toggleExplorerPaneMaximization: "تبديل تكبير اللوحة الجانبية",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
         cycleAgentMode: "تبديل وضع الوكيل",

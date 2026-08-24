@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
 import { formatPrTabLabel } from "@/git/pull-request-panel";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelRegistration } from "@/panels/panel-registry";
+import { definePanel } from "@/panels/panel-registry";
 import { PullRequestContent, usePullRequestData } from "@/panels/pull-request";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
@@ -54,10 +54,7 @@ function PullRequestPanel() {
   );
 }
 
-export const pullRequestPanelRegistration: PanelRegistration<"pull_request"> = {
-  kind: "pull_request",
-  supportedHosts: ["main", "explorer"],
-  resourceKey: () => "pull_request",
+export const pullRequestPanelRegistration = definePanel("pull_request", {
   component: PullRequestPanel,
   useDescriptor: usePullRequestPanelDescriptor,
-};
+});

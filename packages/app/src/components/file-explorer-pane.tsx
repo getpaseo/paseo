@@ -41,6 +41,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   PaneContentToolbar,
   paneContentToolbarIconSize,
+  paneContentToolbarTrailingPadding,
   ToolbarButton,
   ToolbarControls,
 } from "@/components/ui/pane-content-toolbar";
@@ -62,7 +63,6 @@ import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
-import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { isHiddenExplorerPath } from "@/file-explorer/visibility";
 import {
@@ -101,16 +101,6 @@ function DirectoryChevronIcon({ loading, expanded }: { loading: boolean; expande
   return <TreeChevron expanded={expanded} />;
 }
 
-function formatFileSize({ size }: { size: number }): string {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 interface TreeRowItemProps {
   serverId: string;
   workspaceId?: string | null;
@@ -127,6 +117,7 @@ interface TreeRowItemProps {
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
+  onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
   onCollapseDirectory?: (path: string) => void;
   onRenameEntry?: (entry: ExplorerEntry) => void;
@@ -250,6 +241,7 @@ function TreeRowItem({
   revealTargetName,
   onDownloadEntry,
   onAddToChat,
+  onOpenFileToSide,
   onNewEntry,
   onCollapseDirectory,
   onRenameEntry,
@@ -257,7 +249,6 @@ function TreeRowItem({
   onDeleteEntry,
   testID,
 }: TreeRowItemProps) {
-  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const showNameHover = useCallback(() => setIsHovered(true), []);
   const hideNameHover = useCallback(() => setIsHovered(false), []);
@@ -311,6 +302,10 @@ function TreeRowItem({
     onAddToChat?.(entry.path);
   }, [onAddToChat, entry.path]);
 
+  const handleOpenToSide = useCallback(() => {
+    onOpenFileToSide?.(entry.path);
+  }, [entry.path, onOpenFileToSide]);
+
   const handleNewFile = useCallback(() => {
     onNewEntry?.(entry.path, "file");
   }, [onNewEntry, entry.path]);
@@ -334,30 +329,6 @@ function TreeRowItem({
   const handleDelete = useCallback(() => {
     onDeleteEntry?.(entry);
   }, [onDeleteEntry, entry]);
-
-  const metaHeader = useMemo(
-    () => (
-      <View style={styles.contextMetaBlock}>
-        <View style={styles.contextMetaRow}>
-          <Text style={styles.contextMetaLabel} numberOfLines={1}>
-            {t("workspace.fileExplorer.context.size")}
-          </Text>
-          <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-            {formatFileSize({ size: entry.size })}
-          </Text>
-        </View>
-        <View style={styles.contextMetaRow}>
-          <Text style={styles.contextMetaLabel} numberOfLines={1}>
-            {t("workspace.fileExplorer.context.modified")}
-          </Text>
-          <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-            {formatTimeAgo(new Date(entry.modifiedAt))}
-          </Text>
-        </View>
-      </View>
-    ),
-    [entry.modifiedAt, entry.size, t],
-  );
 
   return (
     <ContextMenu>
@@ -401,13 +372,13 @@ function TreeRowItem({
         revealTargetName={revealTargetName}
         onDownload={handleDownload}
         onAddToChat={onAddToChat ? handleAddToChat : undefined}
+        onOpenToSide={!isDirectory && onOpenFileToSide ? handleOpenToSide : undefined}
         onNewFile={onNewEntry ? handleNewFile : undefined}
         onNewFolder={onNewEntry ? handleNewFolder : undefined}
         onCollapseFolder={isDirectory && isExpanded ? handleCollapseDirectory : undefined}
         onRename={onRenameEntry ? handleRename : undefined}
         onDuplicate={onDuplicateEntry ? handleDuplicate : undefined}
         onDelete={onDeleteEntry ? handleDelete : undefined}
-        header={metaHeader}
         testIDPrefix={testID}
       />
     </ContextMenu>
@@ -419,6 +390,7 @@ interface FileExplorerPaneProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   onOpenFile?: (filePath: string) => void;
+  onOpenFileToSide?: (filePath: string) => void;
   onAddToChat?: (path: string) => void;
 }
 
@@ -427,6 +399,7 @@ export function FileExplorerPane({
   workspaceId,
   workspaceRoot,
   onOpenFile,
+  onOpenFileToSide,
   onAddToChat,
 }: FileExplorerPaneProps) {
   const { t } = useTranslation();
@@ -990,6 +963,7 @@ export function FileExplorerPane({
           revealTargetName={fileManagerTarget?.label}
           onDownloadEntry={handleDownloadEntry}
           onAddToChat={onAddToChat}
+          onOpenFileToSide={onOpenFileToSide}
           onNewEntry={fsEntryOpsEnabled ? handleNewEntry : undefined}
           onCollapseDirectory={handleCollapseDirectory}
           onRenameEntry={fsEntryOpsEnabled ? handleRenameEntry : undefined}
@@ -1020,6 +994,7 @@ export function FileExplorerPane({
       fileManagerTarget,
       selectedEntryPath,
       onAddToChat,
+      onOpenFileToSide,
       serverId,
       workspaceId,
     ],
@@ -1220,7 +1195,10 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
 
   return (
     <View style={[styles.treePane, styles.treePaneFill]}>
-      <PaneContentToolbar style={styles.paneHeader} testID="files-pane-header">
+      <PaneContentToolbar
+        style={[styles.paneHeader, { paddingRight: paneContentToolbarTrailingPadding(isCompact) }]}
+        testID="files-pane-header"
+      >
         <Pressable
           onPress={handleSortCycle}
           style={sortTriggerStyleProp}
@@ -1243,7 +1221,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               >
                 <FilePlus
                   size={paneContentToolbarIconSize(isCompact)}
-                  color={theme.colors.foregroundMuted}
+                  color={theme.colors.foregroundExtraMuted}
                 />
               </ToolbarButton>
               <ToolbarButton
@@ -1255,7 +1233,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               >
                 <FolderPlus
                   size={paneContentToolbarIconSize(isCompact)}
-                  color={theme.colors.foregroundMuted}
+                  color={theme.colors.foregroundExtraMuted}
                 />
               </ToolbarButton>
             </>
@@ -1271,12 +1249,12 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
             {showHiddenFiles ? (
               <Eye
                 size={paneContentToolbarIconSize(isCompact)}
-                color={theme.colors.foregroundMuted}
+                color={theme.colors.foregroundExtraMuted}
               />
             ) : (
               <EyeOff
                 size={paneContentToolbarIconSize(isCompact)}
-                color={theme.colors.foregroundMuted}
+                color={theme.colors.foregroundExtraMuted}
               />
             )}
           </ToolbarButton>
@@ -1296,12 +1274,12 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               {isRefreshFetching ? (
                 <LoadingSpinner
                   size={paneContentToolbarIconSize(isCompact)}
-                  color={theme.colors.foregroundMuted}
+                  color={theme.colors.foregroundExtraMuted}
                 />
               ) : (
                 <RotateCw
                   size={paneContentToolbarIconSize(isCompact)}
-                  color={theme.colors.foregroundMuted}
+                  color={theme.colors.foregroundExtraMuted}
                 />
               )}
             </View>
@@ -1450,6 +1428,7 @@ function TreeRowDispatcher({
   revealTargetName,
   onDownloadEntry,
   onAddToChat,
+  onOpenFileToSide,
   onNewEntry,
   onCollapseDirectory,
   onRenameEntry,
@@ -1471,6 +1450,7 @@ function TreeRowDispatcher({
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
   onAddToChat?: (path: string) => void;
+  onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
   onCollapseDirectory?: (path: string) => void;
   onRenameEntry?: (entry: ExplorerEntry) => void;
@@ -1501,6 +1481,7 @@ function TreeRowDispatcher({
       revealTargetName={revealTargetName}
       onDownloadEntry={onDownloadEntry}
       onAddToChat={onAddToChat}
+      onOpenFileToSide={onOpenFileToSide}
       onNewEntry={onNewEntry}
       onCollapseDirectory={onCollapseDirectory}
       onRenameEntry={onRenameEntry}
@@ -1669,7 +1650,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingRight: theme.spacing[1],
     backgroundColor: theme.colors.surfaceSidebar,
   },
   sortTrigger: {
@@ -1777,29 +1757,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   draftPlaceholder: {
     color: theme.colors.foregroundExtraMuted,
-  },
-  contextMetaBlock: {
-    paddingVertical: theme.spacing[1],
-  },
-  contextMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    minHeight: 32,
-    paddingHorizontal: theme.spacing[3],
-  },
-  contextMetaLabel: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundMuted,
-    flexShrink: 0,
-  },
-  contextMetaValue: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-    flex: 1,
-    minWidth: 0,
-    textAlign: "right",
   },
   previewHeaderText: {
     flex: 1,

@@ -36,6 +36,7 @@ import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
+import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
@@ -76,7 +77,7 @@ import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
 import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
-import { updateDesktopWindowControls } from "@/desktop/electron/window";
+import { updateDesktopWindowChrome } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
@@ -574,6 +575,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           </WindowChromeSafeArea>
         </WindowChromeRegion>
       ) : null}
+      <DesktopWindowControls />
       <FloatingPanelPortalHost />
       {isCompactLayout ? sidebarChrome : null}
       <DownloadToast />
@@ -665,18 +667,16 @@ function DesktopWindowControlsSync() {
   const { isLoading } = useAppSettings();
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
-  const foreground = theme.colors.foreground;
 
   useEffect(() => {
     if (isLoading || isNative) return;
-    void updateDesktopWindowControls({
+    void updateDesktopWindowChrome({
       backgroundColor: surface0,
-      foregroundColor: foreground,
-      trafficLightOffsetY: -5,
+      trafficLightOffsetY: -4,
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [isLoading, surface0, foreground]);
+  }, [isLoading, surface0]);
 
   return null;
 }

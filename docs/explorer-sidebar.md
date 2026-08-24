@@ -1,0 +1,69 @@
+# Explorer sidebar and side pane
+
+The Explorer sidebar and the side pane share panel implementations, but they have different shell
+contracts.
+
+| Surface          | Purpose                      | Lifecycle                                  |
+| ---------------- | ---------------------------- | ------------------------------------------ |
+| Explorer sidebar | Files and Changes navigation | Cmd+E shows or hides the dedicated dock    |
+| Side pane        | Ordinary workspace content   | Created and closed like any workspace pane |
+
+## Panel host contract
+
+Every desktop panel registers its supported `PaneHost` values in
+`packages/app/src/panels/panel-registry.ts`. Launchers filter by host, tab moves reject unsupported
+destinations, and placement resolves only to a compatible pane.
+
+The Explorer host accepts `files` and `changes_tree`. Content panels use the `main` host; an
+ordinary side pane is a main-host pane. Keep panel implementations independent of either shell.
+`WorkspacePanelHost` owns mounting and retention, while each shell owns its tabs, focus, dragging,
+resizing, and shortcuts.
+
+## Explorer sidebar
+
+`packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection.
+On desktop, the shell is rendered outside the workspace split canvas so it divides the full
+workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
+never read or modify that width.
+
+The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
+that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
+literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
+
+The fixed tab rail has no add or close controls. Its context menu adds or removes Files and Changes.
+Explorer tabs can be reordered, but their host contract prevents moving them to workspace panes or
+creating split previews there. Selecting an Explorer tab does not change workspace focus.
+
+Cmd+E selects Changes for Git workspaces and Files otherwise. On compact and native non-split
+layouts, the same command uses the existing Explorer overlay.
+
+## Side pane
+
+`packages/app/src/workspace-tabs/open-beside.ts` owns content opened beside the user's work. The
+layout store remembers one ordinary pane per workspace. The first side open creates a full-height
+right split around the workspace root; later side opens reuse it.
+
+Closing the pane or moving away its final tab removes it normally and clears the remembered id. A
+later side open creates a new pane. There is no hidden side-pane lifecycle.
+
+Placement intent still controls existing tabs:
+
+| Mode      | New target                  | Existing target                   |
+| --------- | --------------------------- | --------------------------------- |
+| `pane`    | opens in the requested pane | moves to the requested pane       |
+| `prefer`  | opens in the requested pane | stays where the user placed it    |
+| `focused` | opens in the focused pane   | focuses it where it already lives |
+| `ambient` | opens in a compatible pane  | focuses it where it already lives |
+
+Explicit **Open to Side** uses `pane`. Implicit opens use `prefer`, so a preference affects only a
+new target and never yanks an existing tab out of a user-selected pane.
+
+## Routing preferences
+
+Desktop **Settings → Layout → Open in side pane** has independent switches for Explorer Files,
+Explorer Changes, chat files, diff files, subagents, pull requests, and Changes links. All switches
+default off. Mobile ignores them.
+
+Panels request an implicit open through the narrow `openPreferredTarget(target, source)` pane
+contract. Entry points outside panels use `openPreferredWorkspaceTarget`. Do not branch on a
+specific shell inside a panel.

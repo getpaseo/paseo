@@ -10,7 +10,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import type { PanelRegistration } from "@/panels/panel-registry";
+import { definePanel } from "@/panels/panel-registry";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import {
   useWorkspaceTabLaunchCatalog,
@@ -116,18 +116,19 @@ function useNewTabDescriptor() {
 }
 
 const NewTabPanel = memo(function NewTabPanel(): ReactElement {
-  const { isSidePanel, serverId, tabId } = usePaneContext();
+  const { host, serverId, tabId } = usePaneContext();
   const { isInteractive, focusPane } = usePaneFocus();
   const containerRef = useRef<View | null>(null);
   const groups = useWorkspaceTabLaunchCatalog({
     serverId,
-    purpose: isSidePanel ? "supporting" : "primary",
-    host: isSidePanel ? "explorer" : "main",
+    purpose: host === "explorer" ? "supporting" : "primary",
+    host,
   });
   const itemsById = useMemo(
     () => new Map(groups.flatMap((group) => group.items).map((item) => [item.id, item])),
     [groups],
   );
+  const handlesWorkspaceShortcuts = isInteractive && host === "main";
 
   useEffect(() => {
     if (!isWeb || !isInteractive) return;
@@ -217,7 +218,7 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
       "workspace.tab.target.changes",
       "workspace.tab.target.files",
     ],
-    enabled: isInteractive,
+    enabled: handlesWorkspaceShortcuts,
     priority: 250,
     handle: handleKeyboardAction,
   });
@@ -250,13 +251,10 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
   );
 });
 
-export const newTabPanelRegistration: PanelRegistration<"new_tab"> = {
-  kind: "new_tab",
-  supportedHosts: ["main"],
-  resourceKey: () => "new_tab",
+export const newTabPanelRegistration = definePanel("new_tab", {
   component: NewTabPanel,
   useDescriptor: useNewTabDescriptor,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {

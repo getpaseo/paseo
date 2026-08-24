@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
@@ -65,7 +65,7 @@ export const ru: TranslationResources = {
       agents: "Агенты",
       newAgent: "Новый агент",
       open: "Открыть {{name}}",
-      openInSidePanel: "Открыть {{name}} в боковой панели",
+      openInSidePane: "Открыть {{name}} в боковой панели",
       openInFocusedPane: "Открыть {{name}} в активной области",
       addProject: "Добавить проект",
       home: "Главная",
@@ -419,6 +419,7 @@ export const ru: TranslationResources = {
     },
     fileActions: {
       openFile: "Открыть файл",
+      openToSide: "Открыть сбоку",
       copyPath: "Копировать путь",
       copyRelativePath: "Копировать относительный путь",
       revealIn: "Показать в {{target}}",
@@ -612,7 +613,7 @@ export const ru: TranslationResources = {
         terminalProfilesMenu: "Профили терминала",
         editTerminalProfiles: "Изменить профили",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "Открыть боковую панель",
         close: "Закрыть боковую панель",
         toggle: "Переключить боковую панель",
@@ -1228,6 +1229,12 @@ export const ru: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Свернуть окно",
+      maximize: "Развернуть окно",
+      restore: "Восстановить окно",
+      close: "Закрыть окно",
+    },
     quitting: {
       title: "Завершение работы Paseo...",
       detail: "Остановка локального демона.",
@@ -1869,6 +1876,7 @@ export const ru: TranslationResources = {
     sections: {
       general: "Основные",
       appearance: "Оформление",
+      layout: en.settings.sections.layout,
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
@@ -1877,6 +1885,7 @@ export const ru: TranslationResources = {
       diagnostics: "Диагностика",
       about: "О приложении",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Редактор",
       vimKeybindings: "Сочетания клавиш Vim",
@@ -1967,11 +1976,6 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
-      },
-      sidePanelRouting: {
-        label: "Открывать вспомогательные вкладки в боковой панели",
-        description:
-          "Ссылки на файлы, пул-реквесты и ход настройки открываются рядом с вашей работой, а не в активной панели",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
@@ -2171,7 +2175,6 @@ export const ru: TranslationResources = {
         toggleBothSidebars: "Переключить обе боковые панели",
         toggleSettings: "Переключить настройки",
         toggleFocusMode: "Переключить режим фокусировки",
-        toggleExplorerPaneMaximization: "Развернуть или восстановить боковую панель",
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
         cycleAgentMode: "Переключить режим агента",

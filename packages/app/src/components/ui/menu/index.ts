@@ -22,6 +22,7 @@ export {
   MenuLabel,
   MenuSeparator,
   MenuTextField,
+  MENU_ITEM_HEIGHT,
   menuRowContentInset,
   type ActionStatus,
   type MenuItemProps,

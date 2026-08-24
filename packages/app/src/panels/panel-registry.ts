@@ -1,13 +1,14 @@
 import type { ComponentType } from "react";
+import { getPanelManifest, type PanelManifest } from "@/panels/panel-manifest";
+export type { PaneHost } from "@/panels/panel-manifest";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
 export interface PanelIconProps {
   size: number;
   color: string;
+  strokeWidth?: number;
 }
-
-export type PaneHost = "main" | "explorer";
 
 export interface PanelDescriptor {
   label: string;
@@ -26,19 +27,27 @@ export interface PanelDescriptorContext {
 
 export interface PanelRegistration<
   K extends WorkspaceTabTarget["kind"] = WorkspaceTabTarget["kind"],
-> {
-  kind: K;
-  supportedHosts: readonly PaneHost[];
+> extends PanelManifest<K> {
   component: ComponentType;
   useDescriptor(
     target: Extract<WorkspaceTabTarget, { kind: K }>,
     context: PanelDescriptorContext,
   ): PanelDescriptor;
-  resourceKey(target: Extract<WorkspaceTabTarget, { kind: K }>): string;
 }
 
-export function panelSupportsHost(kind: WorkspaceTabTarget["kind"], host: PaneHost): boolean {
-  return getPanelRegistration(kind)?.supportedHosts.includes(host) ?? false;
+type PanelImplementation<K extends WorkspaceTabTarget["kind"]> = Pick<
+  PanelRegistration<K>,
+  "component" | "useDescriptor"
+>;
+
+export function definePanel<K extends WorkspaceTabTarget["kind"]>(
+  kind: K,
+  implementation: PanelImplementation<K>,
+): PanelRegistration<K> {
+  return {
+    ...getPanelManifest(kind),
+    ...implementation,
+  };
 }
 
 const panelRegistry = new Map<WorkspaceTabTarget["kind"], PanelRegistration>();

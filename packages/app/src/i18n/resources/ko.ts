@@ -65,7 +65,7 @@ export const ko: TranslationResources = {
       agents: "에이전트",
       newAgent: "새 에이전트",
       open: "{{name}} 열기",
-      openInSidePanel: "사이드 패널에서 {{name}} 열기",
+      openInSidePane: "사이드 패널에서 {{name}} 열기",
       openInFocusedPane: "포커스된 창에서 {{name}} 열기",
       addProject: "프로젝트 추가",
       home: "홈",
@@ -417,6 +417,7 @@ export const ko: TranslationResources = {
     },
     fileActions: {
       openFile: "파일 열기",
+      openToSide: "옆에 열기",
       copyPath: "경로 복사",
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",
@@ -609,7 +610,7 @@ export const ko: TranslationResources = {
         terminalProfilesMenu: "터미널 프로필",
         editTerminalProfiles: "프로필 편집",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "사이드 패널 열기",
         close: "사이드 패널 닫기",
         toggle: "사이드 패널 토글",
@@ -1218,6 +1219,12 @@ export const ko: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "창 최소화",
+      maximize: "창 최대화",
+      restore: "창 복원",
+      close: "창 닫기",
+    },
     quitting: {
       title: "Paseo 종료 중...",
       detail: "로컬 데몬을 중지하는 중입니다.",
@@ -1848,6 +1855,7 @@ export const ko: TranslationResources = {
     sections: {
       general: "일반",
       appearance: "모양",
+      layout: en.settings.sections.layout,
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -1856,6 +1864,7 @@ export const ko: TranslationResources = {
       diagnostics: "진단",
       about: "정보",
     },
+    layout: en.settings.layout,
     editor: {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",
@@ -1945,11 +1954,6 @@ export const ko: TranslationResources = {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
-      },
-      sidePanelRouting: {
-        label: "보조 탭을 사이드 패널에서 열기",
-        description:
-          "파일 링크, 풀 리퀘스트, 설정 진행 상황이 포커스된 창이 아니라 작업 옆에서 열립니다",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
@@ -2144,7 +2148,6 @@ export const ko: TranslationResources = {
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
-        toggleExplorerPaneMaximization: "사이드 패널 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",

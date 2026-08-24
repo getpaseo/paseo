@@ -41,7 +41,7 @@ export interface WorkspaceCommandCenterLabels {
   moveTabDown: string;
   closePane: string;
   toggleFocusMode: string;
-  toggleSidePanel: string;
+  toggleExplorerSidebar: string;
 }
 
 export interface WorkspaceCommandCenterIcons {
@@ -62,7 +62,7 @@ export interface WorkspaceCommandCenterIcons {
   focusPane?: CommandCenterIcon;
   moveTab?: CommandCenterIcon;
   focusMode?: CommandCenterIcon;
-  sidePanel?: CommandCenterIcon;
+  explorerSidebar?: CommandCenterIcon;
   git?(action: GitAction): CommandCenterIcon | undefined;
 }
 
@@ -77,7 +77,7 @@ export interface WorkspaceCommandCenterShortcuts {
   closeCurrentTab?: ShortcutKey[][];
   closePane?: ShortcutKey[][];
   toggleFocusMode?: ShortcutKey[][];
-  toggleSidePanel?: ShortcutKey[][];
+  toggleExplorerSidebar?: ShortcutKey[][];
 }
 
 export interface WorkspaceCommandCenterSource {
@@ -195,7 +195,9 @@ function buildPanelContributions(
       }),
     );
     if (!source.capabilities.canSplitPanes) continue;
-    for (const [placementIndex, placement] of (["side-panel", "focused-pane"] as const).entries()) {
+    if (panel.target !== "pull-request") continue;
+    const placements = ["side-pane", "focused-pane"] as const;
+    for (const [placementIndex, placement] of placements.entries()) {
       contributions.push(
         buildQueryAction(source, {
           id: `tab:open:${panel.target}:${placement}`,
@@ -510,12 +512,12 @@ export function buildWorkspaceCommandCenterContributions(
     ...buildActiveTabContributions(source),
     ...(source.capabilities.canSplitPanes ? buildPaneContributions(source) : []),
     buildQueryAction(source, {
-      id: "side-panel:toggle",
+      id: "explorer-sidebar:toggle",
       rank: 70,
-      title: source.labels.toggleSidePanel,
-      keywords: ["side", "panel", "toggle", "show", "hide"],
-      icon: source.icons.sidePanel,
-      shortcutKeys: source.shortcuts.toggleSidePanel,
+      title: source.labels.toggleExplorerSidebar,
+      keywords: ["explorer", "sidebar", "toggle", "show", "hide"],
+      icon: source.icons.explorerSidebar,
+      shortcutKeys: source.shortcuts.toggleExplorerSidebar,
       action: { id: "sidebar.toggle.right", scope: "workspace" },
     }),
   ];

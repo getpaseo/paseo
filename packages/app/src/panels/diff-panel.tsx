@@ -14,12 +14,13 @@ import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { defaultChangesState, changesStateSchema } from "@/panels/changes/state";
 import { usePanelState } from "@/panels/use-panel-state";
+import { RenderProfile } from "@/utils/render-profiler";
 
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
@@ -77,7 +78,7 @@ function PanelState({
 
 function WorkingDiffPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, tabId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openPreferredTarget } = usePaneContext();
   const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isActive = useRetainedPanelActive();
@@ -85,8 +86,8 @@ function WorkingDiffPanel() {
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
 
   const handleOpenFile = useCallback(
-    (path: string) => openFileInWorkspace({ location: { path }, disposition: "side" }),
-    [openFileInWorkspace],
+    (path: string) => openPreferredTarget({ kind: "file", path }, "diffFiles"),
+    [openPreferredTarget],
   );
 
   if (!cwd) {
@@ -95,28 +96,30 @@ function WorkingDiffPanel() {
 
   return (
     <View style={styles.container} testID="working-diff-panel">
-      <ChangesSurface
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={cwd}
-        enabled={isActive}
-        host="panel"
-        presentation="diff"
-        modeScope={tabId}
-        focusPath={target.focusPath}
-        focusRequestId={target.focusRequestId}
-        onOpenFile={handleOpenFile}
-        onAddToChat={canAddToChat ? addFile : undefined}
-        state={changesState}
-        onStateChange={setChangesState}
-      />
+      <RenderProfile id={`WorkingDiffPanel:${tabId}`}>
+        <ChangesSurface
+          serverId={serverId}
+          workspaceId={workspaceId}
+          cwd={cwd}
+          enabled={isActive}
+          presentation="diff"
+          modeScope={tabId}
+          focusPath={target.focusPath}
+          focusRequestId={target.focusRequestId}
+          onOpenFile={handleOpenFile}
+          onAddToChat={canAddToChat ? addFile : undefined}
+          state={changesState}
+          onStateChange={setChangesState}
+        />
+      </RenderProfile>
     </View>
   );
 }
 
 function ChangesTreePanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, tabId, target, openPreviewInMain } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openPreferredTarget, openTargetToSide } =
+    usePaneContext();
   const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isActive = useRetainedPanelActive();
@@ -125,12 +128,20 @@ function ChangesTreePanel() {
 
   const handleSelectDiffFile = useCallback(
     (path: string) =>
-      openPreviewInMain({ kind: "working_diff", focusPath: path, focusRequestId: Date.now() }),
-    [openPreviewInMain],
+      openPreferredTarget(
+        { kind: "working_diff", focusPath: path, focusRequestId: Date.now() },
+        "explorerChanges",
+      ),
+    [openPreferredTarget],
   );
   const handleOpenFile = useCallback(
-    (path: string) => openPreviewInMain({ kind: "file", path }),
-    [openPreviewInMain],
+    (path: string) => openPreferredTarget({ kind: "file", path }, "explorerChanges"),
+    [openPreferredTarget],
+  );
+  const handleOpenDiffToSide = useCallback(
+    (path: string) =>
+      openTargetToSide?.({ kind: "working_diff", focusPath: path, focusRequestId: Date.now() }),
+    [openTargetToSide],
   );
 
   if (!cwd) {
@@ -139,20 +150,22 @@ function ChangesTreePanel() {
 
   return (
     <View style={styles.container} testID="changes-tree-panel">
-      <ChangesSurface
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={cwd}
-        enabled={isActive}
-        host="explorer"
-        presentation="tree"
-        modeScope={tabId}
-        onSelectDiffFile={handleSelectDiffFile}
-        onOpenFile={handleOpenFile}
-        onAddToChat={canAddToChat ? addFile : undefined}
-        state={changesState}
-        onStateChange={setChangesState}
-      />
+      <RenderProfile id={`ChangesTreePanel:${tabId}`}>
+        <ChangesSurface
+          serverId={serverId}
+          workspaceId={workspaceId}
+          cwd={cwd}
+          enabled={isActive}
+          presentation="tree"
+          modeScope={tabId}
+          onSelectDiffFile={handleSelectDiffFile}
+          onOpenFile={handleOpenFile}
+          onOpenToSide={openTargetToSide ? handleOpenDiffToSide : undefined}
+          onAddToChat={canAddToChat ? addFile : undefined}
+          state={changesState}
+          onStateChange={setChangesState}
+        />
+      </RenderProfile>
     </View>
   );
 }
@@ -244,29 +257,20 @@ function useCommitDiffPanelDescriptor(
   };
 }
 
-export const workingDiffPanelRegistration: PanelRegistration<"working_diff"> = {
-  kind: "working_diff",
-  supportedHosts: ["main"],
+export const workingDiffPanelRegistration = definePanel("working_diff", {
   component: WorkingDiffPanel,
   useDescriptor: useWorkingDiffPanelDescriptor,
-  resourceKey: () => "working_diff",
-};
+});
 
-export const changesTreePanelRegistration: PanelRegistration<"changes_tree"> = {
-  kind: "changes_tree",
-  supportedHosts: ["explorer"],
+export const changesTreePanelRegistration = definePanel("changes_tree", {
   component: ChangesTreePanel,
   useDescriptor: useWorkingDiffPanelDescriptor,
-  resourceKey: () => "changes_tree",
-};
+});
 
-export const commitDiffPanelRegistration: PanelRegistration<"commit_diff"> = {
-  kind: "commit_diff",
-  supportedHosts: ["main"],
+export const commitDiffPanelRegistration = definePanel("commit_diff", {
   component: CommitDiffPanel,
   useDescriptor: useCommitDiffPanelDescriptor,
-  resourceKey: (target) => target.sha,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {

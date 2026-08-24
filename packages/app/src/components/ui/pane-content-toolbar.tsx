@@ -13,6 +13,12 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import {
+  iconButtonChromeGlyphSize,
+  iconButtonChromeStyle,
+  smallIconButtonChromeFrameSize,
+} from "@/components/ui/icon-button-chrome";
+import { WORKSPACE_PANE_TRAILING_GLYPH_RAIL } from "@/components/tree-primitives";
 
 /** Shared chrome at the boundary between a workspace pane's tabs and content. */
 export function PaneContentToolbar({
@@ -82,13 +88,14 @@ export function ToolbarButton({
   ...props
 }: ToolbarButtonProps) {
   const buttonStyle = useMemo(
-    () => (state: { hovered?: boolean; pressed: boolean; open?: boolean }) => [
-      compact ? styles.buttonCompact : styles.button,
-      style,
-      (selected || Boolean(state.hovered) || state.pressed || Boolean(state.open)) &&
-        styles.buttonActive,
-      disabled && styles.buttonDisabled,
-    ],
+    () => (state: { hovered?: boolean; pressed: boolean; open?: boolean }) =>
+      iconButtonChromeStyle({
+        size: "small",
+        compact,
+        state: { ...state, active: selected },
+        disabled: Boolean(disabled),
+        style,
+      }),
     [compact, disabled, selected, style],
   );
   const accessibilityState = useMemo(
@@ -145,7 +152,15 @@ export function ToolbarButton({
 }
 
 export function paneContentToolbarIconSize(isCompact: boolean): number {
-  return isCompact ? 18 : 14;
+  return iconButtonChromeGlyphSize("small", isCompact);
+}
+
+/** Keeps a toolbar glyph on the same trailing rail as tree-row glyphs. */
+export function paneContentToolbarTrailingPadding(isCompact: boolean): number {
+  const buttonSize = smallIconButtonChromeFrameSize(isCompact);
+  return (
+    WORKSPACE_PANE_TRAILING_GLYPH_RAIL - (buttonSize - paneContentToolbarIconSize(isCompact)) / 2
+  );
 }
 
 /** @deprecated Use `ToolbarButton`; retained while remaining pane toolbars migrate. */
@@ -155,8 +170,11 @@ export function paneContentToolbarIconButtonStyle(
   isCompact = false,
 ) {
   return [
-    isCompact ? styles.buttonCompact : styles.button,
-    (selected || Boolean(hovered) || pressed) && styles.buttonActive,
+    iconButtonChromeStyle({
+      size: "small",
+      compact: isCompact,
+      state: { hovered, pressed, active: selected },
+    }),
   ];
 }
 
@@ -172,32 +190,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 1,
-  },
-  button: {
-    width: 20,
-    height: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-    flexShrink: 0,
-    outlineWidth: 0,
-    outlineColor: "transparent",
-  },
-  buttonCompact: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-    flexShrink: 0,
-    outlineWidth: 0,
-    outlineColor: "transparent",
-  },
-  buttonActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  buttonDisabled: {
-    opacity: theme.opacity[50],
   },
   tooltipRow: {
     flexDirection: "row",

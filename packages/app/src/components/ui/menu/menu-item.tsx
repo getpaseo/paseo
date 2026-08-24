@@ -42,7 +42,7 @@ const successMapping = (theme: Theme) => ({ color: theme.colors.palette.green[50
  * `lineHeight` to the platform and the content outgrows `minHeight`, which then does nothing and
  * the rows drift taller again. On compact, `minHeight` leads instead and the label centres in it.
  */
-const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
+export const MENU_ITEM_HEIGHT = { xs: 40, md: 28 } as const;
 const MENU_ITEM_LINE_HEIGHT = 18;
 
 /**
