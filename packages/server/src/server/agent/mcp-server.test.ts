@@ -5425,6 +5425,109 @@ describe("agent snapshot MCP serialization", () => {
     expect(new Set(agentIds)).toEqual(new Set(["in-cwd", "in-child-cwd", "stored-in-cwd"]));
   });
 
+  // An archived agent is resumed back into memory whenever something reads its
+  // history, so its id can appear in listAgents while its stored record is
+  // archived. The stored branch drops such a record as already-live, so archive
+  // filtering has to run on the combined list or the agent comes back as active.
+  it("excludes an archived agent that is also live from list_agents", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const now = new Date().toISOString();
+    const archivedRecord = createStoredRecord({
+      id: "resumed-archived",
+      cwd: "/tmp/workspace",
+      updatedAt: now,
+      lastActivityAt: now,
+      archivedAt: now,
+    });
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({ id: "caller-agent", cwd: "/tmp/workspace" }),
+    );
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({ id: "resumed-archived", cwd: "/tmp/workspace" }),
+      createManagedAgent({ id: "in-cwd", cwd: "/tmp/workspace" }),
+    ]);
+    spies.agentStorage.list.mockResolvedValue([archivedRecord]);
+    spies.agentStorage.get.mockImplementation(async (id: string) =>
+      id === "resumed-archived" ? archivedRecord : null,
+    );
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      callerAgentId: "caller-agent",
+    });
+    const tool = registeredTool(server, "list_agents");
+    const response = await tool.handler({});
+
+    expect(agentsOf(response).map((agent) => agent.id)).toEqual(["in-cwd"]);
+  });
+
+  it("reports the archive timestamp of a live archived agent when archives are requested", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const now = new Date().toISOString();
+    const archivedRecord = createStoredRecord({
+      id: "resumed-archived",
+      cwd: "/tmp/workspace",
+      updatedAt: now,
+      lastActivityAt: now,
+      archivedAt: now,
+    });
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({ id: "caller-agent", cwd: "/tmp/workspace" }),
+    );
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({ id: "resumed-archived", cwd: "/tmp/workspace" }),
+    ]);
+    spies.agentStorage.list.mockResolvedValue([archivedRecord]);
+    spies.agentStorage.get.mockImplementation(async (id: string) =>
+      id === "resumed-archived" ? archivedRecord : null,
+    );
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      callerAgentId: "caller-agent",
+    });
+    const tool = registeredTool(server, "list_agents");
+    const response = await tool.handler({ includeArchived: true });
+
+    const agents = agentsOf(response);
+    expect(agents.map((agent) => agent.id)).toEqual(["resumed-archived"]);
+    expect(agents[0]?.archivedAt).toBe(now);
+  });
+
+  // A structural guard, not a mutation test: it passes on the unfixed code too,
+  // and it would not catch a managed copy of the timestamp either, since the
+  // fixture seeds no stale managed state. What it pins is narrower and still
+  // worth pinning: the reported value follows the stored record, so clearing
+  // that record -- which is all unarchiveSnapshot does -- is immediately
+  // visible over MCP.
+  it("reports a live agent as unarchived as soon as its stored record is cleared", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({ id: "resumed-archived", cwd: "/tmp/workspace" }),
+    );
+    spies.agentStorage.get.mockResolvedValue(
+      createStoredRecord({ id: "resumed-archived", cwd: "/tmp/workspace", archivedAt: null }),
+    );
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_status");
+    const response = await tool.handler({ agentId: "resumed-archived" });
+
+    const snapshot = z.record(z.string(), z.unknown()).parse(response.structuredContent.snapshot);
+    expect(snapshot.archivedAt ?? null).toBeNull();
+  });
+
   it("allows explicit cwd, status, archive, time, and limit filters for list_agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = Date.now();
