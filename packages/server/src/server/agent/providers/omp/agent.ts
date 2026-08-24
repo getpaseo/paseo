@@ -108,6 +108,11 @@ import {
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
+import {
+  buildOmpMcpHostTools,
+  mergeOmpToolCatalogs,
+  type OmpMcpToolCatalog,
+} from "./mcp-tool-bridge.js";
 
 const OMP_PROVIDER = "omp";
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -120,7 +125,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsSessionPersistence: true,
   supportsSessionListing: true,
   supportsDynamicModes: true,
-  supportsMcpServers: false,
+  supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
   supportsRewindConversation: true,
@@ -186,6 +191,7 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   paseoTools?: PaseoToolCatalog;
+  mcpToolBridge?: OmpMcpToolCatalog | null;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -462,7 +468,7 @@ function readNativeMessageId(
 function withOmpCapabilities(): AgentCapabilityFlags {
   return {
     ...OMP_CORE_CAPABILITIES,
-    supportsMcpServers: false,
+    supportsMcpServers: true,
     supportsNativePaseoTools: true,
   };
 }
@@ -882,6 +888,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.mcpToolBridge = options.mcpToolBridge ?? null;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -930,6 +937,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
   private readonly paseoTools?: PaseoToolCatalog;
+  private readonly mcpToolBridge: OmpMcpToolCatalog | null;
 
   get id(): string | null {
     return this.state.sessionId;
@@ -1162,6 +1170,9 @@ export class OmpAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
+      await this.mcpToolBridge?.close().catch((error: unknown) => {
+        this.logger.debug({ err: error }, "Failed to close OMP MCP tool bridge clients");
+      });
       this.clearOmpSessionState();
     }
   }
@@ -2231,6 +2242,7 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
+    const mcpToolBridge = await buildOmpMcpHostTools(config);
     const runtimeSession = await this.runtime.startSession({
       cwd: config.cwd,
       protocolMode: "rpc-ui",
@@ -2243,7 +2255,14 @@ export class OmpAgentClient implements AgentClient {
       env: launchContext?.env,
     });
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      // MCP-bridged tools must ride the same catalog used both to register
+      // host tools with OMP (below) and to dispatch `host_tool_call` events
+      // back (see the `paseoTools` field OmpAgentSession forwards to
+      // `handleOmpHostToolRuntimeEvent`). Registering the merged catalog but
+      // dispatching only the native one would advertise bridged tools the
+      // model could call yet never actually execute.
+      const paseoTools = mergeOmpToolCatalogs(launchContext?.paseoTools, mcpToolBridge ?? undefined);
+      await this.configureNativePaseoTools(runtimeSession, paseoTools);
       return new OmpAgentSession({
         runtimeSession,
         config,
@@ -2254,9 +2273,11 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
-        paseoTools: launchContext?.paseoTools,
+        paseoTools,
+        mcpToolBridge,
       });
     } catch (error) {
+      await mcpToolBridge?.close().catch(() => undefined);
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }

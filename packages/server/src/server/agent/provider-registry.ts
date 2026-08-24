@@ -153,6 +153,12 @@ const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
   claude: { optionsSchema: ClaudeProviderOptionsSchema, supportsExactMcpPreapproval: true },
   codex: { optionsSchema: CodexProviderOptionsSchema, supportsExactMcpPreapproval: true },
   opencode: { optionsSchema: OpenCodeProviderOptionsSchema, supportsExactMcpPreapproval: true },
+  // The Hub injects the `hub` MCP server with an exact tool grant (e.g.
+  // `reply`/`finish_execution`) and OMP runs its host-tool bridge in
+  // full-access mode with no per-tool approval prompt, so there is no
+  // narrower policy to enforce here the way Claude/Codex/OpenCode do via
+  // `applyToolPolicy`. Preapproval is a no-op gate for this provider today.
+  omp: { optionsSchema: EmptyProviderOptionsSchema, supportsExactMcpPreapproval: true },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
