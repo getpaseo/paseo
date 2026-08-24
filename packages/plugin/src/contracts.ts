@@ -102,6 +102,26 @@ export interface PluginSidebarContribution {
   surface: string;
 }
 
+/**
+ * Declarative opt-in to a core-owned native Project sidebar projection.
+ *
+ * The plugin declares only a closed label codec. Paseo keeps ownership of native workspace
+ * identity, history, status, ordering, routing, and the fail-open physical fallback.
+ */
+export interface PluginSidebarWorkspaceGroupingContribution {
+  id: string;
+  logicalWorkspaceRefLabelPrefix: string;
+  defaultPlacementLabel: string;
+  /** Host-local native workspaces kept live only to retain their existing agent history. */
+  retainedHistoryBindings?: readonly PluginSidebarWorkspaceRetainedHistoryBinding[];
+}
+
+export interface PluginSidebarWorkspaceRetainedHistoryBinding {
+  workspaceId: string;
+  physicalWorkspaceRef: string;
+  logicalWorkspaceRef: string;
+}
+
 export interface PluginThemeColors {
   background: string;
   foreground: string;
@@ -190,6 +210,7 @@ export interface PluginContext {
   ): void;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
   addSidebarItem(contribution: PluginSidebarContribution): void;
+  addSidebarWorkspaceGrouping(contribution: PluginSidebarWorkspaceGroupingContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;

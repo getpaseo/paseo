@@ -11,6 +11,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react-native";
 import {
+  isReservedWorkspaceLabel,
   normalizeWorkspaceLabelName,
   WORKSPACE_LABEL_COLORS,
   type WorkspaceLabelColor,
@@ -225,7 +226,7 @@ function WorkspaceLabelCreatePage({
 
   const submit = useCallback(() => {
     const trimmed = normalizeWorkspaceLabelName(name);
-    if (!trimmed || pending) return;
+    if (!trimmed || isReservedWorkspaceLabel(trimmed) || pending) return;
     setPending(true);
     setError(null);
     workspaceLabels
@@ -260,7 +261,7 @@ function WorkspaceLabelCreatePage({
       </View>
       <MenuSeparator />
       <MenuItem
-        disabled={offline || !normalizeWorkspaceLabelName(name)}
+        disabled={offline || !normalizeWorkspaceLabelName(name) || isReservedWorkspaceLabel(name)}
         status={pending ? "pending" : "idle"}
         pendingLabel={t("workspaceLabels.creating")}
         closeOnSelect={false}

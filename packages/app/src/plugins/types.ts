@@ -3,6 +3,7 @@ import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
+  PluginSidebarWorkspaceGroupingContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,
   PluginWorkspacePanelContribution,
@@ -13,6 +14,7 @@ export interface EvaluatedPlugin {
   cleanup: () => void;
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
+  sidebarWorkspaceGroupings?: PluginSidebarWorkspaceGroupingContribution[];
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
@@ -29,6 +31,7 @@ export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
+  PluginSidebarWorkspaceGroupingContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,
   PluginWorkspacePanelContribution,

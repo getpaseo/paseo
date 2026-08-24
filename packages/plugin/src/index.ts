@@ -22,6 +22,8 @@ export type {
   PluginHostProps,
   PluginTheme,
   PluginSidebarContribution,
+  PluginSidebarWorkspaceGroupingContribution,
+  PluginSidebarWorkspaceRetainedHistoryBinding,
   PluginSurfaceContribution,
   PluginSurfaceProps,
   PluginThemeColors,

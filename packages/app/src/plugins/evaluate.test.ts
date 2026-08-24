@@ -290,4 +290,103 @@ describe("evaluatePluginClientBundle", () => {
       ),
     ).toThrow("setup exploded");
   });
+
+  it("collects one declarative native workspace grouping seam", () => {
+    const plugin = evaluatePluginClientBundle(
+      "paseo-layout",
+      bundle(`
+        plugin.addSidebarWorkspaceGrouping({
+          id: "logical-workspaces",
+          logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+          defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+          retainedHistoryBindings: [{
+            workspaceId: " wks_retained_history ",
+            physicalWorkspaceRef: "project-a-catalog-host-b",
+            logicalWorkspaceRef: "project-a-catalog",
+          }],
+        });
+      `),
+    );
+
+    expect(plugin.sidebarWorkspaceGroupings).toEqual([
+      {
+        id: "logical-workspaces",
+        logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+        defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+        retainedHistoryBindings: [
+          {
+            workspaceId: "wks_retained_history",
+            physicalWorkspaceRef: "project-a-catalog-host-b",
+            logicalWorkspaceRef: "project-a-catalog",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("rejects duplicate or non-v1 workspace grouping codecs", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "paseo-layout",
+        bundle(`
+          const grouping = {
+            id: "logical-workspaces",
+            logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+            defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+          };
+          plugin.addSidebarWorkspaceGrouping(grouping);
+          plugin.addSidebarWorkspaceGrouping(grouping);
+        `),
+      ),
+    ).toThrow("Duplicate sidebar workspace grouping: logical-workspaces");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "paseo-layout",
+        bundle(`
+          plugin.addSidebarWorkspaceGrouping({
+            id: "logical-workspaces",
+            logicalWorkspaceRefLabelPrefix: "custom:logical=",
+            defaultPlacementLabel: "custom:default",
+          });
+        `),
+      ),
+    ).toThrow("must use the reserved v1 workspace label codec");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "paseo-layout",
+        bundle(`
+          plugin.addSidebarWorkspaceGrouping({
+            id: "logical-workspaces",
+            logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+            defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+            retainedHistoryBindings: [{
+              workspaceId: "",
+              physicalWorkspaceRef: "project-a-catalog-host-b",
+              logicalWorkspaceRef: "project-a-catalog",
+            }],
+          });
+        `),
+      ),
+    ).toThrow("invalid retained-history workspace id");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "paseo-layout",
+        bundle(`
+          plugin.addSidebarWorkspaceGrouping({
+            id: "logical-workspaces",
+            logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+            defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+            retainedHistoryBindings: [{
+              workspaceId: "old-workspace",
+              physicalWorkspaceRef: "project-a-catalog-host-b",
+              logicalWorkspaceRef: "project-a/parts",
+            }],
+          });
+        `),
+      ),
+    ).toThrow("invalid retained-history logical workspace ref");
+  });
 });

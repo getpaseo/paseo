@@ -1,5 +1,6 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
+  isReservedWorkspaceLabel,
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
 } from "@getpaseo/protocol/workspace-labels";
@@ -74,15 +75,26 @@ export function projectWorkspaceLabels(
   hostsById: Readonly<Record<string, WorkspaceLabelHostSnapshot>>,
   targetServerId?: string,
 ): WorkspaceLabelProjection {
-  const hosts = Object.values(hostsById);
+  const hosts = Object.values(hostsById).map((host) => ({
+    serverId: host.serverId,
+    labels: filterUserWorkspaceLabelDefinitions(host.labels),
+    status: host.status,
+    error: host.error,
+  }));
   const catalogs = hosts
     .filter((host) => host.status === "online")
     .map((host) => ({ serverId: host.serverId, labels: host.labels }));
   return {
     hosts,
     labels: mergeWorkspaceLabelCatalogs({ catalogs, targetServerId }),
-    targetHost: targetServerId ? hostsById[targetServerId] : undefined,
+    targetHost: targetServerId ? hosts.find((host) => host.serverId === targetServerId) : undefined,
   };
+}
+
+export function filterUserWorkspaceLabelDefinitions(
+  labels: readonly WorkspaceLabelDefinition[],
+): WorkspaceLabelDefinition[] {
+  return labels.filter((label) => !isReservedWorkspaceLabel(label.name));
 }
 
 /** Reactive cross-host projection. Consumers do not reconstruct replica eligibility or precedence. */
@@ -122,12 +134,14 @@ export function selectWorkspaceLabelDefinitions(input: {
 }): readonly WorkspaceLabelDefinition[] {
   const { hostsById, serverId, names } = input;
   if (!names || names.length === 0) return EMPTY_LABEL_DEFINITIONS;
-  const catalog = hostsById[serverId]?.labels ?? [];
+  const catalog = filterUserWorkspaceLabelDefinitions(hostsById[serverId]?.labels ?? []);
   const byKey = new Map(catalog.map((label) => [workspaceLabelKey(label.name), label]));
-  return names.flatMap((name) => {
-    const definition = byKey.get(workspaceLabelKey(name));
-    return definition ? [definition] : [];
-  });
+  return names
+    .filter((name) => !isReservedWorkspaceLabel(name))
+    .flatMap((name) => {
+      const definition = byKey.get(workspaceLabelKey(name));
+      return definition ? [definition] : [];
+    });
 }
 
 const EMPTY_LABEL_DEFINITIONS: readonly WorkspaceLabelDefinition[] = [];

@@ -2,14 +2,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import { z } from "zod";
-import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+import { isReservedWorkspaceLabel, workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type SidebarGroupMode = "project" | "status";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 6;
+const SIDEBAR_VIEW_STORE_VERSION = 7;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -31,7 +31,7 @@ export interface SidebarLabelFilter {
 }
 
 export function hasActiveSidebarLabelFilter(filter: SidebarLabelFilter): boolean {
-  return filter.labels.length > 0;
+  return filter.labels.some((label) => !isReservedWorkspaceLabel(label));
 }
 
 /**
@@ -155,7 +155,9 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
  * state that was written by an older build of this page rather than by the current one.
  */
 function normalizeSidebarLabelFilter(filter: SidebarLabelFilter): SidebarLabelFilter {
-  const labels = new Set(filter.labels.map(workspaceLabelKey));
+  const labels = new Set(
+    filter.labels.filter((label) => !isReservedWorkspaceLabel(label)).map(workspaceLabelKey),
+  );
   return { labels: [...labels] };
 }
 
@@ -191,6 +193,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       clearProjectFilters: () => set({ projectFilters: [] }),
       toggleLabelFilter: (name) =>
         set((state) => {
+          if (isReservedWorkspaceLabel(name)) return state;
           const key = workspaceLabelKey(name);
           const labels = state.labelFilter.labels.includes(key)
             ? state.labelFilter.labels.filter((label) => label !== key)
@@ -200,9 +203,13 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       clearLabelFilter: () => set({ labelFilter: emptyLabelFilter() }),
       reconcileLabelFilter: (labels) =>
         set((state) => {
-          const available = new Set(labels.map(workspaceLabelKey));
+          const available = new Set(
+            labels.filter((label) => !isReservedWorkspaceLabel(label)).map(workspaceLabelKey),
+          );
           const next = state.labelFilter.labels.filter(
-            (label) => label === SIDEBAR_UNLABELLED_LABEL_KEY || available.has(label),
+            (label) =>
+              !isReservedWorkspaceLabel(label) &&
+              (label === SIDEBAR_UNLABELLED_LABEL_KEY || available.has(label)),
           );
           if (next.length === state.labelFilter.labels.length) return state;
           return { labelFilter: { labels: next } };

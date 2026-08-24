@@ -78,6 +78,7 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
   server: new Set([
     "addSurface",
     "addSidebarItem",
+    "addSidebarWorkspaceGrouping",
     "addWorkspacePanel",
     "addCommandCenterItem",
     "addAttachmentSource",

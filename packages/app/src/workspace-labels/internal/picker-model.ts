@@ -1,5 +1,5 @@
 import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
-import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+import { isReservedWorkspaceLabel, workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 
 export interface WorkspaceLabelPickerRow extends WorkspaceLabelDefinition {
   assigned: boolean;
@@ -17,9 +17,11 @@ export function buildWorkspaceLabelPickerRows(input: {
   assigned: readonly string[];
 }): WorkspaceLabelPickerRow[] {
   const assigned = new Set(input.assigned.map(workspaceLabelKey));
-  return input.labels.map((label) => ({
-    name: label.name,
-    color: label.color,
-    assigned: assigned.has(workspaceLabelKey(label.name)),
-  }));
+  return input.labels
+    .filter((label) => !isReservedWorkspaceLabel(label.name))
+    .map((label) => ({
+      name: label.name,
+      color: label.color,
+      assigned: assigned.has(workspaceLabelKey(label.name)),
+    }));
 }

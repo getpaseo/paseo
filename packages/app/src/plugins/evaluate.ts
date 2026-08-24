@@ -6,11 +6,17 @@ import * as ReactNative from "react-native";
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
 import {
+  DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+  LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+  encodeLogicalWorkspaceRefLabel,
+} from "@getpaseo/protocol/workspace-labels";
+import {
   defineAttachmentSource,
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
   type PluginSidebarContribution,
+  type PluginSidebarWorkspaceGroupingContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
   type PluginWorkspacePanelContribution,
@@ -33,10 +39,21 @@ function requireId(value: string, label: string): string {
   return id;
 }
 
+function requireWorkspaceRef(value: unknown, label: string): string {
+  const ref = typeof value === "string" ? value.trim() : "";
+  try {
+    encodeLogicalWorkspaceRefLabel(ref);
+  } catch {
+    throw new Error(`Sidebar workspace grouping has invalid retained-history ${label}`);
+  }
+  return ref;
+}
+
 export function evaluatePluginClientBundle(id: string, bundle: string): EvaluatedPlugin {
   const collector: PluginRegistrationCollector = {
     surfaces: [],
     sidebarItems: [],
+    sidebarWorkspaceGroupings: [],
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
@@ -44,6 +61,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
+  const sidebarWorkspaceGroupingIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
@@ -70,6 +88,62 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         title: contribution.title.trim(),
         icon: contribution.icon.trim(),
         surface: requireId(contribution.surface, "sidebar surface id"),
+      });
+    },
+    addSidebarWorkspaceGrouping(contribution: PluginSidebarWorkspaceGroupingContribution) {
+      const normalizedId = requireId(contribution.id, "sidebar workspace grouping id");
+      if (sidebarWorkspaceGroupingIds.has(normalizedId)) {
+        throw new Error(`Duplicate sidebar workspace grouping: ${normalizedId}`);
+      }
+      const logicalWorkspaceRefLabelPrefix = contribution.logicalWorkspaceRefLabelPrefix.trim();
+      const defaultPlacementLabel = contribution.defaultPlacementLabel.trim();
+      if (
+        logicalWorkspaceRefLabelPrefix !== LOGICAL_WORKSPACE_REF_LABEL_PREFIX ||
+        defaultPlacementLabel !== DEFAULT_WORKSPACE_PLACEMENT_LABEL
+      ) {
+        throw new Error(
+          `Sidebar workspace grouping ${normalizedId} must use the reserved v1 workspace label codec`,
+        );
+      }
+      const retainedHistoryBindings = contribution.retainedHistoryBindings ?? [];
+      if (!Array.isArray(retainedHistoryBindings)) {
+        throw new Error(
+          `Sidebar workspace grouping ${normalizedId} has invalid retained-history bindings`,
+        );
+      }
+      const retainedWorkspaceIds = new Set<string>();
+      const normalizedRetainedHistoryBindings = retainedHistoryBindings.map((binding) => {
+        const workspaceId =
+          typeof binding?.workspaceId === "string" ? binding.workspaceId.trim() : "";
+        if (!workspaceId) {
+          throw new Error(
+            `Sidebar workspace grouping ${normalizedId} has invalid retained-history workspace id`,
+          );
+        }
+        if (retainedWorkspaceIds.has(workspaceId)) {
+          throw new Error(
+            `Sidebar workspace grouping ${normalizedId} has duplicate retained-history workspace id: ${workspaceId}`,
+          );
+        }
+        retainedWorkspaceIds.add(workspaceId);
+        return {
+          workspaceId,
+          physicalWorkspaceRef: requireWorkspaceRef(
+            binding.physicalWorkspaceRef,
+            "physical workspace ref",
+          ),
+          logicalWorkspaceRef: requireWorkspaceRef(
+            binding.logicalWorkspaceRef,
+            "logical workspace ref",
+          ),
+        };
+      });
+      sidebarWorkspaceGroupingIds.add(normalizedId);
+      collector.sidebarWorkspaceGroupings.push({
+        id: normalizedId,
+        logicalWorkspaceRefLabelPrefix,
+        defaultPlacementLabel,
+        retainedHistoryBindings: normalizedRetainedHistoryBindings,
       });
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
@@ -213,6 +287,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     cleanup,
     surfaces: collector.surfaces,
     sidebarItems: collector.sidebarItems,
+    sidebarWorkspaceGroupings: collector.sidebarWorkspaceGroupings,
     workspacePanels: collector.workspacePanels,
     commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,

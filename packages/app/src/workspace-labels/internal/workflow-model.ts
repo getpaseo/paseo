@@ -1,4 +1,5 @@
 import {
+  isReservedWorkspaceLabel,
   normalizeWorkspaceLabelName,
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
@@ -67,6 +68,7 @@ export class WorkspaceLabelPickerModel extends ObservableModel {
   }
 
   toggle(label: WorkspaceLabelDefinition, assigned: boolean): Promise<boolean> {
+    if (isReservedWorkspaceLabel(label.name)) return Promise.resolve(false);
     const key = workspaceLabelKey(label.name);
     const inFlight = this.pending.get(key);
     if (inFlight) return inFlight;
@@ -163,7 +165,10 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
   snapshot = (): WorkspaceLabelManagerSnapshot => this.currentSnapshot;
 
   syncHosts(hosts: readonly WorkspaceLabelManagerHost[]): void {
-    this.hosts = hosts;
+    this.hosts = hosts.map((host) => ({
+      ...host,
+      labels: host.labels.filter((label) => !isReservedWorkspaceLabel(label.name)),
+    }));
     if (!this.operation && !hosts.some((host) => host.serverId === this.serverId)) {
       this.serverId = hosts[0]?.serverId ?? "";
       this.draft = null;
@@ -181,7 +186,7 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
 
   /** Open the edit view on a label, seeded with what that label currently is. */
   edit(label: WorkspaceLabelDefinition): void {
-    if (this.operation) return;
+    if (this.operation || isReservedWorkspaceLabel(label.name)) return;
     this.draft = { name: label.name, draftName: label.name, color: label.color };
     this.error = null;
     this.commit();
@@ -305,6 +310,7 @@ export class WorkspaceLabelManagerModel extends ObservableModel {
         draft !== null &&
         editing !== null &&
         draftName.length > 0 &&
+        !isReservedWorkspaceLabel(draftName) &&
         (draftName !== editing.name || draft.color !== editing.color),
     };
   }
