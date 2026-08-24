@@ -186,6 +186,33 @@ describe("applyDraftToConfig", () => {
     expect(buildEntry.command).toEqual(["npm run build"]);
   });
 
+  it("round-trips a workspace link without retaining a command", () => {
+    const base = PaseoConfigRawSchema.parse({
+      scripts: {
+        "Open in code-server": {
+          type: "link",
+          url: "https://code.razvoj.app/?folder={workspacePath}",
+        },
+      },
+    });
+
+    const draft = configToDraft(base);
+    expect(draft.scripts[0]).toMatchObject({
+      name: "Open in code-server",
+      type: "link",
+      commandText: "",
+      urlText: "https://code.razvoj.app/?folder={workspacePath}",
+    });
+
+    draft.scripts[0].commandText = "must not be saved";
+    const next = applyDraftToConfig({ draft, base });
+    expect(next.scripts?.["Open in code-server"]).toMatchObject({
+      type: "link",
+      url: "https://code.razvoj.app/?folder={workspacePath}",
+    });
+    expect(next.scripts?.["Open in code-server"]?.command).toBeUndefined();
+  });
+
   it("parses script port as a number when numeric and writes string for non-numeric input", () => {
     const base = PaseoConfigRawSchema.parse({});
     const draft = configToDraft(base);
@@ -195,6 +222,7 @@ describe("applyDraftToConfig", () => {
         name: "dev",
         commandText: "npm run dev",
         commandOriginalKind: "missing",
+        urlText: "",
         type: "long-running",
         portText: "3000",
         rawEntry: {},
@@ -204,6 +232,7 @@ describe("applyDraftToConfig", () => {
         name: "tunnel",
         commandText: "ngrok",
         commandOriginalKind: "missing",
+        urlText: "",
         type: "long-running",
         portText: "auto",
         rawEntry: {},
@@ -341,6 +370,7 @@ describe("applyDraftToConfig", () => {
         name: "   ",
         commandText: "echo hi",
         commandOriginalKind: "missing",
+        urlText: "",
         type: "",
         portText: "",
         rawEntry: {},

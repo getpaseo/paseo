@@ -15,6 +15,7 @@ export interface ProjectScriptDraft {
   name: string;
   commandText: string;
   commandOriginalKind: LifecycleOriginalKind;
+  urlText: string;
   type: string;
   portText: string;
   rawEntry: PaseoScriptEntryRaw;
@@ -77,6 +78,10 @@ function projectScriptPort(value: unknown): string {
   return "";
 }
 
+function projectScriptUrl(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function parseScriptPort(value: string): number | string | undefined {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
@@ -120,6 +125,7 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
       name,
       commandText: command.text,
       commandOriginalKind: command.kind,
+      urlText: projectScriptUrl(entry.url),
       type: projectScriptType(entry.type),
       portText: projectScriptPort(entry.port),
       rawEntry: entry,
@@ -151,6 +157,35 @@ interface ApplyDraftInput {
   base: PaseoConfigRaw | null | undefined;
 }
 
+function applyScriptDraft(row: ProjectScriptDraft): PaseoScriptEntryRaw {
+  const nextEntry: Record<string, unknown> = { ...row.rawEntry };
+  const nextCommand = lifecycleFromText(row.commandText, row.commandOriginalKind);
+  if (row.type === "link" || nextCommand === undefined) {
+    delete nextEntry.command;
+  } else {
+    nextEntry.command = nextCommand;
+  }
+  const trimmedUrl = row.urlText.trim();
+  if (row.type !== "link" || trimmedUrl.length === 0) {
+    delete nextEntry.url;
+  } else {
+    nextEntry.url = trimmedUrl;
+  }
+  const trimmedType = row.type.trim();
+  if (trimmedType.length === 0) {
+    delete nextEntry.type;
+  } else {
+    nextEntry.type = trimmedType;
+  }
+  const nextPort = parseScriptPort(row.portText);
+  if (nextPort === undefined) {
+    delete nextEntry.port;
+  } else {
+    nextEntry.port = nextPort;
+  }
+  return nextEntry as PaseoScriptEntryRaw;
+}
+
 export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   const baseConfig = input.base ?? {};
   const baseWorktree = baseConfig.worktree ?? {};
@@ -178,27 +213,7 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     if (trimmedName.length === 0) {
       continue;
     }
-    const baseEntry = row.rawEntry;
-    const nextEntry: Record<string, unknown> = { ...baseEntry };
-    const nextCommand = lifecycleFromText(row.commandText, row.commandOriginalKind);
-    if (nextCommand === undefined) {
-      delete nextEntry.command;
-    } else {
-      nextEntry.command = nextCommand;
-    }
-    const trimmedType = row.type.trim();
-    if (trimmedType.length === 0) {
-      delete nextEntry.type;
-    } else {
-      nextEntry.type = trimmedType;
-    }
-    const nextPort = parseScriptPort(row.portText);
-    if (nextPort === undefined) {
-      delete nextEntry.port;
-    } else {
-      nextEntry.port = nextPort;
-    }
-    nextScripts[trimmedName] = nextEntry as PaseoScriptEntryRaw;
+    nextScripts[trimmedName] = applyScriptDraft(row);
   }
 
   const nextMetadataGeneration: Record<string, unknown> = {

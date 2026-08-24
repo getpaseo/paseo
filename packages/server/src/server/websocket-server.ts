@@ -1424,6 +1424,13 @@ export class VoiceAssistantWebSocketServer {
           ),
         );
       },
+      onProjectConfigChanged: async (repoRoot) => {
+        await Promise.all(
+          this.listTrustedSessions().map((activeSession) =>
+            activeSession.refreshWorkspaceDescriptorsForExternalProjectRoot(repoRoot),
+          ),
+        );
+      },
       downloadTokenStore: this.downloadTokenStore,
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
@@ -1764,6 +1771,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(workspaceLinks): added in v0.2.0, remove after 2027-01-24.
+        workspaceLinks: true,
       },
     };
   }

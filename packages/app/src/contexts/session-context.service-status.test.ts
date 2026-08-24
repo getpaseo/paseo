@@ -22,6 +22,7 @@ function workspace(input: {
     statusEnteredAt: null,
     diffStat: null,
     scripts: input.scripts ?? [],
+    links: [],
   };
 }
 

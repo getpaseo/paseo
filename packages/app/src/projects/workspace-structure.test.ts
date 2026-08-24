@@ -34,6 +34,7 @@ function workspace(id: string, projectId: string, root: string): WorkspaceDescri
     archivingAt: null,
     diffStat: null,
     scripts: [],
+    links: [],
   };
 }
 

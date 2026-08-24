@@ -31,6 +31,7 @@ function createWorkspace(
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
+    links: input.links ?? [],
   };
 }
 

@@ -3,7 +3,8 @@ import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown } from "lucide-react-native";
+import { Check, ChevronDown, ExternalLink } from "lucide-react-native";
+import type { WorkspaceLinkPayload } from "@getpaseo/protocol/messages";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { EditorTargetIcon } from "@/components/icons/editor-target-icon";
 import {
@@ -32,6 +33,7 @@ import { buttonControlHeight } from "@/components/ui/control-geometry";
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  links?: WorkspaceLinkPayload[];
   activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
 }
@@ -47,6 +49,8 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedEditorTargetIcon = withUnistyles(EditorTargetIcon);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheckIcon = withUnistyles(Check);
+const ThemedExternalLink = withUnistyles(ExternalLink);
+const EMPTY_WORKSPACE_LINKS: WorkspaceLinkPayload[] = [];
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -82,6 +86,7 @@ function OpenTargetMenuItem({ target, isPreferred, onOpen }: OpenTargetMenuItemP
 export function WorkspaceOpenInEditorButton({
   serverId,
   cwd,
+  links = EMPTY_WORKSPACE_LINKS,
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
@@ -117,47 +122,51 @@ export function WorkspaceOpenInEditorButton({
     cwd: shouldQueryCheckout ? cwd : "",
   });
 
-  const targets = useMemo<OpenTarget[]>(
-    () =>
-      planWorkspaceOpenTargets({
-        workspaceDirectory: cwd,
-        activeFile,
-        resolvedActiveFile: resolvedFile,
-        desktopTargets: desktopOpenTargets,
-        canUseDesktopBridge: isDesktopOpenAvailable,
-        isLocalExecution: isLocalDaemon,
-        checkoutStatus,
-        forge: resolvedForge,
-      }).map((target) => {
-        if (target.source === "forge") {
-          const presentation = getForgePresentation(target.forge);
-          return {
-            id: target.id,
-            label: target.label,
-            icon: renderForgeOpenTargetIcon(presentation.icon),
-            onOpen: () => openExternalUrl(target.url),
-          };
-        }
+  const targets = useMemo<OpenTarget[]>(() => {
+    const workspaceTargets = planWorkspaceOpenTargets({
+      workspaceDirectory: cwd,
+      activeFile,
+      resolvedActiveFile: resolvedFile,
+      desktopTargets: desktopOpenTargets,
+      canUseDesktopBridge: isDesktopOpenAvailable,
+      isLocalExecution: isLocalDaemon,
+      checkoutStatus,
+      forge: resolvedForge,
+    }).map((target) => {
+      if (target.source === "forge") {
+        const presentation = getForgePresentation(target.forge);
         return {
           id: target.id,
           label: target.label,
-          icon: (
-            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
-          ),
-          onOpen: () => openDesktopTarget(target.openInput),
+          icon: renderForgeOpenTargetIcon(presentation.icon),
+          onOpen: () => openExternalUrl(target.url),
         };
-      }),
-    [
-      activeFile,
-      checkoutStatus,
-      cwd,
-      desktopOpenTargets,
-      resolvedForge,
-      isDesktopOpenAvailable,
-      isLocalDaemon,
-      resolvedFile,
-    ],
-  );
+      }
+      return {
+        id: target.id,
+        label: target.label,
+        icon: <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />,
+        onOpen: () => openDesktopTarget(target.openInput),
+      };
+    });
+    const linkTargets = links.map((link) => ({
+      id: `workspace-link:${link.name}`,
+      label: link.name,
+      icon: <ThemedExternalLink size={16} uniProps={mutedColorMapping} />,
+      onOpen: () => openExternalUrl(link.url),
+    }));
+    return [...linkTargets, ...workspaceTargets];
+  }, [
+    activeFile,
+    checkoutStatus,
+    cwd,
+    desktopOpenTargets,
+    resolvedForge,
+    isDesktopOpenAvailable,
+    isLocalDaemon,
+    resolvedFile,
+    links,
+  ]);
 
   const targetIds = useMemo(() => targets.map((target) => target.id), [targets]);
   const effectivePreferredEditorId = useMemo(

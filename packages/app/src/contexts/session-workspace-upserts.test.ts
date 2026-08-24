@@ -21,6 +21,7 @@ const baseWorkspace: WorkspaceDescriptor = {
   statusEnteredAt: null,
   diffStat: null,
   scripts: [],
+  links: [],
 };
 
 function workspace(input?: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {

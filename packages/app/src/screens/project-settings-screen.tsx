@@ -38,6 +38,7 @@ import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
+import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
@@ -56,6 +57,8 @@ import {
 } from "@/utils/projects";
 
 const SCRIPT_SERVICE_TYPE = "service";
+const SCRIPT_LINK_TYPE = "link";
+const WORKSPACE_PATH_TEMPLATE = "{workspacePath}";
 
 const ICON_SIZE = 14;
 
@@ -115,6 +118,10 @@ export default function ProjectSettingsScreen({
     Boolean(serverId) &&
     (selectedSnapshot?.connectionStatus === "offline" ||
       selectedSnapshot?.connectionStatus === "error");
+  // COMPAT(workspaceLinks): added in v0.2.0, remove after 2027-01-24.
+  const supportsWorkspaceLinks = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceLinks === true,
+  );
 
   const client = useHostRuntimeClient(serverId);
   const canEdit =
@@ -139,6 +146,7 @@ export default function ProjectSettingsScreen({
       isHostGone={isHostGone}
       onBackToProjects={onBackToProjects}
       showBackToProjects={showBackToProjects}
+      supportsWorkspaceLinks={supportsWorkspaceLinks}
     />
   );
 }
@@ -193,6 +201,7 @@ interface ProjectSettingsBodyProps {
   isHostGone: boolean;
   onBackToProjects: () => void;
   showBackToProjects: boolean;
+  supportsWorkspaceLinks: boolean;
 }
 
 function ProjectSettingsBody({
@@ -202,6 +211,7 @@ function ProjectSettingsBody({
   isHostGone,
   onBackToProjects,
   showBackToProjects,
+  supportsWorkspaceLinks,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -317,6 +327,7 @@ function ProjectSettingsBody({
         isHostGone,
         onBackToProjects,
         showBackToProjects,
+        supportsWorkspaceLinks,
       })}
     </View>
   );
@@ -335,6 +346,7 @@ interface RenderContentInput {
   isHostGone: boolean;
   onBackToProjects: () => void;
   showBackToProjects: boolean;
+  supportsWorkspaceLinks: boolean;
 }
 
 function renderContent({
@@ -350,6 +362,7 @@ function renderContent({
   isHostGone,
   onBackToProjects,
   showBackToProjects,
+  supportsWorkspaceLinks,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -395,6 +408,7 @@ function renderContent({
       queryKey={queryKey}
       client={client}
       onReload={onReload}
+      supportsWorkspaceLinks={supportsWorkspaceLinks}
     />
   );
 }
@@ -476,6 +490,7 @@ interface ProjectConfigFormProps {
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
+  supportsWorkspaceLinks: boolean;
 }
 
 function ProjectConfigForm({
@@ -486,6 +501,7 @@ function ProjectConfigForm({
   queryKey,
   client,
   onReload,
+  supportsWorkspaceLinks,
 }: ProjectConfigFormProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -597,6 +613,7 @@ function ProjectConfigForm({
           name: "",
           commandText: "",
           commandOriginalKind: "missing" satisfies LifecycleOriginalKind,
+          urlText: "",
           type: "",
           portText: "",
           rawEntry: {},
@@ -626,6 +643,7 @@ function ProjectConfigForm({
       const isEmpty =
         entry.name.trim().length === 0 &&
         entry.commandText.trim().length === 0 &&
+        entry.urlText.trim().length === 0 &&
         entry.type.trim().length === 0 &&
         entry.portText.trim().length === 0;
       if (!isEmpty) return d;
@@ -843,6 +861,7 @@ function ProjectConfigForm({
           onChange={handleEditingDraftChange}
           onCancel={handleCancelEditing}
           onSave={handleSaveEditing}
+          supportsWorkspaceLinks={supportsWorkspaceLinks}
         />
       ) : null}
     </View>
@@ -954,25 +973,43 @@ function scriptHint(script: ProjectScriptDraft, t: TFunction): string {
   const pieces: string[] = [];
   if (script.type) pieces.push(script.type);
   if (script.portText) pieces.push(t("settings.project.scripts.port", { port: script.portText }));
-  if (script.commandText) pieces.push(script.commandText.split("\n")[0] ?? "");
+  const actionText = script.type === SCRIPT_LINK_TYPE ? script.urlText : script.commandText;
+  if (actionText) pieces.push(actionText.split("\n")[0] ?? "");
   return pieces.join(" · ");
 }
 
 interface ScriptValidation {
   hasErrors: boolean;
   nameError: string | null;
-  commandError: string | null;
+  actionError: string | null;
+}
+
+function isValidLinkUrl(value: string): boolean {
+  try {
+    const url = new URL(value.replaceAll(WORKSPACE_PATH_TEMPLATE, "/workspace"));
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidation {
   const nameError =
     script.name.trim().length === 0 ? t("settings.project.scripts.nameRequired") : null;
-  const commandError =
-    script.commandText.trim().length === 0 ? t("settings.project.scripts.commandRequired") : null;
+  let actionError: string | null = null;
+  if (script.type === SCRIPT_LINK_TYPE) {
+    if (script.urlText.trim().length === 0) {
+      actionError = t("settings.project.scripts.urlRequired");
+    } else if (!isValidLinkUrl(script.urlText)) {
+      actionError = t("settings.project.scripts.urlInvalid");
+    }
+  } else if (script.commandText.trim().length === 0) {
+    actionError = t("settings.project.scripts.commandRequired");
+  }
   return {
-    hasErrors: Boolean(nameError || commandError),
+    hasErrors: Boolean(nameError || actionError),
     nameError,
-    commandError,
+    actionError,
   };
 }
 
@@ -981,6 +1018,7 @@ interface ScriptEditModalProps {
   onChange: (next: ProjectScriptDraft) => void;
   onCancel: () => void;
   onSave: () => void;
+  supportsWorkspaceLinks: boolean;
 }
 
 interface ScriptFieldsTouched {
@@ -991,7 +1029,13 @@ interface ScriptFieldsTouched {
 const ALL_TOUCHED: ScriptFieldsTouched = { name: true, command: true };
 const NONE_TOUCHED: ScriptFieldsTouched = { name: false, command: false };
 
-function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModalProps) {
+function ScriptEditModal({
+  script,
+  onChange,
+  onCancel,
+  onSave,
+  supportsWorkspaceLinks,
+}: ScriptEditModalProps) {
   const { t } = useTranslation();
   const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
 
@@ -1008,11 +1052,21 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
     [onChange, script],
   );
   const handleCommandChange = useCallback(
-    (text: string) => onChange({ ...script, commandText: text }),
+    (text: string) => {
+      if (script.type === SCRIPT_LINK_TYPE) {
+        onChange({ ...script, urlText: text });
+        return;
+      }
+      onChange({ ...script, commandText: text });
+    },
     [onChange, script],
   );
   const handleServiceToggle = useCallback(
     (next: boolean) => onChange({ ...script, type: next ? SCRIPT_SERVICE_TYPE : "" }),
+    [onChange, script],
+  );
+  const handleLinkToggle = useCallback(
+    (next: boolean) => onChange({ ...script, type: next ? SCRIPT_LINK_TYPE : "" }),
     [onChange, script],
   );
 
@@ -1030,8 +1084,9 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
   }, [validation.hasErrors, onSave]);
 
   const showNameError = touched.name && validation.nameError;
-  const showCommandError = touched.command && validation.commandError;
+  const showActionError = touched.command && validation.actionError;
   const isService = script.type === SCRIPT_SERVICE_TYPE;
+  const isLink = script.type === SCRIPT_LINK_TYPE;
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
       title: script.name
@@ -1068,40 +1123,68 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
         ) : null}
       </View>
       <View style={styles.modalSection}>
-        <Text style={styles.modalLabel}>{t("settings.project.scripts.command")}</Text>
+        <Text style={styles.modalLabel}>
+          {isLink ? t("settings.project.scripts.url") : t("settings.project.scripts.command")}
+        </Text>
         <TextInput
+          key={isLink ? "link" : "command"}
           testID="script-edit-command"
-          accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
+          accessibilityLabel={
+            isLink
+              ? t("settings.project.scripts.urlAccessibility")
+              : t("settings.project.scripts.commandAccessibility")
+          }
           multiline
-          initialValue={script.commandText}
+          initialValue={isLink ? script.urlText : script.commandText}
           onChangeText={handleCommandChange}
           onBlur={handleCommandBlur}
-          placeholder="npm run dev"
+          placeholder={isLink ? "https://code.example.com/?folder={workspacePath}" : "npm run dev"}
           placeholderTextColor={styles.placeholderColor.color}
           style={styles.modalMultilineInput}
         />
-        {showCommandError ? (
+        {showActionError ? (
           <Text testID="script-edit-command-error" style={styles.fieldError}>
-            {validation.commandError}
+            {validation.actionError}
           </Text>
         ) : null}
       </View>
       <View style={styles.modalSection}>
         <View style={styles.serviceToggleRow}>
           <View style={styles.serviceToggleText}>
-            <Text style={styles.serviceToggleLabel}>
-              {t("settings.project.scripts.runAsService")}
+            <Text style={styles.serviceToggleLabel}>{t("settings.project.scripts.openUrl")}</Text>
+            <Text style={styles.modalHint}>
+              {supportsWorkspaceLinks
+                ? t("settings.project.scripts.openUrlHint")
+                : t("settings.project.scripts.openUrlUpdateHost")}
             </Text>
-            <Text style={styles.modalHint}>{t("settings.project.scripts.serviceHint")}</Text>
           </View>
           <Switch
-            value={isService}
-            onValueChange={handleServiceToggle}
-            accessibilityLabel={t("settings.project.scripts.runAsService")}
-            testID="script-edit-service-toggle"
+            value={isLink}
+            onValueChange={handleLinkToggle}
+            accessibilityLabel={t("settings.project.scripts.openUrl")}
+            testID="script-edit-link-toggle"
+            disabled={!supportsWorkspaceLinks}
           />
         </View>
       </View>
+      {!isLink ? (
+        <View style={styles.modalSection}>
+          <View style={styles.serviceToggleRow}>
+            <View style={styles.serviceToggleText}>
+              <Text style={styles.serviceToggleLabel}>
+                {t("settings.project.scripts.runAsService")}
+              </Text>
+              <Text style={styles.modalHint}>{t("settings.project.scripts.serviceHint")}</Text>
+            </View>
+            <Switch
+              value={isService}
+              onValueChange={handleServiceToggle}
+              accessibilityLabel={t("settings.project.scripts.runAsService")}
+              testID="script-edit-service-toggle"
+            />
+          </View>
+        </View>
+      ) : null}
       <View style={styles.modalFooter}>
         <Button onPress={onCancel} variant="ghost" size="md" testID="script-edit-cancel">
           {t("settings.project.actions.cancel")}

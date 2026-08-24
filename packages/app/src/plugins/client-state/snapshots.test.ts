@@ -18,6 +18,7 @@ const workspace: WorkspaceDescriptor = {
   archivingAt: null,
   diffStat: { additions: 12, deletions: 3 },
   scripts: [],
+  links: [],
 };
 
 const agent: Agent = {

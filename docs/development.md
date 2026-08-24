@@ -401,6 +401,24 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 | `PASEO_PORT`                | Self alias for `PASEO_SERVICE_<SELF>_PORT`.                                                                               |
 | `HOST`                      | Bind host for the service process.                                                                                        |
 
+An entry with `"type": "link"` opens a client-side browser URL instead of running a process.
+Use `{workspacePath}` where the URL needs the Paseo-owned worktree root, falling back to the
+workspace directory for ordinary folders. Paseo URL-encodes the substituted path.
+
+```json
+{
+  "scripts": {
+    "Open in code-server": {
+      "type": "link",
+      "url": "https://code.example.com/?folder={workspacePath}"
+    }
+  }
+}
+```
+
+Workspace links appear alongside editor and forge targets in the **Open code** menu. Because the
+client opens them directly, they work when the daemon runs on a remote host.
+
 Service proxy hostnames use the double-dash shape: `web--feature-auth--project.localhost` or, on the default branch, `web--project.localhost`. Optional public aliases use the same leftmost label under the configured public base host.
 
 `<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.

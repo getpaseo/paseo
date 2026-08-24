@@ -75,6 +75,8 @@ interface SessionHandlerInternals {
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
+  refreshWorkspaceDescriptorsForExternalProjectRoot(repoRoot: string): Promise<void>;
+  workspaceUpdatesSubscription: unknown;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
   handleCheckoutSwitchBranchRequest(params: unknown): Promise<unknown>;
   handleBranchSuggestionsRequest(params: unknown): Promise<unknown>;
@@ -301,7 +303,7 @@ interface SessionForTestOptions {
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
     getProjectSlug?: ReturnType<typeof vi.fn>;
   };
-  workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
+  workspaceRegistry?: Partial<SessionOptions["workspaceRegistry"]>;
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
   serviceProxy?: SessionOptions["serviceProxy"];
@@ -318,6 +320,7 @@ interface SessionForTestOptions {
   daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   pushNotifications?: SessionOptions["pushNotifications"];
+  onProjectConfigChanged?: SessionOptions["onProjectConfigChanged"];
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
@@ -371,6 +374,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushNotifications: options.pushNotifications ?? asPushNotifications(),
+    onProjectConfigChanged: options.onProjectConfigChanged,
     paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
@@ -1740,6 +1744,78 @@ describe("project config RPC authorization", () => {
       },
     ]);
   });
+
+  test("write_project_config_request publishes descriptor refreshes to the server", async () => {
+    const repoRoot = makeRoot();
+    const onProjectConfigChanged = vi.fn(async () => {});
+    const session = createSessionForTest({
+      onProjectConfigChanged,
+      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+    });
+
+    await session.handleMessage({
+      type: "write_project_config_request",
+      requestId: "write-links-1",
+      repoRoot,
+      config: {
+        scripts: {
+          Browser: { type: "link", url: "https://example.com/?folder={workspacePath}" },
+        },
+      },
+      expectedRevision: null,
+    });
+
+    expect(onProjectConfigChanged).toHaveBeenCalledExactlyOnceWith(repoRoot);
+  });
+
+  test.skipIf(isPlatform("win32"))(
+    "descriptor refresh matches a project registered through a symlink",
+    async () => {
+      const repoRoot = makeRoot();
+      const symlinkRoot = join(makeRoot(), "project-link");
+      symlinkSync(repoRoot, symlinkRoot, "dir");
+      const project = createProjectRecord(symlinkRoot);
+      const workspace = {
+        workspaceId: "workspace-symlink-project",
+        projectId: project.projectId,
+        cwd: repoRoot,
+        kind: "local_checkout" as const,
+        displayName: "main",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: null,
+      };
+      const messages: SessionOutboundMessage[] = [];
+      const session = createSessionForTest({
+        messages,
+        projectRegistry: {
+          list: vi.fn().mockResolvedValue([project]),
+          get: vi.fn().mockResolvedValue(project),
+        },
+        workspaceRegistry: {
+          list: vi.fn().mockResolvedValue([workspace]),
+          get: vi.fn().mockResolvedValue(workspace),
+        },
+      });
+      const internals = asSessionInternals(session);
+      internals.workspaceUpdatesSubscription = {
+        subscriptionId: "workspace-symlink-refresh",
+        isBootstrapping: false,
+        pendingUpdatesByWorkspaceId: new Map(),
+        lastEmittedByWorkspaceId: new Map(),
+      };
+
+      await internals.refreshWorkspaceDescriptorsForExternalProjectRoot(repoRoot);
+
+      expect(messages).toContainEqual({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: expect.objectContaining({ id: workspace.workspaceId }),
+        },
+      });
+    },
+  );
 });
 
 test("push token registration can be revoked by the connected client", async () => {
@@ -4027,6 +4103,56 @@ describe("session workspace descriptors", () => {
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
     expect(descriptor.diffStat).toEqual({ additions: 7, deletions: 2 });
+  });
+
+  test("reads workspace links from the project config for managed worktrees", async () => {
+    const repoRoot = realpathSync(mkdtempSync(join(tmpdir(), "workspace-links-project-")));
+    const worktreeRoot = realpathSync(mkdtempSync(join(tmpdir(), "workspace-links-worktree-")));
+    writeFileSync(
+      join(repoRoot, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          Browser: { type: "link", url: "https://example.com/?folder={workspacePath}" },
+        },
+      }),
+    );
+    writeFileSync(
+      join(worktreeRoot, "paseo.json"),
+      JSON.stringify({
+        scripts: { Stale: { type: "link", url: "https://stale.example.com" } },
+      }),
+    );
+
+    try {
+      const session = createSessionForTest();
+      const descriptor = await asSessionInternals(session).describeWorkspaceRecord(
+        {
+          workspaceId: "workspace-links",
+          projectId: "project-links",
+          cwd: worktreeRoot,
+          worktreeRoot,
+          isPaseoOwnedWorktree: true,
+          kind: "worktree",
+          displayName: "Workspace",
+        },
+        {
+          projectId: "project-links",
+          rootPath: repoRoot,
+          displayName: "Project",
+          kind: "git",
+        },
+      );
+
+      expect(descriptor.links).toEqual([
+        {
+          name: "Browser",
+          url: `https://example.com/?folder=${encodeURIComponent(worktreeRoot)}`,
+        },
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+    }
   });
 
   test("does not cold-load git data while describing a workspace", async () => {
