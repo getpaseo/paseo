@@ -180,7 +180,7 @@ export async function openGithubPickerFromMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 5_000 });
 }
 
-/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "pr:1"), and click it. */
+/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "change_request:1"), and click it. */
 export async function selectGithubOption(
   page: Page,
   searchTerm: string,
