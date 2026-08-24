@@ -20,4 +20,6 @@ export interface FileDropSink {
   onFiles: (images: ImageAttachment[]) => void;
   onGenericFiles?: (items: DroppedItem[]) => void;
   onWorkspaceFile?: (payload: WorkspaceFileDragPayload) => void;
+  /** Text or a URL dragged in from another app. Only called for drops that carry no files. */
+  onText?: (text: string) => void;
 }

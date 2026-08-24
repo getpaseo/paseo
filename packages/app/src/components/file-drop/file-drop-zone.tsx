@@ -25,6 +25,7 @@ interface FileDropZoneProps {
  */
 export function FileDropZone({ children, disabled = false, style }: FileDropZoneProps) {
   const isDragging = useSharedValue(false);
+  const isTextDrag = useSharedValue(false);
   const suppressed = useSharedValue(false);
   const hasSink = useSharedValue(false);
   const activeGetSink = useRef<(() => FileDropSink | null) | null>(null);
@@ -46,11 +47,18 @@ export function FileDropZone({ children, disabled = false, style }: FileDropZone
   const getSink = useCallback(() => activeGetSink.current?.() ?? null, []);
 
   const ctx = useMemo<FileDropContextValue>(
-    () => ({ isDragging, suppressed, hasSink, registerSink }),
-    [isDragging, suppressed, hasSink, registerSink],
+    () => ({ isDragging, isTextDrag, suppressed, hasSink, registerSink }),
+    [isDragging, isTextDrag, suppressed, hasSink, registerSink],
   );
 
-  const containerRef = useDropListeners({ isDragging, suppressed, hasSink, getSink, disabled });
+  const containerRef = useDropListeners({
+    isDragging,
+    isTextDrag,
+    suppressed,
+    hasSink,
+    getSink,
+    disabled,
+  });
 
   const targetStyle = useMemo(() => [styles.target, style], [style]);
 

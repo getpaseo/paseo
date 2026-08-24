@@ -11,6 +11,7 @@ import {
 } from "@/attachments/file-types";
 import { isWeb } from "@/constants/platform";
 import type { DroppedItem, DroppedPathItem, FileDropSink } from "./types";
+import { classifyDragTypes, readDroppedText, type DragSinkCapabilities } from "./data-transfer";
 import {
   parseWorkspaceFileDragPayload,
   WORKSPACE_FILE_DRAG_MIME,
@@ -34,6 +35,17 @@ async function filePathToImageAttachment(path: string): Promise<ImageAttachment>
   return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
+/** Routes a workspace-file payload to the sink, reporting whether the drop was consumed by it. */
+function deliverWorkspaceFile(dataTransfer: DataTransfer, sink: FileDropSink): boolean {
+  if (!sink.onWorkspaceFile) return false;
+  const serialized = dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
+  if (!serialized) return false;
+  const payload = parseWorkspaceFileDragPayload(serialized);
+  if (!payload) return false;
+  sink.onWorkspaceFile(payload);
+  return true;
+}
+
 async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
   const mimeType = resolveRasterImageMimeType({ mimeType: file.type, path: file.name });
   if (!mimeType) {
@@ -48,6 +60,8 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 
 interface UseDropListenersOptions {
   isDragging: SharedValue<boolean>;
+  /** Whether the in-progress drag carries text rather than files, so the overlay can say so. */
+  isTextDrag: SharedValue<boolean>;
   /** Active sink can't accept right now: reject drops without showing acceptance. */
   suppressed: SharedValue<boolean>;
   /** Whether a consumer is mounted: with none, don't advertise or accept drops. */
@@ -63,6 +77,7 @@ interface UseDropListenersOptions {
  */
 export function useDropListeners({
   isDragging,
+  isTextDrag,
   suppressed,
   hasSink,
   getSink,
@@ -189,6 +204,14 @@ export function useDropListeners({
         return;
       }
 
+      function sinkCapabilities(): DragSinkCapabilities {
+        const sink = getSink();
+        return {
+          acceptsWorkspaceFile: Boolean(sink?.onWorkspaceFile),
+          acceptsText: Boolean(sink?.onText),
+        };
+      }
+
       function handleDragEnter(e: DragEvent) {
         e.preventDefault();
         e.stopPropagation();
@@ -197,12 +220,12 @@ export function useDropListeners({
 
         dragCounter.current++;
         if (suppressed.value || !hasSink.value) return;
-        const types = new Set(e.dataTransfer?.types ?? []);
-        const acceptsWorkspaceFile =
-          types.has(WORKSPACE_FILE_DRAG_MIME) && Boolean(getSink()?.onWorkspaceFile);
-        if (types.has("Files") || acceptsWorkspaceFile) {
-          isDragging.value = true;
-        }
+        const drag = classifyDragTypes(e.dataTransfer?.types ?? [], sinkCapabilities());
+        if (!drag.isAccepted) return;
+        // The only write: the value is meaningless unless a drag is active, and clearing it when
+        // the drag ends would flip the overlay's label mid fade-out.
+        isTextDrag.value = drag.isTextDrag;
+        isDragging.value = true;
       }
 
       function handleDragOver(e: DragEvent) {
@@ -212,11 +235,9 @@ export function useDropListeners({
         if (!e.dataTransfer) return;
         // Only advertise "copy" when the drop would actually be accepted, so the cursor doesn't
         // promise a drop that the handler then discards (suppressed/archived/no consumer mounted).
-        const types = new Set(e.dataTransfer.types);
-        const acceptsWorkspaceFile =
-          types.has(WORKSPACE_FILE_DRAG_MIME) && Boolean(getSink()?.onWorkspaceFile);
-        const acceptsDrop = types.has("Files") || acceptsWorkspaceFile;
-        const canAccept = acceptsDrop && !disabledRef.current && !suppressed.value && hasSink.value;
+        const drag = classifyDragTypes(e.dataTransfer.types, sinkCapabilities());
+        const canAccept =
+          drag.isAccepted && !disabledRef.current && !suppressed.value && hasSink.value;
         e.dataTransfer.dropEffect = canAccept ? "copy" : "none";
       }
 
@@ -244,15 +265,12 @@ export function useDropListeners({
         const sink = getSink();
         if (!sink) return;
 
-        const serializedWorkspaceFile = e.dataTransfer?.getData(WORKSPACE_FILE_DRAG_MIME);
-        if (serializedWorkspaceFile && sink.onWorkspaceFile) {
-          const payload = parseWorkspaceFileDragPayload(serializedWorkspaceFile);
-          if (payload) {
-            sink.onWorkspaceFile(payload);
-          }
-        }
+        const dataTransfer = e.dataTransfer;
+        if (!dataTransfer) return;
 
-        const files = Array.from(e.dataTransfer?.files ?? []);
+        const consumedWorkspaceFile = deliverWorkspaceFile(dataTransfer, sink);
+
+        const files = Array.from(dataTransfer.files);
         const genericItems: DroppedItem[] = files.map((file) => ({
           kind: "web-file",
           file,
@@ -260,6 +278,15 @@ export function useDropListeners({
 
         if (sink.onGenericFiles && genericItems.length > 0) {
           sink.onGenericFiles(genericItems);
+        }
+
+        // A drop carries text only as a description of its real payload when it also carries files
+        // (Finder) or a workspace file (a drag from the file tree), so text is what's left over.
+        if (files.length === 0 && !consumedWorkspaceFile && sink.onText) {
+          const text = readDroppedText(dataTransfer);
+          if (text) {
+            sink.onText(text);
+          }
         }
 
         const imageFiles = files.filter(isRasterImageFile);
@@ -302,7 +329,7 @@ export function useDropListeners({
       disposed = true;
       runCleanup();
     };
-  }, [isDragging, suppressed, hasSink, getSink]);
+  }, [isDragging, isTextDrag, suppressed, hasSink, getSink]);
 
   return containerRef;
 }

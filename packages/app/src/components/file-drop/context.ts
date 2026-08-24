@@ -5,6 +5,8 @@ import type { FileDropSink } from "./types";
 export interface FileDropContextValue {
   /** Drag-active flag, driven on the UI thread so toggling it triggers no React render. */
   isDragging: SharedValue<boolean>;
+  /** The active drag carries text rather than files, so the backdrop offers to insert it. */
+  isTextDrag: SharedValue<boolean>;
   /** Active sink can't accept right now (e.g. composer submitting): hide backdrop and reject drops. */
   suppressed: SharedValue<boolean>;
   /** Whether a consumer is currently registered — no consumer (e.g. archived agent), no backdrop. */
