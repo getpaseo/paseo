@@ -30,6 +30,7 @@ import {
 } from "./local-transport.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
+import { createKeepAwakeCommandHandlers } from "../features/keep-awake.js";
 import {
   createDesktopSettingsCommandHandlers,
   type DesktopCommandHandler,
@@ -518,6 +519,7 @@ async function resolveRequestedReleaseChannel(
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
+    ...createKeepAwakeCommandHandlers(),
     desktop_get_runtime_info: () => ({
       appVersion: resolveDesktopAppVersion(),
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
@@ -580,14 +582,11 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
 export function registerDaemonManager(): void {
   const handlers = createDaemonCommandHandlers();
 
-  ipcMain.handle(
-    "paseo:invoke",
-    async (_event, command: string, args?: Record<string, unknown>) => {
-      const handler = handlers[command];
-      if (!handler) {
-        throw new Error(`Unknown desktop command: ${command}`);
-      }
-      return await handler(args);
-    },
-  );
+  ipcMain.handle("paseo:invoke", async (event, command: string, args?: Record<string, unknown>) => {
+    const handler = handlers[command];
+    if (!handler) {
+      throw new Error(`Unknown desktop command: ${command}`);
+    }
+    return await handler(args, event);
+  });
 }

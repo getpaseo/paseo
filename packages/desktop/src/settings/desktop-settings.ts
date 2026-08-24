@@ -13,12 +13,16 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
+  power: {
+    keepAwakeWhileAgentsRunning: boolean;
+  };
 }
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
+  power?: Partial<DesktopSettings["power"]>;
 }
 
 interface PersistedDesktopSettingsDocument {
@@ -48,6 +52,9 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
+  },
+  power: {
+    keepAwakeWhileAgentsRunning: false,
   },
 };
 
@@ -82,6 +89,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
       releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
       notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
       daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
+      power: { ...DEFAULT_DESKTOP_SETTINGS.power },
     },
     migrations: {
       legacyRendererSettingsImported: false,
@@ -95,6 +103,7 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
     notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
+    power: { ...DEFAULT_DESKTOP_SETTINGS.power },
   };
 
   if (!isRecord(input)) {
@@ -122,6 +131,13 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     const keepRunningAfterQuit = coerceBoolean(input.daemon.keepRunningAfterQuit);
     if (keepRunningAfterQuit !== null) {
       result.daemon.keepRunningAfterQuit = keepRunningAfterQuit;
+    }
+  }
+
+  if (isRecord(input.power)) {
+    const keepAwakeWhileAgentsRunning = coerceBoolean(input.power.keepAwakeWhileAgentsRunning);
+    if (keepAwakeWhileAgentsRunning !== null) {
+      result.power.keepAwakeWhileAgentsRunning = keepAwakeWhileAgentsRunning;
     }
   }
 
@@ -162,6 +178,17 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
     }
   }
 
+  if (isRecord(input.power)) {
+    const powerPatch: Partial<DesktopSettings["power"]> = {};
+    const keepAwakeWhileAgentsRunning = coerceBoolean(input.power.keepAwakeWhileAgentsRunning);
+    if (keepAwakeWhileAgentsRunning !== null) {
+      powerPatch.keepAwakeWhileAgentsRunning = keepAwakeWhileAgentsRunning;
+    }
+    if (Object.keys(powerPatch).length > 0) {
+      patch.power = powerPatch;
+    }
+  }
+
   return patch;
 }
 
@@ -194,6 +221,7 @@ function mergeDesktopSettings(
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
     notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
+    power: { ...current.power, ...patch.power },
   };
 }
 

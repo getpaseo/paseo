@@ -1,6 +1,10 @@
+import type { IpcMainInvokeEvent } from "electron";
 import type { DesktopSettingsStore } from "./desktop-settings.js";
 
-export type DesktopCommandHandler = (args?: Record<string, unknown>) => unknown;
+export type DesktopCommandHandler = (
+  args?: Record<string, unknown>,
+  event?: IpcMainInvokeEvent,
+) => unknown;
 
 export function createDesktopSettingsCommandHandlers({
   settingsStore,
