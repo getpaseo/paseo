@@ -12,7 +12,6 @@ import {
   DEFAULT_SIDEBAR_ROW_ITEMS,
   isChecksHiddenByLegacyRowItem,
   parseSidebarRowItems,
-  SIDEBAR_ROW_ITEMS,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
@@ -257,111 +256,26 @@ export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Setti
 
 export function normalizeAppSettings(value: unknown): AppSettings {
   const stored = isPlainJsonObject(value) ? value : {};
-  const picked = pickAppSettings(stored);
-  warnDiscardedAppSettings(stored);
   return {
     ...DEFAULT_CLIENT_SETTINGS,
-    ...picked,
+    ...pickAppSettings(stored),
   };
 }
 
-function warnDiscardedAppSettings(stored: StoredAppSettings): void {
-  const discarded = (key: string, valid: boolean): void => {
-    if (stored[key] !== undefined && !valid) {
-      console.warn(`[AppSettings] Ignoring invalid ${key}.`);
-    }
-  };
+function pickStoredSetting<Value>(
+  stored: StoredAppSettings,
+  key: string,
+  parse: (value: unknown) => Value | null,
+): Value | null {
+  const value = parse(stored[key]);
+  if (stored[key] !== undefined && value === null) {
+    console.warn(`[AppSettings] Ignoring invalid ${key}.`);
+  }
+  return value;
+}
 
-  discarded("theme", isEnumValue(VALID_THEMES, stored.theme));
-  discarded(
-    "sendBehavior",
-    stored.sendBehavior === "interrupt" ||
-      stored.sendBehavior === "steer" ||
-      stored.sendBehavior === "queue",
-  );
-  discarded(
-    "serviceUrlBehavior",
-    isEnumValue(VALID_SERVICE_URL_BEHAVIORS, stored.serviceUrlBehavior),
-  );
-  discarded("language", parseAppLanguage(stored.language) !== null);
-  discarded(
-    "syntaxTheme",
-    typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme),
-  );
-  discarded(
-    "workspaceTitleSource",
-    isEnumValue(VALID_WORKSPACE_TITLE_SOURCES, stored.workspaceTitleSource),
-  );
-  discarded(
-    "sidebarWorkspaceTrailing",
-    isEnumValue(VALID_SIDEBAR_WORKSPACE_TRAILINGS, stored.sidebarWorkspaceTrailing),
-  );
-  discarded(
-    "sidebarChecksDisplay",
-    parseSidebarChecksDisplay(stored.sidebarChecksDisplay) !== null,
-  );
-  discarded(
-    "terminalScrollbackLines",
-    parseTerminalScrollbackLines(stored.terminalScrollbackLines) !== null,
-  );
-  discarded("uiFontFamily", sanitizeFontFamily(stored.uiFontFamily) !== null);
-  discarded("monoFontFamily", sanitizeFontFamily(stored.monoFontFamily) !== null);
-  discarded(
-    "uiBaseFontSize",
-    parseClampedFontSize(stored.uiBaseFontSize, {
-      min: MIN_UI_BASE_FONT_SIZE,
-      max: MAX_UI_BASE_FONT_SIZE,
-    }) !== null,
-  );
-  discarded(
-    "contentFontSize",
-    parseClampedFontSize(stored.contentFontSize, {
-      min: MIN_CONTENT_FONT_SIZE,
-      max: MAX_CONTENT_FONT_SIZE,
-    }) !== null,
-  );
-  discarded(
-    "codeFontSize",
-    parseClampedFontSize(stored.codeFontSize, {
-      min: MIN_CODE_FONT_SIZE,
-      max: MAX_CODE_FONT_SIZE,
-    }) !== null,
-  );
-  discarded("uiFontSize", parseClampedFontSize(stored.uiFontSize, { min: 11, max: 24 }) !== null);
-  for (const key of [
-    "useLegacyTerminalRenderer",
-    "vimKeybindings",
-    "chatOutlineEnabled",
-    "openSupportingTabsInSidePanel",
-    "autoExpandReasoning",
-  ]) {
-    discarded(key, typeof stored[key] === "boolean");
-  }
-  discarded(
-    "toolCallDetailLevel",
-    isEnumValue(VALID_TOOL_CALL_DETAIL_LEVELS, stored.toolCallDetailLevel) ||
-      stored.toolCallDetailLevel === "concise",
-  );
-  discarded("compactToolCalls", typeof stored.compactToolCalls === "boolean");
-  if (
-    stored.pluginThemeId !== undefined &&
-    stored.pluginThemeId !== null &&
-    typeof stored.pluginThemeId !== "string"
-  ) {
-    console.warn("[AppSettings] Ignoring invalid pluginThemeId.");
-  }
-  if (stored.sidebarRowItems !== undefined && !isPlainJsonObject(stored.sidebarRowItems)) {
-    console.warn("[AppSettings] Ignoring invalid sidebarRowItems.");
-  } else if (isPlainJsonObject(stored.sidebarRowItems)) {
-    for (const key of SIDEBAR_ROW_ITEMS) {
-      if (
-        stored.sidebarRowItems[key] !== undefined &&
-        typeof stored.sidebarRowItems[key] !== "boolean"
-      ) {
-        console.warn(`[AppSettings] Ignoring invalid sidebarRowItems.${key}.`);
-      }
-    }
-  }
+function parseBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLevel | null {
@@ -371,17 +285,22 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
     }
     // COMPAT(toolCallDetailLevelConcise): removed in v0.1.107; legacy "concise" values
     // keep their former meaning. Remove after 2027-01-14.
-    return stored.toolCallDetailLevel === "concise" ? "overview" : null;
+    if (stored.toolCallDetailLevel === "concise") {
+      return "overview";
+    }
+    console.warn("[AppSettings] Ignoring invalid toolCallDetailLevel.");
+    return null;
   }
-  if (typeof stored.compactToolCalls === "boolean") {
+  const compactToolCalls = pickStoredSetting(stored, "compactToolCalls", parseBoolean);
+  if (compactToolCalls !== null) {
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
-    return stored.compactToolCalls ? "overview" : "detailed";
+    return compactToolCalls ? "overview" : "detailed";
   }
   return null;
 }
 
 function parseStoredSidebarChecksDisplay(stored: StoredAppSettings): SidebarChecksDisplay | null {
-  const display = parseSidebarChecksDisplay(stored.sidebarChecksDisplay);
+  const display = pickStoredSetting(stored, "sidebarChecksDisplay", parseSidebarChecksDisplay);
   if (display !== null) {
     return display;
   }
@@ -391,17 +310,29 @@ function parseStoredSidebarChecksDisplay(stored: StoredAppSettings): SidebarChec
 
 function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (typeof stored.useLegacyTerminalRenderer === "boolean") {
-    result.useLegacyTerminalRenderer = stored.useLegacyTerminalRenderer;
+  const useLegacyTerminalRenderer = pickStoredSetting(
+    stored,
+    "useLegacyTerminalRenderer",
+    parseBoolean,
+  );
+  if (useLegacyTerminalRenderer !== null) {
+    result.useLegacyTerminalRenderer = useLegacyTerminalRenderer;
   }
-  if (typeof stored.vimKeybindings === "boolean") {
-    result.vimKeybindings = stored.vimKeybindings;
+  const vimKeybindings = pickStoredSetting(stored, "vimKeybindings", parseBoolean);
+  if (vimKeybindings !== null) {
+    result.vimKeybindings = vimKeybindings;
   }
-  if (typeof stored.chatOutlineEnabled === "boolean") {
-    result.chatOutlineEnabled = stored.chatOutlineEnabled;
+  const chatOutlineEnabled = pickStoredSetting(stored, "chatOutlineEnabled", parseBoolean);
+  if (chatOutlineEnabled !== null) {
+    result.chatOutlineEnabled = chatOutlineEnabled;
   }
-  if (typeof stored.openSupportingTabsInSidePanel === "boolean") {
-    result.openSupportingTabsInSidePanel = stored.openSupportingTabsInSidePanel;
+  const openSupportingTabsInSidePanel = pickStoredSetting(
+    stored,
+    "openSupportingTabsInSidePanel",
+    parseBoolean,
+  );
+  if (openSupportingTabsInSidePanel !== null) {
+    result.openSupportingTabsInSidePanel = openSupportingTabsInSidePanel;
   }
   return result;
 }
@@ -413,27 +344,41 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
  */
 function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (isEnumValue(VALID_THEMES, stored.theme)) {
-    result.theme = stored.theme;
+  const theme = pickStoredSetting(stored, "theme", (value) =>
+    isEnumValue(VALID_THEMES, value) ? value : null,
+  );
+  if (theme !== null) {
+    result.theme = theme;
   }
-  if (
-    stored.sendBehavior === "interrupt" ||
-    stored.sendBehavior === "steer" ||
-    stored.sendBehavior === "queue"
-  ) {
-    result.sendBehavior = stored.sendBehavior;
+  const sendBehavior = pickStoredSetting(stored, "sendBehavior", (value): SendBehavior | null =>
+    value === "interrupt" || value === "steer" || value === "queue" ? value : null,
+  );
+  if (sendBehavior !== null) {
+    result.sendBehavior = sendBehavior;
   }
-  if (isEnumValue(VALID_SERVICE_URL_BEHAVIORS, stored.serviceUrlBehavior)) {
-    result.serviceUrlBehavior = stored.serviceUrlBehavior;
+  const serviceUrlBehavior = pickStoredSetting(stored, "serviceUrlBehavior", (value) =>
+    isEnumValue(VALID_SERVICE_URL_BEHAVIORS, value) ? value : null,
+  );
+  if (serviceUrlBehavior !== null) {
+    result.serviceUrlBehavior = serviceUrlBehavior;
   }
-  if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
-    result.syntaxTheme = stored.syntaxTheme;
+  const syntaxTheme = pickStoredSetting(stored, "syntaxTheme", (value) =>
+    typeof value === "string" && isSyntaxThemeId(value) ? value : null,
+  );
+  if (syntaxTheme !== null) {
+    result.syntaxTheme = syntaxTheme;
   }
-  if (isEnumValue(VALID_WORKSPACE_TITLE_SOURCES, stored.workspaceTitleSource)) {
-    result.workspaceTitleSource = stored.workspaceTitleSource;
+  const workspaceTitleSource = pickStoredSetting(stored, "workspaceTitleSource", (value) =>
+    isEnumValue(VALID_WORKSPACE_TITLE_SOURCES, value) ? value : null,
+  );
+  if (workspaceTitleSource !== null) {
+    result.workspaceTitleSource = workspaceTitleSource;
   }
-  if (isEnumValue(VALID_SIDEBAR_WORKSPACE_TRAILINGS, stored.sidebarWorkspaceTrailing)) {
-    result.sidebarWorkspaceTrailing = stored.sidebarWorkspaceTrailing;
+  const sidebarWorkspaceTrailing = pickStoredSetting(stored, "sidebarWorkspaceTrailing", (value) =>
+    isEnumValue(VALID_SIDEBAR_WORKSPACE_TRAILINGS, value) ? value : null,
+  );
+  if (sidebarWorkspaceTrailing !== null) {
+    result.sidebarWorkspaceTrailing = sidebarWorkspaceTrailing;
   }
   return result;
 }
@@ -443,49 +388,61 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   Object.assign(result, pickEnumAppSettings(stored));
   if (typeof stored.pluginThemeId === "string") {
     result.pluginThemeId = stored.pluginThemeId;
+  } else if (stored.pluginThemeId !== undefined && stored.pluginThemeId !== null) {
+    console.warn("[AppSettings] Ignoring invalid pluginThemeId.");
   }
   if (stored.sidebarRowItems !== undefined) {
+    if (!isPlainJsonObject(stored.sidebarRowItems)) {
+      console.warn("[AppSettings] Ignoring invalid sidebarRowItems.");
+    }
     result.sidebarRowItems = parseSidebarRowItems(stored.sidebarRowItems);
   }
   const sidebarChecksDisplay = parseStoredSidebarChecksDisplay(stored);
   if (sidebarChecksDisplay !== null) {
     result.sidebarChecksDisplay = sidebarChecksDisplay;
   }
-  const language = parseAppLanguage(stored.language);
+  const language = pickStoredSetting(stored, "language", parseAppLanguage);
   if (language !== null) {
     result.language = language;
   }
-  const terminalScrollbackLines = parseTerminalScrollbackLines(stored.terminalScrollbackLines);
+  const terminalScrollbackLines = pickStoredSetting(
+    stored,
+    "terminalScrollbackLines",
+    parseTerminalScrollbackLines,
+  );
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
   }
-  const uiFontFamily = sanitizeFontFamily(stored.uiFontFamily);
+  const uiFontFamily = pickStoredSetting(stored, "uiFontFamily", sanitizeFontFamily);
   if (uiFontFamily !== null) {
     result.uiFontFamily = uiFontFamily;
   }
-  const monoFontFamily = sanitizeFontFamily(stored.monoFontFamily);
+  const monoFontFamily = pickStoredSetting(stored, "monoFontFamily", sanitizeFontFamily);
   if (monoFontFamily !== null) {
     result.monoFontFamily = monoFontFamily;
   }
-  const uiBaseFontSize = parseClampedFontSize(stored.uiBaseFontSize, {
-    min: MIN_UI_BASE_FONT_SIZE,
-    max: MAX_UI_BASE_FONT_SIZE,
-  });
+  const uiBaseFontSize = pickStoredSetting(stored, "uiBaseFontSize", (value) =>
+    parseClampedFontSize(value, {
+      min: MIN_UI_BASE_FONT_SIZE,
+      max: MAX_UI_BASE_FONT_SIZE,
+    }),
+  );
   if (uiBaseFontSize !== null) {
     result.uiBaseFontSize = uiBaseFontSize;
   } else {
-    const legacyUiFontSize = parseClampedFontSize(stored.uiFontSize, {
-      min: 11,
-      max: 24,
-    });
+    const legacyUiFontSize = pickStoredSetting(stored, "uiFontSize", (value) =>
+      parseClampedFontSize(value, { min: 11, max: 24 }),
+    );
     if (legacyUiFontSize !== null) {
       result.uiBaseFontSize = Math.round((FONT_SIZE.base * legacyUiFontSize) / 16);
     }
   }
-  const contentFontSize = parseClampedFontSize(stored.contentFontSize, {
-    min: MIN_CONTENT_FONT_SIZE,
-    max: MAX_CONTENT_FONT_SIZE,
-  });
+  const contentFontSize = pickStoredSetting(stored, "contentFontSize", (value) =>
+    parseClampedFontSize(value, {
+      min: MIN_CONTENT_FONT_SIZE,
+      max: MAX_CONTENT_FONT_SIZE,
+    }),
+  );
   if (contentFontSize !== null) {
     result.contentFontSize = contentFontSize;
   } else if (stored.contentFontSize === undefined) {
@@ -493,16 +450,19 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
     // once, then persist the independent setting during the read migration.
     result.contentFontSize = result.uiBaseFontSize ?? DEFAULT_UI_BASE_FONT_SIZE;
   }
-  const codeFontSize = parseClampedFontSize(stored.codeFontSize, {
-    min: MIN_CODE_FONT_SIZE,
-    max: MAX_CODE_FONT_SIZE,
-  });
+  const codeFontSize = pickStoredSetting(stored, "codeFontSize", (value) =>
+    parseClampedFontSize(value, {
+      min: MIN_CODE_FONT_SIZE,
+      max: MAX_CODE_FONT_SIZE,
+    }),
+  );
   if (codeFontSize !== null) {
     result.codeFontSize = codeFontSize;
   }
   Object.assign(result, pickBooleanAppSettings(stored));
-  if (typeof stored.autoExpandReasoning === "boolean") {
-    result.autoExpandReasoning = stored.autoExpandReasoning;
+  const autoExpandReasoning = pickStoredSetting(stored, "autoExpandReasoning", parseBoolean);
+  if (autoExpandReasoning !== null) {
+    result.autoExpandReasoning = autoExpandReasoning;
   }
   const toolCallDetailLevel = parseToolCallDetailLevel(stored);
   if (toolCallDetailLevel !== null) {
