@@ -775,7 +775,11 @@ function pickModeForProvider(input: {
     return currentMode;
   }
   const entry = resolveSelectedEntry(input.entries, input.provider);
-  return entry?.defaultModeId ?? entry?.modes?.[0]?.id ?? "";
+  const enabledModes = entry?.modes?.filter((mode) => mode.disabledReason === undefined) ?? [];
+  if (entry?.defaultModeId && enabledModes.some((mode) => mode.id === entry.defaultModeId)) {
+    return entry.defaultModeId;
+  }
+  return enabledModes[0]?.id ?? "";
 }
 
 function pickModelForProvider(input: {

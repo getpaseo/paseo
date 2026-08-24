@@ -76,6 +76,20 @@ async function createSession() {
   });
 }
 
+async function createRootSession(modeId?: string) {
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory: sdkQueryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+    runningAsRoot: true,
+  });
+  return client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    modeId,
+  });
+}
+
 function createSessionWithLogger(logger: Logger) {
   const client = new ClaudeAgentClient({
     logger,
@@ -199,6 +213,70 @@ test("exposes and applies auto permission mode", async () => {
   } finally {
     await session.close();
   }
+});
+
+test("disables permission bypass and omits its launch capability when running as root", async () => {
+  let capturedOptions:
+    | {
+        permissionMode?: string;
+        allowDangerouslySkipPermissions?: boolean;
+      }
+    | undefined;
+  sdkQueryFactory.mockImplementation(
+    ({
+      options,
+    }: {
+      options: {
+        permissionMode?: string;
+        allowDangerouslySkipPermissions?: boolean;
+      };
+    }) => {
+      capturedOptions = options;
+      return createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    },
+  );
+  const session = await createRootSession("bypassPermissions");
+
+  try {
+    await expect(session.getCurrentMode()).resolves.toBe("default");
+    await expect(session.getAvailableModes()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "bypassPermissions",
+          disabledReason:
+            "Claude Code does not allow bypassing permissions when Paseo runs as root.",
+        }),
+      ]),
+    );
+    await expect(session.setMode("bypassPermissions")).rejects.toThrow(
+      "Claude Code does not allow bypassing permissions when Paseo runs as root.",
+    );
+
+    await collectUntilTerminal(streamSession(session, "run safely"));
+    expect(capturedOptions).toMatchObject({ permissionMode: "default" });
+    expect(capturedOptions?.allowDangerouslySkipPermissions).toBeUndefined();
+  } finally {
+    await session.close();
+  }
+});
+
+test("marks permission bypass disabled in the root provider catalog", async () => {
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveVersion: async () => "2.1.220",
+    runningAsRoot: true,
+  });
+
+  const catalog = await client.fetchCatalog({ scope: "global", force: false });
+
+  expect(catalog.modes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "bypassPermissions",
+        disabledReason: "Claude Code does not allow bypassing permissions when Paseo runs as root.",
+      }),
+    ]),
+  );
 });
 
 test("rejects auto mode when Claude Code uses Bedrock", async () => {

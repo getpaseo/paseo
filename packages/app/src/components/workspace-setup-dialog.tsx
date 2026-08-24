@@ -123,7 +123,7 @@ function buildCreateAgentOptions({
   provider,
 }: {
   composerState: {
-    modeOptions: { id: string }[];
+    modeOptions: { id: string; disabledReason?: string }[];
     selectedMode: string;
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
@@ -140,7 +140,9 @@ function buildCreateAgentOptions({
   // globally-remembered mode this workspace's provider config no longer
   // defines), so the submitted mode must match that display rather than send a
   // stale mode the provider would reject.
-  const modeOptionIds = composerState.modeOptions.map((mode) => mode.id);
+  const modeOptionIds = composerState.modeOptions
+    .filter((mode) => mode.disabledReason === undefined)
+    .map((mode) => mode.id);
   const reconciledMode = modeOptionIds.includes(composerState.selectedMode)
     ? composerState.selectedMode
     : (modeOptionIds[0] ?? "");
