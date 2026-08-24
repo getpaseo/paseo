@@ -21,8 +21,8 @@ export function useBrowserMirror(serverId: string): boolean {
 /**
  * Whether this client offers "new browser tab" at all.
  *
- * COMPAT(browserMirror): added in v0.5.1, remove after 2027-09-01 once the daemon
- * floor >= v0.5.1. An older daemon advertises no mirror, and Electron's local
+ * COMPAT(browserMirror): added in v0.5.2, remove after 2027-09-01 once the daemon
+ * floor >= v0.5.2. An older daemon advertises no mirror, and Electron's local
  * browser predates mirroring and still works against it, so the desktop app
  * keeps offering tabs there. Delete the `getIsElectron()` branch and this
  * comment together.

@@ -27,10 +27,10 @@ export const CLIENT_CAPS = {
   // The host end of browser automation: this client owns browser tabs and can
   // run automation commands against them. Its value is the host's command list.
   browserHost: "browser_host",
-  // COMPAT(browserMirror): added in v0.5.1. The viewer end: this client parses
+  // COMPAT(browserMirror): added in v0.5.2. The viewer end: this client parses
   // `browser.tabs.changed`. Older apps have no branch for it, so the daemon
   // pushes mirror messages only to clients that advertise this. Remove the gate
-  // after 2027-09-01 once the supported client floor is >= v0.5.1.
+  // after 2027-09-01 once the supported client floor is >= v0.5.2.
   browserMirror: "browser_mirror",
 } as const;
 
