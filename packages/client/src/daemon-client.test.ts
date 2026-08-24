@@ -1439,6 +1439,110 @@ test("honors explicit getDaemonPairingOffer timeout below the session RPC defaul
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
 });
 
+test("gates config reload on the daemon capability", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(client.reloadDaemonConfig("reload-old-host")).rejects.toThrow(
+    "Update the host to reload daemon configuration.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
+test("sends and parses daemon config reload", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { daemonConfigReload: true } });
+  await connectPromise;
+
+  const response = client.reloadDaemonConfig("reload-new-host");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "daemon.config.reload.request",
+    requestId: "reload-new-host",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "daemon.config.reload.response",
+      payload: {
+        requestId: "reload-new-host",
+        appliedPaths: ["daemon.browserTools.enabled"],
+        restartRequiredPaths: ["daemon.listen"],
+        overrideControlledPaths: [],
+      },
+    }),
+  );
+
+  await expect(response).resolves.toEqual({
+    requestId: "reload-new-host",
+    appliedPaths: ["daemon.browserTools.enabled"],
+    restartRequiredPaths: ["daemon.listen"],
+    overrideControlledPaths: [],
+  });
+});
+
+test("gets a structured plugin log snapshot", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pluginLogs: true } });
+  await connectPromise;
+
+  const response = client.getPluginLogs("example");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({ type: "plugin.logs.get.request", pluginId: "example" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "plugin.logs.get.response",
+      payload: {
+        requestId: request.requestId,
+        pluginId: "example",
+        entries: [
+          {
+            sequence: 3,
+            timestamp: "2026-08-16T12:00:00.000Z",
+            stream: "stdout",
+            message: "ready",
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(response).resolves.toEqual([
+    {
+      sequence: 3,
+      timestamp: "2026-08-16T12:00:00.000Z",
+      stream: "stdout",
+      message: "ready",
+    },
+  ]);
+});
+
 test("keeps waitForAgentUpsert initial fetch inside the requested deadline", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
@@ -2106,6 +2210,61 @@ test("readFile resolves from binary file frames when the daemon supports them", 
     modifiedAt: "2026-05-02T00:00:00.000Z",
   });
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("readFile drops an old daemon's over-budget binary chunks and reports the refusal", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_file_budget_compat",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.readFile("/tmp/project", "large.txt", "req-budget", 10);
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file_explorer_request",
+      cwd: "/tmp/project",
+      path: "large.txt",
+      mode: "file",
+      acceptBinary: true,
+      maxBytes: 10,
+      requestId: "req-budget",
+    },
+  });
+
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-budget",
+      metadata: {
+        mime: "text/plain",
+        size: 100,
+        encoding: "utf-8",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-budget",
+      payload: new Uint8Array(100),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-budget" }),
+  );
+
+  await expect(responsePromise).rejects.toThrow("File is too large to display");
 });
 
 test("uploadFile sends metadata request and file bytes as binary chunks", async () => {

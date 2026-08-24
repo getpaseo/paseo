@@ -332,7 +332,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   optionLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   optionTrailingSlot: {

@@ -89,6 +89,9 @@ test.describe("real provider subagent timelines", () => {
         }
         await rows.first().click();
 
+        // Choosing a row is a menu selection: the track panel goes with it.
+        await expect(page.getByTestId("subagents-track-header-panel")).toBeHidden();
+
         const panel = page.getByTestId("provider-subagent-panel");
         await expect(panel).toBeVisible({ timeout: 30_000 });
         if (scenario.expectedSubtitle) {
@@ -133,6 +136,8 @@ test.describe("real provider subagent timelines", () => {
         await expect(
           page.getByTestId("assistant-message").filter({ hasText: "ROOT_DONE" }).last(),
         ).toBeVisible({ timeout: 60_000 });
+        // Opening the subagent's tab closed the panel with the parent's pane.
+        await openSubagentsTrack(page);
         const archiveFinished = page.getByTestId("subagents-track-archive-finished");
         await expect(archiveFinished).toBeVisible({ timeout: 30_000 });
         await archiveFinished.click();

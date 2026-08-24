@@ -201,6 +201,39 @@ export function scoreMatch(
   return fuzzy ? scoreFuzzyMatch(q, t, fuzzy) : null;
 }
 
+interface CompactText {
+  value: string;
+  offsets: number[];
+}
+
+function compactText(value: string): CompactText {
+  let compact = "";
+  const offsets: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (!/[a-z0-9]/i.test(value[index])) continue;
+    compact += value[index].toLowerCase();
+    offsets.push(index);
+  }
+  return { value: compact, offsets };
+}
+
+/** Match a query against a complete displayed path, including its separators. */
+export function scorePathMatch(query: string, path: string): MatchScore | null {
+  const direct = scoreMatch(query, path);
+  if (direct) return direct;
+
+  const compactQuery = compactText(query);
+  const compactPath = compactText(path);
+  if (!compactQuery.value || !compactPath.value) return null;
+
+  const compactScore = scoreMatch(compactQuery.value, compactPath.value);
+  if (!compactScore) return null;
+  return {
+    ...compactScore,
+    offset: compactPath.offsets[compactScore.offset] ?? compactScore.offset,
+  };
+}
+
 export interface MatchRange {
   start: number;
   length: number;

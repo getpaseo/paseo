@@ -1087,7 +1087,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(dedupedRemoteBranch.status).toBe(1);
     });
 
-    test("derives a deduped PR lookup target from git config when metadata has no target", async () => {
+    test("does not derive a deduped PR lookup target when managed metadata has no target", async () => {
       const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
       execFileSync("git", ["remote", "set-url", "origin", `file://${remoteDir}`], {
@@ -1145,7 +1145,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(facts).toMatchObject({
         isGit: true,
         currentBranch: "daemon-shutdown-diagnostics-1",
-        pullRequestLookupTarget: { headRef: "daemon-shutdown-diagnostics" },
+        pullRequestLookupTarget: null,
       });
     });
 

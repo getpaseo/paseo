@@ -222,7 +222,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   subtitleText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
@@ -230,6 +230,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export const providerSubagentPanelRegistration: PanelRegistration<"provider_subagent"> = {
   kind: "provider_subagent",
+  resourceKey: (target) => `${target.parentAgentId}:${target.subagentId}`,
   component: ProviderSubagentPanel,
   useDescriptor: useProviderSubagentDescriptor,
 };

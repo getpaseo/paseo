@@ -5,6 +5,7 @@ import {
   fuzzyPolicyForToken,
   matchRanges,
   scoreMatch,
+  scorePathMatch,
   scoreTextFields,
 } from "./text-match.js";
 
@@ -168,6 +169,28 @@ describe("scoreMatch typo tolerance", () => {
     expect(
       scoreMatch("mian", "feat/mainline-fix", { fuzzy: fuzzyPolicyForToken("mian") })?.tier,
     ).toBe(6);
+  });
+});
+
+describe("scorePathMatch", () => {
+  it("matches a literal fragment anywhere in the complete path", () => {
+    expect(
+      scorePathMatch("skills/", "something/something-else/skills/paseo-advisor/SKILL.md"),
+    ).not.toBeNull();
+  });
+
+  it("fuzzy-matches spaced text against a compact path", () => {
+    expect(scorePathMatch("blank page editor", "blankpage/editor")).toEqual({
+      tier: 0,
+      offset: 0,
+    });
+  });
+
+  it("keeps the original path offset for compact matches", () => {
+    expect(scorePathMatch("blank page editor", "projects/blankpage/editor")).toEqual({
+      tier: 4,
+      offset: 9,
+    });
   });
 });
 

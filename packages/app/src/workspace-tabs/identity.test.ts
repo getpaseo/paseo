@@ -5,6 +5,18 @@ import {
   workspaceTabTargetsEqual,
 } from "./identity";
 
+describe("New tab identity", () => {
+  it("stays outside deterministic target identity", () => {
+    const target = { kind: "new_tab" } as const;
+
+    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+    expect(workspaceTabTargetsEqual(target, target)).toBe(false);
+    expect(() => buildDeterministicWorkspaceTabId(target)).toThrow(
+      "New tabs do not have deterministic target identities",
+    );
+  });
+});
+
 describe("provider subagent tab identity", () => {
   test("normalizes and compares the parent and provider child as one tab identity", () => {
     const target = normalizeWorkspaceTabTarget({
@@ -80,6 +92,19 @@ describe("working diff tab identity", () => {
   });
 });
 
+describe("workspace utility panel identity", () => {
+  it.each(["files", "pull_request"] as const)(
+    "normalizes and deterministically keys %s",
+    (kind) => {
+      const target = { kind };
+
+      expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+      expect(buildDeterministicWorkspaceTabId(target)).toBe(kind);
+      expect(workspaceTabTargetsEqual(target, target)).toBe(true);
+    },
+  );
+});
+
 describe("commit diff tab identity", () => {
   it("keys a commit diff tab by its sha", () => {
     expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(
@@ -130,5 +155,44 @@ describe("commit diff tab identity", () => {
         sha: "   ",
       }),
     ).toBeNull();
+  });
+});
+
+describe("plugin panel tab identity", () => {
+  it("normalizes exact workspace and agent context", () => {
+    expect(
+      normalizeWorkspaceTabTarget({
+        kind: "plugin",
+        pluginId: " review ",
+        panelId: " details ",
+        context: "agent",
+        agentId: " agent-1 ",
+      }),
+    ).toEqual({
+      kind: "plugin",
+      pluginId: "review",
+      panelId: "details",
+      context: "agent",
+      agentId: "agent-1",
+    });
+  });
+
+  it("gives workspace and agent instances distinct stable ids", () => {
+    const workspace = buildDeterministicWorkspaceTabId({
+      kind: "plugin",
+      pluginId: "review",
+      panelId: "details",
+      context: "workspace",
+    });
+    const agent = buildDeterministicWorkspaceTabId({
+      kind: "plugin",
+      pluginId: "review",
+      panelId: "details",
+      context: "agent",
+      agentId: "agent-1",
+    });
+
+    expect(workspace).toBe("plugin_workspace_6_review_7_details");
+    expect(agent).toBe("plugin_agent_6_review_7_details_7_agent-1");
   });
 });

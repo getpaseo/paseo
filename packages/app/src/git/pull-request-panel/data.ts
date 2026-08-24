@@ -27,7 +27,11 @@ export interface PrPaneCheck {
   name: string;
   workflow?: string;
   status: CheckStatus;
-  duration?: string;
+  /**
+   * What the row says about time: how long a finished check took ("2m"), or how long a
+   * running one has been going ("running 2m"). Absent when the forge reports neither.
+   */
+  timing?: string;
   url: string;
   /**
    * Forge-neutral reference for fetching this check's detail/logs on demand. Any
@@ -212,14 +216,16 @@ function mapCheck(
     return [];
   }
 
+  const status = mapCheckStatus(check.status);
+  const timing = formatCheckTiming(check.duration, status);
   return [
     {
       provider: forge,
       name: check.name,
-      status: mapCheckStatus(check.status),
+      status,
       url: check.url,
       ...(check.workflow ? { workflow: check.workflow } : {}),
-      ...(check.duration ? { duration: check.duration } : {}),
+      ...(timing ? { timing } : {}),
       ...(check.checkRunId !== undefined || check.workflowRunId !== undefined
         ? {
             detailRef: {
@@ -230,6 +236,18 @@ function mapCheck(
         : {}),
     },
   ];
+}
+
+/**
+ * The forge measures how long a check ran, whether or not it has finished. Which one it
+ * is comes from the status: on a running check a bare "2m" would read as "took 2m", so
+ * the row says the run is still going.
+ */
+function formatCheckTiming(duration: string | undefined, status: CheckStatus): string | null {
+  if (!duration) {
+    return null;
+  }
+  return status === "pending" ? `running ${duration}` : duration;
 }
 
 function mapActivity(item: PullRequestTimelineItem, nowMs: number, forge: Forge): PrPaneActivity[] {

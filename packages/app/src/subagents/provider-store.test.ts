@@ -160,7 +160,7 @@ describe("provider subagent client store", () => {
       item: { type: "assistant_message", text: "Finished output." },
     });
 
-    store.hideFinishedForParent(SERVER_ID, PARENT_ID);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, [SUBAGENT_ID]);
 
     const state = useProviderSubagentStore.getState();
     const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
@@ -185,7 +185,7 @@ describe("provider subagent client store", () => {
       toolCallId: "call-1",
     };
     store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: completed });
-    store.hideFinishedForParent(SERVER_ID, PARENT_ID);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, [SUBAGENT_ID]);
     store.replaceList(SERVER_ID, PARENT_ID, [completed]);
 
     const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
@@ -215,7 +215,7 @@ describe("provider subagent client store", () => {
         toolCallId: "call-1",
       },
     });
-    store.hideFinishedForParent(SERVER_ID, PARENT_ID);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, [SUBAGENT_ID]);
 
     store.replaceList(SERVER_ID, PARENT_ID, []);
 
@@ -239,7 +239,7 @@ describe("provider subagent client store", () => {
       toolCallId: "call-1",
     };
     store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: completed });
-    store.hideFinishedForParent(SERVER_ID, PARENT_ID);
+    store.hideFromTrack(SERVER_ID, PARENT_ID, [SUBAGENT_ID]);
     store.applyUpdate(SERVER_ID, {
       kind: "remove",
       parentAgentId: PARENT_ID,

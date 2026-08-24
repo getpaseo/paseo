@@ -7,6 +7,7 @@ import path from "node:path";
 import net from "node:net";
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
+import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { metroTest as test } from "../support/fixtures";
 import { buildSeededHost } from "../support/helpers/daemon-registry";
 import { loadDaemonClientConstructor } from "../support/helpers/daemon-client-loader";
@@ -348,12 +349,14 @@ async function seedBrowserForDaemon(page: Page, input: { serverId: string; port:
     {
       daemon: host,
       preferences: {
-        serverId: input.serverId,
         provider: "codex",
         providerPreferences: {
-          codex: { model: "gpt-5.4-mini", thinkingOptionId: "low" },
+          codex: {
+            model: "gpt-5.4-mini",
+            thinkingByModel: { "gpt-5.4-mini": "low" },
+          },
         },
-      },
+      } satisfies FormPreferences,
     },
   );
 }

@@ -2,23 +2,22 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import { z } from "zod";
+import { readValidatedString } from "@/storage/validated-storage";
 import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "./types";
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
+const ExpoPushTokenSchema = z.string().trim().min(1);
 
 function storageKey(serverId: string): string {
   return `${STORAGE_PREFIX}${serverId}`;
 }
 
 function getExpoProjectId(): string | null {
-  const constants = Constants as unknown as {
-    easConfig?: { projectId?: unknown };
-    expoConfig?: { extra?: { eas?: { projectId?: unknown } } };
-  };
-  const fromEas = constants.easConfig?.projectId;
-  if (typeof fromEas === "string" && fromEas.trim()) return fromEas.trim();
-  const fromExtra = constants.expoConfig?.extra?.eas?.projectId;
-  return typeof fromExtra === "string" && fromExtra.trim() ? fromExtra.trim() : null;
+  const fromEas = ExpoPushTokenSchema.safeParse(Constants.easConfig?.projectId);
+  if (fromEas.success) return fromEas.data;
+  const fromExtra = ExpoPushTokenSchema.safeParse(Constants.expoConfig?.extra?.eas?.projectId);
+  return fromExtra.success ? fromExtra.data : null;
 }
 
 async function ensurePushPermission(): Promise<boolean> {
@@ -31,7 +30,7 @@ async function ensurePushPermission(): Promise<boolean> {
 
 async function resolveToken(serverId: string): Promise<string | null> {
   const key = storageKey(serverId);
-  const cached = await AsyncStorage.getItem(key);
+  const cached = await readValidatedString(AsyncStorage, key, ExpoPushTokenSchema);
   if (!(await ensurePushPermission())) {
     await AsyncStorage.removeItem(key);
     return null;
@@ -87,7 +86,7 @@ export function startSubscription(input: StartPushNotificationsInput): () => voi
 
 export async function revokeSubscription(input: RevokePushNotificationsInput): Promise<void> {
   const key = storageKey(input.serverId);
-  const token = await AsyncStorage.getItem(key);
+  const token = await readValidatedString(AsyncStorage, key, ExpoPushTokenSchema);
   if (
     token &&
     input.client?.isConnected &&

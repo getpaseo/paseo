@@ -3,7 +3,10 @@ import { expectComposerVisible, submitMessage } from "../support/helpers/compose
 import { delayCreatedAgentInitialTailResponse } from "../support/helpers/agent-timeline-gate";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
-import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  createAgentTabFromMenu,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
@@ -56,7 +59,7 @@ test.describe("Workspace agent title handoff", () => {
     try {
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       await waitForWorkspaceTabsVisible(page);
-      await page.getByTestId("workspace-new-agent-tab-inline").click();
+      await createAgentTabFromMenu(page);
       await expectComposerVisible(page);
 
       const prompt = "Keep the optimistic agent pane visible during handoff";
@@ -99,7 +102,7 @@ test.describe("Workspace agent title handoff", () => {
     try {
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       await waitForWorkspaceTabsVisible(page);
-      await page.getByTestId("workspace-new-agent-tab-inline").click();
+      await createAgentTabFromMenu(page);
       await expectComposerVisible(page);
 
       const promptTitle = "Investigate optimistic tab title handoff";
@@ -130,7 +133,7 @@ test.describe("Workspace agent title handoff", () => {
         .toBe(promptTitle);
       await expect(agentTab).toContainText(promptTitle, { timeout: 15_000 });
       await agentTab.click({ button: "right" });
-      await expect(page.getByTestId(`workspace-tab-context-agent_${agentId}-rename`)).toBeVisible({
+      await expect(page.getByRole("menuitem", { name: "Rename", exact: true })).toBeVisible({
         timeout: 10_000,
       });
       await page.keyboard.press("Escape");

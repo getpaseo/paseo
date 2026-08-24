@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useMemo,
   type PropsWithChildren,
   type ReactElement,
   type ReactNode,
@@ -20,6 +21,7 @@ import {
   useMenuState,
   type MenuCompactMode,
 } from "./menu-context";
+import { isWeb } from "@/constants/platform";
 
 /**
  * Owns one menu's state. Wrap a trigger and a `MenuSurface` in it.
@@ -67,7 +69,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
 }
 
 export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigger(
-  { children, disabled, style, ...props },
+  { children, disabled, style, accessibilityState, ...props },
   forwardedRef,
 ): ReactElement {
   const ctx = useMenuContext("MenuTrigger");
@@ -102,13 +104,23 @@ export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigg
     },
     [children, ctx.open],
   );
+  const resolvedAccessibilityState = useMemo(
+    () => ({ ...accessibilityState, disabled: Boolean(disabled), expanded: ctx.open }),
+    [accessibilityState, ctx.open, disabled],
+  );
+  const webExpandedState = useMemo(
+    () => (isWeb ? ({ "aria-expanded": ctx.open } as const) : null),
+    [ctx.open],
+  );
 
   return (
     <Pressable
       {...props}
+      {...webExpandedState}
       ref={handleTriggerRef}
       collapsable={false}
       disabled={disabled}
+      accessibilityState={resolvedAccessibilityState}
       onPress={handlePress}
       style={pressableStyle}
     >

@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { highlightCode, isLanguageSupported, type HighlightToken } from "@getpaseo/highlight";
 
+const MAX_DIFF_HIGHLIGHT_LINE_CHARS = 10_000;
+
 export interface DiffLine {
   type: "add" | "remove" | "context" | "header";
   content: string;
@@ -227,6 +229,25 @@ function buildFileContent(lineMap: Map<number, string>): string {
   return lines.join("\n");
 }
 
+function hasOversizedLine(content: string): boolean {
+  let lineStart = 0;
+  for (let index = 0; index <= content.length; index++) {
+    if (index !== content.length && content.charCodeAt(index) !== 10) continue;
+    if (index - lineStart > MAX_DIFF_HIGHLIGHT_LINE_CHARS) return true;
+    lineStart = index + 1;
+  }
+  return false;
+}
+
+function hasOversizedDiffLine(file: ParsedDiffFile): boolean {
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      if (line.content.length > MAX_DIFF_HIGHLIGHT_LINE_CHARS) return true;
+    }
+  }
+  return false;
+}
+
 function buildTokenLookup(
   lineMap: Map<number, string>,
   highlighted: HighlightToken[][],
@@ -251,7 +272,9 @@ function buildTokenLookup(
 function buildFullFileTokenLookup(
   fileContent: string,
   path: string,
-): Map<number, HighlightToken[]> {
+): Map<number, HighlightToken[]> | null {
+  if (hasOversizedLine(fileContent)) return null;
+
   const lookup = new Map<number, HighlightToken[]>();
   const highlighted = highlightCode(fileContent, path);
 
@@ -284,13 +307,16 @@ function buildReconstructedTokenLookups(file: ParsedDiffFile): {
  * This is the fallback when actual file content is not available.
  */
 export function highlightDiffFromHunks(file: ParsedDiffFile): ParsedDiffFile {
-  if (!isLanguageSupported(file.path)) {
+  if (!isLanguageSupported(file.path) || hasOversizedDiffLine(file)) {
     return file;
   }
 
-  const { newTokensByLine, oldTokensByLine } = buildReconstructedTokenLookups(file);
-
-  return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
+  const reconstructedTokens = buildReconstructedTokenLookups(file);
+  return applyTokensToHunks(
+    file,
+    reconstructedTokens.newTokensByLine,
+    reconstructedTokens.oldTokensByLine,
+  );
 }
 
 /**
@@ -302,7 +328,7 @@ export async function highlightDiffWithFileContent(
   cwd: string,
   options: HighlightDiffWithFileContentOptions = {},
 ): Promise<ParsedDiffFile> {
-  if (!isLanguageSupported(file.path)) {
+  if (!isLanguageSupported(file.path) || hasOversizedDiffLine(file)) {
     return file;
   }
 
@@ -311,18 +337,20 @@ export async function highlightDiffWithFileContent(
   let oldTokensByLine = reconstructedTokens.oldTokensByLine;
 
   if (typeof options.oldFileContent === "string") {
-    oldTokensByLine = buildFullFileTokenLookup(options.oldFileContent, file.path);
+    oldTokensByLine =
+      buildFullFileTokenLookup(options.oldFileContent, file.path) ?? oldTokensByLine;
   }
 
   if (typeof options.newFileContent === "string") {
-    newTokensByLine = buildFullFileTokenLookup(options.newFileContent, file.path);
+    newTokensByLine =
+      buildFullFileTokenLookup(options.newFileContent, file.path) ?? newTokensByLine;
     return applyTokensToHunks(file, newTokensByLine, oldTokensByLine);
   }
 
   const filePath = resolve(cwd, file.path);
   try {
     const fileContent = await readFile(filePath, "utf-8");
-    newTokensByLine = buildFullFileTokenLookup(fileContent, file.path);
+    newTokensByLine = buildFullFileTokenLookup(fileContent, file.path) ?? newTokensByLine;
   } catch {
     // If file read fails (deleted file, etc.), fall back to reconstructed new-side tokens.
   }

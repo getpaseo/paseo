@@ -5,7 +5,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,
   type KeyboardShortcutInput,
@@ -37,6 +37,7 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -55,6 +56,7 @@ export function useKeyboardShortcuts({
   exitFocusMode: () => void;
   cycleTheme?: () => void;
 }) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const pathname = usePathname();
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
@@ -269,7 +271,6 @@ export function useKeyboardShortcuts({
         },
         bindings,
       });
-
       chordStateRef.current = result.nextChordState;
       if (
         shouldPublishBrowserShortcutPolicy({
@@ -310,6 +311,10 @@ export function useKeyboardShortcuts({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
+        return;
+      }
+
+      if (dispatchTopWebOverlayKeyDown(event)) {
         return;
       }
 
@@ -405,6 +410,7 @@ export function useKeyboardShortcuts({
     isMac,
     isMobile,
     isWorkspaceFocusModeEnabled,
+    keyboardActionDispatcher,
     openProjectPickerAction,
     pathname,
     publishBrowserShortcutPolicy,

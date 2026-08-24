@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
-import { materializeAgentProfile, toAgentConfigApply } from "./materialize-profile";
+import {
+  materializeAgentProfile,
+  reconcileMaterializedProfileMode,
+  toAgentConfigApply,
+} from "./materialize-profile";
 
 function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {
@@ -85,5 +89,31 @@ describe("toAgentConfigApply", () => {
     expect(
       toAgentConfigApply(materializeAgentProfile(profile({ model: "claude-opus-5" }))),
     ).not.toHaveProperty("provider");
+  });
+});
+
+describe("reconcileMaterializedProfileMode", () => {
+  it("waits when the current provider mode catalog is unknown", () => {
+    expect(
+      reconcileMaterializedProfileMode(materializeAgentProfile(profile({ modeId: "plan" })), null),
+    ).toBeNull();
+  });
+
+  it("drops a profile mode removed from the current provider catalog", () => {
+    expect(
+      reconcileMaterializedProfileMode(
+        materializeAgentProfile(profile({ modeId: "removed-mode" })),
+        ["plan", "default"],
+      ),
+    ).toMatchObject({ modeId: "" });
+  });
+
+  it("preserves a profile mode still offered by the provider", () => {
+    expect(
+      reconcileMaterializedProfileMode(materializeAgentProfile(profile({ modeId: "plan" })), [
+        "plan",
+        "default",
+      ]),
+    ).toMatchObject({ modeId: "plan" });
   });
 });

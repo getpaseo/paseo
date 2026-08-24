@@ -21,6 +21,9 @@ type ProjectDirectoryDelta = Extract<SessionOutboundMessage, { type: "project.up
 export interface WorkspaceDirectorySnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
   projects: Map<string, ProjectDescriptor>;
+  syncCursors?: Partial<
+    Record<"projects" | "workspaces", { generation: string; afterSeq: number }>
+  >;
 }
 
 function applyProjectDelta(

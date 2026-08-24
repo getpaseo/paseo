@@ -10,6 +10,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "packages/highlight/**"
+      - "packages/plugin/**"
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"

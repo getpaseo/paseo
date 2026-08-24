@@ -6,6 +6,7 @@ import {
   type CompactProviderSnapshot,
 } from "@getpaseo/protocol/provider-snapshot-codec";
 import { CompactProviderSnapshotSchema } from "@getpaseo/protocol/messages";
+import { z } from "zod";
 
 const CACHE_VERSION = 1;
 const CACHE_KEY_PREFIX = "@paseo/provider-snapshot/v1";
@@ -44,6 +45,13 @@ interface ProviderSnapshotIndex {
   entries: ProviderSnapshotIndexEntry[];
 }
 
+const StoredProviderSnapshotSchema: z.ZodType<StoredProviderSnapshot> = z.strictObject({
+  version: z.literal(CACHE_VERSION),
+  hash: z.string(),
+  generatedAt: z.string().datetime({ offset: true }),
+  compactSnapshot: CompactProviderSnapshotSchema,
+});
+
 export interface CachedProviderSnapshot extends StoredProviderSnapshot {
   entries: ProviderSnapshotEntry[];
 }
@@ -81,22 +89,8 @@ function oldestFirst(left: ProviderSnapshotIndexEntry, right: ProviderSnapshotIn
 
 function parseStoredProviderSnapshot(value: string): StoredProviderSnapshot | null {
   const parsed: unknown = JSON.parse(value);
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const version = Reflect.get(parsed, "version");
-  const hash = Reflect.get(parsed, "hash");
-  const generatedAt = Reflect.get(parsed, "generatedAt");
-  const compactSnapshot = CompactProviderSnapshotSchema.safeParse(
-    Reflect.get(parsed, "compactSnapshot"),
-  );
-  if (
-    version !== CACHE_VERSION ||
-    typeof hash !== "string" ||
-    typeof generatedAt !== "string" ||
-    !compactSnapshot.success
-  ) {
-    return null;
-  }
-  return { version, hash, generatedAt, compactSnapshot: compactSnapshot.data };
+  const result = StoredProviderSnapshotSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 export function createProviderSnapshotCache(
@@ -173,12 +167,18 @@ export function createProviderSnapshotCache(
   }): Promise<void> {
     const currentIndex = await ensureCacheIndex();
     const key = cacheKey(input.serverId, input.cwd);
-    const value = JSON.stringify({
+    const stored = StoredProviderSnapshotSchema.safeParse({
       version: CACHE_VERSION,
       hash: input.hash,
       generatedAt: input.generatedAt,
       compactSnapshot: input.compactSnapshot,
-    } satisfies StoredProviderSnapshot);
+    });
+    if (!stored.success) {
+      await storage.removeItem(key);
+      await persistIndex(currentIndex.entries.filter((entry) => entry.key !== key));
+      return;
+    }
+    const value = JSON.stringify(stored.data);
     const incomingBytes = storedBytes(key, value);
     const canStoreIncoming = incomingBytes <= maxBytes;
     const retainedEntries = currentIndex.entries.filter((entry) => entry.key !== key);

@@ -11,6 +11,7 @@ interface HubLogoutResult {
   origin: string | null;
   status: "logged_out" | "not_logged_in";
   daemonDisconnected: boolean;
+  warning?: string;
 }
 
 const schema: OutputSchema<HubLogoutResult> = {
@@ -19,6 +20,7 @@ const schema: OutputSchema<HubLogoutResult> = {
     { header: "HUB", field: "origin" },
     { header: "STATUS", field: "status" },
     { header: "DAEMON DISCONNECTED", field: "daemonDisconnected" },
+    { header: "WARNING", field: "warning" },
   ],
 };
 
@@ -70,11 +72,16 @@ export async function runHubLogout(
     options,
     `Disconnecting this daemon from ${active.origin}`,
   );
-  await withHubDaemon(dependencies.daemon, options.host, async (daemon) => {
-    await daemon.disconnectHub(options.force ?? false);
+  const disconnect = await withHubDaemon(dependencies.daemon, options.host, async (daemon) => {
+    return daemon.disconnectHub(options.force ?? false);
   });
   dependencies.credentials.logoutActive();
-  return logoutResult({ origin: active.origin, status: "logged_out", daemonDisconnected: true });
+  return logoutResult({
+    origin: active.origin,
+    status: "logged_out",
+    daemonDisconnected: disconnect.status.state === "not_connected",
+    ...(disconnect.warning ? { warning: disconnect.warning } : {}),
+  });
 }
 
 export function addHubLogoutCommand(parent: Command, dependencies: HubLogoutDependencies): void {
@@ -83,7 +90,7 @@ export function addHubLogoutCommand(parent: Command, dependencies: HubLogoutDepe
       .command("logout")
       .description("Remove the active stored Hub CLI login")
       .option("--disconnect-daemon", "Also disconnect a daemon related to the same Hub")
-      .option("--force", "Remove daemon authority even if Hub is offline"),
+      .option("--force", "Remove daemon authority without notifying the Hub"),
   ).action(
     withOutput(async (...args) => {
       const options = args.at(-2) as HubLogoutOptions;

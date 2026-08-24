@@ -5,23 +5,32 @@ import {
   type AutocompleteOptionsPosition,
 } from "@/components/ui/autocomplete-utils";
 
-interface UseAutocompleteInput<TOption> {
+interface AutocompleteKeyPressEvent {
+  key: string;
+  preventDefault: () => void;
+}
+
+interface UseAutocompleteInput<
+  TOption,
+  TKeyPressEvent extends AutocompleteKeyPressEvent = AutocompleteKeyPressEvent,
+> {
   isVisible: boolean;
   options: readonly TOption[];
   query: string;
-  onSelectOption: (option: TOption) => void;
+  onSelectOption: (option: TOption, event?: TKeyPressEvent) => void;
   onEscape?: () => void;
   optionsPosition?: AutocompleteOptionsPosition;
 }
 
-interface UseAutocompleteResult {
+interface UseAutocompleteResult<TKeyPressEvent extends AutocompleteKeyPressEvent> {
   selectedIndex: number;
-  onKeyPress: (event: { key: string; preventDefault: () => void }) => boolean;
+  onKeyPress: (event: TKeyPressEvent) => boolean;
 }
 
-export function useAutocomplete<TOption>(
-  input: UseAutocompleteInput<TOption>,
-): UseAutocompleteResult {
+export function useAutocomplete<
+  TOption,
+  TKeyPressEvent extends AutocompleteKeyPressEvent = AutocompleteKeyPressEvent,
+>(input: UseAutocompleteInput<TOption, TKeyPressEvent>): UseAutocompleteResult<TKeyPressEvent> {
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const previousQueryRef = useRef("");
 
@@ -56,7 +65,7 @@ export function useAutocomplete<TOption>(
   }, [input.isVisible, input.options.length, input.query, input.optionsPosition]);
 
   const onKeyPress = useCallback(
-    (event: { key: string; preventDefault: () => void }) => {
+    (event: TKeyPressEvent) => {
       if (!input.isVisible || input.options.length === 0) {
         return false;
       }
@@ -97,7 +106,7 @@ export function useAutocomplete<TOption>(
             : fallbackIndex;
         const selectedOption = input.options[resolvedIndex];
         if (selectedOption) {
-          input.onSelectOption(selectedOption);
+          input.onSelectOption(selectedOption, event);
         }
         return true;
       }

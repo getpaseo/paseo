@@ -25,7 +25,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   optionSubtext: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     marginTop: theme.spacing[1],
   },
   optionBody: {

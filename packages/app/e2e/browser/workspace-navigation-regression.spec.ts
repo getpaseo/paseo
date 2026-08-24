@@ -79,6 +79,12 @@ async function getVisibleDraftTabCount(page: Page): Promise<number> {
 }
 
 async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
+  const tab = page
+    .locator('[data-testid^="workspace-tab-draft"]')
+    .filter({ visible: true })
+    .first();
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await tab.hover();
   const closeButton = page.locator('[data-testid^="workspace-draft-close-"]').filter({
     visible: true,
   });

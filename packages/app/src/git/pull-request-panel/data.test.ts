@@ -155,13 +155,34 @@ describe("mapPrPaneData", () => {
         name: "success",
         workflow: "CI",
         status: "success",
-        duration: "1m",
+        timing: "1m",
         url: "https://example.com/1",
       },
       { provider: "github", name: "failure", status: "failure", url: "https://example.com/2" },
       { provider: "github", name: "pending", status: "pending", url: "https://example.com/3" },
       { provider: "github", name: "skipped", status: "skipped", url: "https://example.com/4" },
       { provider: "github", name: "cancelled", status: "skipped", url: "https://example.com/5" },
+    ]);
+  });
+
+  it("marks a running check's elapsed time so it does not read as a finished duration", () => {
+    const data = mapPrPaneData(
+      status({
+        checks: [
+          { name: "running", status: "pending", url: "https://example.com/1", duration: "7m" },
+          { name: "done", status: "success", url: "https://example.com/2", duration: "1m 4s" },
+          { name: "broke", status: "failure", url: "https://example.com/3", duration: "12s" },
+          { name: "untimed", status: "pending", url: "https://example.com/4" },
+        ],
+      }),
+      baseTimeline,
+    );
+
+    expect(data?.checks.map((check) => check.timing)).toEqual([
+      "running 7m",
+      "1m 4s",
+      "12s",
+      undefined,
     ]);
   });
 

@@ -12,12 +12,12 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
-  type TextInput,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-modal-sheet";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import {
   createControlGeometry,
   resolveControlInteractionStyles,
@@ -45,7 +45,7 @@ export function Field({ label, children, hint, error, testID }: FieldProps) {
     }
     if (hint) {
       return (
-        <Text numberOfLines={1} style={styles.hintText} testID={hintTestID}>
+        <Text style={styles.hintText} testID={hintTestID}>
           {hint}
         </Text>
       );
@@ -141,7 +141,10 @@ function stripUnistylesMetadata<TStyle extends object>(style: TStyle): TStyle {
   return cleanStyle as TStyle;
 }
 
-function assignTextInputRef(forwardedRef: ForwardedRef<TextInput>, node: TextInput | null): void {
+function assignTextInputRef(
+  forwardedRef: ForwardedRef<EditingTextInputHandle>,
+  node: EditingTextInputHandle | null,
+): void {
   if (typeof forwardedRef === "function") {
     forwardedRef(node);
     return;
@@ -151,74 +154,73 @@ function assignTextInputRef(forwardedRef: ForwardedRef<TextInput>, node: TextInp
   }
 }
 
-export const FormTextInput = forwardRef<TextInput, FormTextInputProps>(function FormTextInput(
-  { size = "md", style, onFocus, onBlur, editable, ...props },
-  ref,
-) {
-  const [focused, setFocused] = useState(false);
-  const isDisabled = editable === false;
-  const chromeSizeStyle = size === "sm" ? formInputStyles.chromeSm : formInputStyles.chromeMd;
-  const inputSizeStyle = size === "sm" ? formInputStyles.inputSm : formInputStyles.inputMd;
-  const splitStyle = useMemo(() => splitFormTextInputStyle(style), [style]);
-  const setInputRef = useCallback(
-    (node: TextInput | null) => {
-      assignTextInputRef(ref, node);
-    },
-    [ref],
-  );
-  const handleFocus = useCallback<NonNullable<AdaptiveTextInputProps["onFocus"]>>(
-    (event) => {
-      setFocused(true);
-      onFocus?.(event);
-    },
-    [onFocus],
-  );
-  const handleBlur = useCallback<NonNullable<AdaptiveTextInputProps["onBlur"]>>(
-    (event) => {
-      setFocused(false);
-      onBlur?.(event);
-    },
-    [onBlur],
-  );
-  const inputStyle = useMemo(
-    () => [formInputStyles.input, inputSizeStyle, splitStyle.inputStyle],
-    [inputSizeStyle, splitStyle.inputStyle],
-  ) as AdaptiveTextInputProps["style"];
-  const chromeStyle = useCallback(
-    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      formInputStyles.chrome,
-      chromeSizeStyle,
-      resolveControlInteractionStyles(
-        {
-          controlRest: formInputStyles.controlRest,
-          controlHover: formInputStyles.controlHover,
-          controlActive: formInputStyles.controlActive,
-          controlDisabled: formInputStyles.controlDisabled,
-        },
-        {
-          hovered,
-          focused,
-          disabled: isDisabled,
-        },
-      ),
-      splitStyle.chromeStyle,
-    ],
-    [chromeSizeStyle, focused, isDisabled, splitStyle.chromeStyle],
-  );
+export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputProps>(
+  function FormTextInput({ size = "md", style, onFocus, onBlur, editable, ...props }, ref) {
+    const [focused, setFocused] = useState(false);
+    const isDisabled = editable === false;
+    const chromeSizeStyle = size === "sm" ? formInputStyles.chromeSm : formInputStyles.chromeMd;
+    const inputSizeStyle = size === "sm" ? formInputStyles.inputSm : formInputStyles.inputMd;
+    const splitStyle = useMemo(() => splitFormTextInputStyle(style), [style]);
+    const setInputRef = useCallback(
+      (node: EditingTextInputHandle | null) => {
+        assignTextInputRef(ref, node);
+      },
+      [ref],
+    );
+    const handleFocus = useCallback<NonNullable<AdaptiveTextInputProps["onFocus"]>>(
+      (event) => {
+        setFocused(true);
+        onFocus?.(event);
+      },
+      [onFocus],
+    );
+    const handleBlur = useCallback<NonNullable<AdaptiveTextInputProps["onBlur"]>>(
+      (event) => {
+        setFocused(false);
+        onBlur?.(event);
+      },
+      [onBlur],
+    );
+    const inputStyle = useMemo(
+      () => [formInputStyles.input, inputSizeStyle, splitStyle.inputStyle],
+      [inputSizeStyle, splitStyle.inputStyle],
+    ) as AdaptiveTextInputProps["style"];
+    const chromeStyle = useCallback(
+      ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+        formInputStyles.chrome,
+        chromeSizeStyle,
+        resolveControlInteractionStyles(
+          {
+            controlRest: formInputStyles.controlRest,
+            controlHover: formInputStyles.controlHover,
+            controlActive: formInputStyles.controlActive,
+            controlDisabled: formInputStyles.controlDisabled,
+          },
+          {
+            hovered,
+            focused,
+            disabled: isDisabled,
+          },
+        ),
+        splitStyle.chromeStyle,
+      ],
+      [chromeSizeStyle, focused, isDisabled, splitStyle.chromeStyle],
+    );
 
-  return (
-    <Pressable disabled={isDisabled} style={chromeStyle}>
-      <AdaptiveTextInput
-        ref={setInputRef}
-        editable={editable}
-        {...props}
-        onBlur={handleBlur}
-        onFocus={handleFocus}
-        style={inputStyle}
-      />
-    </Pressable>
-  );
-});
+    return (
+      <Pressable disabled={isDisabled} style={chromeStyle}>
+        <AdaptiveTextInput
+          ref={setInputRef}
+          editable={editable}
+          {...props}
+          onBlur={handleBlur}
+          onFocus={handleFocus}
+          style={inputStyle}
+        />
+      </Pressable>
+    );
+  },
+);
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -226,18 +228,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   hintText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: Math.round(theme.fontSize.xs * 1.4),
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
   },
   errorText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    lineHeight: Math.round(theme.fontSize.xs * 1.4),
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.4),
   },
 }));
 

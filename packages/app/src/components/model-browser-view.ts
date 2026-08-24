@@ -9,6 +9,36 @@ export type ModelBrowserView =
   | { kind: "all" }
   | { kind: "provider"; providerId: string; providerLabel: string };
 
+/** A profile's model reference; used to match profiles back to model rows. */
+export interface ModelProfileRef {
+  provider: string;
+  modelId: string;
+}
+
+/**
+ * Groups profiles by `provider:modelId`, skipping profiles that name no model.
+ * Pure so the model browser can test it apart from the component tree.
+ */
+export function groupProfilesByProviderModel<T extends ModelProfileRef>(
+  refs: readonly T[],
+): Map<string, T[]> {
+  const lookup = new Map<string, T[]>();
+  for (const ref of refs) {
+    const modelId = ref.modelId.trim();
+    if (!modelId) {
+      continue;
+    }
+    const key = `${ref.provider}:${modelId}`;
+    const existing = lookup.get(key);
+    if (existing) {
+      existing.push(ref);
+    } else {
+      lookup.set(key, [ref]);
+    }
+  }
+  return lookup;
+}
+
 /** What the root view shows: the provider drill-down, or ranked cross-provider results. */
 export type ModelBrowserAllView =
   | { kind: "browse" }
@@ -18,25 +48,24 @@ export type ModelBrowserAllView =
 export function resolveModelBrowserAllView({
   providers,
   normalizedQuery,
+  isSearchFocused,
 }: {
   providers: ProviderSelectorProvider[];
   normalizedQuery: string;
+  isSearchFocused: boolean;
 }): ModelBrowserAllView {
-  if (!normalizedQuery) {
+  if (!normalizedQuery && !isSearchFocused) {
     return { kind: "browse" };
   }
-  const rows = filterAndRankModelRows(getAllProviderModelRows(providers), normalizedQuery);
+  const allRows = getAllProviderModelRows(providers);
+  const rows = normalizedQuery ? filterAndRankModelRows(allRows, normalizedQuery) : allRows;
   if (rows.length === 0) {
     return { kind: "noSearchMatches" };
   }
   return { kind: "searchResults", rows };
 }
 
-/**
- * Where the picker lands when it opens. Agent profiles live on the root view, so
- * a host that has any profile always opens there — including the single-provider
- * case, which would otherwise skip the root entirely and hide them.
- */
+/** Where the picker lands when it opens. A sole provider skips the redundant root view. */
 export function resolveInitialModelBrowserView({
   providers,
   selectedProvider,
@@ -48,10 +77,6 @@ export function resolveInitialModelBrowserView({
   selectedModel: string;
   hasProfiles: boolean;
 }): ModelBrowserView {
-  if (hasProfiles) {
-    return { kind: "all" };
-  }
-
   const singleProvider = providers.length === 1 ? providers[0] : undefined;
   if (singleProvider) {
     return {
@@ -59,6 +84,10 @@ export function resolveInitialModelBrowserView({
       providerId: singleProvider.id,
       providerLabel: singleProvider.label,
     };
+  }
+
+  if (hasProfiles) {
+    return { kind: "all" };
   }
 
   if (selectedProvider.length > 0 && selectedModel.length > 0) {

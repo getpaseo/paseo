@@ -153,6 +153,18 @@ async function startObservedFixture(siblingCount: number): Promise<ReturnType<ty
   return fixture;
 }
 
+test("quiet observed workspaces spawn no git commands beyond the old self-heal interval", async () => {
+  await startObservedFixture(2);
+  await settleGitCommands();
+
+  startGitCommandMetrics();
+  await new Promise((resolve) => setTimeout(resolve, 61_000));
+  await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 5_000 });
+  const idle = stopGitCommandMetrics();
+
+  expect(idle.submissions).toEqual([]);
+}, 90_000);
+
 interface GitRuntimeExpectation {
   currentBranch?: string;
   remoteUrl?: string;
@@ -377,21 +389,21 @@ test.each([1, 2, 10])(
     const creation = stopGitCommandMetrics();
 
     expect(response?.workspace?.name).toBe("created-during-measurement");
-    expect(creation.submitted).toBe(90);
     expect(countGitOperations(creation.submissions)).toEqual({
       branch: 4,
-      config: 19,
-      diff: 2,
-      "for-each-ref": 6,
-      "ls-files": 3,
-      "merge-base": 2,
-      "rev-list": 2,
-      "rev-parse": 34,
-      "show-ref": 6,
-      status: 6,
+      config: 22,
+      diff: 3,
+      "for-each-ref": 7,
+      "ls-files": 4,
+      "merge-base": 3,
+      "rev-list": 3,
+      "rev-parse": 38,
+      "show-ref": 7,
+      status: 7,
       "symbolic-ref": 4,
-      worktree: 2,
+      worktree: 1,
     });
+    expect(creation.submitted).toBe(103);
     const existingWorktrees = new Set(fixture.siblingWorktrees.map((cwd) => realpathSync(cwd)));
     expect(
       creation.submissions.filter((command) => existingWorktrees.has(realpathSync(command.cwd))),

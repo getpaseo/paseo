@@ -1,7 +1,14 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
-import { readFile, rm, stat } from "fs/promises";
+import {
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "fs";
+import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -33,10 +40,8 @@ import {
 import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
-import { writeFileAtomic } from "../server/atomic-file.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
-import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
 
@@ -794,20 +799,16 @@ export async function runWorktreeTeardownCommands(options: {
   return results;
 }
 
-export async function copySourcePaseoConfigFile(options: {
+export async function seedPaseoConfigFile(options: {
   sourceCwd: string;
   targetCwd: string;
 }): Promise<void> {
   const sourceConfigPath = join(options.sourceCwd, "paseo.json");
   const targetConfigPath = join(options.targetCwd, "paseo.json");
-  let sourceConfig: Buffer;
-  try {
-    sourceConfig = await readFile(sourceConfigPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  await writeFileAtomic(targetConfigPath, sourceConfig);
+  await copyFile(sourceConfigPath, targetConfigPath, fsConstants.COPYFILE_EXCL).catch((error) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST" && code !== "ENOENT") throw error;
+  });
 }
 
 /**
@@ -1257,7 +1258,7 @@ export const createWorktree = async ({
       : {}),
   });
 
-  await copySourcePaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
 
   if (runSetup) {
     await runWorktreeSetupCommands({
@@ -1308,7 +1309,7 @@ async function resolveWorktreeSourcePlan({
   switch (source.kind) {
     case "branch-off": {
       const branchName = source.branchName;
-      validateWorktreeBranchName(branchName);
+      await validateGitBranchName(cwd, branchName);
       const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
       const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
       const branchExists = await localBranchExists(cwd, branchName);
@@ -1320,11 +1321,15 @@ async function resolveWorktreeSourcePlan({
         branchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         metadataBaseRef: resolvedBaseBranch,
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+          headRef: newBranchName,
+          localBranchName: newBranchName,
+        }),
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
     case "checkout-branch": {
-      await validateExistingWorktreeBranchName(cwd, source.branchName);
+      await validateGitBranchName(cwd, source.branchName);
       if (!(await localBranchExists(cwd, source.branchName))) {
         try {
           await runGitCommand(["fetch", "origin", `${source.branchName}:${source.branchName}`], {
@@ -1340,6 +1345,10 @@ async function resolveWorktreeSourcePlan({
         return {
           branchName,
           metadataBaseRefName: source.branchName,
+          changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+            headRef: branchName,
+            localBranchName: branchName,
+          }),
           addArguments: ["-b", branchName, "--no-track", source.branchName],
         };
       }
@@ -1347,13 +1356,17 @@ async function resolveWorktreeSourcePlan({
       return {
         branchName: source.branchName,
         metadataBaseRefName: source.branchName,
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+          headRef: source.branchName,
+          localBranchName: source.branchName,
+        }),
         addArguments: [source.branchName],
       };
     }
     case "checkout-change-request":
     case "checkout-github-pr": {
       const localBranchCandidate = source.localBranchName ?? source.headRef;
-      await validateExistingWorktreeBranchName(cwd, localBranchCandidate);
+      await validateGitBranchName(cwd, localBranchCandidate);
       const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
@@ -1575,14 +1588,7 @@ async function configureWorktreeTrackingRemote(options: {
   );
 }
 
-function validateWorktreeBranchName(branchName: string): void {
-  const validation = validateBranchSlug(branchName);
-  if (!validation.valid) {
-    throw new Error(`Invalid branch name: ${validation.error}`);
-  }
-}
-
-async function validateExistingWorktreeBranchName(cwd: string, branchName: string): Promise<void> {
+async function validateGitBranchName(cwd: string, branchName: string): Promise<void> {
   const result = await runGitCommand(["check-ref-format", "--branch", branchName], {
     cwd,
     timeout: 30_000,

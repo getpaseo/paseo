@@ -95,11 +95,11 @@ Hub authentication rejection or close code `4403` permanently revokes the local 
 daemon deletes its credential, stops reconnecting, and retains only the relationship ID, Hub origin,
 scopes, and a sanitized reason for status reporting.
 
-`paseo hub disconnect` disables socket reconnect before requesting remote revocation. If the Hub is
-offline, the daemon persists `disconnecting` and retries revocation across daemon restarts without
-opening a Hub socket. This also covers an enrollment whose request may have succeeded but whose
-response was lost. `--force` removes local authority immediately and warns that remote revocation may
-still be pending.
+`paseo hub disconnect` disables socket reconnect and execution authority before making one bounded
+remote revocation request. The daemon then removes the local relationship whether the request
+succeeds or fails. A failed request returns a warning that server-side revocation may remain pending.
+`--force` skips the remote request. Legacy persisted `disconnecting` records are removed on startup;
+the daemon does not retry revocation in the background.
 
 `paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout inspects and optionally disconnects a same-origin daemon before deleting the login; a failed requested disconnect preserves the login. JSON and noninteractive logout never prompt or disconnect implicitly.
 

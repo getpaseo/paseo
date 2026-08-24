@@ -36,6 +36,43 @@ const projectSchema = z
 
 export const projectsResponseSchema = z.object({ projects: z.array(projectSchema) }).strict();
 
+export const configurationResourcesSchema = z
+  .object({
+    daemons: z.array(z.object({ id: z.string().uuid(), slug: z.string().min(1) }).strict()),
+    github: z.array(
+      z
+        .object({
+          slug: z.string().min(1),
+          accountLogin: z.string().min(1),
+          accountType: z.string().min(1),
+          repositories: z.array(z.string().min(1)),
+        })
+        .strict(),
+    ),
+    discord: z.array(z.object({ slug: z.string().min(1), guildName: z.string().min(1) }).strict()),
+    slack: z.array(z.object({ slug: z.string().min(1), teamName: z.string().min(1) }).strict()),
+  })
+  .strict();
+
+export const setupResourcesSchema = z
+  .object({
+    github: z.array(
+      z
+        .object({
+          slug: z.string().min(1),
+          accountLogin: z.string().min(1),
+          accountType: z.string().min(1),
+          repositories: z.array(z.string().min(1)),
+        })
+        .strict(),
+    ),
+    discord: z.array(
+      z.object({ guildId: z.string().min(1), guildName: z.string().min(1) }).strict(),
+    ),
+    slack: z.array(z.object({ teamId: z.string().min(1), teamName: z.string().min(1) }).strict()),
+  })
+  .strict();
+
 export const installResponseSchema = z
   .object({
     projectSlug: z.string().min(1),
@@ -56,5 +93,7 @@ export const enrollmentTokenSchema = z
 export type CliAuthorization = z.infer<typeof authorizationSchema>;
 export type CliAuthorizationPoll = z.infer<typeof authorizationPollSchema>;
 export type HubProject = z.infer<typeof projectSchema>;
+export type HubConfigurationResources = z.infer<typeof configurationResourcesSchema>;
+export type HubSetupResources = z.infer<typeof setupResourcesSchema>;
 export type HubInstallResult = z.infer<typeof installResponseSchema>;
 export type HubValidationResult = z.infer<typeof validationResponseSchema>;

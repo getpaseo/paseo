@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CreateAgentPreferencesService } from "./service";
 import {
+  applyAgentProfilePreferences,
   mergeCreateAgentSelectionPreferences,
   mergeProviderPreferences,
   parseFormPreferences,
@@ -133,8 +134,82 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("erases a saved mode when a complete selection explicitly has no mode", () => {
+    expect(
+      mergeCreateAgentSelectionPreferences({
+        preferences: {
+          provider: "pi",
+          providerPreferences: { pi: { model: "anthropic/sonnet", mode: "full-access" } },
+        },
+        provider: "pi",
+        modelId: "anthropic/sonnet",
+        modeId: null,
+      }),
+    ).toEqual({
+      provider: "pi",
+      providerPreferences: { pi: { model: "anthropic/sonnet" } },
+    });
+  });
+
+  it("repairs the previous provider while applying a profile", () => {
+    expect(
+      applyAgentProfilePreferences({
+        preferences: {
+          provider: "pi",
+          providerPreferences: {
+            pi: { model: "anthropic/sonnet", mode: "full-access" },
+            mock: { model: "ten-second-stream", mode: "load-test" },
+          },
+        },
+        previousProvider: "pi",
+        previousProviderModeIds: [],
+        provider: "mock",
+        modelId: "one-minute-stream",
+        modeId: "approval-test",
+        thinkingOptionId: "",
+        featureValues: {},
+      }),
+    ).toEqual({
+      provider: "mock",
+      providerPreferences: {
+        pi: { model: "anthropic/sonnet" },
+        mock: { model: "one-minute-stream", mode: "approval-test", featureValues: {} },
+      },
+    });
+  });
+
   it("loads invalid stored preferences as empty preferences", () => {
     expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
+  });
+
+  it("strips the explicitly supported legacy location fields", () => {
+    expect(
+      parseFormPreferences({
+        workingDir: "/old/workspace",
+        provider: "codex",
+        providerPreferences: {
+          codex: {
+            model: "gpt-5.4-mini",
+            mode: "full-access",
+            thinkingOptionId: "high",
+          },
+        },
+        serverId: "old-host",
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.4-mini",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.4-mini": "high" },
+        },
+      },
+    });
+  });
+
+  it("rejects unknown persisted fields outside the explicit legacy shape", () => {
+    expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({});
   });
 
   it("persists and reloads the workspace isolation choice", async () => {

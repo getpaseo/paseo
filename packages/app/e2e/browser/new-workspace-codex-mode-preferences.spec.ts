@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "../support/fixtures";
+import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute } from "../support/helpers/mock-agent";
@@ -10,7 +11,6 @@ import {
 import { expectNoTruncation } from "../support/helpers/no-truncation";
 import { escapeRegex } from "../support/helpers/regex";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
@@ -49,13 +49,12 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
   return maybeEnvelope.message as Record<string, unknown>;
 }
 
-async function seedCodexDefaultPermissionPreferences(page: Page, serverId: string): Promise<void> {
+async function seedCodexDefaultPermissionPreferences(page: Page): Promise<void> {
   await page.addInitScript(
-    ({ preferencesKey, serverId: seededServerId }) => {
+    ({ preferencesKey }) => {
       localStorage.setItem(
         preferencesKey,
         JSON.stringify({
-          serverId: seededServerId,
           provider: "codex",
           providerPreferences: {
             codex: {
@@ -69,10 +68,10 @@ async function seedCodexDefaultPermissionPreferences(page: Page, serverId: strin
               model: "ten-second-stream",
             },
           },
-        }),
+        } satisfies FormPreferences),
       );
     },
-    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY, serverId },
+    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY },
   );
 }
 
@@ -155,10 +154,9 @@ test.describe("New workspace Codex mode preferences", () => {
   test("keeps Full Access as the global Codex mode after the workspace draft auto-submit handoff", async ({
     page,
   }) => {
-    const serverId = getServerId();
     const seeded = await seedWorkspace({ repoPrefix: "codex-mode-preferences-" });
     const createAgentRecorder = await recordAndBlockCreateAgentRequests(page);
-    await seedCodexDefaultPermissionPreferences(page, serverId);
+    await seedCodexDefaultPermissionPreferences(page);
 
     try {
       await gotoAppShell(page);
@@ -194,9 +192,8 @@ test.describe("New workspace Codex mode preferences", () => {
   });
 
   test("uses the live Codex agent mode as the next New Workspace default", async ({ page }) => {
-    const serverId = getServerId();
     const seeded = await seedWorkspace({ repoPrefix: "codex-live-mode-preferences-" });
-    await seedCodexDefaultPermissionPreferences(page, serverId);
+    await seedCodexDefaultPermissionPreferences(page);
 
     try {
       const agent = await seeded.client.createAgent({

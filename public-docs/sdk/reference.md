@@ -106,7 +106,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                         |
 | `subscribe(handler)`     | Unsubscribe function          | Listens for connection-local workspace updates. Call `list({ subscribe })` first. |
 
-A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `archive()`, and `subscribe()`. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
+A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
 ## `client.providers`
 

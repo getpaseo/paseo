@@ -793,7 +793,7 @@ const styles = StyleSheet.create((theme) => {
     },
     groupHeaderText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.normal,
     },
     section: {
@@ -812,14 +812,14 @@ const styles = StyleSheet.create((theme) => {
     },
     sectionTitle: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.sm,
       fontWeight: theme.fontWeight.semibold,
       textTransform: "uppercase",
       letterSpacing: 0.5,
     },
     rangeText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.xs,
+      fontSize: theme.fontSize.sm,
     },
     diffContainer: {
       borderWidth: theme.borderWidth[1],
@@ -916,7 +916,7 @@ const styles = StyleSheet.create((theme) => {
     },
     emptyStateText: {
       color: theme.colors.foregroundMuted,
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base,
       fontStyle: "italic",
     },
     loadingContainer: {

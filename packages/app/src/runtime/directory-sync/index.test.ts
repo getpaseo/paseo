@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { useSessionStore } from "@/stores/session-store";
+import { normalizeProjectDescriptor, useSessionStore } from "@/stores/session-store";
 import { DirectoryRefreshSupersededError, DirectorySync } from "./index";
 
 type WorkspaceFetchResult = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
@@ -9,8 +9,11 @@ type ProjectListResult = Awaited<ReturnType<DaemonClient["listProjects"]>>;
 
 class FakeDirectoryClient {
   fetchAgentsCalls = 0;
+  lastAgentOptions: unknown;
   fetchWorkspacesCalls = 0;
   listProjectsCalls = 0;
+  lastProjectOptions: unknown;
+  projectResult: ProjectListResult | null = null;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
   private readonly handlers = new Map<
     SessionOutboundMessage["type"],
@@ -42,8 +45,9 @@ class FakeDirectoryClient {
     return complete;
   }
 
-  async fetchAgents(): Promise<Awaited<ReturnType<DaemonClient["fetchAgents"]>>> {
+  async fetchAgents(options?: unknown): Promise<Awaited<ReturnType<DaemonClient["fetchAgents"]>>> {
     this.fetchAgentsCalls += 1;
+    this.lastAgentOptions = options;
     return {
       requestId: "agents",
       entries: [],
@@ -66,8 +70,10 @@ class FakeDirectoryClient {
     };
   }
 
-  async listProjects(): Promise<ProjectListResult> {
+  async listProjects(options?: unknown): Promise<ProjectListResult> {
     this.listProjectsCalls += 1;
+    this.lastProjectOptions = options;
+    if (this.projectResult) return this.projectResult;
     return {
       requestId: "projects",
       projects: [
@@ -111,6 +117,52 @@ afterEach(() => {
 });
 
 describe("DirectorySync session readiness", () => {
+  it("uses the saved agent sequence while bounding the bootstrap page", async () => {
+    const serverId = "agent-list-sequence-page";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readDirectoryCheckpoint: () => ({ agents: { generation: "generation", afterSeq: 12 } }),
+        writeDirectoryCheckpoint: () => undefined,
+      },
+    );
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { directorySync: true, workspaceMultiplicity: true },
+    });
+
+    await directory.refreshAgents({
+      subscribe: { subscriptionId: `app:${serverId}` },
+      page: { limit: 200 },
+    });
+
+    expect(client.lastAgentOptions).toEqual({
+      scope: "active",
+      sort: [{ key: "updated_at", direction: "desc" }],
+      subscribe: { subscriptionId: `app:${serverId}` },
+      page: { limit: 200 },
+      sync: { generation: "generation", afterSeq: 12 },
+    });
+    directory.dispose();
+  });
+
   it("waits for workspace capability metadata before choosing the workspace protocol", async () => {
     const serverId = "workspace-metadata";
     const { client, directory } = createDirectory(serverId);
@@ -156,6 +208,82 @@ describe("DirectorySync session readiness", () => {
       projectId: "project-1",
       projectKey: "remote:github.com/acme/app",
     });
+    directory.dispose();
+  });
+
+  it("merges project changes from the existing list RPC and advances its cursor", async () => {
+    const serverId = "project-list-sequence";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const writes: unknown[] = [];
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readDirectoryCheckpoint: () => ({ projects: { generation: "generation", afterSeq: 4 } }),
+        writeDirectoryCheckpoint: (_serverId, checkpoint) => writes.push(checkpoint),
+      },
+    );
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.setProjects(serverId, [
+      normalizeProjectDescriptor({
+        projectId: "project-1",
+        projectDisplayName: "Old name",
+        projectRootPath: "/repo/one",
+        projectKind: "git",
+      }),
+      normalizeProjectDescriptor({
+        projectId: "project-2",
+        projectDisplayName: "Removed",
+        projectRootPath: "/repo/two",
+        projectKind: "git",
+      }),
+    ]);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true, projectList: true, directorySync: true },
+    });
+    client.projectResult = {
+      requestId: "projects",
+      projects: [
+        {
+          projectId: "project-1",
+          projectDisplayName: "New name",
+          projectRootPath: "/repo/one",
+          projectKind: "git",
+          syncSeq: 5,
+        },
+      ],
+      sync: {
+        generation: "generation",
+        headSeq: 6,
+        mode: "changes",
+        removals: [{ id: "project-2", seq: 6 }],
+      },
+    };
+
+    await directory.refreshWorkspaces();
+
+    expect(client.lastProjectOptions).toEqual({
+      sync: { generation: "generation", afterSeq: 4 },
+    });
+    const projects = useSessionStore.getState().sessions[serverId]?.projects;
+    expect(Array.from(projects?.keys() ?? [])).toEqual(["project-1"]);
+    expect(projects?.get("project-1")?.projectDisplayName).toBe("New name");
+    expect(writes).toContainEqual({ projects: { generation: "generation", afterSeq: 6 } });
     directory.dispose();
   });
 

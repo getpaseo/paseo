@@ -259,6 +259,39 @@ test("seeds an uncommitted exact-project config into the mapped worktree directo
   expect(existsSync(path.join(result.worktree.worktreePath, "paseo.json"))).toBe(false);
 });
 
+test("does not overwrite a committed exact-project config with source checkout edits", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  const committedConfig = JSON.stringify({ worktree: { setup: ["npm ci"] } });
+  writeFileSync(path.join(sourceDir, "paseo.json"), committedConfig);
+  commitAll(repoDir, "add subproject config");
+  writeFileSync(
+    path.join(sourceDir, "paseo.json"),
+    JSON.stringify({ worktree: { setup: ["npm install"] } }),
+  );
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "preserve-nested-config",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(committedConfig);
+  expect(
+    execFileSync("git", ["status", "--porcelain"], {
+      cwd: result.worktree.worktreePath,
+      encoding: "utf8",
+    }),
+  ).toBe("");
+});
+
 test("removes a new worktree when its ref does not contain the selected project directory", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);

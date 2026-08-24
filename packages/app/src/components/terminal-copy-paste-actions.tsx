@@ -119,7 +119,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   keyButtonText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     textAlign: "center",
   },
@@ -134,7 +134,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   floatingButtonText: {
     color: "#f5f5f5",
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     textAlign: "center",
   },

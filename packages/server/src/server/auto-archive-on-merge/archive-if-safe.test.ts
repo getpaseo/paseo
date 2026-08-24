@@ -57,8 +57,9 @@ function createSnapshot(overrides?: {
       diffStat: { additions: 0, deletions: 0 },
       ...overrides?.git,
     },
-    github: {
+    forge: {
       featuresEnabled: true,
+      authState: "authenticated",
       pullRequest:
         overrides && "pullRequest" in overrides
           ? (overrides.pullRequest ?? null)
@@ -78,18 +79,13 @@ function createLogger(): Logger {
 }
 
 function createHarness(overrides?: {
-  autoArchiveAfterMerge?: boolean;
   autoArchivedChangeRequestUrl?: string | null;
-  getSnapshot?: () => Promise<WorkspaceGitRuntimeSnapshot | null>;
+  snapshot?: WorkspaceGitRuntimeSnapshot;
   isPaseoOwnedWorktreeCwd?: ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   archiveByScope?: ArchiveIfSafeDependencies["archiveByScope"];
-  resolveWorkspaceIdAtPath?: ArchiveIfSafeDependencies["resolveWorkspaceIdAtPath"];
 }) {
-  const getConfig = vi.fn(() => ({
-    autoArchiveAfterMerge: overrides?.autoArchiveAfterMerge ?? true,
-  }));
-  const getSnapshot = vi.fn(
-    overrides?.getSnapshot ?? (async () => createSnapshot()),
+  const getSnapshot = vi.fn(async () =>
+    createSnapshot(),
   ) as unknown as AutoArchiveArchiveOptions["workspaceGitService"]["getSnapshot"];
   const workspaceGitService = {
     getSnapshot,
@@ -97,7 +93,7 @@ function createHarness(overrides?: {
   const options: AutoArchiveArchiveOptions = {
     paseoHome: PASEO_HOME,
     daemonConfigStore: {
-      get: getConfig,
+      get: () => ({ autoArchiveAfterMerge: true }),
     } as unknown as AutoArchiveArchiveOptions["daemonConfigStore"],
     workspaceGitService,
     github: {} as AutoArchiveArchiveOptions["github"],
@@ -123,9 +119,6 @@ function createHarness(overrides?: {
           removedDirectory: false,
         }) satisfies ArchiveResult),
   ) as unknown as ArchiveIfSafeDependencies["archiveByScope"];
-  const resolveWorkspaceIdAtPath = vi.fn(
-    overrides?.resolveWorkspaceIdAtPath ?? (async () => "ws-auto-archive"),
-  ) as unknown as ArchiveIfSafeDependencies["resolveWorkspaceIdAtPath"];
   const isPaseoOwnedWorktreeCwd = vi.fn(
     overrides?.isPaseoOwnedWorktreeCwd ??
       (async () => ({
@@ -137,37 +130,34 @@ function createHarness(overrides?: {
   ) as unknown as ArchiveIfSafeDependencies["isPaseoOwnedWorktreeCwd"];
   const deps: ArchiveIfSafeDependencies = {
     archiveByScope,
-    resolveWorkspaceIdAtPath,
     isPaseoOwnedWorktreeCwd,
     killTerminalsForWorkspace: vi.fn(),
   };
   const log = createLogger();
-  const inFlight = new Set<string>();
-
   return {
     deps,
-    getConfig,
     getSnapshot,
-    inFlight,
     log,
     options,
+    snapshot: overrides?.snapshot ?? createSnapshot(),
   };
 }
 
 async function runArchiveIfSafe(
   harness: ReturnType<typeof createHarness>,
   overrides?: {
-    cwd?: string;
+    workspaceId?: string;
+    snapshot?: WorkspaceGitRuntimeSnapshot;
     pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   },
 ): Promise<void> {
   await archiveIfSafe({
-    cwd: overrides?.cwd ?? CWD,
-    pullRequest:
-      overrides && "pullRequest" in overrides
-        ? (overrides.pullRequest ?? null)
-        : createPullRequest(),
-    inFlight: harness.inFlight,
+    workspaceId: overrides?.workspaceId ?? "ws-auto-archive",
+    snapshot:
+      overrides?.snapshot ??
+      (overrides && "pullRequest" in overrides
+        ? createSnapshot({ pullRequest: overrides.pullRequest ?? null })
+        : harness.snapshot),
     options: harness.options,
     log: harness.log,
     deps: harness.deps,
@@ -292,8 +282,9 @@ function createRealOutcomeHarness(input: {
             hasRemote: true,
             diffStat: { additions: 0, deletions: 0 },
           },
-          github: {
+          forge: {
             featuresEnabled: true,
+            authState: "authenticated",
             pullRequest: createPullRequest({ isMerged: true }),
             error: null,
           },
@@ -336,7 +327,6 @@ function createRealOutcomeHarness(input: {
   return {
     options,
     log: logger,
-    inFlight: new Set<string>(),
   };
 }
 
@@ -356,61 +346,13 @@ describe("archiveIfSafe", () => {
 
     await runArchiveIfSafe(harness, { pullRequest: createPullRequest({ isMerged: false }) });
 
-    expect(harness.getConfig).not.toHaveBeenCalled();
     expect(harness.getSnapshot).not.toHaveBeenCalled();
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-  });
-
-  test("does nothing when auto-archive-after-merge is disabled", async () => {
-    const harness = createHarness({ autoArchiveAfterMerge: false });
-
-    await runArchiveIfSafe(harness);
-
-    expect(harness.getConfig).toHaveBeenCalledTimes(1);
-    expect(harness.getSnapshot).not.toHaveBeenCalled();
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-  });
-
-  test("does nothing when the cwd already has an archive in flight", async () => {
-    const harness = createHarness();
-    harness.inFlight.add(CWD);
-
-    await runArchiveIfSafe(harness);
-
-    expect(harness.getSnapshot).not.toHaveBeenCalled();
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-    expect(harness.inFlight.has(CWD)).toBe(true);
-  });
-
-  test("logs and skips when reading the snapshot fails", async () => {
-    const harness = createHarness({
-      getSnapshot: async () => {
-        throw new Error("snapshot failed");
-      },
-    });
-
-    await runArchiveIfSafe(harness);
-
-    expect(harness.log.warn).toHaveBeenCalledWith(
-      { err: expect.any(Error), cwd: CWD },
-      "Failed to read snapshot for auto-archive; skipping",
-    );
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-    expect(harness.inFlight.has(CWD)).toBe(false);
-  });
-
-  test("does nothing when there is no snapshot", async () => {
-    const harness = createHarness({ getSnapshot: async () => null });
-
-    await runArchiveIfSafe(harness);
-
-    expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
     expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
   });
 
   test("does nothing when the worktree is dirty", async () => {
     const harness = createHarness({
-      getSnapshot: async () => createSnapshot({ git: { isDirty: true } }),
+      snapshot: createSnapshot({ git: { isDirty: true } }),
     });
 
     await runArchiveIfSafe(harness);
@@ -421,7 +363,7 @@ describe("archiveIfSafe", () => {
 
   test("does nothing when the worktree is ahead of origin", async () => {
     const harness = createHarness({
-      getSnapshot: async () => createSnapshot({ git: { aheadOfOrigin: 1 } }),
+      snapshot: createSnapshot({ git: { aheadOfOrigin: 1 } }),
     });
 
     await runArchiveIfSafe(harness);
@@ -432,8 +374,7 @@ describe("archiveIfSafe", () => {
 
   test("archives when the PR is merged and the upstream branch was deleted", async () => {
     const harness = createHarness({
-      getSnapshot: async () =>
-        createSnapshot({ git: { aheadOfOrigin: null, behindOfOrigin: null } }),
+      snapshot: createSnapshot({ git: { aheadOfOrigin: null, behindOfOrigin: null } }),
     });
 
     await runArchiveIfSafe(harness);
@@ -467,7 +408,6 @@ describe("archiveIfSafe", () => {
       { err: expect.any(Error), cwd: CWD },
       "Auto-archive after merge failed",
     );
-    expect(harness.inFlight.has(CWD)).toBe(false);
   });
 
   test("archives a clean Paseo-owned worktree after merge", async () => {
@@ -475,14 +415,6 @@ describe("archiveIfSafe", () => {
 
     await runArchiveIfSafe(harness);
 
-    expect(harness.deps.resolveWorkspaceIdAtPath).toHaveBeenCalledTimes(1);
-    expect(harness.deps.resolveWorkspaceIdAtPath).toHaveBeenCalledWith(
-      {
-        findWorkspaceIdForCwd: harness.options.findWorkspaceIdForCwd,
-        listActiveWorkspaces: harness.options.listActiveWorkspaces,
-      },
-      CWD,
-    );
     expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
     expect(harness.deps.archiveByScope).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -495,10 +427,14 @@ describe("archiveIfSafe", () => {
       },
     );
     expect(harness.log.info).toHaveBeenCalledWith(
-      { cwd: CWD },
+      {
+        workspaceId: "ws-auto-archive",
+        cwd: CWD,
+        branch: "feature",
+        pullRequestUrl: "https://github.com/acme/repo/pull/123",
+      },
       "Auto-archived worktree after PR merge",
     );
-    expect(harness.inFlight.has(CWD)).toBe(false);
   });
 
   test("does not archive a merge event already consumed by this workspace", async () => {
@@ -540,18 +476,15 @@ describe("archiveIfSafe", () => {
     });
   });
 
-  test("resolves the merged cwd to a single workspace and does not iterate siblings", async () => {
-    const harness = createHarness({
-      resolveWorkspaceIdAtPath: async () => "ws-merged-worktree",
-    });
+  test("archives only the supplied workspace id and does not iterate siblings", async () => {
+    const harness = createHarness();
     harness.options.listActiveWorkspaces = vi.fn(async () => [
       { workspaceId: "ws-merged-worktree", cwd: CWD, kind: "worktree" as const },
       { workspaceId: "ws-sibling", cwd: CWD, kind: "local_checkout" as const },
     ]);
 
-    await runArchiveIfSafe(harness);
+    await runArchiveIfSafe(harness, { workspaceId: "ws-merged-worktree" });
 
-    expect(harness.deps.resolveWorkspaceIdAtPath).toHaveBeenCalledTimes(1);
     expect(harness.deps.archiveByScope).toHaveBeenCalledTimes(1);
     expect(harness.deps.archiveByScope).toHaveBeenCalledWith(
       expect.any(Object),
@@ -581,9 +514,8 @@ describe("archiveIfSafe", () => {
     });
 
     await archiveIfSafe({
-      cwd: worktree.worktreePath,
-      pullRequest: createPullRequest({ isMerged: true }),
-      inFlight: harness.inFlight,
+      workspaceId: workspaceA,
+      snapshot: { ...createSnapshot(), cwd: worktree.worktreePath },
       options: harness.options,
       log: harness.log,
     });
@@ -609,9 +541,8 @@ describe("archiveIfSafe", () => {
     });
 
     await archiveIfSafe({
-      cwd: worktree.worktreePath,
-      pullRequest: createPullRequest({ isMerged: true }),
-      inFlight: harness.inFlight,
+      workspaceId: workspaceA,
+      snapshot: { ...createSnapshot(), cwd: worktree.worktreePath },
       options: harness.options,
       log: harness.log,
     });

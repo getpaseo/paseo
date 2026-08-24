@@ -5,25 +5,31 @@ import { extname, join } from "path";
  * Icon file patterns to search for, in priority order.
  * Patterns starting with '*' are glob patterns (e.g., icon-*.png).
  *
- * Within each name, SVG and PNG outrank ICO: every client renders them (React
- * Native's <Image> cannot decode ICO at all) and they scale better. ICO is the
- * last resort for each name, not the first.
+ * SVG and PNG outrank ICO across all known names: every client renders them
+ * and they scale better. ICO is the final fallback because native clients
+ * cannot decode containers whose frames use the legacy bitmap format.
  */
 export const ICON_PATTERNS = [
   "favicon.svg",
   "favicon.png",
-  "favicon.ico",
+  "favicon-*.svg",
+  "favicon-*.png",
   "favico.svg",
   "favico.png",
-  "favico.ico",
   "icon.svg",
   "icon.png",
   "app-icon.svg",
   "app-icon.png",
   "apple-touch-icon.png",
+  "apple-touch-icon-*.png",
   "icon-*.png",
+  "android-chrome-*.png",
+  "safari-pinned-tab.svg",
+  "mstile-*.png",
   "logo.svg",
   "logo.png",
+  "favicon.ico",
+  "favico.ico",
 ];
 
 /**

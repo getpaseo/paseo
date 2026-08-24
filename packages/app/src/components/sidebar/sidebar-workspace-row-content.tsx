@@ -1,7 +1,6 @@
-import { memo, useId, useMemo, useCallback, useState, type ReactNode } from "react";
+import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -28,11 +27,8 @@ import {
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
-
-// The scrim spans more than the kebab so the fade starts left of the diff stat. Solid from
-// SCRIM_SOLID_OFFSET rightward, which keeps the kebab itself off the gradient entirely.
-const SCRIM_WIDTH = 48;
-const SCRIM_SOLID_OFFSET = "55%";
+import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
+import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputColorMapping = (theme: Theme) => ({
@@ -44,33 +40,6 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
-
-/**
- * react-native-svg's extractGradient reads stopColor off the child elements structurally,
- * without rendering them, so wrapping Stop itself in withUnistyles hides the color from it and
- * the native gradient silently falls back to black. Theme the whole SVG instead and keep real
- * Stop elements as direct children of the gradient.
- */
-function TrailingActionScrimSvg({ gradientId, color }: { gradientId: string; color: string }) {
-  return (
-    <Svg width="100%" height="100%" preserveAspectRatio="none">
-      <Defs>
-        <SvgLinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-          {/* Same color at both ends, varying only stopOpacity. Interpolating a hex toward
-              `transparent` goes through black in some engines and leaves a grey fringe. */}
-          <Stop offset="0%" stopColor={color} stopOpacity={0} />
-          <Stop offset={SCRIM_SOLID_OFFSET} stopColor={color} stopOpacity={1} />
-          <Stop offset="100%" stopColor={color} stopOpacity={1} />
-        </SvgLinearGradient>
-      </Defs>
-      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
-    </Svg>
-  );
-}
-
-const ThemedTrailingActionScrimSvg = withUnistyles(TrailingActionScrimSvg);
-
-const scrimColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceSidebarHover });
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -109,7 +78,7 @@ export function SidebarWorkspaceRowFrame({
       disabled={contextMenuOpen}
     >
       {children({
-        isHovered: isHovered && !contextMenuOpen,
+        isHovered: isHovered && !contextMenuOpen && !isDragging,
         contextMenuOpen,
         onContextMenuOpenChange: handleContextMenuOpenChange,
         hoverHandlers,
@@ -154,6 +123,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  // The workspace carries label names; their colors live in its host's catalog, so the row is
+  // where the two meet — the meta line is handed finished definitions.
+  const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -192,9 +164,12 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
+            currentBranch={workspace.currentBranch}
+            projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}
+            labels={labels}
           />
         </View>
       </View>
@@ -331,7 +306,7 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
   },
   shortcutBadgeText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     lineHeight: 14,
   },
@@ -357,13 +332,6 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     position: "absolute",
     top: 0,
     right: 0,
-  },
-  trailingActionScrim: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    right: 0,
-    width: SCRIM_WIDTH,
   },
 }));
 
@@ -458,41 +426,22 @@ export function SidebarWorkspaceTrailingActionBase({
 
 export function SidebarWorkspaceTrailingActionOverlay({
   visible,
-  scrim = false,
+  scrimBackdrop,
   children,
 }: {
   visible: boolean;
   /** Fade the row into the kebab when something (the diff stat) is still rendered behind it. */
-  scrim?: boolean;
+  scrimBackdrop?: SidebarSurfaceBackdrop;
   children: ReactNode;
 }) {
   if (!visible || !children) return null;
   return (
     <>
-      {scrim ? <TrailingActionScrim /> : null}
+      {scrimBackdrop ? (
+        <TrailingActionScrim backdrop={scrimBackdrop} testID="sidebar-workspace-trailing-scrim" />
+      ) : null}
       <View style={sidebarWorkspaceRowStyles.trailingActionOverlay}>{children}</View>
     </>
-  );
-}
-
-/**
- * The row's own background, faded in from the right, sitting between the diff stat and the
- * kebab. The kebab lands on fully opaque background while the diff dissolves underneath it
- * rather than blinking out — hiding the diff outright was the old behavior and it cost a
- * visible flicker on every hover.
- *
- * Anchored to the trailing slot, which is position:relative. Wider than the slot on purpose:
- * the fade has to start before the diff stat does or the diff's left edge cuts off hard.
- */
-function TrailingActionScrim() {
-  // useId's output contains characters that are not legal inside url(#...) — React 19 wraps
-  // ids in guillemets, React 18 in colons — and an unresolvable fill paints nothing at all.
-  // Keep the per-instance uniqueness, drop everything a fragment reference can't carry.
-  const gradientId = `sidebar-scrim-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  return (
-    <View style={sidebarWorkspaceRowStyles.trailingActionScrim} pointerEvents="none">
-      <ThemedTrailingActionScrimSvg gradientId={gradientId} uniProps={scrimColorMapping} />
-    </View>
   );
 }
 
@@ -556,7 +505,7 @@ const styles = StyleSheet.create((theme) => ({
   // to the meta row, so it takes the full width the trailing slot leaves behind.
   workspaceBranchText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "400",
     lineHeight: 20,
     opacity: 0.76,

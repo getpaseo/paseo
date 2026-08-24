@@ -3,6 +3,7 @@ import { HubCommandError } from "../error.js";
 import {
   authorizationPollSchema,
   authorizationSchema,
+  configurationResourcesSchema,
   enrollmentTokenSchema,
   installResponseSchema,
   projectsResponseSchema,
@@ -10,6 +11,9 @@ import {
   type CliAuthorization,
   type CliAuthorizationPoll,
   type HubInstallResult,
+  type HubConfigurationResources,
+  setupResourcesSchema,
+  type HubSetupResources,
   type HubProject,
   type HubValidationResult,
 } from "./internal/contracts.js";
@@ -19,6 +23,8 @@ export type {
   CliAuthorization,
   CliAuthorizationPoll,
   HubInstallResult,
+  HubConfigurationResources,
+  HubSetupResources,
   HubProject,
   HubValidationResult,
 } from "./internal/contracts.js";
@@ -78,6 +84,30 @@ export class HubHttpClient {
       failureMessage: "Hub project listing failed",
     });
     return response.projects;
+  }
+
+  listConfigurationResources(origin: string, apiKey: string): Promise<HubConfigurationResources> {
+    return requestHub({
+      origin,
+      path: "/api/v1/configuration-resources",
+      method: "GET",
+      apiKey,
+      successStatus: 200,
+      schema: configurationResourcesSchema,
+      failureMessage: "Hub configuration resource listing failed",
+    });
+  }
+
+  listSetupResources(origin: string, apiKey: string): Promise<HubSetupResources> {
+    return requestHub({
+      origin,
+      path: "/api/v1/setup-resources",
+      method: "GET",
+      apiKey,
+      successStatus: 200,
+      schema: setupResourcesSchema,
+      failureMessage: "Hub guided setup resource listing failed",
+    });
   }
 
   installConfiguration(input: HubConfigurationInput): Promise<HubInstallResult> {

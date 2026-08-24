@@ -1,16 +1,14 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { SPACING, type Theme } from "@/styles/theme";
-import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 // Shared presentation primitives for the app's directory trees. Both the Files
 // explorer (server-loaded listings) and the Changes view (client-built from diff
 // paths) render different data, but their ROWS should look identical — same
-// indentation, guide lines, and chevron. Keep those here so the two trees can't
+// indentation, density, name emphasis, and chevron. Keep those here so the two trees can't
 // drift apart.
-export const TREE_INDENT_PER_LEVEL = 16;
+export const TREE_INDENT_PER_LEVEL = 12;
 export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
 export const WORKSPACE_TREE_ICON_SIZE = 16;
 export const WORKSPACE_TREE_LOADING_ICON_SIZE = 14;
@@ -22,8 +20,7 @@ export const WORKSPACE_TREE_ICON_LABEL_GAP = SPACING[2];
  */
 export const WORKSPACE_FILE_ROW_TRAILING_PADDING = SPACING[4] + 2;
 
-/** Left padding for a tree row at `depth`. Shared by folder rows and file headers
- * in the Changes tree so their indentation can't drift apart. */
+/** Left padding for a row in either workspace tree. */
 export function treeRowPaddingLeft(depth: number): number {
   return SPACING[3] + depth * TREE_INDENT_PER_LEVEL;
 }
@@ -33,32 +30,6 @@ const foregroundExtraMutedIconColorMapping = (theme: Theme) => ({
 });
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
-
-/**
- * Vertical guide lines connecting nested rows to their ancestors — one line per
- * ancestor depth level, positioned absolutely within the (relative) row. Renders
- * nothing at depth 0.
- */
-export function TreeIndentGuides({ depth }: { depth: number }) {
-  const guides = useMemo(
-    () =>
-      Array.from({ length: depth }, (_, index) => ({
-        key: index,
-        style: [
-          styles.indentGuide,
-          inlineUnistylesStyle({ left: SPACING[3] + index * TREE_INDENT_PER_LEVEL + 4 }),
-        ],
-      })),
-    [depth],
-  );
-  return (
-    <>
-      {guides.map((guide) => (
-        <View key={guide.key} style={guide.style} pointerEvents="none" />
-      ))}
-    </>
-  );
-}
 
 /** Rotating disclosure chevron for a directory row (points right; rotates down when expanded). */
 export function TreeChevron({ expanded }: { expanded: boolean }) {
@@ -72,14 +43,22 @@ export function TreeChevron({ expanded }: { expanded: boolean }) {
   );
 }
 
-const styles = StyleSheet.create((theme: Theme) => ({
-  indentGuide: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    width: 1,
-    backgroundColor: theme.colors.surface2,
+export const workspaceTreeRowStyles = StyleSheet.create((theme: Theme) => ({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
+    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
   },
+  active: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  name: { color: theme.colors.foreground, opacity: 0.76 },
+  nameHovered: { opacity: 1 },
+}));
+
+const styles = StyleSheet.create((_theme: Theme) => ({
   chevron: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,

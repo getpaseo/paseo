@@ -88,13 +88,18 @@ export class OmpCliRuntime implements OmpRuntime {
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
+    const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
+    input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
       await negotiateOmpProtocolV2(process, this.options.logger);
+      input.signal?.throwIfAborted();
       return new OmpCliRuntimeSession(process, this.commandsRpcName);
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
       throw startupError;
+    } finally {
+      input.signal?.removeEventListener("abort", handleAbort);
     }
   }
 }
@@ -216,7 +221,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
-  async getAvailableModels(timeoutMs?: number): Promise<OmpModel[]> {
+  async getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]> {
     const data = OmpModelsResultSchema.parse(
       await this.request({ type: "get_available_models" }, timeoutMs),
     );
@@ -337,7 +342,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.process.close(new Error("OMP RPC session is closed"));
   }
 
-  private request(command: OmpRpcCommand, timeoutMs?: number): Promise<unknown> {
+  private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
   }
 

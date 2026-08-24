@@ -132,7 +132,7 @@ const test = metroTest.extend<
         endpoint: `127.0.0.1:${daemonPort}`,
         nowIso,
       });
-      const createAgentPreferences = buildCreateAgentPreferences(testDaemon.serverId);
+      const createAgentPreferences = buildCreateAgentPreferences();
 
       await page.addInitScript(
         ({ daemon, preferences, seedNonce: nonce, extraHostsKey }) => {

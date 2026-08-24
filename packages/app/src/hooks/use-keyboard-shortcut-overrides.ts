@@ -1,15 +1,18 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import type { ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
 import {
   createShortcutOverrideStore,
   type ShortcutOverrideStore,
 } from "@/keyboard/shortcut-override-store";
+import { readValidatedJson } from "@/storage/validated-storage";
 
 const STORAGE_KEY = "@paseo:keyboard-shortcut-overrides";
 const QUERY_KEY = ["keyboard-shortcut-overrides"];
 
 const EMPTY_OVERRIDES: ShortcutOverrides = {};
+const ShortcutOverridesSchema = z.record(z.string(), z.string().nullable());
 
 export interface UseKeyboardShortcutOverridesReturn {
   overrides: ShortcutOverrides;
@@ -76,10 +79,10 @@ function getStore(queryClient: QueryClient): ShortcutOverrideStore {
 
 async function loadOverridesFromStorage(): Promise<ShortcutOverrides> {
   try {
-    const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored) as ShortcutOverrides;
-    }
+    return (
+      (await readValidatedJson(AsyncStorage, STORAGE_KEY, ShortcutOverridesSchema)) ??
+      EMPTY_OVERRIDES
+    );
   } catch (err) {
     console.error("[KeyboardShortcutOverrides] Failed to load overrides:", err);
   }

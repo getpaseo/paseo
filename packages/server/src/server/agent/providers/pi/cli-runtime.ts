@@ -78,6 +78,10 @@ export class PiCliRuntime implements PiRuntime {
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
+    if (input.signal?.aborted) {
+      await process.close(input.signal.reason);
+      input.signal.throwIfAborted();
+    }
     return new PiCliRuntimeSession(process, this.commandsRpcName);
   }
 }

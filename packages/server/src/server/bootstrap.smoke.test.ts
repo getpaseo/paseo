@@ -1,12 +1,13 @@
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
+import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
@@ -15,6 +16,11 @@ import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { findFreePort } from "./service-proxy.js";
+import {
+  configureGitProcessPolicy,
+  snapshotGitCommandRuntimeMetrics,
+} from "../utils/run-git-command.js";
+import { DEFAULT_GIT_PROCESS_POLICY } from "../utils/git-process-scheduler.js";
 import type {
   HubEnrollment,
   HubEnrollmentResult,
@@ -73,10 +79,268 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  function httpGetWithHost(port: number, host: string, requestPath: string): Promise<Response> {
+  test("keeps timeline activity in memory and removes obsolete timeline files at startup", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-cleanup-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const obsoleteTimelineDirectory = path.join(paseoHome, "agent-timelines");
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
+    await mkdir(obsoleteTimelineDirectory, { recursive: true });
+    await writeFile(path.join(obsoleteTimelineDirectory, "obsolete.json"), "{}\n", "utf-8");
+
+    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+    try {
+      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "timeline stays in memory",
+      });
+      await daemonHandle.daemon.agentManager.flush();
+
+      await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await daemonHandle.close();
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("does not create a timeline directory for live timeline activity", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-memory-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
+    const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+    const timelineDirectory = path.join(daemonHandle.paseoHome, "agent-timelines");
+    try {
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: agentCwd },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await daemonHandle.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "timeline stays in memory",
+      });
+      await daemonHandle.daemon.agentManager.flush();
+
+      await expect(access(timelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await daemonHandle.close();
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  test("reload applies live HTTP, MCP, Git, provider, relay, and app policies", async () => {
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-config-reload-runtime-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-config-reload-agent-"));
+    await mkdir(paseoHome, { recursive: true });
+    const configPath = path.join(paseoHome, "config.json");
+    const initialPersisted = {
+      version: 1 as const,
+      daemon: {
+        listen: "127.0.0.1:0",
+        hostnames: ["127.0.0.1", "before.example.test"],
+        cors: { allowedOrigins: ["https://before.example.test"] },
+        trustedProxies: [],
+        mcp: { enabled: true, injectIntoAgents: false },
+        git: { maxProcessesPerSecond: 64, maxProcessConcurrency: 8 },
+        relay: {
+          enabled: false,
+          endpoint: "127.0.0.1:9",
+          publicEndpoint: "127.0.0.1:9",
+          useTls: false,
+          publicUseTls: false,
+        },
+      },
+      app: { baseUrl: "https://before.example.test" },
+    };
+    await writeFile(configPath, `${JSON.stringify(initialPersisted, null, 2)}\n`, "utf-8");
+    const config = loadConfig(paseoHome, { env: {} });
+    config.staticDir = staticDir;
+    config.agentClients = createTestAgentClients();
+    config.agentStoragePath = path.join(paseoHome, "agents");
+    config.isDev = true;
+    config.speech = {
+      providers: {
+        dictationStt: { provider: "local", explicit: true, enabled: false },
+        voiceTurnDetection: { provider: "local", explicit: true, enabled: false },
+        voiceStt: { provider: "local", explicit: true, enabled: false },
+        voiceTts: { provider: "local", explicit: true, enabled: false },
+      },
+    };
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    let client: DaemonClient | null = null;
+    let proxyUpstream: http.Server | null = null;
+
+    try {
+      await daemon.start();
+      const target = daemon.getListenTarget();
+      if (!target || target.type !== "tcp") throw new Error("Expected a TCP listener");
+      client = new DaemonClient({
+        url: `ws://127.0.0.1:${target.port}/ws`,
+        appVersion: "0.4.0",
+      });
+      await client.connect();
+
+      proxyUpstream = http.createServer((req, res) => {
+        res.end(String(req.headers["x-forwarded-proto"] ?? "missing"));
+      });
+      await new Promise<void>((resolve) => proxyUpstream?.listen(0, "127.0.0.1", resolve));
+      const proxyAddress = proxyUpstream.address();
+      if (!proxyAddress || typeof proxyAddress === "string") {
+        throw new Error("Expected proxy upstream TCP address");
+      }
+      const proxyRoute = daemon.serviceProxy.registerWorkspaceService({
+        workspaceId: "workspace-config-reload",
+        projectSlug: "reload",
+        branchName: "main",
+        scriptName: "proxy",
+        port: proxyAddress.port,
+      });
+      const proxyHost = `${proxyRoute.hostname}:${target.port}`;
+
+      expect(
+        (await httpGetWithHost(target.port, "before.example.test", "/api/health")).status,
+      ).toBe(200);
+      expect((await httpGetWithHost(target.port, "after.example.test", "/api/health")).status).toBe(
+        403,
+      );
+      const beforeCors = await fetch(`http://127.0.0.1:${target.port}/api/health`, {
+        headers: { Origin: "https://before.example.test" },
+      });
+      expect(beforeCors.headers.get("access-control-allow-origin")).toBe(
+        "https://before.example.test",
+      );
+      const beforeMcp = await fetch(`http://127.0.0.1:${target.port}/mcp/agents`, {
+        method: "POST",
+      });
+      expect(beforeMcp.status).toBe(406);
+      const beforeProxyReload = await httpGetWithHost(target.port, proxyHost, "/", {
+        "x-forwarded-proto": "https",
+      });
+      expect(await beforeProxyReload.text()).toBe("http");
+
+      const reloadedPersisted = {
+        ...initialPersisted,
+        daemon: {
+          ...initialPersisted.daemon,
+          hostnames: ["127.0.0.1", "after.example.test"],
+          cors: { allowedOrigins: ["https://after.example.test"] },
+          trustedProxies: true as const,
+          mcp: { enabled: false, injectIntoAgents: false },
+          git: { maxProcessesPerSecond: 5, maxProcessConcurrency: 1 },
+          relay: { ...initialPersisted.daemon.relay, enabled: true },
+        },
+        app: { baseUrl: "https://after.example.test" },
+        agents: {
+          catalogRefreshTimeoutMs: 5_000,
+          providers: { codex: { enabled: false } },
+        },
+      };
+      await writeFile(configPath, `${JSON.stringify(reloadedPersisted, null, 2)}\n`, "utf-8");
+
+      const result = await client.reloadDaemonConfig("runtime-policies");
+
+      expect(result).toEqual({
+        requestId: "runtime-policies",
+        appliedPaths: [
+          "agents.catalogRefreshTimeoutMs",
+          "agents.providers",
+          "app.baseUrl",
+          "daemon.cors.allowedOrigins",
+          "daemon.git.maxProcessConcurrency",
+          "daemon.git.maxProcessesPerSecond",
+          "daemon.hostnames",
+          "daemon.mcp.enabled",
+          "daemon.relay.enabled",
+          "daemon.trustedProxies",
+        ],
+        restartRequiredPaths: [],
+        overrideControlledPaths: [],
+      });
+      expect(
+        (await httpGetWithHost(target.port, "before.example.test", "/api/health")).status,
+      ).toBe(403);
+      expect((await httpGetWithHost(target.port, "after.example.test", "/api/health")).status).toBe(
+        200,
+      );
+      const afterCors = await fetch(`http://127.0.0.1:${target.port}/api/health`, {
+        headers: { Origin: "https://after.example.test" },
+      });
+      expect(afterCors.headers.get("access-control-allow-origin")).toBe(
+        "https://after.example.test",
+      );
+      const afterProxyReload = await httpGetWithHost(target.port, proxyHost, "/", {
+        "x-forwarded-proto": "https",
+      });
+      expect(await afterProxyReload.text()).toBe("https");
+      await expect(
+        probeWebSocketConnection(`ws://127.0.0.1:${target.port}/ws`, {
+          host: "after.example.test",
+          origin: "https://after.example.test",
+        }),
+      ).resolves.toEqual({ status: "connected" });
+      await expect(
+        probeWebSocketConnection(`ws://127.0.0.1:${target.port}/ws`, {
+          host: "after.example.test",
+          origin: "https://before.example.test",
+        }),
+      ).resolves.toEqual({ status: "rejected", statusCode: 403 });
+      expect(
+        (
+          await fetch(`http://127.0.0.1:${target.port}/mcp/agents`, {
+            method: "POST",
+          })
+        ).status,
+      ).toBe(404);
+      expect(snapshotGitCommandRuntimeMetrics()).toMatchObject({
+        concurrencyLimit: 1,
+        maxProcessesPerSecond: 5,
+      });
+      await expect(
+        daemon.agentManager.createAgent({ provider: "codex", cwd: agentCwd }, undefined, {
+          workspaceId: undefined,
+        }),
+      ).rejects.toThrow(/disabled/i);
+      expect((await client.getDaemonStatus()).relay?.enabled).toBe(true);
+      expect((await client.getDaemonPairingOffer()).url).toContain(
+        "https://after.example.test/#offer=",
+      );
+    } finally {
+      configureGitProcessPolicy(DEFAULT_GIT_PROCESS_POLICY);
+      await client?.close().catch(() => undefined);
+      await daemon.stop().catch(() => undefined);
+      if (proxyUpstream) {
+        await new Promise<void>((resolve) => proxyUpstream?.close(() => resolve()));
+      }
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true }),
+        rm(staticDir, { recursive: true, force: true }),
+        rm(agentCwd, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  function httpGetWithHost(
+    port: number,
+    host: string,
+    requestPath: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
     return new Promise((resolve, reject) => {
       const req = http.get(
-        { hostname: "127.0.0.1", port, path: requestPath, headers: { host } },
+        { hostname: "127.0.0.1", port, path: requestPath, headers: { host, ...headers } },
         (res) => {
           const chunks: Buffer[] = [];
           res.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -387,7 +651,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("rolls back already-open standalone listener when main daemon listen fails", async () => {
+  test("rolls back standalone listener without starting plugins when main listen fails", async () => {
     const mainPort = await findFreePort();
     const standalonePort = await findFreePort();
     const occupiedMain = http.createServer((_req, res) => {
@@ -398,7 +662,24 @@ describe("paseo daemon bootstrap", () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-main-rollback-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const pluginDirectory = path.join(paseoHomeRoot, "plugin");
+    const pluginPidPath = path.join(pluginDirectory, "plugin.pid");
     await mkdir(paseoHome, { recursive: true });
+    if (!isPlatform("win32")) {
+      await mkdir(pluginDirectory);
+      await writeFile(
+        path.join(pluginDirectory, "paseo-plugin.json"),
+        JSON.stringify({ id: "startup-rollback" }),
+      );
+      await writeFile(
+        path.join(pluginDirectory, "index.tsx"),
+        `import { writeFileSync } from "node:fs";
+export default function contribute(plugin: unknown) {
+  void plugin;
+  writeFileSync(${JSON.stringify(pluginPidPath)}, String(process.pid));
+}`,
+      );
+    }
     const config: PaseoDaemonConfig = {
       listen: `127.0.0.1:${mainPort}`,
       paseoHome,
@@ -414,12 +695,19 @@ describe("paseo daemon bootstrap", () => {
       openai: undefined,
       speech: undefined,
       serviceProxy: { standaloneListen: `127.0.0.1:${standalonePort}` },
+      pluginsEnabled: !isPlatform("win32"),
+      plugins: isPlatform("win32")
+        ? {}
+        : { "startup-rollback": { source: "directory", path: pluginDirectory } },
     };
     const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
 
     try {
       await expect(daemon.start()).rejects.toThrow();
       await expect(fetch(`http://127.0.0.1:${standalonePort}/api/health`)).rejects.toThrow();
+      if (!isPlatform("win32")) {
+        await expect(readFile(pluginPidPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      }
     } finally {
       await daemon.stop().catch(() => undefined);
       await new Promise<void>((resolve) => occupiedMain.close(() => resolve()));
@@ -738,8 +1026,16 @@ async function beginDaemonShutdownWithAgentClosing(): Promise<BlockedDaemonShutd
   };
 }
 
-function probeWebSocketConnection(url: string): Promise<WebSocketProbeResult> {
-  const ws = new WebSocket(url);
+function probeWebSocketConnection(
+  url: string,
+  headers?: { host?: string; origin?: string },
+): Promise<WebSocketProbeResult> {
+  const ws = new WebSocket(url, {
+    headers: {
+      ...(headers?.host ? { Host: headers.host } : {}),
+      ...(headers?.origin ? { Origin: headers.origin } : {}),
+    },
+  });
   return new Promise((resolve) => {
     ws.once("open", () => {
       ws.close();

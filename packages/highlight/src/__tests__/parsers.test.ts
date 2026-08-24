@@ -21,7 +21,9 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.swift")).toBe(true);
     expect(isLanguageSupported("test.dart")).toBe(true);
     expect(isLanguageSupported("test.cs")).toBe(true);
+    expect(isLanguageSupported("test.nix")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
+    expect(isLanguageSupported("Counter.svelte")).toBe(true);
   });
 
   it("returns false for unsupported file extensions", () => {
@@ -60,7 +62,9 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("swift");
     expect(extensions).toContain("dart");
     expect(extensions).toContain("cs");
+    expect(extensions).toContain("nix");
     expect(extensions).toContain("json");
+    expect(extensions).toContain("svelte");
   });
 });
 

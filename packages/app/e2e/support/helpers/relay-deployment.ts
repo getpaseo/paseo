@@ -60,7 +60,7 @@ export async function connectDaemonWebAppOnlyThroughRelay(
       localStorage.setItem("@paseo:daemon-registry", JSON.stringify([storedHost]));
       localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
     },
-    { storedHost: host, preferences: buildCreateAgentPreferences(offer.serverId) },
+    { storedHost: host, preferences: buildCreateAgentPreferences() },
   );
 
   const relaySocketOpened = new Promise<void>((resolve) => {

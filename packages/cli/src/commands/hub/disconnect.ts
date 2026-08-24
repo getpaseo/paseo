@@ -31,7 +31,7 @@ export function runHubDisconnect(
       );
     }
     const response = await client.disconnectHub(options.force ?? false);
-    return hubStatusResult(response.status, response.warning, current.hubOrigin);
+    return hubStatusResult(response.status, response.warning);
   });
 }
 
@@ -42,7 +42,7 @@ export function addHubDisconnectCommand(
   addJsonAndDaemonHostOptions(
     parent
       .command("disconnect")
-      .option("--force", "Remove local authority even if the Hub is offline"),
+      .option("--force", "Remove local authority without notifying the Hub"),
   ).action(
     withOutput(async (...args) => {
       const options = args.at(-2) as HubDisconnectOptions;

@@ -197,6 +197,32 @@ describe("deriveAgentStreamTurnLiveness", () => {
   });
 });
 
+describe("timeline turn membership compatibility", () => {
+  it("hydrates tagged rows while retaining legacy rows without a turn ID", () => {
+    const hydrated = hydrateStreamState([
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          turnId: "turn-1",
+          item: { type: "user_message", text: "prompt", clientMessageId: "prompt-id" },
+        },
+        timestamp: new Date(1000),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "assistant_message", text: "legacy" },
+        },
+        timestamp: new Date(2000),
+      },
+    ]);
+
+    expect(hydrated.map((item) => item.turnId)).toEqual(["turn-1", undefined]);
+  });
+});
+
 describe("detached timeline windows", () => {
   it("does not apply or catch up live events while viewing an older window", () => {
     const currentTail = [makeAssistantItem("older window")];
@@ -285,8 +311,17 @@ describe("processTimelineResponse", () => {
       text: "local prompt",
       timestamp: new Date(1000),
       timelineCursor: { epoch: "epoch-1", seq: 1 },
+      turnId: "turn-1",
     });
-    const currentTail = [canonical, makeAssistantItem("existing tail", "existing-tail")];
+    const hello = createUserMessage({
+      id: "hello",
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date(1500),
+      timelineCursor: { epoch: "epoch-1", seq: 2 },
+      turnId: "turn-1",
+    });
+    const currentTail = [canonical, makeAssistantItem("existing tail", "existing-tail"), hello];
     const currentHead = [makeAssistantItem("existing head", "existing-head")];
 
     const result = processTimelineResponse({
@@ -314,6 +349,7 @@ describe("processTimelineResponse", () => {
         ],
       },
     });
+    expect(result.tail.find((item) => item.id === "hello")?.turnId).toBe("turn-1");
 
     expect(result.commit).toBe("discard");
     expect(result.tail).toBe(currentTail);

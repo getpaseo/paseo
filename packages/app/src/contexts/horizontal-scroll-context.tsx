@@ -4,6 +4,12 @@ import { useSharedValue, type SharedValue } from "react-native-reanimated";
 interface HorizontalScrollContextValue {
   // Shared value indicating if any registered horizontal scroll is scrolled (offset > 0)
   isAnyScrolledRight: SharedValue<boolean>;
+  // Captures whether the horizontal surface under the current touch started
+  // away from its leading edge. The value stays true for the whole gesture so
+  // returning to zero cannot also close a mobile panel in the same swipe.
+  activeGestureStartedScrolled: SharedValue<boolean>;
+  beginHorizontalGesture: (offset: number) => void;
+  endHorizontalGesture: () => void;
   // Register a scroll view's offset - returns an unregister function
   registerScrollOffset: (id: string, offset: number) => void;
   unregisterScrollOffset: (id: string) => void;
@@ -13,7 +19,19 @@ const HorizontalScrollContext = createContext<HorizontalScrollContextValue | nul
 
 export function HorizontalScrollProvider({ children }: { children: ReactNode }) {
   const isAnyScrolledRight = useSharedValue(false);
+  const activeGestureStartedScrolled = useSharedValue(false);
   const scrollOffsetsRef = useRef<Map<string, number>>(new Map());
+
+  const beginHorizontalGesture = useCallback(
+    (offset: number) => {
+      activeGestureStartedScrolled.value = offset > 1;
+    },
+    [activeGestureStartedScrolled],
+  );
+
+  const endHorizontalGesture = useCallback(() => {
+    activeGestureStartedScrolled.value = false;
+  }, [activeGestureStartedScrolled]);
 
   const updateIsAnyScrolled = useCallback(() => {
     let anyScrolled = false;
@@ -44,11 +62,21 @@ export function HorizontalScrollProvider({ children }: { children: ReactNode }) 
 
   const contextValue = useMemo(
     () => ({
+      activeGestureStartedScrolled,
+      beginHorizontalGesture,
+      endHorizontalGesture,
       isAnyScrolledRight,
       registerScrollOffset,
       unregisterScrollOffset,
     }),
-    [isAnyScrolledRight, registerScrollOffset, unregisterScrollOffset],
+    [
+      activeGestureStartedScrolled,
+      beginHorizontalGesture,
+      endHorizontalGesture,
+      isAnyScrolledRight,
+      registerScrollOffset,
+      unregisterScrollOffset,
+    ],
   );
 
   return (

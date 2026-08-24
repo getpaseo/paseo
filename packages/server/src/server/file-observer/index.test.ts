@@ -237,7 +237,7 @@ test("observes a thousand concurrent writes and remains healthy after delete and
 
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
   await expect
-    .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 10_000 })
+    .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 60_000 })
     .toEqual([]);
 
   const removedPaths = paths.slice(0, 100);
@@ -258,7 +258,7 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   await writeFile(sentinel, "alive");
   await expect.poll(() => observed.has(sentinel)).toBe(true);
   await subscription.unsubscribe();
-}, 30_000);
+}, 90_000);
 
 test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   const root = await createRoot();

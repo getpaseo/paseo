@@ -21,8 +21,10 @@ import {
  *   task_notification  task_id, tool_use_id, status
  *
  * Only `task_started` carries `tool_use_id`, so the mapping from task id to the canonical
- * subagent id has to be remembered. The source also accumulates Claude's presentation facts so
- * the shared descriptor receives one complete provider-owned subtitle rather than Claude fields.
+ * subagent id has to be remembered. Claude may re-announce a session task with a new tool id when
+ * resuming it; later ids are aliases for the first id. The source also accumulates Claude's
+ * presentation facts so the shared descriptor receives one complete provider-owned subtitle
+ * rather than Claude fields.
  * Neither is a lifecycle state machine: status comes directly from task announcements.
  *
  * The table is session-scoped, because task ids are. It survives a turn ending — the one thing a
@@ -150,6 +152,8 @@ export interface ClaudeTaskProtocolSourceInput {
 export class ClaudeTaskProtocolSource {
   /** task_id -> canonical subagent id (the Task tool_use id). Populated by task_started. */
   private readonly subagentIdByTaskId = new Map<string, string>();
+  /** Every announced tool id -> the first tool id that publicly identifies the child. */
+  private readonly canonicalIdByToolUseId = new Map<string, string>();
   /**
    * Every subagent id this source declared. It is the source's whole vocabulary: an id that is
    * not in here was either filtered at declaration or never announced, and this source has
@@ -213,6 +217,12 @@ export class ClaudeTaskProtocolSource {
     return this.declaredIds.has(subagentId);
   }
 
+  /** Resolve a Claude tool id to the provider descriptor id that owns its state and timeline. */
+  resolveSubagentId(toolUseId: string): string | undefined {
+    const canonicalId = this.canonicalIdByToolUseId.get(toolUseId);
+    return canonicalId && this.declaredIds.has(canonicalId) ? canonicalId : undefined;
+  }
+
   /** Whether Claude's task protocol declared this task as a provider subagent. */
   isDeclaredTask(taskId: string): boolean {
     const subagentId = this.subagentIdByTaskId.get(taskId);
@@ -248,6 +258,7 @@ export class ClaudeTaskProtocolSource {
    */
   reset(): void {
     this.subagentIdByTaskId.clear();
+    this.canonicalIdByToolUseId.clear();
     this.declaredIds.clear();
     this.workflowTaskIds.clear();
     this.lastWorkflowResultByTaskId.clear();
@@ -303,7 +314,30 @@ export class ClaudeTaskProtocolSource {
     if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
+    const existingId = this.subagentIdByTaskId.get(message.task_id);
+    if (existingId) {
+      this.canonicalIdByToolUseId.set(id, existingId);
+      const observations: SubagentObservation[] = [];
+      if (this.lastStatusById.get(existingId) !== "running") {
+        this.lastStatusById.set(existingId, "running");
+        observations.push({ kind: "status", id: existingId, status: "running" });
+      }
+      const prompt =
+        message.task_type === CLAUDE_WORKFLOW_TASK_TYPE
+          ? readString(message.description)
+          : readString(message.prompt);
+      if (prompt) {
+        observations.push({
+          kind: "timeline",
+          id: existingId,
+          item: { type: "user_message", text: prompt },
+        });
+      }
+      return observations;
+    }
+
     this.subagentIdByTaskId.set(message.task_id, id);
+    this.canonicalIdByToolUseId.set(id, id);
     this.declaredIds.add(id);
     this.lastStatusById.set(id, "running");
 

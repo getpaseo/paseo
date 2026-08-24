@@ -1,13 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-  type GestureResponderEvent,
-  type ViewStyle,
-} from "react-native";
+import { Image, Pressable, ScrollView, Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   CircleCheck,
@@ -44,7 +36,12 @@ import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachment
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { isNative } from "@/constants/platform";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  PaneContentToolbar,
+  paneContentToolbarIconSize,
+  paneContentToolbarIconButtonStyle,
+} from "@/components/ui/pane-content-toolbar";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { getForgePresentation } from "@/git/forge";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
@@ -64,8 +61,8 @@ import {
   buildPullRequestReviewContextAttachment,
   buildPullRequestThreadContextAttachment,
   canAddPullRequestActivityToChat,
-  canAddPullRequestCheckLogsToChat,
 } from "./context-attachment";
+import { ChecksSection, getCheckIdentity } from "./checks-section";
 import { getActivityVerb, getStateLabel } from "./data";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
@@ -76,11 +73,9 @@ import {
   type PrTimelineEntry,
 } from "./timeline";
 import {
-  CheckStatusIcon,
   Section,
   SUMMARY_DANGER_ICON,
   SUMMARY_SUCCESS_ICON,
-  SUMMARY_WARNING_ICON,
   SummaryPill,
   dangerColorMapping,
   foregroundMutedColorMapping,
@@ -145,10 +140,6 @@ function handleMarkdownLinkPress(url: string): boolean {
   return false;
 }
 
-function rowPressableStyle({ hovered }: { hovered?: boolean }) {
-  return [sectionKitStyles.checkRow, Boolean(hovered) && styles.hoverable];
-}
-
 function entryHeaderPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.entryHeaderPressable, Boolean(hovered) && styles.hoverable];
 }
@@ -159,11 +150,11 @@ function kebabTriggerStyle({
   return [styles.kebabButton, hovered && styles.kebabButtonHovered];
 }
 
-function refreshButtonStyle({
-  hovered = false,
-  pressed = false,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.refreshButton, (hovered || pressed) && styles.refreshButtonHovered];
+function refreshButtonStyle(
+  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
+  isCompact: boolean,
+) {
+  return paneContentToolbarIconButtonStyle({ hovered, pressed }, false, isCompact);
 }
 
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
@@ -173,16 +164,6 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
       uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
     />
   );
-}
-
-function getCheckIdentity(check: PrPaneCheck): string {
-  if (check.detailRef?.checkRunId !== undefined) {
-    return `${check.provider}:check-run:${check.detailRef.checkRunId}`;
-  }
-  if (check.detailRef?.workflowRunId !== undefined) {
-    return `${check.provider}:workflow-run:${check.detailRef.workflowRunId}`;
-  }
-  return `${check.provider}:${check.name}:${check.url}`;
 }
 
 function addLoadingCheck(current: ReadonlySet<string>, checkKey: string): ReadonlySet<string> {
@@ -217,6 +198,11 @@ export function PullRequestPane({
   workspaceAttachmentScopeKey?: string;
 }) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const toolbarRefreshButtonStyle = useCallback(
+    (state: PressableStateCallbackType) => refreshButtonStyle(state, isCompact),
+    [isCompact],
+  );
   const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
   // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
@@ -267,10 +253,6 @@ export function PullRequestPane({
   const handleToggleActivity = useCallback(() => {
     setActivityOpen((open) => !open);
   }, []);
-
-  const passed = data.checks.filter((check) => check.status === "success").length;
-  const failed = data.checks.filter((check) => check.status === "failure").length;
-  const pending = data.checks.filter((check) => check.status === "pending").length;
 
   const approvals = data.activity.filter(
     (item) => item.kind === "review" && item.reviewState === "approved",
@@ -495,7 +477,7 @@ export function PullRequestPane({
   return (
     <View style={styles.root} testID="pr-pane">
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.toolbar} testID="pr-pane-toolbar">
+        <PaneContentToolbar style={styles.toolbar} testID="pr-pane-toolbar">
           <View style={styles.toolbarActions}>
             <Button
               variant="ghost"
@@ -517,7 +499,7 @@ export function PullRequestPane({
                   : t("workspace.git.diff.refreshState", { brand: forgePresentation.brandLabel })
               }
               testID="pr-pane-refresh"
-              style={refreshButtonStyle}
+              style={toolbarRefreshButtonStyle}
               hitSlop={8}
               onPress={handleRefresh}
               disabled={isRefreshing}
@@ -525,16 +507,19 @@ export function PullRequestPane({
               <View style={styles.refreshIcon}>
                 {isRefreshing ? (
                   <ThemedLoadingSpinner
-                    size={ICON_SIZE.sm}
+                    size={paneContentToolbarIconSize(isCompact)}
                     uniProps={foregroundMutedColorMapping}
                   />
                 ) : (
-                  <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+                  <ThemedRotateCw
+                    size={paneContentToolbarIconSize(isCompact)}
+                    uniProps={foregroundMutedColorMapping}
+                  />
                 )}
               </View>
             </Pressable>
           ) : null}
-        </View>
+        </PaneContentToolbar>
 
         <Pressable onPress={handleOpenPrUrl} style={styles.header}>
           {({ hovered }) => (
@@ -567,50 +552,14 @@ export function PullRequestPane({
         </Pressable>
 
         {nativeChecksSection ?? (
-          <Section
-            title="Checks"
+          <ChecksSection
+            checks={data.checks}
             open={checksOpen}
             onToggle={handleToggleChecks}
-            summary={
-              <>
-                <SummaryPill
-                  count={passed}
-                  icon={SUMMARY_SUCCESS_ICON}
-                  variant="success"
-                  testID="pr-pane-check-passed"
-                />
-                <SummaryPill
-                  count={failed}
-                  icon={SUMMARY_DANGER_ICON}
-                  variant="danger"
-                  testID="pr-pane-check-failed"
-                />
-                <SummaryPill
-                  count={pending}
-                  icon={SUMMARY_WARNING_ICON}
-                  variant="warning"
-                  testID="pr-pane-check-pending"
-                />
-              </>
-            }
-          >
-            {data.checks.length === 0 ? (
-              <Text style={sectionKitStyles.emptyText}>No checks</Text>
-            ) : (
-              data.checks.map((check) => {
-                const checkKey = getCheckIdentity(check);
-                return (
-                  <CheckRow
-                    key={checkKey}
-                    check={check}
-                    attachEnabled={attachEnabled}
-                    isAddingLogsToChat={loadingCheckKeys.has(checkKey)}
-                    onAddLogsToChat={handleAddCheckLogsToChat}
-                  />
-                );
-              })
-            )}
-          </Section>
+            attachEnabled={attachEnabled}
+            loadingCheckKeys={loadingCheckKeys}
+            onAddLogsToChat={handleAddCheckLogsToChat}
+          />
         )}
 
         <View style={styles.divider} />
@@ -670,57 +619,6 @@ function stateLabelStyle(state: PrState) {
   if (state === "draft") return styles.stateLabelDraft;
   if (state === "merged") return styles.stateLabelMerged;
   return styles.stateLabelClosed;
-}
-
-function CheckRow({
-  check,
-  attachEnabled,
-  isAddingLogsToChat,
-  onAddLogsToChat,
-}: {
-  check: PrPaneCheck;
-  attachEnabled: boolean;
-  isAddingLogsToChat: boolean;
-  onAddLogsToChat: (check: PrPaneCheck) => void;
-}) {
-  const handlePress = useCallback(() => {
-    void openExternalUrl(check.url);
-  }, [check.url]);
-  const handleAddLogsToChat = useCallback(
-    (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      void onAddLogsToChat(check);
-    },
-    [check, onAddLogsToChat],
-  );
-  return (
-    <Pressable onPress={handlePress} style={rowPressableStyle}>
-      <CheckStatusIcon status={check.status} />
-      <Text style={sectionKitStyles.checkName} numberOfLines={1}>
-        {check.name}
-      </Text>
-      {check.workflow && (
-        <Text style={sectionKitStyles.checkWorkflow} numberOfLines={1}>
-          {check.workflow}
-        </Text>
-      )}
-      <View style={sectionKitStyles.checkTrailing}>
-        {attachEnabled && canAddPullRequestCheckLogsToChat(check) ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            leftIcon={MessageSquarePlus}
-            loading={isAddingLogsToChat}
-            onPress={handleAddLogsToChat}
-            style={styles.checkAddButton}
-          >
-            {isAddingLogsToChat ? "Adding..." : "Add to chat"}
-          </Button>
-        ) : null}
-        {check.duration && <Text style={sectionKitStyles.checkDuration}>{check.duration}</Text>}
-      </View>
-    </Pressable>
-  );
 }
 
 interface TimelineEntryCallbacks {
@@ -1317,27 +1215,27 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 16,
   },
   stateLabelOpen: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusSuccess,
   },
   stateLabelDraft: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
   stateLabelMerged: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusMerged,
   },
   stateLabelClosed: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusDanger,
   },
   repoRef: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
     marginLeft: theme.spacing[1],
@@ -1354,15 +1252,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.border,
   },
   toolbar: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    paddingTop: theme.spacing[2],
     paddingRight: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
     paddingLeft: theme.spacing[3],
   },
   toolbarActions: {
@@ -1377,17 +1270,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 0,
     paddingHorizontal: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
-  },
-  refreshButton: {
-    marginLeft: "auto",
-    width: 22,
-    height: 22,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  refreshButtonHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {
     width: ICON_SIZE.md,
@@ -1414,7 +1296,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   filterHiddenCount: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   eventRow: {
@@ -1445,7 +1327,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   authorText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
     flexShrink: 1,
@@ -1456,19 +1338,19 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   verbMuted: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   verbSuccess: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusSuccess,
   },
   verbDanger: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.statusDanger,
   },
   ageText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   kebabSlot: {
@@ -1522,7 +1404,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface1,
   },
   threadPath: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontFamily: theme.fontFamily.mono,
     color: theme.colors.foreground,
     flexShrink: 1,
