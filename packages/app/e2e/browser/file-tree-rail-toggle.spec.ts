@@ -9,6 +9,18 @@ import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-cli
 
 let workspace: SeededWorkspace;
 
+async function effectiveBackground(locator: import("@playwright/test").Locator): Promise<string> {
+  return locator.evaluate((element) => {
+    let current: Element | null = element;
+    while (current) {
+      const color = getComputedStyle(current).backgroundColor;
+      if (color !== "rgba(0, 0, 0, 0)" && color !== "transparent") return color;
+      current = current.parentElement;
+    }
+    return "transparent";
+  });
+}
+
 test.beforeAll(async () => {
   workspace = await seedWorkspace({
     repoPrefix: "file-tree-rail-toggle-",
@@ -21,6 +33,21 @@ test.afterAll(async () => {
 });
 
 test.describe("File panel tree rail", () => {
+  test("the Files panel starts with an empty content pane beside the tree", async ({ page }) => {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await openFileExplorer(page);
+
+    const rail = page.getByTestId("files-tree-rail").filter({ visible: true });
+    await expect(rail).toBeVisible({ timeout: 30_000 });
+    const content = rail.getByTestId("files-tree-rail-content");
+    const tree = rail.getByTestId("files-tree-rail-tree");
+    await expect(content).toHaveText("Choose a file");
+    await expect(tree).toContainText("docs");
+    expect(await effectiveBackground(tree.getByTestId("file-explorer-tree-scroll"))).toBe(
+      await effectiveBackground(content),
+    );
+  });
+
   test("the file toolbar toggle closes and reopens the tree", async ({ page }, testInfo) => {
     await gotoWorkspace(page, workspace.workspaceId);
     await openFileExplorer(page);

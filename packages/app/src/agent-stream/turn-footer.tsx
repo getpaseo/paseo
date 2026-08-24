@@ -24,7 +24,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-export const TURN_FOOTER_BOTTOM_SPACING = SPACING[6];
+export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
@@ -231,7 +231,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   turnFooterRow: {
-    marginTop: theme.spacing[4],
+    marginTop: theme.spacing[2] + 5,
   },
   turnFooterSlot: {
     flexDirection: "row",

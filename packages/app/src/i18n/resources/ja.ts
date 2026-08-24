@@ -64,6 +64,9 @@ export const ja: TranslationResources = {
       workspaces: "ワークスペース",
       agents: "エージェント",
       newAgent: "新しいエージェント",
+      open: "{{name}}を開く",
+      openInSidePanel: "{{name}}をサイドパネルで開く",
+      openInFocusedPane: "{{name}}をフォーカス中のペインで開く",
       addProject: "プロジェクトを追加",
       home: "ホーム",
       groupByProject: "プロジェクトでグループ化",
@@ -616,7 +619,7 @@ export const ja: TranslationResources = {
         files: "ファイル",
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
-        editTerminalProfiles: "プロファイルを編集…",
+        editTerminalProfiles: "プロファイルを編集",
       },
       sidePanel: {
         open: "サイドパネルを開く",
@@ -1653,6 +1656,8 @@ export const ja: TranslationResources = {
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
+      securityWarning:
+        "このペアリングリンクはパスワードと同様に扱ってください。リンクを知っている人は誰でもこのデーモンにアクセスできます。",
       qrUnavailable: "QRコードが利用できません。",
       qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
@@ -1726,6 +1731,7 @@ export const ja: TranslationResources = {
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
+      tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
@@ -1754,6 +1760,7 @@ export const ja: TranslationResources = {
       label: "ファイル",
       subtitle: "ワークスペースのファイル",
       tooltip: "ワークスペースのファイルを参照",
+      chooseFile: "ファイルを選択",
     },
     pullRequest: {
       label: "プルリクエスト",
@@ -2384,10 +2391,9 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
-        notesLabel: "エージェントへのメモ",
+        notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
-        notesHint:
-          "list_profiles MCPツールによって返されます。他のエージェントへの指示として記述してください。",
+        notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
         save: "保存",
         saving: "保存中...",
         remove: "削除",

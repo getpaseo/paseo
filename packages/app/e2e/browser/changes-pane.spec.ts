@@ -838,24 +838,35 @@ test("desktop Changes toggles a navigation tree beside the expanded diff documen
   await testInfo.attach("changes-toolbar", { path: screenshot, contentType: "image/png" });
 });
 
-test("compact Changes keeps its options control touch-sized", async ({ page }) => {
+test("compact Changes keeps its actions compact and menu-only", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
   await page.setViewportSize({ width: 480, height: 900 });
 
+  const actions = page.getByTestId("changes-actions-menu-trigger").filter({ visible: true });
   const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
-  const [optionsBox, glyphBox] = await Promise.all([
+  const [actionsBox, optionsBox, glyphBox] = await Promise.all([
+    actions.boundingBox(),
     options.boundingBox(),
     options.locator("svg").boundingBox(),
   ]);
-  if (!optionsBox || !glyphBox) {
-    throw new Error("Compact Changes options geometry could not be measured");
+  if (!actionsBox || !optionsBox || !glyphBox) {
+    throw new Error("Compact Changes toolbar geometry could not be measured");
   }
+  expect(actionsBox.width).toBe(48);
+  expect(actionsBox.height).toBe(28);
   expect(optionsBox.width).toBe(32);
   expect(optionsBox.height).toBe(32);
   expect(glyphBox.width).toBe(18);
   expect(glyphBox.height).toBe(18);
+
+  await expect(actions).not.toContainText("Commit");
+  await expect(actions.locator("svg")).toHaveCount(2);
+  await actions.click();
+  await expect(page.getByTestId("changes-primary-cta-menu")).toBeVisible();
+  await expect(page.getByTestId("changes-menu-commit")).toContainText("Commit");
+  await page.keyboard.press("Escape");
 
   await options.click();
   const wrapLines = page.getByText("Wrap long lines", { exact: true });
@@ -996,6 +1007,23 @@ test("canvas diff creates, edits, and deletes an inline review without DOM code 
   await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
 });
 
+test("autofocusing an inline review keeps the Changes tab focused", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const changesTab = page.getByTestId("workspace-tab-working_diff").filter({ visible: true });
+  const focusedBackground = await changesTab.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+
+  await startReviewOnFirstChangedLine(page);
+  await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
+  await expect
+    .poll(() => changesTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(focusedBackground);
+});
+
 test("split canvas creates a review on the changed side and keeps it in that column", async ({
   page,
 }) => {
@@ -1095,7 +1123,7 @@ test("canvas diff copies a dragged character selection without opening a review"
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
-test("the first click after a canvas selection only dismisses the selection", async ({ page }) => {
+test("clicking the canvas dismisses a selection without opening a review", async ({ page }) => {
   const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
   await useUnwrappedDiffLines(page);
   await openSelectionWorkspaceChanges(page, workspace);
@@ -1105,7 +1133,7 @@ test("the first click after a canvas selection only dismisses the selection", as
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 
   await clickFirstChangedLine(page);
-  await expect(page.getByTestId("inline-review-editor")).toBeVisible();
+  await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
 test("canvas diff replaces a selection with forward and backward drags", async ({
@@ -1537,7 +1565,8 @@ async function startReviewOnFirstChangedLine(
   if (!bodyBounds) throw new Error("Expanded diff body has no bounds");
   const lineHeight = Math.round(fontSize * 1.5);
   const columnLeft = side === "right" ? bodyBounds.x + bodyBounds.width / 2 : bodyBounds.x;
-  await page.mouse.click(columnLeft + 20, bodyBounds.y + lineHeight * 1.5);
+  await page.mouse.move(columnLeft + 20, bodyBounds.y + lineHeight * 1.5);
+  await page.getByRole("button", { name: "Add review comment" }).click();
   await expect(page.getByTestId("inline-review-editor")).toBeVisible();
 }
 

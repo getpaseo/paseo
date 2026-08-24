@@ -2,9 +2,8 @@
 // 1) with the explorer pane focused, a newly appearing agent must auto-open into the
 //    MAIN pane in the background — the explorer pane is a background surface and must
 //    never swallow entity tabs or lose the user's focus, and
-// 2) splitting a tab out of a pane leaves that pane empty, and the app must stay
-//    interactive in the [agent | empty main | explorer] state (the reporter hit an
-//    app-wide lockup here with no way to close the empty pane).
+// 2) splitting a tab out of a pane leaves a New tab behind, and the app must stay
+//    interactive in the [agent | New | explorer] state.
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
@@ -53,19 +52,19 @@ async function closeSeededDraftInMainPane(page: Page): Promise<void> {
   await expect(draftTabChip(page)).toHaveCount(0, { timeout: 15_000 });
 }
 
-function emptyPaneChild(page: Page): Locator {
+function newTabPaneChild(page: Page): Locator {
   return page
     .getByTestId("split-group-child")
-    .filter({ has: page.getByTestId("workspace-pane-empty-state") })
+    .filter({ has: page.getByTestId("workspace-new-tab-panel") })
     .first();
 }
 
 async function emptyPaneBox(page: Page) {
-  const paneChild = emptyPaneChild(page);
+  const paneChild = newTabPaneChild(page);
   await expect(paneChild).toBeVisible({ timeout: 15_000 });
   const box = await paneChild.boundingBox();
   expect(box).not.toBeNull();
-  if (!box) throw new Error("Empty pane has no bounding box");
+  if (!box) throw new Error("New tab pane has no bounding box");
   return box;
 }
 
@@ -97,7 +96,7 @@ async function dragChipTo(
 }
 
 test.describe("explorer pane tab placement", () => {
-  test("agents open in the main pane and empty-pane splits keep the app usable", async ({
+  test("agents open in the main pane and New-tab splits keep the app usable", async ({
     page,
   }, testInfo) => {
     const consoleErrors: string[] = [];
@@ -171,9 +170,9 @@ test.describe("explorer pane tab placement", () => {
           body: await page.screenshot(),
           contentType: "image/png",
         });
-        // The split must have taken: agent pane + empty main + explorer = 3 tab rows.
+        // The split must have taken: agent pane + New main + explorer = 3 tab rows.
         await expect(visible(page, "workspace-tabs-row")).toHaveCount(3, { timeout: 10_000 });
-        await expect(page.getByTestId("workspace-pane-empty-state")).toBeVisible();
+        await expect(page.getByTestId("workspace-new-tab-panel")).toBeVisible();
       });
 
       await test.step("app must stay interactive after the split", async () => {
@@ -186,17 +185,12 @@ test.describe("explorer pane tab placement", () => {
         await chip.click({ position: { x: 12, y: 13 }, timeout: 5_000 });
         await expect(chip).toHaveAttribute("aria-selected", "true", { timeout: 5_000 });
 
-        // Clicking inside the empty pane (focuses it) must not lock anything. Aim
+        // Clicking inside the New tab pane (focuses it) must not lock anything. Aim
         // above the vertically centred launcher, which would open a tab instead.
-        const emptyPane = emptyPaneChild(page);
+        const emptyPane = newTabPaneChild(page);
         await emptyPane.click({ position: { x: 40, y: 120 }, timeout: 5_000 });
 
-        // The empty pane's + menu must open and dismiss cleanly.
-        const emptyPaneTrigger = emptyPane.getByTestId("workspace-new-tab-menu-trigger").first();
-        await emptyPaneTrigger.click({ timeout: 5_000 });
-        await page.keyboard.press("Escape");
-
-        // A second drag must work: center-drop the agent tab back into the empty pane.
+        // A second drag must work: center-drop the agent tab back into the New pane.
         const target = await emptyPaneBox(page);
         await dragChipTo(page, chip, {
           x: target.x + target.width / 2,
@@ -207,8 +201,8 @@ test.describe("explorer pane tab placement", () => {
           contentType: "image/png",
         });
 
-        // The agent chip must have moved into the previously empty pane and stay clickable.
-        await expect(page.getByTestId("workspace-pane-empty-state")).toHaveCount(0, {
+        // The agent chip must have replaced New in that pane and stay clickable.
+        await expect(page.getByTestId("workspace-new-tab-panel")).toHaveCount(0, {
           timeout: 10_000,
         });
         await agentTabChip(page, agentId)

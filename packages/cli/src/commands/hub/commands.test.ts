@@ -87,6 +87,7 @@ describe("Hub commands", () => {
     assert.deepEqual(events, [
       "progress:Logging in to https://hub.paseo.sh",
       "authorize:https://hub.paseo.sh",
+      "progress:Logged in",
     ]);
     assert.equal(result.data.origin, "https://hub.paseo.sh");
   });
@@ -113,11 +114,18 @@ describe("Hub commands", () => {
           events.push("init");
           events.push("deploy");
         },
-        reporter: quietReporter,
+        reporter: { progress: (message) => events.push(`progress:${message}`) },
       },
     );
 
-    assert.deepEqual(events, ["login", "connect:https://hub.test", "init", "deploy"]);
+    assert.deepEqual(events, [
+      "progress:Logging in to https://hub.test",
+      "login",
+      "progress:Logged in",
+      "connect:https://hub.test",
+      "init",
+      "deploy",
+    ]);
   });
 
   it("JSON and noninteractive login remain login-only", async () => {

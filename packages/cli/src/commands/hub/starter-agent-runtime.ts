@@ -11,7 +11,6 @@ export interface HubStarterAgentProvider {
   label: string;
   models: readonly HubStarterAgentModel[];
   modes: readonly HubStarterAgentMode[];
-  suggested: boolean;
 }
 
 export interface HubStarterAgentModel {
@@ -25,6 +24,11 @@ export interface HubStarterAgentMode {
   label: string;
   suggested: boolean;
 }
+
+export type HubStarterAgentProviderSnapshotState =
+  | { kind: "ready"; providers: readonly HubStarterAgentProvider[] }
+  | { kind: "loading" }
+  | { kind: "unavailable" };
 
 export function availableStarterAgentProviders(
   entries: readonly ProviderSnapshotEntry[],
@@ -47,12 +51,21 @@ export function availableStarterAgentProviders(
         label: entry.label ?? entry.provider,
         models,
         modes,
-        suggested:
-          models.some((model) => model.suggested) &&
-          (modes.length === 0 || modes.some((mode) => mode.suggested)),
       },
     ];
   });
+}
+
+export function starterAgentProviderSnapshotState(
+  entries: readonly ProviderSnapshotEntry[],
+): HubStarterAgentProviderSnapshotState {
+  const providers = availableStarterAgentProviders(entries);
+  if (providers.length > 0) return { kind: "ready", providers };
+  if (entries.length === 0) return { kind: "loading" };
+  if (entries.some((entry) => entry.enabled && entry.status === "loading")) {
+    return { kind: "loading" };
+  }
+  return { kind: "unavailable" };
 }
 
 export function suggestedStarterAgentChoice<T extends { suggested: boolean }>(

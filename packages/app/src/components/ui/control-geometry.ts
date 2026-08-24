@@ -78,8 +78,12 @@ function fieldLineHeight(fontSize: number): number {
   return Math.round(fontSize * FIELD_TEXT_LINE_HEIGHT_RATIO);
 }
 
-function fieldVerticalPadding(controlHeight: number, lineHeight: number): number {
-  return (controlHeight - lineHeight) / 2;
+function fieldVerticalPadding(
+  controlHeight: number,
+  lineHeight: number,
+  borderWidth: number,
+): number {
+  return (controlHeight - lineHeight - borderWidth * 2) / 2;
 }
 
 export function getControlInteractionPhase(
@@ -111,18 +115,27 @@ export function resolveControlInteractionStyles(
 }
 
 export function createControlGeometry(theme: Theme) {
+  const controlBorderWidth = theme.borderWidth[1];
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldTextMdLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldControlSm = {
     minHeight: CONTROL_HEIGHTS.compact,
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: fieldVerticalPadding(CONTROL_HEIGHTS.compact, fieldTextSmLineHeight),
+    paddingVertical: fieldVerticalPadding(
+      CONTROL_HEIGHTS.compact,
+      fieldTextSmLineHeight,
+      controlBorderWidth,
+    ),
     borderRadius: theme.borderRadius.md,
   };
   const fieldControlMd = {
     minHeight: CONTROL_HEIGHTS.field,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: fieldVerticalPadding(CONTROL_HEIGHTS.field, fieldTextMdLineHeight),
+    paddingVertical: fieldVerticalPadding(
+      CONTROL_HEIGHTS.field,
+      fieldTextMdLineHeight,
+      controlBorderWidth,
+    ),
     borderRadius: theme.borderRadius.lg,
   };
   const fieldTextSm = {
@@ -182,7 +195,7 @@ export function createControlGeometry(theme: Theme) {
     fieldTextSm,
     fieldTextMd,
     controlRest: {
-      borderWidth: theme.borderWidth[1],
+      borderWidth: controlBorderWidth,
       borderColor: "transparent",
       outlineWidth: 0,
       outlineColor: "transparent",

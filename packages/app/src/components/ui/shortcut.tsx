@@ -70,7 +70,7 @@ const styles = StyleSheet.create((theme) => ({
   badgeBackground: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface4,
+    backgroundColor: theme.colors.surface3,
     opacity: theme.opacity[50],
   },
   sequence: {

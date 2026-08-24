@@ -1390,6 +1390,10 @@ export class HostRuntimeStore {
     return this.hostRegistryStatus;
   }
 
+  recordUserActivity(): void {
+    this.replicaCache.recordUserActivity();
+  }
+
   subscribeHostList(listener: () => void): () => void {
     this.hostListListeners.add(listener);
     return () => {
