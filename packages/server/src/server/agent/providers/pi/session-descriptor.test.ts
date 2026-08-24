@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -12,6 +12,52 @@ async function writeSession(root: string, lines: unknown[]): Promise<string> {
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return filePath;
 }
+
+test("Pi cwd filtering continues past the global candidate overscan", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-cwd-limit-"));
+  const sessionsDir = path.join(root, "sessions");
+  const requestedCwd = path.join(root, "requested");
+  const otherCwd = path.join(root, "other");
+  const requestedFile = path.join(sessionsDir, "requested", "requested.jsonl");
+  await mkdir(path.dirname(requestedFile), { recursive: true });
+  await writeFile(
+    requestedFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "requested-session",
+      timestamp: "2026-06-01T00:00:00.000Z",
+      cwd: requestedCwd,
+    })}\n`,
+    "utf8",
+  );
+  await utimes(requestedFile, new Date("2026-06-01"), new Date("2026-06-01"));
+
+  await Promise.all(
+    Array.from({ length: 400 }, async (_, index) => {
+      const file = path.join(sessionsDir, "other", `${index}.jsonl`);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(
+        file,
+        `${JSON.stringify({
+          type: "session",
+          version: 3,
+          id: `other-${index}`,
+          timestamp: "2026-06-02T00:00:00.000Z",
+          cwd: otherCwd,
+        })}\n`,
+        "utf8",
+      );
+      await utimes(file, new Date("2026-06-02"), new Date("2026-06-02"));
+    }),
+  );
+
+  await expect(
+    listPiImportableSessions({ sessionDir: sessionsDir, cwd: requestedCwd, limit: 1 }),
+  ).resolves.toEqual([
+    expect.objectContaining({ providerHandleId: requestedFile, cwd: requestedCwd }),
+  ]);
+});
 
 test("Pi import config preserves the latest recorded model and thinking level", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-model-"));

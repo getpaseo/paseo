@@ -11,7 +11,12 @@ type WorkspaceHeaderRenderState =
       kind: "ready";
       title: string;
       subtitle: string;
-      shouldShowSubtitle: boolean;
+      /**
+       * Whether the project name says anything the workspace name doesn't. It is the fact, not
+       * the verdict: a header that stacks the two lines shows the project either way, and one
+       * that sets them side by side drops the repeat.
+       */
+      isSubtitleDistinct: boolean;
       isGitCheckout: boolean;
       currentBranchName: string | null;
     };
@@ -54,10 +59,6 @@ export function resolveWorkspaceHeaderRenderState(input: {
     return { kind: "skeleton" };
   }
 
-  if (input.checkoutState.kind === "pending" && input.workspace.projectKind === "git") {
-    return { kind: "skeleton" };
-  }
-
   const header = resolveWorkspaceHeader({ workspace: input.workspace });
   const checkout = input.checkoutState.kind === "ready" ? input.checkoutState.checkout : null;
   const currentBranchName =
@@ -69,7 +70,7 @@ export function resolveWorkspaceHeaderRenderState(input: {
     kind: "ready",
     title: header.title,
     subtitle: header.subtitle,
-    shouldShowSubtitle: !areHeaderLabelsEquivalent(header.title, header.subtitle),
+    isSubtitleDistinct: !areHeaderLabelsEquivalent(header.title, header.subtitle),
     isGitCheckout: checkout?.isGit ?? false,
     currentBranchName,
   };

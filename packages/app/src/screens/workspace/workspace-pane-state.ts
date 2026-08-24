@@ -3,7 +3,7 @@ import {
   type SplitPane,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   buildDeterministicWorkspaceTabId,
@@ -58,6 +58,7 @@ function normalizeWorkspaceTab(tab: WorkspaceTab): WorkspaceTab | null {
     tabId,
     target,
     createdAt: tab.createdAt,
+    state: tab.state,
   };
 }
 
@@ -98,6 +99,7 @@ function normalizeWorkspacePaneTabs(tabs: WorkspaceTab[]): NormalizeWorkspacePan
         tabId: normalizedTab.tabId,
         kind: normalizedTab.target.kind,
         target: normalizedTab.target,
+        state: normalizedTab.state,
       },
     });
   }

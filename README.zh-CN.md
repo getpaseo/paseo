@@ -7,7 +7,8 @@
 <p align="center">
   <a href="README.md">English</a> ·
   <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="README.ja.md">日本語</a>
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a>
 </p>
 
 <p align="center">
@@ -117,7 +118,6 @@ npx skills add getpaseo/paseo
 然后在任意 agent 对话中使用：
 
 - `/paseo-handoff` — 在 agents 之间交接工作。我会用它先和 Claude 规划，再交给 Codex 实现。
-- `/paseo-loop` — 让 agent 按明确验收标准循环工作（也叫 Ralph loops），也可以加 verifier。
 - `/paseo-advisor` — 启动单个 agent 作为 advisor，提供第二意见，但不把工作委托出去。
 - `/paseo-committee` — 组建两个风格互补的 agents，让它们后退一步做根因分析并产出计划。
 
@@ -151,9 +151,10 @@ npm run build:server
 npm run typecheck
 ```
 
-## 社区
+## 相关项目
 
-- [paseo-relay](https://github.com/zenghongtu/paseo-relay) — Go 实现的自托管 relay
+- [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — 官方分布式 relay，使用 Elixir 编写
+- [paseo-skins](https://github.com/huangguang1999/paseo-skins) — Paseo 桌面端社区主题与零 patch 换肤工具，支持 Agent Skill
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 扩展
 
 ### 自托管 relay TLS
@@ -201,18 +202,6 @@ server {
   }
 }
 ```
-
----
-
-<p align="center">
-  <a href="https://star-history.com/#getpaseo/paseo&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date&theme=dark">
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date">
-      <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="Star history chart for getpaseo/paseo" width="600" style="max-width: 100%;">
-    </picture>
-  </a>
-</p>
 
 ## License
 

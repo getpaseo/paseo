@@ -423,6 +423,22 @@ describe("voice runtime", () => {
     expect(runtime.shouldPlayVoiceAudio("server-1")).toBe(false);
   });
 
+  it("rolls daemon voice mode back when capture fails after enabling it", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    vi.mocked(engine.startCapture).mockRejectedValue(new Error("audio focus unavailable"));
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+
+    await expect(runtime.startVoice("server-1", "agent-1")).rejects.toThrow(
+      "audio focus unavailable",
+    );
+
+    expect(adapter.setVoiceMode).toHaveBeenNthCalledWith(1, true, "agent-1");
+    expect(adapter.setVoiceMode).toHaveBeenNthCalledWith(2, false);
+    expect(runtime.getSnapshot().phase).toBe("disabled");
+  });
+
   it("returns an explicit not-ready error when the adapter is missing", async () => {
     const { runtime } = createRuntime();
     await expect(runtime.startVoice("server-1", "agent-1")).rejects.toThrow(

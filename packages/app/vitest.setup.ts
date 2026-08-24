@@ -49,20 +49,9 @@ if (typeof globalThis.cancelAnimationFrame !== "function") {
   };
 }
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: <T>(styles: T) => styles,
-  },
-  useUnistyles: () => ({
-    theme: {},
-    rt: {},
-    breakpoint: undefined,
-  }),
-  UnistylesRuntime: {
-    setTheme: vi.fn(),
-    themeName: "light",
-  },
-}));
+// The unistyles test double lives in test-stubs/react-native-unistyles.ts and
+// reaches every vitest project through the resolve.alias in vitest.config.ts —
+// no vi.mock here, so there is a single copy of the fixture theme.
 
 vi.mock("@xterm/addon-ligatures", () => ({
   LigaturesAddon: class LigaturesAddon {
@@ -70,31 +59,9 @@ vi.mock("@xterm/addon-ligatures", () => ({
   },
 }));
 
-vi.mock("react-native-svg", () => {
-  const Stub = () => null;
-  return {
-    __esModule: true,
-    default: Stub,
-    Circle: Stub,
-    Defs: Stub,
-    G: Stub,
-    Line: Stub,
-    LinearGradient: Stub,
-    Path: Stub,
-    Rect: Stub,
-    Stop: Stub,
-    SvgCss: Stub,
-    SvgCssUri: Stub,
-    SvgFromXml: Stub,
-    SvgUri: Stub,
-    SvgXml: Stub,
-    Use: Stub,
-  };
-});
-
-vi.mock("expo-linking", () => ({
-  openURL: vi.fn().mockResolvedValue(undefined),
-}));
+// react-native-svg and expo-linking test doubles live in test-stubs/ and reach
+// every vitest project through the resolve.alias in vitest.config.ts, same as
+// react-native-unistyles and lucide-react-native.
 
 const RouterPassthrough = ({ children }: { children?: React.ReactNode }) => children;
 

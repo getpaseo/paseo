@@ -2,7 +2,7 @@
 title: Browser tools
 description: The browser_* MCP tools agents use to drive Paseo browser tabs.
 nav: Tools reference
-order: 36
+order: 37
 category: Browser
 ---
 

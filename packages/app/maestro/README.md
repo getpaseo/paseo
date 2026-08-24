@@ -3,6 +3,31 @@
 This directory contains local mobile UI flows. Keep flows small enough that a
 failure screenshot proves the intended behavior, not just that the app launched.
 
+## iOS Sidebar Close Regression
+
+`ios-sidebar-close-regression.yaml` exercises close swipes over a semantic header
+and the nested workspace list without activating the content below the swipe.
+Start the `sh.paseo.debug` dev client against the intended Metro server first;
+the flow preserves that running connection.
+
+```bash
+maestro test packages/app/maestro/ios-sidebar-close-regression.yaml --udid <simulator-udid>
+```
+
+## iOS Sidebar Drag Cancellation Regression
+
+`test-sidebar-drag-cancellation-ios.sh` creates three temporary projects and
+uses real native slow swipes to cover successful reorder, a second touch during
+the drop spring, horizontal close cancellation, outer-list scroll recovery, and
+a subsequent reorder. The harness removes its daemon projects and local fixture
+directories on exit.
+
+Start the debug dev client against the intended Metro server, then run:
+
+```bash
+bash packages/app/maestro/test-sidebar-drag-cancellation-ios.sh
+```
+
 ## New Workspace Android Flow
 
 Use these files when debugging or extending workspace creation on Android:

@@ -41,6 +41,7 @@ function threadEntry(id: string, resolved = false, outdated = false): PrTimeline
     kind: "thread",
     id: `thread:${id}`,
     location: { path: "a.ts", line: 1, isResolved: resolved, isOutdated: outdated },
+    isResolved: resolved,
     comments: [activity(id)],
   };
 }
@@ -87,6 +88,18 @@ describe("pull request activity state", () => {
       { id: "thread:thread-normal", collapsed: false },
       { id: "thread:thread-resolved", collapsed: true },
       { id: "thread:thread-outdated", collapsed: true },
+    ]);
+  });
+
+  it("collapses a resolved general thread that carries no location", () => {
+    const entries: PrTimelineEntry[] = [
+      { kind: "thread", id: "thread:general", isResolved: true, comments: [activity("g1")] },
+    ];
+
+    const visible = getVisibleEntries(getActivityState(), { prNumber: 42, entries });
+
+    expect(visible.map((v) => ({ id: v.entry.id, collapsed: v.collapsed }))).toEqual([
+      { id: "thread:general", collapsed: true },
     ]);
   });
 

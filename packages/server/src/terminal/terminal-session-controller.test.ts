@@ -12,6 +12,7 @@ import type { ServerMessage, TerminalSession, TerminalStateSnapshot } from "./te
 import { TerminalSessionController } from "./terminal-session-controller.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { isSameOrDescendantPath } from "../server/path-utils.js";
+import { PluginSessionSocket } from "../server/plugins/session-socket.js";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -74,7 +75,7 @@ describe("terminal-session-controller restore", () => {
       getSize: () => ({ rows: 1, cols: 80 }),
       getState: () => terminalState("restore-before"),
       getStateSnapshot: () => ({ state: terminalState("restore-before"), revision: 1 }),
-      getReplayPreamble: () => "",
+      getReplayPreamble: () => "\x1b[?1h\x1b[?2004h",
       getTitle: () => undefined,
       getActivity: () => null,
       setActivity: vi.fn(),
@@ -146,7 +147,9 @@ describe("terminal-session-controller restore", () => {
       TerminalStreamOpcode.Output,
     ]);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
-    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe("restore-after\n");
+    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
+      "\x1b[?1h\x1b[?2004hrestore-after\n",
+    );
   });
 });
 
@@ -258,6 +261,59 @@ describe("terminal-session-controller legacy terminal creation", () => {
         },
       },
     ]);
+  });
+
+  test("forwards the client-provided viewport size to the terminal manager", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const createTerminal = vi.fn(
+      async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
+        listSession({
+          id: "term-1",
+          name: options.name ?? "Terminal 1",
+          cwd: options.cwd,
+          workspaceId: options.workspaceId,
+        }),
+    );
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(),
+      createTerminal,
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      clearTerminalAttention: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRefs: async () => [],
+    });
+
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd: "/work/repo",
+      workspaceId: "ws-1",
+      size: { rows: 55, cols: 136 },
+      requestId: "req-size",
+    });
+
+    expect(createTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/work/repo", workspaceId: "ws-1", rows: 55, cols: 136 }),
+    );
   });
 });
 
@@ -698,6 +754,21 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(false);
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
+  });
+
+  test("uses plugin IPC queued bytes to enter the snapshot backpressure path", async () => {
+    const socket = new PluginSessionSocket({
+      send() {
+        return true;
+      },
+    });
+    socket.send(new Uint8Array(8 * 1024 * 1024));
+    const { pushOutput, frames } = await setup(() => socket.bufferedAmount);
+
+    pushOutput("p".repeat(300 * 1024));
+    await waitForCoalescerFlush();
+
+    expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(true);
   });
 
   test("falls back to a snapshot at the byte threshold when no backpressure signal exists", async () => {

@@ -1,14 +1,17 @@
+import { existsSync, rmSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
   isProviderImageMarkdown,
+  materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
 } from "./provider-image-output.js";
 
 const HASH = "a".repeat(64);
 
-function renderImageMarkdown(path: string): string {
-  const item = renderProviderImageOutputAsAssistantMarkdown({ path });
+function renderImageMarkdown(imagePath: string): string {
+  const item = renderProviderImageOutputAsAssistantMarkdown({ path: imagePath });
   if (!item || item.type !== "assistant_message") {
     throw new Error("Expected provider image output to render as assistant markdown.");
   }
@@ -18,6 +21,12 @@ function renderImageMarkdown(path: string): string {
 describe("isProviderImageMarkdown", () => {
   test("matches the markdown emitted for a materialized attachment", () => {
     expect(isProviderImageMarkdown(`![Image](/tmp/paseo-attachments/${HASH}.png)`)).toBe(true);
+    expect(isProviderImageMarkdown(`![Image](/tmp/paseo-attachments-a1B2c3/${HASH}.png)`)).toBe(
+      true,
+    );
+    expect(isProviderImageMarkdown(`![Image](/tmp/paseo-attachments/user-1000/${HASH}.png)`)).toBe(
+      true,
+    );
     expect(isProviderImageMarkdown(`![shot](/var/folders/x/paseo-attachments/${HASH}.webp)`)).toBe(
       true,
     );
@@ -40,11 +49,67 @@ describe("isProviderImageMarkdown", () => {
     expect(isProviderImageMarkdown(markdown)).toBe(true);
   });
 
+  test("emits POSIX file paths with spaces as valid file URI markdown", () => {
+    const markdown = renderImageMarkdown("/home/user/Projects/Project With Spaces/screenshot.png");
+
+    expect(markdown).toBe(
+      "![Image](file:///home/user/Projects/Project%20With%20Spaces/screenshot.png)",
+    );
+  });
+
+  test("encodes URI-significant characters in POSIX file paths", () => {
+    const markdown = renderImageMarkdown("/tmp/screenshot#1?draft.png");
+
+    expect(markdown).toBe("![Image](file:///tmp/screenshot%231%3Fdraft.png)");
+  });
+
+  test("preserves double-leading slashes in POSIX file paths", () => {
+    const markdown = renderImageMarkdown("//tmp/screenshot#1.png");
+
+    expect(markdown).toBe("![Image](file:////tmp/screenshot%231.png)");
+  });
+
+  test.each([
+    ["UNC", "\\\\server\\share\\shot#1.png", "file://server/share/shot%231.png"],
+    [
+      "extended UNC",
+      "\\\\?\\UNC\\server\\share\\shot?draft.png",
+      "file://server/share/shot%3Fdraft.png",
+    ],
+  ])("encodes %s image paths as file URIs", (_label, imagePath, expectedSource) => {
+    expect(renderImageMarkdown(imagePath)).toBe(`![Image](${expectedSource})`);
+  });
+
   test("rejects user-authored markdown that is not a materialized attachment", () => {
     // No content hash — a hand-written path, not something the writer produced.
     expect(isProviderImageMarkdown("![diagram](./paseo-attachments/notes.png)")).toBe(false);
     expect(isProviderImageMarkdown("![logo](https://example.com/logo.png)")).toBe(false);
     // Image markdown that does not start the text.
     expect(isProviderImageMarkdown("see the chart: ![chart](x.png)")).toBe(false);
+  });
+});
+
+describe("materializeProviderImage", () => {
+  test("recreates the private temp directory if the cached directory is removed", () => {
+    const first = materializeProviderImage({
+      data: "YWJjMTIz",
+      mimeType: "image/png",
+    });
+    const firstDir = path.dirname(first.path);
+    expect(existsSync(first.path)).toBe(true);
+
+    rmSync(firstDir, { recursive: true, force: true });
+
+    const second = materializeProviderImage({
+      data: "ZGVmNDU2",
+      mimeType: "image/png",
+    });
+    const secondDir = path.dirname(second.path);
+
+    try {
+      expect(existsSync(second.path)).toBe(true);
+    } finally {
+      rmSync(secondDir, { recursive: true, force: true });
+    }
   });
 });

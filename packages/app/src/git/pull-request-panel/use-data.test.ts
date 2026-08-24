@@ -38,6 +38,7 @@ const githubStatus: CheckoutPrStatus["github"] = {
 
 function prStatus(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
   return {
+    forge: "github",
     number: 42,
     url: "https://github.com/getpaseo/paseo/pull/42",
     title: "Wire real PR pane data",
@@ -375,6 +376,34 @@ describe("selectPrPaneState", () => {
     expect(state.data?.number).toBe(42);
     expect(state.data?.title).toBe("Wire real PR pane data");
     expect(state.data?.activity).toEqual([]);
+  });
+
+  it("passes GitLab native facts through the selected pane data", () => {
+    const gitlabFacts = {
+      forge: "gitlab" as const,
+      detailedMergeStatus: "mergeable",
+      hasConflicts: false,
+      blockingDiscussionsResolved: true,
+      approvalsRequired: 2,
+      approvalsGiven: 1,
+      pipelineStatus: null,
+      pipelineId: null,
+      pipelineUrl: null,
+      mergeWhenPipelineSucceeds: false,
+    };
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      forge: "gitlab",
+      status: prStatus({
+        forge: "gitlab",
+        github: undefined,
+        forgeSpecific: gitlabFacts,
+      }),
+      timelinePayload: timelinePayload(),
+    });
+
+    expect(state.data?.provider).toEqual({ id: "gitlab", label: "GitLab" });
+    expect(state.data?.forgeSpecific).toEqual({ ...gitlabFacts, mergeStatus: null });
   });
 
   it("returns null data when the consumer disabled timeline rendering", () => {

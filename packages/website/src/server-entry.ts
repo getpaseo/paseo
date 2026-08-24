@@ -1,15 +1,27 @@
 import startEntry from "@tanstack/react-start/server-entry";
+import { getAndroidVersionCode } from "~/android-version";
+import { getCanonicalRedirect } from "~/canonical-url";
 import { getDoc } from "~/docs";
+import { getLatestAndroidVersion } from "~/latest-release";
 import { buildLlmsTxt } from "~/llms";
 
-const CANONICAL_HOST = "paseo.sh";
-
-type FetchArgs = Parameters<typeof startEntry.fetch>;
+interface WebsiteEnv {
+  WEBSITE_CACHE?: KVNamespace;
+}
 
 function markdownResponse(body: string): Response {
   return new Response(body, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
+      "cache-control": "public, max-age=300, s-maxage=300",
+    },
+  });
+}
+
+function plainTextResponse(body: string): Response {
+  return new Response(body, {
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
       "cache-control": "public, max-age=300, s-maxage=300",
     },
   });
@@ -22,14 +34,17 @@ function docSlugFromMarkdownPath(pathname: string): string | null {
 }
 
 export default {
-  async fetch(...args: FetchArgs): Promise<Response> {
-    const [request] = args;
+  async fetch(request: Request, env: WebsiteEnv, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-    if (!isLocal && (url.hostname !== CANONICAL_HOST || url.protocol !== "https:")) {
-      url.protocol = "https:";
-      url.hostname = CANONICAL_HOST;
+    const environment = import.meta.env.DEV ? "development" : "production";
+    const canonicalRedirect = getCanonicalRedirect(url, environment);
+    if (canonicalRedirect) {
+      return Response.redirect(canonicalRedirect, 301);
+    }
+
+    if (url.pathname === "/cloud" || url.pathname === "/cloud/") {
+      url.pathname = "/hub";
       return Response.redirect(url.toString(), 301);
     }
 
@@ -43,6 +58,14 @@ export default {
       return markdownResponse(buildLlmsTxt());
     }
 
+    if (url.pathname === "/android-version.txt") {
+      const version = await getLatestAndroidVersion({
+        cache: env.WEBSITE_CACHE ?? null,
+        waitUntil: (promise) => context.waitUntil(promise),
+      });
+      return plainTextResponse(`${getAndroidVersionCode(version)}\n`);
+    }
+
     const slug = docSlugFromMarkdownPath(url.pathname);
     if (slug !== null) {
       const doc = getDoc(slug);
@@ -50,6 +73,6 @@ export default {
       return markdownResponse(doc.content);
     }
 
-    return startEntry.fetch(...args);
+    return startEntry.fetch(request);
   },
 };

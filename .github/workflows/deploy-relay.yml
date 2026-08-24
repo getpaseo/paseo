@@ -1,11 +1,8 @@
 name: Deploy Relay
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "packages/relay/**"
-      - ".github/workflows/deploy-relay.yml"
+  # Manual-only while relay.paseo.sh bridges traffic to the Fly deployment.
+  # A release or main push must not redeploy the temporary Cloudflare bridge.
   workflow_dispatch:
 
 jobs:
@@ -21,7 +18,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --workspace=@getpaseo/relay --include-workspace-root
+        run: node scripts/npm-retry.mjs ci --workspace=@getpaseo/relay --include-workspace-root
 
       - name: Typecheck
         run: npm run typecheck --workspace=@getpaseo/relay

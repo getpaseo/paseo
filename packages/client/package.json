@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.1.104-beta.3",
+  "version": "0.5.2",
   "description": "Paseo client SDK package",
   "files": [
     "dist",
@@ -20,6 +20,10 @@
     "./internal/daemon-client-transport-types": {
       "types": "./dist/daemon-client-transport-types.d.ts",
       "default": "./dist/daemon-client-transport-types.js"
+    },
+    "./internal/daemon-client-websocket-transport": {
+      "types": "./dist/daemon-client-websocket-transport.d.ts",
+      "default": "./dist/daemon-client-websocket-transport.js"
     }
   },
   "publishConfig": {
@@ -27,7 +31,7 @@
   },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "tsc -p tsconfig.json --incremental false",
+    "build": "npm run build --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
@@ -35,8 +39,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.1.104-beta.3",
-    "@getpaseo/relay": "0.1.104-beta.3",
+    "@getpaseo/protocol": "0.5.2",
+    "@getpaseo/relay": "0.5.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

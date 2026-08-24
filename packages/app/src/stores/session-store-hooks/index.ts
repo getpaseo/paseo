@@ -3,7 +3,10 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import {
   composeWorkspaceStructure,
+  createWorkspaceStructureProjectsSelector,
   selectHasHydratedWorkspaces,
+  selectHydratedWorkspaceServerIds,
+  selectWorkspaceDirectoryServerIds,
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
@@ -14,7 +17,6 @@ import {
   selectWorkspaceKeys,
   selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
-  selectWorkspaceStructureProjects,
   workspaceEqualityFns,
   type WorkspaceStructure,
 } from "./selectors";
@@ -70,6 +72,22 @@ export function useHasHydratedWorkspaces(serverId: string | null): boolean {
   );
 }
 
+export function useHydratedWorkspaceServerIds(serverIds: string[]): string[] {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectHydratedWorkspaceServerIds(state, serverIds),
+    workspaceEqualityFns.deep,
+  );
+}
+
+export function useWorkspaceDirectoryServerIds(serverIds: string[]): string[] {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectWorkspaceDirectoryServerIds(state, serverIds),
+    workspaceEqualityFns.deep,
+  );
+}
+
 export function useWorkspaceDirectory(
   serverId: string | null,
   workspaceId: string | null,
@@ -82,9 +100,13 @@ export function useWorkspaceDirectory(
 }
 
 export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
+  const selectProjects = useMemo(
+    () => createWorkspaceStructureProjectsSelector(serverIds),
+    [serverIds],
+  );
   const projects = useStoreWithEqualityFn(
     useSessionStore,
-    (state) => selectWorkspaceStructureProjects(state, serverIds),
+    selectProjects,
     workspaceEqualityFns.deep,
   );
   const projectOrder = useStoreWithEqualityFn(

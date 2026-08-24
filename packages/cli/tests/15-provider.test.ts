@@ -17,6 +17,8 @@
  * - provider models opencode lists opencode models
  * - provider models unknown fails with error
  * - provider models --json outputs valid JSON
+ * - provider diagnostic shows the daemon's provider diagnostic
+ * - provider diagnostic --json returns structured output
  */
 
 import assert from "node:assert";
@@ -44,7 +46,17 @@ interface ProviderListRow {
   enabled: string;
 }
 
+interface ProviderDiagnostic {
+  provider: string;
+  diagnostic: string;
+}
+
 const EXPECTED_CLAUDE_MODELS = [
+  {
+    id: "claude-opus-5",
+    model: "Opus 5",
+    descriptionFragment: "Latest release",
+  },
   {
     id: "claude-fable-5",
     model: "Fable 5",
@@ -58,7 +70,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-opus-4-8",
     model: "Opus 4.8",
-    descriptionFragment: "Latest release",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-sonnet-5",
@@ -102,6 +114,23 @@ const EXPECTED_CLAUDE_MODELS = [
   },
 ] as const;
 
+const EXPECTED_CLAUDE_CONTEXT_MODELS = [
+  {
+    id: "claude-sonnet-5[1m]",
+    model: "Sonnet 5 1M",
+    descriptionFragment: "1M context window",
+  },
+] as const;
+
+const EXPECTED_CLAUDE_CATALOG_MODELS = [
+  ...new Map(
+    [...EXPECTED_CLAUDE_MODELS, ...EXPECTED_CLAUDE_CONTEXT_MODELS].map((model) => [
+      model.id,
+      model,
+    ]),
+  ).values(),
+];
+
 let claudeModelIdsFromJson: string[] = [];
 let claudeModelsFromJson: ProviderModel[] = [];
 
@@ -134,18 +163,18 @@ async function runProviderModelsJson(provider: string): Promise<ProviderModel[]>
 function assertClaudeModels(data: ProviderModel[]): void {
   assert.strictEqual(
     data.length,
-    EXPECTED_CLAUDE_MODELS.length,
+    EXPECTED_CLAUDE_CATALOG_MODELS.length,
     "claude output should match the current catalog size",
   );
 
   const byId = new Map(data.map((model) => [model.id, model]));
   const ids = [...byId.keys()].sort();
-  const expectedIds = EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort();
+  const expectedIds = EXPECTED_CLAUDE_CATALOG_MODELS.map((model) => model.id).sort();
 
   assert.strictEqual(byId.size, data.length, "claude model IDs should be unique");
   assert.deepStrictEqual(ids, expectedIds, "claude IDs should match the current catalog");
 
-  for (const expectedModel of EXPECTED_CLAUDE_MODELS) {
+  for (const expectedModel of EXPECTED_CLAUDE_CATALOG_MODELS) {
     const actualModel = byId.get(expectedModel.id);
     assert(actualModel, `claude output should include ${expectedModel.id}`);
     assert.strictEqual(
@@ -168,6 +197,7 @@ try {
     assert.strictEqual(result.exitCode, 0, "provider --help should exit 0");
     assert(result.stdout.includes("ls"), "help should mention ls");
     assert(result.stdout.includes("models"), "help should mention models");
+    assert(result.stdout.includes("diagnostic"), "help should mention diagnostic");
     console.log("✓ provider --help shows subcommands\n");
   }
 
@@ -383,7 +413,7 @@ try {
     const lines = result.stdout.trim().split("\n").filter(Boolean);
     assert.strictEqual(
       lines.length,
-      EXPECTED_CLAUDE_MODELS.length,
+      EXPECTED_CLAUDE_CATALOG_MODELS.length,
       "should have one line per Claude catalog model",
     );
     assert.deepStrictEqual(
@@ -393,7 +423,7 @@ try {
     );
     assert.deepStrictEqual(
       [...lines].sort(),
-      EXPECTED_CLAUDE_MODELS.map((model) => model.id).sort(),
+      EXPECTED_CLAUDE_CATALOG_MODELS.map((model) => model.id).sort(),
       "--quiet should print the current Claude catalog IDs",
     );
     assert(
@@ -401,6 +431,39 @@ try {
       "captured --json output should include the current Claude everyday model id",
     );
     console.log("✓ provider models --quiet outputs model IDs only\n");
+  }
+
+  // Test 12: provider diagnostic shows the daemon's provider diagnostic
+  {
+    console.log("Test 12: provider diagnostic shows the daemon's provider diagnostic");
+    const result = await ctx.paseo([
+      "provider",
+      "diagnostic",
+      " Claude ",
+      "--host",
+      `127.0.0.1:${ctx.port}`,
+    ]);
+    assert.strictEqual(result.exitCode, 0, "provider diagnostic should exit 0");
+    assert(result.stdout.includes("Claude Code"), "diagnostic should identify the provider");
+    assert(result.stdout.includes("Daemon PATH:"), "diagnostic should include the daemon PATH");
+    assert(result.stdout.includes("Resolved path:"), "diagnostic should include binary resolution");
+    assert(result.stdout.includes("Version:"), "diagnostic should include the provider version");
+    assert(result.stdout.includes("Status:"), "diagnostic should include provider status");
+    console.log("✓ provider diagnostic shows the daemon's provider diagnostic\n");
+  }
+
+  // Test 13: provider diagnostic --json returns structured output
+  {
+    console.log("Test 13: provider diagnostic --json returns structured output");
+    const result = await ctx.paseo(["provider", "diagnostic", "claude", "--json"]);
+    assert.strictEqual(result.exitCode, 0, "provider diagnostic --json should exit 0");
+    const data = JSON.parse(result.stdout.trim()) as ProviderDiagnostic;
+    assert.strictEqual(data.provider, "claude", "JSON should identify the provider");
+    assert(data.diagnostic.includes("Daemon PATH:"), "JSON should include the daemon PATH");
+    assert(data.diagnostic.includes("Resolved path:"), "JSON should include binary resolution");
+    assert(data.diagnostic.includes("Version:"), "JSON should include the provider version");
+    assert(data.diagnostic.includes("Status:"), "JSON should include provider status");
+    console.log("✓ provider diagnostic --json returns structured output\n");
   }
 } finally {
   await ctx.stop();

@@ -7,6 +7,11 @@ const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
+const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const fdroidModuleOverrides = {
+  "expo-camera": path.resolve(appSrcRoot, "fdroid/expo-camera.tsx"),
+  "expo-notifications": path.resolve(appSrcRoot, "fdroid/expo-notifications.ts"),
+};
 const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .trim()
   .replace(/^\./, "")
@@ -14,6 +19,12 @@ const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
 
 const config = getDefaultConfig(projectRoot);
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
+
+// Keep app exports deterministic across dev machines and CI. Metro's Watchman
+// crawler behavior depends on the host Watchman build/capabilities, while the
+// node crawler is the path used when Watchman is absent.
+config.resolver.useWatchman = false;
+
 const escapedAppSrcRoot = appSrcRoot
   .split(path.sep)
   .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
@@ -66,6 +77,10 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
 }
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (isFdroidBuild && platform === "android" && fdroidModuleOverrides[moduleName]) {
+    return resolveWithCustomWebOverlay(context, fdroidModuleOverrides[moduleName], platform);
+  }
+
   const origin = context.originModulePath;
   if (origin && origin.startsWith(relaySrcRoot) && moduleName.endsWith(".js")) {
     const tsModuleName = moduleName.replace(/\.js$/, ".ts");

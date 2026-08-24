@@ -6,7 +6,6 @@ import { StyleSheet } from "react-native-unistyles";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 import { diffLinePrefix } from "@/utils/diff-highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { getCodeInsets } from "./code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
@@ -127,7 +126,6 @@ export function DiffViewer({
   const { t } = useTranslation();
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
   const resolvedEmptyLabel = emptyLabel ?? t("diffViewer.empty");
-  const webScrollbarStyle = useWebScrollbarStyle();
   const handleInnerLayout = React.useCallback(
     (e: { nativeEvent: { layout: { width: number } } }) =>
       setScrollViewWidth(e.nativeEvent.layout.width),
@@ -139,9 +137,8 @@ export function DiffViewer({
       styles.verticalScroll,
       maxHeight !== undefined && inlineUnistylesStyle({ maxHeight }),
       fillAvailableHeight && styles.fillHeight,
-      webScrollbarStyle,
     ],
-    [maxHeight, fillAvailableHeight, webScrollbarStyle],
+    [maxHeight, fillAvailableHeight],
   );
   const linesContainerStyle = React.useMemo(
     () => [
@@ -180,7 +177,6 @@ export function DiffViewer({
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
-      style={webScrollbarStyle}
       contentContainerStyle={styles.horizontalContent}
       onLayout={handleInnerLayout}
     >
@@ -275,7 +271,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: "center" as const,
     },
     emptyText: {
-      fontSize: theme.fontSize.sm,
+      fontSize: theme.fontSize.base,
       color: theme.colors.foregroundMuted,
     },
   };

@@ -7,19 +7,32 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
   FileDownloadTokenRequest,
+  FileEntryCreateRequest,
+  FileEntryDeleteRequest,
+  FileEntryDuplicateRequest,
+  FileEntryRenameRequest,
   FileExplorerRequest,
   FileUploadRequest,
+  FileSubscribeRequest,
+  FileUnsubscribeRequest,
+  FileWriteRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "../../messages.js";
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
+  createExplorerEntry,
+  deleteExplorerEntry,
+  duplicateExplorerEntry,
   getDownloadableFileInfo,
   listDirectoryEntries,
   readExplorerFile,
-  readExplorerFileBytes,
+  renameExplorerEntry,
+  streamExplorerFile,
+  writeExplorerFile,
 } from "../../file-explorer/service.js";
+import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
 
 /**
@@ -29,8 +42,8 @@ import { getProjectIcon } from "../../../utils/project-icon.js";
  * — old clients without a binary channel fall back to inline JSON file content.
  */
 export interface WorkspaceFilesSessionHost {
-  emit(msg: SessionOutboundMessage): void;
-  emitBinary(frame: Uint8Array): void;
+  emit(msg: SessionOutboundMessage, source?: object): void;
+  emitBinary(frame: Uint8Array, source?: object): Promise<void>;
   hasBinaryChannel(): boolean;
 }
 
@@ -39,6 +52,7 @@ export interface WorkspaceFilesSessionOptions {
   downloadTokenStore: DownloadTokenStore;
   paseoHome: string;
   logger: pino.Logger;
+  fileObserver?: FileObserver;
 }
 
 /**
@@ -53,30 +67,176 @@ export class WorkspaceFilesSession {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly logger: pino.Logger;
   private readonly fileUploads: FileUploadStore;
+  private readonly fileObserver: FileObserver;
+  private readonly fileSubscriptions = new Map<string, () => void>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
     this.downloadTokenStore = options.downloadTokenStore;
     this.logger = options.logger;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
+    this.fileObserver = options.fileObserver ?? workspaceFileObserver;
   }
 
-  async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
+  async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
+    this.fileSubscriptions.get(request.subscriptionId)?.();
+    try {
+      const subscription = await this.fileObserver.subscribe(
+        { cwd: request.cwd, path: request.path },
+        (version) => {
+          this.host.emit({
+            type: "fs.file.update",
+            payload: { subscriptionId: request.subscriptionId, version },
+          });
+        },
+      );
+      this.fileSubscriptions.set(request.subscriptionId, subscription.unsubscribe);
+      this.host.emit({
+        type: "fs.file.subscribe.response",
+        payload: {
+          subscriptionId: request.subscriptionId,
+          initial: subscription.initial,
+          requestId: request.requestId,
+        },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "fs.file.subscribe.response",
+        payload: {
+          subscriptionId: request.subscriptionId,
+          initial: {
+            status: "error",
+            cwd: request.cwd,
+            path: request.path,
+            error: getErrorMessage(error),
+          },
+          requestId: request.requestId,
+        },
+      });
+    }
+  }
+
+  handleFileUnsubscribeRequest(request: FileUnsubscribeRequest): void {
+    this.fileSubscriptions.get(request.subscriptionId)?.();
+    this.fileSubscriptions.delete(request.subscriptionId);
+    this.host.emit({
+      type: "fs.file.unsubscribe.response",
+      payload: { subscriptionId: request.subscriptionId, requestId: request.requestId },
+    });
+  }
+
+  async handleFileWriteRequest(request: FileWriteRequest): Promise<void> {
+    const result = await writeExplorerFile({
+      root: request.cwd,
+      relativePath: request.path,
+      content: request.content,
+      expectedModifiedAt: request.expectedModifiedAt,
+      expectedRevision: request.expectedRevision,
+    });
+    this.host.emit({
+      type: "fs.file.write.response",
+      payload: { result, requestId: request.requestId },
+    });
+  }
+
+  async handleFileEntryCreateRequest(request: FileEntryCreateRequest): Promise<void> {
+    const result = await createExplorerEntry({
+      root: request.cwd,
+      parentPath: request.parentPath,
+      name: request.name,
+      kind: request.kind,
+    });
+    this.host.emit({
+      type: "fs.entry.create.response",
+      payload: {
+        cwd: request.cwd,
+        parentPath: request.parentPath,
+        path: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryRenameRequest(request: FileEntryRenameRequest): Promise<void> {
+    const result = await renameExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+      name: request.name,
+    });
+    this.host.emit({
+      type: "fs.entry.rename.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        renamedPath: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryDuplicateRequest(request: FileEntryDuplicateRequest): Promise<void> {
+    const result = await duplicateExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+    });
+    this.host.emit({
+      type: "fs.entry.duplicate.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        duplicatedPath: result.status === "ok" ? result.path : null,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  async handleFileEntryDeleteRequest(request: FileEntryDeleteRequest): Promise<void> {
+    const result = await deleteExplorerEntry({
+      root: request.cwd,
+      relativePath: request.path,
+    });
+    this.host.emit({
+      type: "fs.entry.delete.response",
+      payload: {
+        cwd: request.cwd,
+        path: request.path,
+        success: result.status === "ok",
+        error: result.status === "ok" ? null : result.error,
+        requestId: request.requestId,
+      },
+    });
+  }
+
+  dispose(): void {
+    for (const unsubscribe of this.fileSubscriptions.values()) unsubscribe();
+    this.fileSubscriptions.clear();
+  }
+
+  async handleFileExplorerRequest(request: FileExplorerRequest, source?: object): Promise<void> {
     const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
     const cwd = workspaceCwd.trim();
     if (!cwd) {
-      this.host.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: "cwd is required",
-          requestId,
+      this.host.emit(
+        {
+          type: "file_explorer_response",
+          payload: {
+            cwd: workspaceCwd,
+            path: requestedPath,
+            mode,
+            directory: null,
+            file: null,
+            error: "cwd is required",
+            requestId,
+          },
         },
-      });
+        source,
+      );
       return;
     }
 
@@ -87,68 +247,83 @@ export class WorkspaceFilesSession {
           relativePath: requestedPath,
         });
 
-        this.host.emit({
-          type: "file_explorer_response",
-          payload: {
-            cwd,
-            path: directory.path,
-            mode,
-            directory,
-            file: null,
-            error: null,
-            requestId,
+        this.host.emit(
+          {
+            type: "file_explorer_response",
+            payload: {
+              cwd,
+              path: directory.path,
+              mode,
+              directory,
+              file: null,
+              error: null,
+              requestId,
+            },
           },
-        });
+          source,
+        );
       } else {
+        if (request.maxBytes) {
+          const file = await getDownloadableFileInfo({ root: cwd, relativePath: requestedPath });
+          if (file.size > request.maxBytes) {
+            throw new Error("File is too large to display");
+          }
+        }
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
-          const file = await readExplorerFileBytes({
-            root: cwd,
-            relativePath: requestedPath,
+          await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
+            await this.host.emitBinary(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileBegin,
+                requestId,
+                metadata: {
+                  mime: file.mimeType,
+                  size: file.size,
+                  encoding: file.encoding,
+                  modifiedAt: file.modifiedAt,
+                  revision: file.revision,
+                },
+              }),
+              source,
+            );
+            for await (const chunk of file.chunks) {
+              await this.host.emitBinary(
+                encodeFileTransferFrame({
+                  opcode: FileTransferOpcode.FileChunk,
+                  requestId,
+                  payload: chunk,
+                }),
+                source,
+              );
+            }
+            await this.host.emitBinary(
+              encodeFileTransferFrame({
+                opcode: FileTransferOpcode.FileEnd,
+                requestId,
+              }),
+              source,
+            );
           });
-
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileBegin,
-              requestId,
-              metadata: {
-                mime: file.mimeType,
-                size: file.size,
-                encoding: file.encoding,
-                modifiedAt: file.modifiedAt,
-              },
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
-          this.host.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileEnd,
-              requestId,
-            }),
-          );
         } else {
           const file = await readExplorerFile({
             root: cwd,
             relativePath: requestedPath,
           });
 
-          this.host.emit({
-            type: "file_explorer_response",
-            payload: {
-              cwd,
-              path: file.path,
-              mode,
-              directory: null,
-              file,
-              error: null,
-              requestId,
+          this.host.emit(
+            {
+              type: "file_explorer_response",
+              payload: {
+                cwd,
+                path: file.path,
+                mode,
+                directory: null,
+                file,
+                error: null,
+                requestId,
+              },
             },
-          });
+            source,
+          );
         }
       }
     } catch (error) {
@@ -156,18 +331,21 @@ export class WorkspaceFilesSession {
         { err: error, cwd, path: requestedPath },
         `Failed to fulfill file explorer request for workspace ${cwd}`,
       );
-      this.host.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: getErrorMessage(error),
-          requestId,
+      this.host.emit(
+        {
+          type: "file_explorer_response",
+          payload: {
+            cwd,
+            path: requestedPath,
+            mode,
+            directory: null,
+            file: null,
+            error: getErrorMessage(error),
+            requestId,
+          },
         },
-      });
+        source,
+      );
     }
   }
 

@@ -6,7 +6,7 @@ export const FOOTER_HEIGHT = 75;
 // Shared header inner height (excluding safe area insets and border)
 // Used by both agent header (ScreenHeader) and explorer sidebar header
 // This ensures both headers have the same visual height
-export const HEADER_INNER_HEIGHT = 48;
+export const HEADER_INNER_HEIGHT = 36;
 export const HEADER_INNER_HEIGHT_MOBILE = 56;
 export const WORKSPACE_SECONDARY_HEADER_HEIGHT = 36;
 export const HEADER_TOP_PADDING_MOBILE = 8;
@@ -14,6 +14,13 @@ export const HEADER_TOP_PADDING_MOBILE = 8;
 // Max width for chat content (stream view, input area, new agent form)
 export const MAX_CONTENT_WIDTH = 820;
 export const COMPACT_FORM_FACTOR_WIDTH = 500;
+
+// Settings uses the canonical desktop list + detail layout. Its sidebar and
+// detail target must fit together before it can share width with app navigation.
+export const SETTINGS_DESKTOP_SIDEBAR_WIDTH = 320;
+export const SETTINGS_DESKTOP_DETAIL_MIN_WIDTH = 400;
+export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
+  SETTINGS_DESKTOP_SIDEBAR_WIDTH + SETTINGS_DESKTOP_DETAIL_MIN_WIDTH;
 
 // Desktop app constants for macOS traffic light buttons
 // These buttons (close/minimize/maximize) overlay the top-left corner

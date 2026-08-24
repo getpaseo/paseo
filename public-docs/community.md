@@ -1,23 +1,29 @@
 ---
-title: Community projects
-description: Community-built tools and integrations for Paseo, including self-hosted Docker builds and an alternative relay.
-nav: Community
+title: Related projects
+description: Projects related to Paseo and built by the community.
+nav: Related projects
 order: 7
 category: Getting started
 ---
 
-# Community projects
+# Related projects
 
-Projects built by the Paseo community. These **aren't official Paseo projects** and aren't covered by Paseo's support, but they're useful starting points, especially for self-hosting. Review the code before running anything that touches your machine or your agents.
+These projects are related to Paseo and built by the community.
 
-## Self-hosting
+## Tools and integrations
 
-- **[blockfeed/paseo-selfhosted](https://github.com/blockfeed/paseo-selfhosted)**, a Docker build that runs the Paseo web UI connected to a self-hosted local daemon. A good reference if you want a containerized setup. For the built-in way to serve the UI from the daemon, see [Self-hosting the web UI](/docs/web-ui).
+| Project                                                                                      | What it does                                                                                                                         |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| [Paseo for VS Code](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) | Opens the matching Paseo project or worktree in VS Code and adds agent chat, file mentions, and editor links.                        |
+| [VS Code Web plugin](https://github.com/itsjustanks/paseo-plugin-vscode-web)                 | Opens a live Paseo worktree in `vscode.dev` through a VS Code tunnel, including workspaces on headless hosts.                        |
+| [Paseo Icon](https://github.com/gpambrozio/paseo-menubar)                                    | Shows workspace status across Paseo hosts in the macOS menu bar and opens a workspace with one click.                                |
+| [Paseo Cross-Daemon Comms](https://github.com/xpufx/paseo-cross-daemon-comms)                | Lets agents communicate with agents on another Paseo daemon through an MCP server.                                                   |
+| [Paseo Antigravity ACP](https://github.com/tiezbro/paseo-agy-acp)                            | Connects Google Antigravity CLI to Paseo through ACP, with Paseo-specific context, permissions, and concurrency handling.            |
+| [Desvio](https://github.com/cleiter/desvio)                                                  | Rebuilds a personal fork from a set of branches, using an agent to resolve new conflicts and Git rerere to replay known resolutions. |
 
-- **[zenghongtu/paseo-relay](https://github.com/zenghongtu/paseo-relay)**, a lightweight self-hosted relay server for Paseo, written in Go. Run your own relay instead of the hosted one for fully self-hosted remote access. For how the relay fits into Paseo's connection model, see [Security](/docs/security).
+## Hosting and infrastructure
 
-- **[paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode)**, a VS Code extension.
-
-## Add your project
-
-Built something for Paseo, a relay, a deployment recipe, an integration, a client? Open a pull request or an issue on [GitHub](https://github.com/getpaseo/paseo) to get it listed here.
+| Project                                                            | What it does                                                                                         |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted) | Packages the Paseo web UI and a local daemon as a Docker deployment.                                 |
+| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)          | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access. |

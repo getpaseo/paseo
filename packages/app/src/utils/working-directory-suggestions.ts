@@ -1,3 +1,5 @@
+import { scorePathMatch } from "@getpaseo/protocol/search/text-match";
+
 export interface BuildWorkingDirectorySuggestionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
@@ -7,40 +9,26 @@ export interface BuildWorkingDirectorySuggestionsInput {
 export function buildWorkingDirectorySuggestions(
   input: BuildWorkingDirectorySuggestionsInput,
 ): string[] {
-  const rawQuery = input.query.trim();
+  const query = input.query.trim();
   const recommended = uniquePaths(input.recommendedPaths);
-  if (!rawQuery) {
+  if (!query) {
     return recommended;
   }
 
-  const normalizedQuery = normalizeQuery(rawQuery);
-  const shouldFilterByQuery = normalizedQuery.length > 0;
+  const matchingRecommended = recommended.filter((path) =>
+    recommendedPathMatchesQuery(path, query),
+  );
 
-  const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery))
-    : recommended;
-  const seen = new Set(recommendedMatches);
-  const ordered = [...recommendedMatches];
-
-  for (const entry of uniquePaths(input.serverPaths)) {
-    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery)) {
-      continue;
-    }
-    if (seen.has(entry)) {
-      continue;
-    }
-    ordered.push(entry);
-    seen.add(entry);
-  }
-
-  return ordered;
+  // Server paths are already ranked by the daemon. Recommended paths use the
+  // same shared matcher, then keep their existing recommendation order.
+  return uniquePaths([...matchingRecommended, ...input.serverPaths]);
 }
 
 function uniquePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
-  for (const pathEntry of paths) {
-    const trimmed = pathEntry.trim();
+  for (const path of paths) {
+    const trimmed = path.trim();
     if (!trimmed || seen.has(trimmed)) {
       continue;
     }
@@ -50,23 +38,16 @@ function uniquePaths(paths: string[]): string[] {
   return ordered;
 }
 
-function normalizeQuery(query: string): string {
-  let normalized = query.trim();
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.startsWith("~")) {
-    normalized = normalized.slice(1);
-  }
-  normalized = normalized.replace(/^\/+/, "").toLowerCase();
-  return normalized;
-}
-
-function pathMatchesQuery(candidatePath: string, query: string): boolean {
-  const lowerPath = candidatePath.toLowerCase();
-  if (lowerPath.includes(query)) {
+function recommendedPathMatchesQuery(path: string, query: string): boolean {
+  const candidate = normalizePath(path);
+  const normalizedQuery = normalizePath(query);
+  if (["~", "~/"].includes(normalizedQuery)) {
     return true;
   }
-  const segments = lowerPath.split("/");
-  return (segments[segments.length - 1] ?? "").includes(query);
+
+  return scorePathMatch(normalizedQuery, candidate) !== null;
+}
+
+function normalizePath(value: string): string {
+  return value.trim().replace(/\\/g, "/").toLowerCase();
 }

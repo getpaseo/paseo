@@ -1,7 +1,54 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
+const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
+const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
+const withPasteInput = require("./plugins/with-paste-input");
+const { getNativeReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
+const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
+
+const buildProfile = isFdroidBuild
+  ? {
+      androidPermissions: [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+      ],
+      cameraPlugins: [],
+      fdroidPlugins: [withFdroidAutolinking],
+      notificationPlugins: [],
+    }
+  : {
+      androidPermissions: [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "CAMERA",
+        "android.permission.CAMERA",
+      ],
+      cameraPlugins: [
+        [
+          "expo-camera",
+          {
+            cameraPermission:
+              "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
+          },
+        ],
+      ],
+      fdroidPlugins: [],
+      notificationPlugins: [
+        [
+          "expo-notifications",
+          {
+            icon: "./assets/images/notification-icon.png",
+            color: "#20744A",
+          },
+        ],
+      ],
+    };
 
 function resolveSecretFile(params) {
   const fromEnv = process.env[params.envKey];
@@ -45,23 +92,18 @@ const variants = {
 };
 
 const variant = variants[appVariant] ?? variants.production;
+const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 
 export default {
   expo: {
     name: variant.name,
     slug: "voice-mobile",
-    version: pkg.version,
+    version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
-    runtimeVersion: {
-      policy: "appVersion",
-    },
-    updates: {
-      url: "https://u.expo.dev/0e7f65ce-0367-46c8-a238-2b65963d235a",
-    },
     ios: {
       supportsTablet: true,
       infoPlist: {
@@ -72,6 +114,7 @@ export default {
       ...(variant.googleServiceInfoPlist
         ? { googleServicesFile: variant.googleServiceInfoPlist }
         : {}),
+      buildNumber: nativeReleaseVersion.iosBuildNumber,
     },
     android: {
       adaptiveIcon: {
@@ -83,14 +126,9 @@ export default {
       softwareKeyboardLayoutMode: "resize",
       // Allow HTTP connections for local network hosts (required for release builds)
       usesCleartextTraffic: true,
-      permissions: [
-        "RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "CAMERA",
-        "android.permission.CAMERA",
-      ],
+      permissions: buildProfile.androidPermissions,
       package: variant.packageId,
+      versionCode: nativeReleaseVersion.androidVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
@@ -102,12 +140,9 @@ export default {
     },
     plugins: [
       "expo-router",
-      [
-        "expo-camera",
-        {
-          cameraPermission: "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
-        },
-      ],
+      withPasteInput,
+      [withAndroidAsyncStorageSize, 64],
+      ...buildProfile.cameraPlugins,
       [
         "expo-splash-screen",
         {
@@ -120,14 +155,15 @@ export default {
           },
         },
       ],
+      ...buildProfile.notificationPlugins,
+      "expo-audio",
       [
-        "expo-notifications",
+        "expo-gradle-jvmargs",
         {
-          icon: "./assets/images/notification-icon.png",
-          color: "#20744A",
+          xmx: "4096m",
+          maxMetaspace: "1024m",
         },
       ],
-      "expo-audio",
       [
         "expo-build-properties",
         {
@@ -139,6 +175,8 @@ export default {
           },
         },
       ],
+      ...buildProfile.fdroidPlugins,
+      ...(isProfileBuild ? [withAndroidProfileable] : []),
     ],
     experiments: {
       typedRoutes: true,
@@ -146,6 +184,8 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      fdroidBuild: isFdroidBuild,
+      profileBuild: isProfileBuild,
       router: {},
       eas: {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",

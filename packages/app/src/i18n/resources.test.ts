@@ -6,6 +6,7 @@ import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
 import { ja } from "./resources/ja";
+import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
@@ -109,6 +110,7 @@ describe("translation resources", () => {
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ko).sort()).toEqual(englishKeys);
     expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
@@ -121,9 +123,19 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
+  });
+
+  it("localizes the pull request empty state in every supported language", () => {
+    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+      expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
+      expect(resource.panels.pullRequest.emptyDescription).not.toBe(
+        en.panels.pullRequest.emptyDescription,
+      );
+    }
   });
 
   it("preserves interpolation placeholders in every language", () => {
@@ -131,6 +143,7 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
+    expect(findInterpolationMismatches(ko)).toEqual([]);
     expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
@@ -147,6 +160,7 @@ describe("translation resources", () => {
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
     expect(ja.modelSelector.modelCountPlural).toBe("{{count}}つのモデル");
+    expect(ko.modelSelector.modelCountPlural).toBe("모델 {{count}}개");
     expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
@@ -157,6 +171,15 @@ describe("translation resources", () => {
     expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
+  });
+
+  it("preserves reviewed Korean status labels", () => {
+    expect(ko.common.states.starting).toBe("시작 중...");
+    expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
+  });
+
+  it("labels the immediate add-to-chat action without an ellipsis", () => {
+    expect(en.workspace.fileActions.addToChat).toBe("Add to chat");
   });
 
   it("keeps local connection fallback errors translated", () => {
@@ -176,13 +199,28 @@ describe("translation resources", () => {
     expect(en.shell.menu.toggleSidebar).toBe("Toggle sidebar");
     expect(en.shell.menu.open).toBe("Open menu");
     expect(en.shell.menu.close).toBe("Close menu");
-    expect(en.shell.commandCenter.placeholder).toBe("Type a command or search agents...");
+    expect(en.shell.commandCenter.placeholder).toBe(
+      "Search commands, files, workspaces, and agents...",
+    );
+    expect(en.shell.commandCenter.filePlaceholder).toBe("Search files...");
+    expect(en.shell.commandCenter.files).toBe("Files");
     expect(en.shell.commandCenter.noMatches).toBe("No matches");
     expect(en.shell.commandCenter.actions).toBe("Actions");
+    expect(en.shell.commandCenter.workspaces).toBe("Workspaces");
     expect(en.shell.commandCenter.agents).toBe("Agents");
     expect(en.shell.commandCenter.newAgent).toBe("New agent");
-    expect(en.shell.commandCenter.openProject).toBe("Open project");
+    expect(en.shell.commandCenter.addProject).toBe("Add project");
     expect(en.shell.commandCenter.home).toBe("Home");
+    expect(en.shell.commandCenter.modelGroupLabel).toBe("Model");
+    expect(en.shell.commandCenter.modelSearchKeywords).toBe(
+      "switch model change model set model select model",
+    );
+    expect(en.shell.commandCenter.thinkingGroupLabel).toBe("Thinking");
+    expect(en.shell.commandCenter.modeGroupLabel).toBe("Mode");
+    expect(en.shell.commandCenter.planModeGroupLabel).toBe("Plan mode");
+    expect(en.shell.commandCenter.fastModeGroupLabel).toBe("Fast");
+    expect(en.shell.commandCenter.settingOn).toBe("On");
+    expect(en.shell.commandCenter.settingOff).toBe("Off");
   });
 
   it("includes composer and agent workflow keys for the Batch 2 migration", () => {
@@ -193,7 +231,10 @@ describe("translation resources", () => {
     expect(en.composer.input.sendMessage).toBe("Send message");
     expect(en.composer.voice.startDictation).toBe("Start dictation");
     expect(en.composer.attachments.addIssueOrPr).toBe("Add issue or PR");
+    expect(en.composer.attachments.addIssueOrPr_mr).toBe("Add issue or MR");
     expect(en.composer.github.title).toBe("Attach issue or PR");
+    expect(en.composer.github.title_mr).toBe("Attach issue or MR");
+    expect(en.composer.github.searchPlaceholder_mr).toBe("Search issues and MRs...");
     expect(en.agentControls.provider.fallback).toBe("Provider");
     expect(en.agentControls.hints.model).toBe("Change model");
     expect(en.agentControls.hints.mode).toBe("Change mode");
@@ -208,14 +249,18 @@ describe("translation resources", () => {
 
   it("includes Settings expansion keys for the Batch 3A migration", () => {
     expect(en.settings.diagnostics.title).toBe("Diagnostics");
+    expect(en.settings.diagnostics.legacyTerminalRenderer.label).toBe(
+      "Use legacy terminal renderer",
+    );
     expect(en.settings.about.title).toBe("About");
     expect(en.settings.about.releaseChannel.label).toBe("Release channel");
     expect(en.settings.appearance.theme.title).toBe("Theme");
     expect(en.settings.appearance.fonts.interfaceFont).toBe("Interface font");
     expect(en.settings.shortcuts.actions.rebind).toBe("Rebind");
     expect(en.settings.integrations.commandLine.title).toBe("Command line");
-    expect(en.settings.integrations.skills.updateAvailable).toBe("Update available");
-    expect(en.settings.permissions.notifications).toBe("Notifications");
+    expect(en.settings.notifications.playSound).toBe("Play sound");
+    expect(en.settings.notifications.permission).toBe("Notification permission");
+    expect(en.settings.notifications.sentTitle).toBe("Test notification sent");
     expect(en.settings.permissions.actions.request).toBe("Request");
   });
 
@@ -257,7 +302,14 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.sections.pipeline).toBe("Pipeline");
     expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");
+    expect(en.workspace.git.pr.actions.openOn).toBe("Open on {{brand}}");
+    expect(en.workspace.git.pr.empty.noJobs).toBe("No jobs");
+    expect(en.workspace.git.pr.empty.loadingPipeline).toBe("Loading pipeline…");
+    expect(en.workspace.git.pr.empty.pipelineJobsLoadFailed).toBe("Could not load pipeline jobs");
+    expect(en.workspace.git.pr.empty.allowedToFail).toBe("allowed to fail");
+    expect(en.workspace.git.pr.approvals).toBe("{{given}} of {{required}} approvals");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 
@@ -274,7 +326,7 @@ describe("translation resources", () => {
 
   it("includes provider selector and pairing keys for the Batch 4D migration", () => {
     expect(en.modelSelector.title).toBe("Select provider");
-    expect(en.modelSelector.favorites).toBe("Favorites");
+    expect(en.modelSelector.profiles).toBe("Profiles");
     expect(en.providerCatalog.title).toBe("Add provider");
     expect(en.providerCatalog.actions.installInstructions).toBe("Install instructions");
     expect(en.pairing.link.title).toBe("Paste pairing link");
@@ -349,10 +401,17 @@ describe("translation resources", () => {
     expect(en.message.question.otherPlaceholder).toBe("Other...");
     expect(en.message.todo.title).toBe("Tasks");
     expect(en.message.todo.empty).toBe("No tasks yet.");
+    expect(en.message.todo.tasksProgress).toBe("{{completed}}/{{total}} tasks");
+    expect(en.message.todo.activity).toEqual({
+      created: "Created {{count}} tasks",
+      added: "Added",
+      started: "Started",
+      completed: "Completed",
+      reopened: "Reopened",
+    });
   });
 
   it("includes workspace tab toast keys for the Batch 4J migration", () => {
-    expect(en.workspace.tabs.emptyPane).toBe("No tabs in this pane.");
     expect(en.workspace.tabs.toasts.copyFailed).toBe("Copy failed");
     expect(en.workspace.tabs.toasts.agentIdCopiedLabel).toBe("Agent ID");
     expect(en.workspace.tabs.toasts.resumeCommandCopiedLabel).toBe("resume command");
@@ -370,6 +429,7 @@ describe("translation resources", () => {
     expect(en.sidebar.host.switchTitle).toBe("Switch host");
     expect(en.sidebar.host.searchPlaceholder).toBe("Search hosts...");
     expect(en.sidebar.actions.addProject).toBe("Add project");
+    expect(en.sidebar.actions.hosts).toBe("Hosts");
     expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
@@ -386,7 +446,7 @@ describe("translation resources", () => {
   });
 
   it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
-    expect(en.projectPicker.placeholder).toBe("Type a directory path...");
+    expect(en.projectPicker.placeholder).toBe("Type to search...");
     expect(en.projectPicker.opening).toBe("Opening project...");
     expect(en.projectPicker.searching).toBe("Searching...");
     expect(en.projectPicker.empty).toBe("Start typing a path");
@@ -433,8 +493,14 @@ describe("translation resources", () => {
     expect(en.agentList.dateSections.recent).toBe("Recent");
     expect(en.message.attachments.imagePreviewUnavailable).toBe("Image preview unavailable.");
     expect(en.message.attachments.imagePreviewLoadFailed).toBe("Unable to load image preview.");
-    expect(en.workspace.tabs.explorer.changes).toBe("Changes");
-    expect(en.workspace.tabs.explorer.files).toBe("Files");
+    expect(en.workspace.tabs.sidePanel.changes).toBe("Changes");
+    expect(en.workspace.tabs.sidePanel.files).toBe("Files");
+    expect(en.workspace.tabs.actions.maximizePane).toBe("Maximize pane");
+    expect(en.workspace.tabs.actions.restorePane).toBe("Restore pane");
+    expect(en.settings.shortcuts.help.toggleExplorerPaneMaximization).toBe(
+      "Toggle Side panel maximization",
+    );
+    expect(en.branchSwitcher.triggerTooltip).toBe("Switch workspace branch");
     expect(en.branchSwitcher.uncommittedTitle).toBe("Uncommitted changes");
     expect(en.branchSwitcher.uncommittedMessage).toBe(
       "You have uncommitted changes. Stash them before switching branches?",
@@ -487,7 +553,8 @@ describe("translation resources", () => {
     expect(en.workspace.route.hostOffline).toBe("{{hostName}} is offline");
     expect(en.workspace.route.cannotReachHost).toBe("Cannot reach {{hostName}}");
     expect(en.workspace.route.hostStatus).toBe("Host status: {{status}}");
-    expect(en.workspace.route.missing).toBe("Workspace not found");
+    expect(en.workspace.route.recovery.archivedTitle).toBe("Workspace archived");
+    expect(en.workspace.route.recovery.unavailableTitle).toBe("Workspace unavailable");
     expect(en.message.compaction.loading).toBe("Compacting...");
     expect(en.message.compaction.auto).toBe("Context automatically compacted");
     expect(en.message.compaction.manual).toBe("Context manually compacted");
@@ -606,9 +673,6 @@ describe("translation resources", () => {
     );
     expect(en.desktop.daemon.loadFailed).toBe("Unable to load desktop daemon status.");
     expect(en.desktop.integrations.cli.installFailed).toBe("Unable to install the Paseo CLI.");
-    expect(en.desktop.integrations.skills.installFailed).toBe(
-      "Unable to install orchestration skills.",
-    );
   });
 
   it("includes remaining utility chrome keys for the Batch 4T migration", () => {

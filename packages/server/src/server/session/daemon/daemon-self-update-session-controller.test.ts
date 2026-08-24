@@ -23,12 +23,14 @@ interface ControllerHarness {
 function createController(input: {
   updater: TestUpdater;
   daemonVersion?: string | null;
+  desktopManaged?: boolean;
 }): ControllerHarness {
   const emitted: SessionOutboundMessage[] = [];
   const restartIntents: RestartIntent[] = [];
   const controller = new DaemonSelfUpdateSessionController({
     clientId: "client-1",
     daemonVersion: input.daemonVersion ?? "0.1.15",
+    desktopManaged: input.desktopManaged,
     emit: (msg) => {
       emitted.push(msg);
     },
@@ -82,6 +84,7 @@ describe("DaemonSelfUpdateSessionController", () => {
     await controller.dispatch(updateRequest);
 
     expect(updateInput?.daemonVersion).toBe("0.1.15");
+    expect(updateInput?.desktopManaged).toBe(false);
     expect(emitted).toEqual([
       {
         type: "daemon.update.progress",
@@ -119,15 +122,21 @@ describe("DaemonSelfUpdateSessionController", () => {
   });
 
   test("emits a failed response without restart lifecycle intent", async () => {
+    let updateInput: DaemonSelfUpdateInput | null = null;
     const updater: TestUpdater = {
-      async update() {
+      async update(input) {
+        updateInput = input;
         return { success: false, error: "not an npm global install", newVersion: null };
       },
     };
-    const { controller, emitted, restartIntents } = createController({ updater });
+    const { controller, emitted, restartIntents } = createController({
+      updater,
+      desktopManaged: true,
+    });
 
     await controller.dispatch(updateRequest);
 
+    expect(updateInput?.desktopManaged).toBe(true);
     expect(emitted).toEqual([
       {
         type: "daemon.update.response",

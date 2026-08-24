@@ -13,7 +13,7 @@ Paseo asks a language model to write short pieces of text for you so you don't h
 Paseo generates these kinds of metadata:
 
 - **Workspace titles** — a short, task-shaped label for a workspace, shown in the sidebar.
-- **Worktree branch names** — a slug for the branch a new worktree agent runs on.
+- **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
 
@@ -29,7 +29,7 @@ The candidate list is assembled in this order:
 2. **Built-in defaults**, matched against the models of the providers you have enabled:
    1. a `haiku` model
    2. `gpt-5.4-mini` (low reasoning)
-   3. `minimax-m2.5`
+   3. `minimax-m3`
    4. `nemotron-3-super`
 3. **The model currently selected** for that agent or draft, as a last resort.
 
@@ -37,9 +37,13 @@ Each default is a match on the model id or name, so the first enabled provider t
 
 The intent of the default order is to prefer small, fast, cheap models for these short tasks before falling back to whatever you have selected.
 
-## Configuring the providers
+## Choose a model
 
-To control which models Paseo uses — for example to keep all metadata generation on one provider, or to prefer a local model — set `agents.metadataGeneration.providers` in `~/.paseo/config.json`. Your entries are tried before the built-in defaults.
+Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, Paseo tries the model you choose first, then falls back to the remaining configured models and built-in candidates. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list.
+
+## Configure a custom fallback order
+
+To configure more than one preferred model or control the exact order, set `agents.metadataGeneration.providers` in `~/.paseo/config.json`. Your entries are tried before the built-in defaults.
 
 ```json
 {
@@ -60,7 +64,7 @@ Each entry accepts:
 - `model` (optional) — a specific model id. Omit it to use that provider's default model.
 - `thinkingOptionId` (optional) — a reasoning/thinking level for models that support one. Falls back to the model's default if the value isn't valid for that model.
 
-Restart the daemon after editing the file.
+The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
 
 ## Per-project instructions
 

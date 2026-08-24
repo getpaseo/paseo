@@ -5,14 +5,14 @@ import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import type { FileBackedChatService } from "./chat/chat-service.js";
-import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
+import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+
+const WORKSPACE_ID = "workspace-1";
 
 const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
@@ -86,7 +86,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
     setAgentAttentionCallback: vi.fn(),
-    getAgent: vi.fn(() => null),
+    getAgent: vi.fn(() => ({ workspaceId: WORKSPACE_ID, pendingPermissions: new Map() })),
     getLastAssistantMessage: vi.fn(async () => null),
     getMetricsSnapshot: vi.fn(() => ({
       total: 0,
@@ -100,6 +100,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     ...agentManagerOverrides,
   };
   const daemonConfigStore = {
+    onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
 
@@ -123,8 +124,6 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     undefined,
-    createStub<FileBackedChatService>({}),
-    createStub<LoopService>({}),
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -173,6 +172,8 @@ function createSessionWithActivity(
 ) {
   return {
     getClientActivity: vi.fn(() => activity),
+    supports: () => false,
+    supportsForSource: () => false,
   };
 }
 
@@ -188,6 +189,7 @@ function connectClient(
 ) {
   const ws = createOpenSocket();
   asInternals<WebSocketServerInternals>(server).sessions.set(ws, {
+    kind: "trusted",
     session: createSessionWithActivity(activity),
     clientId: "client-test",
     appVersion: null,
@@ -222,6 +224,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       getAgent: vi.fn(() => ({
         config: { title: null },
         cwd: "/tmp/worktree",
+        workspaceId: WORKSPACE_ID,
         pendingPermissions: new Map(),
       })),
       getLastAssistantMessage,
@@ -239,6 +242,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
         body: "Done. Updated README.md and link.",
         data: {
           serverId: "srv-test",
+          workspaceId: WORKSPACE_ID,
           agentId: "agent-1",
           reason: "finished",
         },
@@ -253,6 +257,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       getAgent: vi.fn(() => ({
         config: { title: null },
         cwd: "/tmp/worktree",
+        workspaceId: WORKSPACE_ID,
         labels: {},
         pendingPermissions: new Map(),
       })),

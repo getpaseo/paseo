@@ -12,7 +12,7 @@ The development workflow is shifting from manually editing files to orchestratin
 
 Freedom and flexibility. Every design decision follows from this:
 
-- **Multi-provider** — Use any coding agent harness. Pick the right model for each job, switch freely as the landscape shifts. No vendor-lock in.
+- **Multi-provider** — Use any coding agent harness. Pick the right model for each job, switch freely as the landscape shifts. No vendor lock-in.
 - **Cross-device** — Desktop, mobile, web, CLI. Start work at your desk, check progress from your phone, script from the terminal.
 - **Self-hosted** — The daemon runs on your machine. Your code, your keys, your environment. No inference markup, no cloud dependency.
 - **Respectful** - No telemetry, no forced cloud, no forced accounts
@@ -43,7 +43,8 @@ This architecture means:
 
 - The daemon can run on any machine: laptop, VM, remote server
 - Multiple clients can connect simultaneously
-- Agents keep running when you close the app
+- Agents keep running when a client disconnects — the daemon owns them, not the client
+- Quitting the desktop app stops the daemon it started, so "restart the app" is a real fix; a daemon you run yourself is unaffected
 
 ## Target user
 
@@ -73,7 +74,7 @@ Anyone who builds software:
 - Built-in providers: Claude Code (Agent SDK), Codex (app-server), GitHub Copilot (ACP), OpenCode, Pi, OMP
 - One-click ACP provider catalog: CodeWhale, Cursor, Hermes, Qwen Coder, Kimi Code, and others — plus custom ACP providers
 - Voice mode: dictate prompts or talk through problems hands-free
-- MCP server exposes the daemon to other agents (create_agent, send_agent_prompt, schedules, terminals, worktrees, workspace renaming)
+- MCP server exposes the daemon to other agents (workspaces, create/detach agent, schedules, heartbeats, terminals, workspace renaming)
 - Scheduled agents (cron-style triggers) via app, CLI, and MCP
 - Frequent releases (multiple per week)
 - Community contributions across packaging, providers, and bug fixes

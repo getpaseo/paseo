@@ -13,7 +13,7 @@ export interface TerminalStreamControllerClient {
   unsubscribeTerminal: (terminalId: string) => void;
   sendTerminalInput: (
     terminalId: string,
-    message: { type: "resize"; rows: number; cols: number },
+    message: { type: "resize"; rows: number; cols: number; intent?: "claim" | "update" },
   ) => void;
   onTerminalStreamEvent: (
     handler: (
@@ -105,12 +105,13 @@ export class TerminalStreamController {
           });
           return;
         }
-        const preferredSize = this.options.getPreferredSize();
+        const preferredSize = restore?.size ? null : this.options.getPreferredSize();
         if (preferredSize) {
           this.options.client.sendTerminalInput(nextTerminalId, {
             type: "resize",
             rows: preferredSize.rows,
             cols: preferredSize.cols,
+            intent: "claim",
           });
         }
         this.options.onStatusChange?.({

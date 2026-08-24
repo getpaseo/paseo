@@ -15,9 +15,9 @@ For the concept and how Paseo manages providers, see [Providers](/docs/providers
 Work out of the box once the underlying CLI is installed and authenticated.
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Anthropic's coding agent with MCP support, streaming, and deep reasoning.
-- [Codex CLI](https://github.com/openai/codex). OpenAI's workspace agent with sandbox controls and optional network access.
+- [Codex](/docs/codex). OpenAI's workspace agent with sandbox controls and optional network access.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
-- [pi](https://github.com/svkozak/pi-acp). Minimal terminal-based coding agent with multi-provider LLM support.
+- [Pi](https://pi.dev). Minimal terminal-based coding agent with multi-provider LLM support.
 
 ## ACP catalog
 
@@ -56,7 +56,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/overview), Alibaba's Qwen coding assistant.
 - [siGit Code](https://github.com/getsigit/sigit), local-first coding agent with optional on-device LLM.
 - [Stakpak](https://stakpak.dev/), Rust-based DevOps agent.
-- [TRAE CLI](https://docs.trae.cn/cli), ByteDance's official TRAE coding agent.
+- [TRAE CLI](https://docs.trae.cn/cli_get-started-with-trae-cli), ByteDance's official TRAE coding agent.
 - [VT Code](https://github.com/vinhnx/VTCode/blob/main/docs/guides/zed-acp.md), open-source multi-provider coding agent.
 
 The in-app catalog is the canonical, version-pinned source. Anything not listed here can still be added manually, see [Custom providers](/docs/custom-providers).

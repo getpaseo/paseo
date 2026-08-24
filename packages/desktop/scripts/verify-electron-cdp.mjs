@@ -3,9 +3,11 @@ import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright";
 
-const CDP_URL = process.env.CDP_URL ?? "http://127.0.0.1:9223";
+const CDP_PORT = process.env.PASEO_ELECTRON_REMOTE_DEBUGGING_PORT ?? "9223";
+const EXPO_PORT = process.env.EXPO_PORT ?? "8082";
+const CDP_URL = process.env.CDP_URL ?? `http://127.0.0.1:${CDP_PORT}`;
 const OUTPUT_DIR = process.env.ELECTRON_VERIFY_OUTPUT_DIR ?? "/tmp/electron-verification";
-const APP_URL_FRAGMENT = process.env.ELECTRON_VERIFY_APP_URL_FRAGMENT ?? "localhost:8081";
+const APP_URL_FRAGMENT = process.env.ELECTRON_VERIFY_APP_URL_FRAGMENT ?? `localhost:${EXPO_PORT}`;
 const REQUIRED_DESKTOP_KEYS = ["invoke", "events", "window", "dialog", "notification", "opener"];
 const INTERACTIVE_SELECTOR = [
   "button",
@@ -32,10 +34,6 @@ function assert(condition, message) {
   }
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 async function ensureDir(dirPath) {
   await fs.mkdir(dirPath, { recursive: true });
 }
@@ -44,6 +42,96 @@ async function captureScreenshot(page, fileName) {
   const filePath = path.join(OUTPUT_DIR, fileName);
   await page.screenshot({ path: filePath, fullPage: true });
   return filePath;
+}
+
+function rectsIntersect(left, right) {
+  return (
+    left.left < right.left + right.width &&
+    left.left + left.width > right.left &&
+    left.top < right.top + right.height &&
+    left.top + left.height > right.top
+  );
+}
+
+function getWindowChromeObstruction(platform, innerWidth) {
+  if (platform === "darwin") {
+    return { corner: "top-left", left: 0, top: 0, width: 78, height: 45 };
+  }
+  return {
+    corner: "top-right",
+    left: innerWidth - 140,
+    top: 0,
+    width: 140,
+    height: 48,
+  };
+}
+
+async function inspectSettingsGeometry(page) {
+  return page.evaluate(() => {
+    function rect(selector) {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) return null;
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: bounds.left,
+        top: bounds.top,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    }
+
+    const title = document.querySelector('[data-testid="settings-detail-header-title"]');
+    const headerLeft = title instanceof HTMLElement ? title.parentElement : null;
+    const headerLeftBounds = headerLeft?.getBoundingClientRect() ?? null;
+
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      sidebarRect: rect('[data-testid="settings-sidebar"]'),
+      detailPaneRect: rect('[data-testid="settings-detail-pane"]'),
+      outerAppSidebarSettingsRect: rect('[data-testid="sidebar-settings"]'),
+      backButtonRect: rect('[data-testid="settings-back-to-workspace"]'),
+      detailTitleRect: rect('[data-testid="settings-detail-header-title"]'),
+      detailHeaderLeftRect: headerLeftBounds
+        ? {
+            left: headerLeftBounds.left,
+            top: headerLeftBounds.top,
+            width: headerLeftBounds.width,
+            height: headerLeftBounds.height,
+          }
+        : null,
+    };
+  });
+}
+
+function settingsGeometryClearsWindowChrome(geometry, platform) {
+  const obstruction = getWindowChromeObstruction(platform, geometry.innerWidth);
+  const consumer = platform === "darwin" ? geometry.backButtonRect : geometry.detailHeaderLeftRect;
+  return Boolean(consumer && !rectsIntersect(consumer, obstruction));
+}
+
+async function readBridgeFullscreen(page) {
+  return page.evaluate(
+    async () =>
+      (await window.paseoDesktop?.window?.getCurrentWindow?.()?.isFullscreen?.()) === true,
+  );
+}
+
+async function setNativeFullscreen(page, fullscreen) {
+  await page.evaluate(async (nextFullscreen) => {
+    const win = window.paseoDesktop?.window?.getCurrentWindow?.();
+    if (typeof win?.setFullscreen !== "function") throw new Error("setFullscreen is unavailable");
+    await win.setFullscreen(nextFullscreen);
+  }, fullscreen);
+}
+
+async function waitForBridgeFullscreen(page, expected) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if ((await readBridgeFullscreen(page)) === expected) return;
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`Timed out waiting for fullscreen=${expected}`);
 }
 
 async function inspectTitlebarRegions(page) {
@@ -259,111 +347,152 @@ async function inspectTitlebarRegions(page) {
   }, INTERACTIVE_SELECTOR);
 }
 
-async function inspectFullscreenResizer(page) {
-  const session = await page.context().newCDPSession(page);
-  let windowId = null;
-  let initialBounds = null;
-  let fullscreenEntered = false;
+async function inspectFullscreenWindowChrome(page, platform) {
+  const initiallyFullscreen = await readBridgeFullscreen(page);
 
   try {
-    const windowInfo = await session.send("Browser.getWindowForTarget");
-    windowId = windowInfo.windowId;
-    initialBounds = await session.send("Browser.getWindowBounds", { windowId });
-    await session.send("Browser.setWindowBounds", {
-      windowId,
-      bounds: { windowState: "fullscreen" },
-    });
-    fullscreenEntered = true;
-    await page.waitForTimeout(1000);
+    assert(!initiallyFullscreen, "Electron verifier requires a non-fullscreen QA window");
+    const before = await inspectSettingsGeometry(page);
+    await setNativeFullscreen(page, true);
+    await waitForBridgeFullscreen(page, true);
 
     const details = await page.evaluate(async () => {
-      const bridge = window.paseoDesktop?.window;
+      const bridge = window.paseoDesktop?.window?.getCurrentWindow?.();
       const bridgeFullscreen =
         typeof bridge?.isFullscreen === "function" ? await bridge.isFullscreen() : null;
-      const visibleNoDragResizers = Array.from(document.querySelectorAll("*"))
-        .filter((node) => node instanceof HTMLElement)
-        .filter((node) => {
-          const element = node;
-          const rect = element.getBoundingClientRect();
-          const style = window.getComputedStyle(element);
-          const appRegion =
-            style.webkitAppRegion || style.getPropertyValue("-webkit-app-region") || "none";
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            style.opacity !== "0" &&
-            appRegion === "no-drag" &&
-            style.position === "absolute" &&
-            Math.abs(rect.height - 4) <= 1 &&
-            rect.top < 220
-          );
-        })
-        .map((node) => {
-          const rect = node.getBoundingClientRect();
-          return {
-            tagName: node.tagName.toLowerCase(),
-            top: rect.top,
-            left: rect.left,
-            width: rect.width,
-            height: rect.height,
-          };
-        });
-
-      return {
-        bridgeFullscreen,
-        visibleNoDragResizers,
-      };
+      return { bridgeFullscreen };
     });
+    const fullscreen = await inspectSettingsGeometry(page);
+    const screenshot = await captureScreenshot(page, "04-fullscreen-window-chrome.png");
+    const clearanceRemoved =
+      platform === "darwin"
+        ? Boolean(
+            before.backButtonRect &&
+            fullscreen.backButtonRect &&
+            before.backButtonRect.top >= 45 &&
+            fullscreen.backButtonRect.top < 45 &&
+            fullscreen.backButtonRect.top < before.backButtonRect.top,
+          )
+        : Boolean(
+            before.detailHeaderLeftRect &&
+            fullscreen.detailHeaderLeftRect &&
+            before.innerWidth -
+              (before.detailHeaderLeftRect.left + before.detailHeaderLeftRect.width) >=
+              140 &&
+            fullscreen.innerWidth -
+              (fullscreen.detailHeaderLeftRect.left + fullscreen.detailHeaderLeftRect.width) <
+              40,
+          );
 
     return {
       supported: true,
-      enteredFullscreen: fullscreenEntered,
-      initialBounds,
+      initiallyFullscreen,
+      before,
+      fullscreen,
+      clearanceRemoved,
+      screenshot,
       ...details,
-      passed:
-        details.bridgeFullscreen === true &&
-        Array.isArray(details.visibleNoDragResizers) &&
-        details.visibleNoDragResizers.length === 0,
+      passed: details.bridgeFullscreen === true && clearanceRemoved,
     };
   } catch (error) {
     return {
       supported: false,
       error: String(error),
-      initialBounds,
+      initiallyFullscreen,
     };
   } finally {
-    const previousWindowState = initialBounds?.bounds?.windowState ?? "normal";
-    if (windowId !== null && fullscreenEntered) {
-      try {
-        await session.send("Browser.setWindowBounds", {
-          windowId,
-          bounds: { windowState: previousWindowState },
-        });
-        await page.waitForTimeout(500);
-      } catch {
-        // Best-effort restore only.
-      }
+    if (await readBridgeFullscreen(page)) {
+      await setNativeFullscreen(page, false);
+      await waitForBridgeFullscreen(page, false);
     }
-    await session.detach().catch(() => undefined);
+  }
+}
+
+async function inspectHalfScreenSettingsLayout(page, platform) {
+  const initialBounds = await page.evaluate(() => ({
+    width: window.outerWidth,
+    height: window.outerHeight,
+  }));
+
+  try {
+    await page.evaluate(() => {
+      // Electron applies resizeTo to the native BrowserWindow. Unlike
+      // page.setViewportSize, this exercises the real window/layout boundary.
+      window.resizeTo(751, Math.max(window.outerHeight, 700));
+    });
+    await page.waitForFunction(() => window.innerWidth === 751, undefined, { timeout: 10_000 });
+
+    const sidebar = page.getByTestId("settings-sidebar");
+    const detail = page.getByTestId("settings-detail-pane");
+    const outerAppSidebarSettings = page.getByTestId("sidebar-settings");
+    await sidebar.waitFor({ state: "visible", timeout: 10_000 });
+    await detail.waitFor({ state: "visible", timeout: 10_000 });
+    await outerAppSidebarSettings.waitFor({ state: "hidden", timeout: 10_000 });
+
+    const details = await inspectSettingsGeometry(page);
+    const obstruction = getWindowChromeObstruction(platform, details.innerWidth);
+    const clearsWindowChrome = settingsGeometryClearsWindowChrome(details, platform);
+    const sidebarRight = details.sidebarRect
+      ? details.sidebarRect.left + details.sidebarRect.width
+      : null;
+    const detailRight = details.detailPaneRect
+      ? details.detailPaneRect.left + details.detailPaneRect.width
+      : null;
+    const screenshot = await captureScreenshot(page, "06-half-screen-settings.png");
+
+    return {
+      supported: true,
+      initialBounds,
+      ...details,
+      obstruction,
+      clearsWindowChrome,
+      screenshot,
+      passed:
+        details.innerWidth === 751 &&
+        details.sidebarRect !== null &&
+        details.sidebarRect.width >= 300 &&
+        details.detailPaneRect !== null &&
+        details.detailPaneRect.width >= 400 &&
+        details.outerAppSidebarSettingsRect === null &&
+        Math.abs(details.sidebarRect.left) <= 1 &&
+        sidebarRight !== null &&
+        Math.abs(sidebarRight - details.detailPaneRect.left) <= 1 &&
+        detailRight !== null &&
+        Math.abs(detailRight - details.innerWidth) <= 1 &&
+        clearsWindowChrome,
+    };
+  } catch (error) {
+    return { supported: false, initialBounds, error: String(error) };
+  } finally {
+    await page.evaluate((bounds) => window.resizeTo(bounds.width, bounds.height), initialBounds);
+    await page.waitForFunction(
+      (width) => Math.abs(window.outerWidth - width) <= 1,
+      initialBounds.width,
+      { timeout: 10_000 },
+    );
   }
 }
 
 async function findAppPage(browser) {
-  function findMatchingPage() {
+  function findMatchingPages() {
+    const matches = [];
     for (const context of browser.contexts()) {
       for (const page of context.pages()) {
         if (page.url().includes(APP_URL_FRAGMENT) && !page.url().startsWith("devtools://")) {
-          return page;
+          matches.push(page);
         }
       }
     }
-    return null;
+    return matches;
   }
   async function poll(attempt) {
-    const page = findMatchingPage();
-    if (page) return page;
+    const pages = findMatchingPages();
+    if (pages.length > 1) {
+      throw new Error(
+        `Expected one Electron QA page for ${APP_URL_FRAGMENT}, found ${pages.length}`,
+      );
+    }
+    if (pages.length === 1) return pages[0];
     if (attempt >= 29) {
       throw new Error(`Unable to find Electron app page for ${APP_URL_FRAGMENT}`);
     }
@@ -412,24 +541,46 @@ async function navigateToSettings(page, serverId) {
   await page.evaluate((nextServerId) => {
     window.location.href = `/h/${nextServerId}/settings`;
   }, serverId);
-  await page.waitForURL(new RegExp(`/h/${escapeRegExp(serverId)}/settings$`), {
-    timeout: 30_000,
-  });
-  await page.getByText("Daemon management", { exact: true }).waitFor({
-    timeout: 30_000,
-  });
+  await page.getByTestId("settings-sidebar").waitFor({ state: "visible", timeout: 30_000 });
+  await page
+    .getByTestId("settings-detail-header-title")
+    .waitFor({ state: "visible", timeout: 30_000 });
 }
 
-async function dismissMobileSidebarIfVisible(page) {
+async function dismissOuterAppSidebarIfVisible(page) {
   const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]').first();
   const menuToggle = page.locator('[data-testid="menu-button"]').first();
   const bothVisible =
     (await sidebarSettingsButton.isVisible().catch(() => false)) &&
     (await menuToggle.isVisible().catch(() => false));
-  if (!bothVisible) return;
+  if (!bothVisible) return false;
   await menuToggle.click();
-  await sidebarSettingsButton.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
+  await sidebarSettingsButton.waitFor({ state: "hidden", timeout: 10_000 });
   await page.waitForTimeout(500);
+  return true;
+}
+
+async function restoreOuterAppSidebar(page, wasDismissed) {
+  if (!wasDismissed) return;
+  const menuToggle = page.locator('[data-testid="menu-button"]').first();
+  const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]').first();
+  await menuToggle.click();
+  await sidebarSettingsButton.waitFor({ state: "visible", timeout: 10_000 });
+}
+
+async function clearTitlebarAnnotations(page) {
+  await page.evaluate(() => {
+    document.getElementById("electron-verify-titlebar-style")?.remove();
+    for (const attribute of [
+      "data-electron-verify-drag",
+      "data-electron-verify-resizer",
+      "data-electron-verify-interactive",
+    ]) {
+      for (const element of document.querySelectorAll(`[${attribute}]`)) {
+        element.removeAttribute(attribute);
+      }
+    }
+  });
 }
 
 function evaluateDragRegionCheck(dragRegionCheck) {
@@ -444,13 +595,13 @@ function evaluateDragRegionCheck(dragRegionCheck) {
   );
 }
 
-function evaluateTrafficLightPadding(dragRegionCheck) {
-  if (process.platform !== "darwin") return true;
-  const observedPaddingLeft = dragRegionCheck.candidate?.parent?.paddingLeft ?? null;
-  return (
-    typeof observedPaddingLeft === "number" &&
-    observedPaddingLeft >= 78 &&
-    observedPaddingLeft <= 110
+function evaluateTrafficLightAvoidance(dragRegionCheck) {
+  const firstInteractive = dragRegionCheck.candidate?.explicitNoDragInteractive?.find(
+    (entry) => entry.testId === "settings-back-to-workspace",
+  );
+  return Boolean(
+    firstInteractive &&
+    !rectsIntersect(firstInteractive, { left: 0, top: 0, width: 78, height: 45 }),
   );
 }
 
@@ -462,14 +613,22 @@ async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, r
     screenshot: dragScreenshot,
   });
 
-  const trafficLightScreenshot = await captureScreenshot(page, "04-traffic-light-padding.png");
+  const trafficLightScreenshot = await captureScreenshot(page, "04-traffic-light-avoidance.png");
+  const firstInteractive = dragRegionCheck.candidate?.explicitNoDragInteractive?.find(
+    (entry) => entry.testId === "settings-back-to-workspace",
+  );
   results.push({
-    check: "traffic-light-padding",
-    pass: evaluateTrafficLightPadding(dragRegionCheck),
+    check: "traffic-light-avoidance",
+    pass: process.platform === "darwin" ? evaluateTrafficLightAvoidance(dragRegionCheck) : true,
+    skipped: process.platform !== "darwin",
     details: {
       platform: process.platform,
-      observedPaddingLeft: dragRegionCheck.candidate?.parent?.paddingLeft ?? null,
-      note: "Traffic-light padding is only validated structurally on macOS in this verifier.",
+      obstruction: process.platform === "darwin" ? { width: 78, height: 45 } : null,
+      firstInteractive: firstInteractive ?? null,
+      note:
+        process.platform === "darwin"
+          ? "The first interactive sidebar row must not intersect the traffic-light rectangle."
+          : "Skipped here; the half-screen check exercises the right-side obstruction on Windows/Linux.",
       candidate: dragRegionCheck.candidate,
     },
     screenshot: trafficLightScreenshot,
@@ -489,25 +648,28 @@ async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, r
   });
 }
 
-async function collectDaemonManagementResult(page, serverId, desktopStatus, results) {
-  const daemonManagementVisible = await Promise.all([
-    page.getByText("Built-in daemon", { exact: true }).isVisible(),
-    page.getByText("Daemon management", { exact: true }).isVisible(),
-    page.getByRole("button", { name: "Restart daemon" }).first().isVisible(),
-  ]).then((values) => values.every(Boolean));
-  const daemonManagementScreenshot = await captureScreenshot(
-    page,
-    "05-settings-daemon-management.png",
-  );
+async function collectSettingsSplitResult(page, serverId, desktopStatus, results) {
+  const geometry = await inspectSettingsGeometry(page);
+  const sidebarRight = geometry.sidebarRect
+    ? geometry.sidebarRect.left + geometry.sidebarRect.width
+    : null;
+  const settingsScreenshot = await captureScreenshot(page, "05-settings-split.png");
   results.push({
-    check: "settings-daemon-management",
-    pass: daemonManagementVisible,
+    check: "settings-split",
+    pass: Boolean(
+      geometry.sidebarRect &&
+      geometry.detailPaneRect &&
+      geometry.detailTitleRect &&
+      sidebarRight !== null &&
+      Math.abs(sidebarRight - geometry.detailPaneRect.left) <= 1,
+    ),
     details: {
       route: page.url(),
       serverId,
       desktopStatus,
+      geometry,
     },
-    screenshot: daemonManagementScreenshot,
+    screenshot: settingsScreenshot,
   });
 }
 
@@ -515,77 +677,108 @@ async function main() {
   await ensureDir(OUTPUT_DIR);
 
   const browser = await chromium.connectOverCDP(CDP_URL);
-  const page = await findAppPage(browser);
-  const consoleMessages = [];
-  const results = [];
+  let page = null;
+  let initialPageUrl = null;
+  let outerSidebarDismissed = false;
 
-  attachConsoleCollector(page, consoleMessages);
-  await navigateToWelcome(page);
+  try {
+    page = await findAppPage(browser);
+    initialPageUrl = page.url();
+    const consoleMessages = [];
+    const results = [];
 
-  const welcomeScreenshot = await captureScreenshot(page, "01-welcome.png");
-  const desktopDetection = await detectDesktopBridge(page);
+    attachConsoleCollector(page, consoleMessages);
+    await navigateToWelcome(page);
 
-  const hasExpectedDesktopShape =
-    desktopDetection.exists &&
-    REQUIRED_DESKTOP_KEYS.every((key) => desktopDetection.keys.includes(key));
+    const welcomeScreenshot = await captureScreenshot(page, "01-welcome.png");
+    const desktopDetection = await detectDesktopBridge(page);
 
-  results.push({
-    check: "desktop-detection",
-    pass: hasExpectedDesktopShape,
-    details: desktopDetection,
-    screenshot: welcomeScreenshot,
-  });
+    const hasExpectedDesktopShape =
+      desktopDetection.exists &&
+      REQUIRED_DESKTOP_KEYS.every((key) => desktopDetection.keys.includes(key));
+    assert(
+      ["darwin", "win32", "linux"].includes(desktopDetection.platform),
+      `Unexpected Electron platform: ${desktopDetection.platform}`,
+    );
 
-  const desktopStatus = await page.evaluate(() =>
-    window.paseoDesktop.invoke("desktop_daemon_status"),
-  );
-  assert(
-    typeof desktopStatus?.serverId === "string" && desktopStatus.serverId.trim().length > 0,
-    "desktop_daemon_status did not return a serverId",
-  );
+    results.push({
+      check: "desktop-detection",
+      pass: hasExpectedDesktopShape,
+      details: desktopDetection,
+      screenshot: welcomeScreenshot,
+    });
 
-  const serverId = desktopStatus.serverId.trim();
-  await navigateToSettings(page, serverId);
+    const desktopStatus = await page.evaluate(() =>
+      window.paseoDesktop.invoke("desktop_daemon_status"),
+    );
+    assert(
+      typeof desktopStatus?.serverId === "string" && desktopStatus.serverId.trim().length > 0,
+      "desktop_daemon_status did not return a serverId",
+    );
 
-  await captureScreenshot(page, "02-settings-page.png");
-  await dismissMobileSidebarIfVisible(page);
+    const serverId = desktopStatus.serverId.trim();
+    await navigateToSettings(page, serverId);
 
-  const dragRegionCheck = await inspectTitlebarRegions(page);
-  const dragScreenshot = await captureScreenshot(page, "03-drag-region.png");
-  await collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results);
+    await captureScreenshot(page, "02-settings-page.png");
+    outerSidebarDismissed = await dismissOuterAppSidebarIfVisible(page);
 
-  const fullscreenDetails = await inspectFullscreenResizer(page);
-  const fullscreenScreenshot = await captureScreenshot(page, "04-fullscreen-resizer.png");
-  results.push({
-    check: "fullscreen-resizer",
-    pass: fullscreenDetails.supported ? fullscreenDetails.passed : true,
-    details: fullscreenDetails,
-    screenshot: fullscreenScreenshot,
-  });
+    const dragRegionCheck = await inspectTitlebarRegions(page);
+    const dragScreenshot = await captureScreenshot(page, "03-drag-region.png");
+    await collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results);
 
-  await collectDaemonManagementResult(page, serverId, desktopStatus, results);
+    const fullscreenDetails = await inspectFullscreenWindowChrome(page, desktopDetection.platform);
+    results.push({
+      check: "fullscreen-window-chrome",
+      pass: fullscreenDetails.supported && fullscreenDetails.passed,
+      details: fullscreenDetails,
+      screenshot: fullscreenDetails.screenshot ?? null,
+    });
 
-  const desktopDetectionScreenshot = await captureScreenshot(page, "06-desktop-detection.png");
-  results[0].screenshot = desktopDetectionScreenshot;
+    await collectSettingsSplitResult(page, serverId, desktopStatus, results);
 
-  const report = {
-    cdpUrl: CDP_URL,
-    outputDir: OUTPUT_DIR,
-    pageUrl: page.url(),
-    desktopStatus,
-    results,
-    consoleMessages,
-  };
+    if (outerSidebarDismissed) {
+      await restoreOuterAppSidebar(page, outerSidebarDismissed);
+      outerSidebarDismissed = false;
+    }
 
-  const reportPath = path.join(OUTPUT_DIR, "report.json");
-  await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    const halfScreenDetails = await inspectHalfScreenSettingsLayout(
+      page,
+      desktopDetection.platform,
+    );
+    results.push({
+      check: "half-screen-settings-layout",
+      pass: halfScreenDetails.supported && halfScreenDetails.passed,
+      details: halfScreenDetails,
+      screenshot: halfScreenDetails.screenshot ?? null,
+    });
 
-  const failedChecks = results.filter((result) => !result.pass);
-  console.log(JSON.stringify(report, null, 2));
-  await browser.close();
+    const desktopDetectionScreenshot = await captureScreenshot(page, "07-desktop-detection.png");
+    results[0].screenshot = desktopDetectionScreenshot;
 
-  if (failedChecks.length > 0) {
-    process.exitCode = 1;
+    const report = {
+      cdpUrl: CDP_URL,
+      outputDir: OUTPUT_DIR,
+      pageUrl: page.url(),
+      desktopStatus,
+      results,
+      consoleMessages,
+    };
+
+    const reportPath = path.join(OUTPUT_DIR, "report.json");
+    await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+    const failedChecks = results.filter((result) => !result.pass);
+    console.log(JSON.stringify(report, null, 2));
+    if (failedChecks.length > 0) process.exitCode = 1;
+  } finally {
+    if (page && !page.isClosed()) {
+      await clearTitlebarAnnotations(page);
+      await restoreOuterAppSidebar(page, outerSidebarDismissed);
+      if (initialPageUrl && page.url() !== initialPageUrl) {
+        await page.goto(initialPageUrl, { waitUntil: "domcontentloaded" });
+      }
+    }
+    await browser.close();
   }
 }
 

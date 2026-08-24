@@ -256,6 +256,65 @@ function stripHopByHopHeaders(
   return out;
 }
 
+const MAX_TCP_PORT = 65535;
+
+function parseHostHeaderPort(hostHeader: string): string | null {
+  const match = /:(\d+)$/.exec(hostHeader);
+  if (!match) {
+    return null;
+  }
+  // The authority is client-supplied — route lookup strips the port before
+  // matching, so any digits reach us. Only pass on something that could be a
+  // real port rather than handing services a number they will build URLs from.
+  const port = Number(match[1]);
+  return port >= 1 && port <= MAX_TCP_PORT ? match[1] : null;
+}
+
+function buildForwardedHeaders({
+  req,
+  route,
+  protocol,
+}: {
+  req: IncomingMessage;
+  route: ServiceProxyRoute;
+  protocol: string;
+}): Record<string, string | string[]> {
+  const hostHeader = String(req.headers.host ?? route.hostname);
+  const forwardedHeaders = stripHopByHopHeaders(req.headers);
+  forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
+  // Forward the authority verbatim, port included. Services derive their public
+  // origin from this header, so a stripped port makes them emit absolute URLs
+  // (redirects, links) pointing at port 80. Route lookup already normalized the
+  // port away, which also means the port here is client-chosen: upstream apps
+  // must treat the forwarded authority as untrusted input.
+  forwardedHeaders["x-forwarded-host"] = hostHeader;
+  forwardedHeaders["x-forwarded-proto"] = protocol;
+  // Keep the two headers consistent: x-forwarded-host is set from Host just
+  // above, and frameworks apply x-forwarded-port afterwards, so an inbound port
+  // that disagrees would silently win over the authority we forwarded. The port
+  // in Host therefore takes precedence. When Host carries no port there is
+  // nothing to derive from and an upstream proxy's value survives — the
+  // nginx-on-:8443 case, where $host drops the port and x-forwarded-port is the
+  // only source. Never derive the port from the scheme: the upgrade path
+  // hardcodes "http", so defaulting would turn a correct 443 into 80.
+  //
+  // LIMITATION: none of this is authenticated, and the port in Host is not an
+  // observation of the connection — it is whatever the client wrote, since
+  // route lookup normalizes the port away before matching. Paseo also does not
+  // check whether an inbound x-forwarded-port arrived from a configured trusted
+  // proxy. Services must treat the forwarded authority as client-influenced
+  // input, not as a trusted origin. This predates the header handling here:
+  // Host has always carried a client-chosen port, and an inbound
+  // x-forwarded-port has always passed straight through. Closing it means
+  // threading the daemon's trustedProxies into this subsystem and into the
+  // upgrade path, which has no Express trust context. Tracked separately.
+  const port = parseHostHeaderPort(hostHeader);
+  if (port !== null) {
+    forwardedHeaders["x-forwarded-port"] = port;
+  }
+  return forwardedHeaders;
+}
+
 function proxyHttpRequest({
   req,
   res,
@@ -267,11 +326,7 @@ function proxyHttpRequest({
   route: ServiceProxyRoute;
   logger: Logger;
 }): void {
-  const hostHeader = req.headers.host ?? route.hostname;
-  const forwardedHeaders = stripHopByHopHeaders(req.headers);
-  forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
-  forwardedHeaders["x-forwarded-host"] = String(hostHeader).replace(/:\d+$/, "");
-  forwardedHeaders["x-forwarded-proto"] = req.protocol;
+  const forwardedHeaders = buildForwardedHeaders({ req, route, protocol: req.protocol });
 
   const proxyReq = http.request(
     {
@@ -313,12 +368,8 @@ function proxyUpgradeRequest({
   route: ServiceProxyRoute;
   logger: Logger;
 }): void {
-  const hostHeader = req.headers.host ?? route.hostname;
   const targetSocket = net.connect({ host: "127.0.0.1", port: route.port }, () => {
-    const forwardedHeaders = stripHopByHopHeaders(req.headers);
-    forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
-    forwardedHeaders["x-forwarded-host"] = String(hostHeader).replace(/:\d+$/, "");
-    forwardedHeaders["x-forwarded-proto"] = "http";
+    const forwardedHeaders = buildForwardedHeaders({ req, route, protocol: "http" });
     forwardedHeaders.connection = "Upgrade";
     forwardedHeaders.upgrade = req.headers.upgrade ?? "websocket";
 
@@ -867,33 +918,19 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
   }
 
   middleware(): RequestHandler {
-    return (req, res, next) => {
-      const classification = this.routes.classifyHost(req.headers.host);
-      if (classification.type === "daemon") {
-        next();
-        return;
-      }
-      if (classification.type === "known-service-miss") {
-        res.status(404).send("404 Not Found");
-        return;
-      }
-      this.proxyHttpRequest(req, res, classification.route);
-    };
+    return createScriptProxyMiddleware({ routeStore: this.routes, logger: this.logger });
   }
 
   upgradeHandler(options: {
     passthroughUnknown: boolean;
   }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
-    return (req, socket, head) => {
-      const classification = this.routes.classifyHost(req.headers.host);
-      if (classification.type !== "registered-service") {
-        if (!options.passthroughUnknown) {
-          socket.destroy();
-        }
-        return;
-      }
-      this.proxyUpgradeRequest(req, socket, head, classification.route);
-    };
+    // Pass passthroughUnknown explicitly: the factory defaults it to true, the
+    // subsystem requires callers to choose.
+    return createScriptProxyUpgradeHandler({
+      routeStore: this.routes,
+      logger: this.logger,
+      passthroughUnknown: options.passthroughUnknown,
+    });
   }
 
   async startStandalone(options: {
@@ -937,86 +974,6 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
     if (listenTarget?.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
     }
-  }
-
-  private proxyHttpRequest(
-    req: Parameters<RequestHandler>[0],
-    res: Parameters<RequestHandler>[1],
-    route: ServiceProxyRoute,
-  ): void {
-    const hostHeader = req.headers.host ?? route.hostname;
-    const forwardedHeaders = stripHopByHopHeaders(req.headers);
-    forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
-    forwardedHeaders["x-forwarded-host"] = String(hostHeader).replace(/:\d+$/, "");
-    forwardedHeaders["x-forwarded-proto"] = req.protocol;
-
-    const proxyReq = http.request(
-      {
-        hostname: "127.0.0.1",
-        port: route.port,
-        path: req.originalUrl,
-        method: req.method,
-        headers: forwardedHeaders,
-      },
-      (proxyRes) => {
-        const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
-        res.writeHead(proxyRes.statusCode ?? 502, responseHeaders);
-        proxyRes.pipe(res, { end: true });
-      },
-    );
-    proxyReq.on("error", (err) => {
-      this.logger.warn(
-        { err, hostname: route.hostname, port: route.port },
-        "Service proxy: upstream unreachable",
-      );
-      if (!res.headersSent) {
-        res.writeHead(502, { "content-type": "text/plain" });
-        res.end("502 Bad Gateway");
-      }
-    });
-    req.pipe(proxyReq, { end: true });
-  }
-
-  private proxyUpgradeRequest(
-    req: IncomingMessage,
-    socket: net.Socket,
-    head: Buffer,
-    route: ServiceProxyRoute,
-  ): void {
-    const hostHeader = req.headers.host ?? route.hostname;
-    const targetSocket = net.connect({ host: "127.0.0.1", port: route.port }, () => {
-      const forwardedHeaders = stripHopByHopHeaders(req.headers);
-      forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
-      forwardedHeaders["x-forwarded-host"] = String(hostHeader).replace(/:\d+$/, "");
-      forwardedHeaders["x-forwarded-proto"] = "http";
-      forwardedHeaders.connection = "Upgrade";
-      forwardedHeaders.upgrade = req.headers.upgrade ?? "websocket";
-
-      const headerLines: string[] = [];
-      headerLines.push(`${req.method ?? "GET"} ${req.url ?? "/"} HTTP/${req.httpVersion}`);
-      for (const [key, value] of Object.entries(forwardedHeaders)) {
-        if (Array.isArray(value)) {
-          for (const v of value) headerLines.push(`${key}: ${v}`);
-        } else {
-          headerLines.push(`${key}: ${value}`);
-        }
-      }
-      headerLines.push("\r\n");
-      targetSocket.write(headerLines.join("\r\n"));
-      if (head.length > 0) targetSocket.write(head);
-      targetSocket.pipe(socket);
-      socket.pipe(targetSocket);
-    });
-    targetSocket.on("error", (err) => {
-      this.logger.warn(
-        { err, hostname: route.hostname, port: route.port },
-        "Service proxy: WebSocket upstream unreachable",
-      );
-      socket.end();
-    });
-    socket.on("error", () => {
-      targetSocket.destroy();
-    });
   }
 }
 

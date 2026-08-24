@@ -3,8 +3,13 @@ import { connectionFromListen } from "@/types/host-connection";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
 
 export type DaemonStartResult = { ok: true } | { ok: false; error: string };
+export type DaemonStartCondition = boolean | (() => boolean | Promise<boolean>);
 
-type DaemonConnectionStore = Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+export interface StartDaemonIfEnabledInput {
+  shouldStart: DaemonStartCondition;
+}
+
+type DaemonConnectionStore = Pick<HostRuntimeStore, "getHosts" | "upsertConnectionFromListen">;
 
 export interface DaemonStartServiceDeps {
   store: DaemonConnectionStore;
@@ -15,13 +20,17 @@ export async function upsertDesktopDaemonConnection(
   store: DaemonConnectionStore,
   daemon: DesktopDaemonStatus,
 ): Promise<DaemonStartResult> {
-  const listenAddress = daemon.listen?.trim() ?? "";
   const serverId = daemon.serverId.trim();
-  if (!listenAddress) {
-    return { ok: false, error: "Desktop daemon did not return a listen address." };
-  }
   if (!serverId) {
     return { ok: false, error: "Desktop daemon did not return a server id." };
+  }
+  if (store.getHosts().some((host) => host.serverId === serverId)) {
+    return { ok: true };
+  }
+
+  const listenAddress = daemon.listen?.trim() ?? "";
+  if (!listenAddress) {
+    return { ok: false, error: "Desktop daemon did not return a listen address." };
   }
   if (!connectionFromListen(listenAddress)) {
     return {
@@ -50,8 +59,27 @@ export class DaemonStartService {
   }
 
   async start(): Promise<DaemonStartResult> {
+    return this.startIfEnabled({ shouldStart: true });
+  }
+
+  async startIfEnabled(input: StartDaemonIfEnabledInput): Promise<DaemonStartResult> {
+    // Settings evaluation is part of startup. Publish the running state before
+    // its first await so restored app chrome cannot appear between these phases.
     this.beginRequest();
     try {
+      let shouldStart: boolean;
+      try {
+        shouldStart =
+          typeof input.shouldStart === "boolean" ? input.shouldStart : await input.shouldStart();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return this.fail(`Failed to evaluate desktop daemon settings: ${message}`);
+      }
+
+      if (!shouldStart) {
+        return { ok: true };
+      }
+
       const daemon = await this.invokeStartDesktopDaemon();
       const result = await upsertDesktopDaemonConnection(this.store, daemon);
       return result.ok ? result : this.fail(result.error);
@@ -64,10 +92,6 @@ export class DaemonStartService {
 
   getLastError(): string | null {
     return this.lastError;
-  }
-
-  recordError(message: string): void {
-    this.setLastError(message);
   }
 
   isRunning(): boolean {

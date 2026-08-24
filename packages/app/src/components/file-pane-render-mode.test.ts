@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { filePreviewRenderKind, isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 
 describe("isRenderedMarkdownFile", () => {
   it("detects .md files", () => {
@@ -19,5 +19,22 @@ describe("isRenderedMarkdownFile", () => {
   it("does not treat other text files as rendered markdown", () => {
     expect(isRenderedMarkdownFile("src/index.ts")).toBe(false);
     expect(isRenderedMarkdownFile("README.md.txt")).toBe(false);
+    expect(isRenderedMarkdownFile("plan.html")).toBe(false);
+  });
+});
+
+describe("filePreviewRenderKind", () => {
+  it("maps each renderable extension to its kind", () => {
+    expect(filePreviewRenderKind("README.md")).toBe("markdown");
+    expect(filePreviewRenderKind("notes.markdown")).toBe("markdown");
+    expect(filePreviewRenderKind("plan.html")).toBe("html");
+    expect(filePreviewRenderKind("docs/PLAN.HTML")).toBe("html");
+    expect(filePreviewRenderKind("plan.htm")).toBe("html");
+  });
+
+  it("returns null for files without a rendered preview", () => {
+    expect(filePreviewRenderKind("src/index.ts")).toBe(null);
+    expect(filePreviewRenderKind("page.mdx")).toBe(null);
+    expect(filePreviewRenderKind("index.html.erb")).toBe(null);
   });
 });

@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import { useReplicaQuery } from "@/data/query";
+import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-
-export function daemonConfigQueryKey(serverId: string | null) {
-  return ["daemon-config", serverId] as const;
-}
 
 interface UseDaemonConfigResult {
   config: MutableDaemonConfig | null;
@@ -21,10 +19,10 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const queryKey = useMemo(() => daemonConfigQueryKey(serverId), [serverId]);
 
-  const configQuery = useQuery({
+  const configQuery = useReplicaQuery({
     queryKey,
     enabled: Boolean(serverId && client && isConnected),
-    staleTime: Infinity,
+    pushEvent: "status:daemon_config_changed",
     queryFn: async () => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -33,22 +31,6 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
       return result.config;
     },
   });
-
-  useEffect(() => {
-    if (!client || !isConnected || !serverId) {
-      return;
-    }
-
-    return client.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      if (message.payload.status !== "daemon_config_changed") {
-        return;
-      }
-      queryClient.setQueryData(queryKey, message.payload.config as MutableDaemonConfig);
-    });
-  }, [client, isConnected, queryClient, queryKey, serverId]);
 
   const patchConfig = useCallback(
     async (patch: MutableDaemonConfigPatch) => {

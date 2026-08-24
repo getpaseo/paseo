@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDraftKey } from "./input-draft-core";
+import { hasDraftContent, resolveDraftKey } from "./input-draft-core";
 import {
   buildDraftCommandConfig,
   resolveEffectiveComposerModelId,
@@ -23,6 +23,12 @@ describe("resolveDraftKey", () => {
         selectedServerId: "host-1",
       }),
     ).toBe("draft:host-1");
+  });
+});
+
+describe("hasDraftContent", () => {
+  it("preserves whitespace-only text while the user is editing", () => {
+    expect(hasDraftContent({ text: "\n\n\n\n\n", attachments: [] })).toBe(true);
   });
 });
 

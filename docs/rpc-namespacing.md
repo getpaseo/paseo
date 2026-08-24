@@ -3,14 +3,14 @@
 New WebSocket session RPCs use dotted names with the direction as the final segment:
 
 ```ts
-checkout.github.set_auto_merge.request;
-checkout.github.set_auto_merge.response;
+checkout.forge.set_auto_merge.request;
+checkout.forge.set_auto_merge.response;
 ```
 
 The namespace reads left to right:
 
 - Domain: `checkout`
-- Provider or subsystem: `github`
+- Namespace segment: `forge`
 - Operation: `set_auto_merge`; this segment is a verb, not a noun. If you would name an RPC `noun.request`, name it `get_noun.request` instead.
 - Direction: `request` or `response`
 
@@ -21,8 +21,8 @@ Use dots, not slashes. Dots are protocol namespaces; slashes imply paths or tran
 For ordinary correlated RPCs, a `.request` has a matching `.response` with the same prefix. The daemon client may derive the response type mechanically:
 
 ```ts
-checkout.github.set_auto_merge.request;
-// -> checkout.github.set_auto_merge.response
+checkout.forge.set_auto_merge.request;
+// -> checkout.forge.set_auto_merge.response
 ```
 
 Most new RPCs should follow this shape. If a request does not have a one-to-one response, call that out in the code near the schema.
@@ -33,7 +33,7 @@ Requests keep their parameters at the top level:
 
 ```ts
 {
-  type: "checkout.github.set_auto_merge.request",
+  type: "checkout.forge.set_auto_merge.request",
   cwd: "/repo",
   enabled: true,
   mergeMethod: "squash",
@@ -45,7 +45,7 @@ Responses put correlated result data under `payload`:
 
 ```ts
 {
-  type: "checkout.github.set_auto_merge.response",
+  type: "checkout.forge.set_auto_merge.response",
   payload: {
     cwd: "/repo",
     enabled: true,
@@ -58,14 +58,16 @@ Responses put correlated result data under `payload`:
 
 Keep `requestId` in both request and response payloads. It is the correlation key.
 
-## Provider Namespacing
+## Forge Namespacing
 
-Provider-specific behavior belongs under the provider segment:
+Forge-neutral behavior currently uses `checkout.forge.*` for checkout-scoped operations and `forge.search.*` for forge search; forge-specific names belong here only after schema and session handlers exist:
 
-- `checkout.github.*` for GitHub-specific checkout operations
-- `checkout.gitlab.*` for future GitLab-specific checkout operations
+- `checkout.forge.*` for operations whose request/response shape is genuinely
+  forge-neutral and whose implementation dispatches through the forge resolver.
+- `checkout.github.*` for existing GitHub-specific compatibility RPCs while
+  callers migrate to the neutral `checkout.forge.*` shape
 
-Do not put GitHub-specific enums or semantics into generic checkout RPC names. A generic RPC should only exist when the behavior is genuinely provider-neutral.
+Do not put GitHub-specific enums or semantics into `checkout.forge.*` RPC names. A generic forge RPC should only exist when the behavior is genuinely forge-neutral.
 
 ## Compatibility
 

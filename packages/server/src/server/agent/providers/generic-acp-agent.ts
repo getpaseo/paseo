@@ -5,6 +5,9 @@ import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
+  type ACPCatalogModelResolver,
+  type ACPClientCapabilityMeta,
+  type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
@@ -18,6 +21,17 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    clientCapabilities: z
+      .object({
+        fs: z
+          .object({
+            readTextFile: z.boolean().optional(),
+            writeTextFile: z.boolean().optional(),
+          })
+          .optional(),
+        terminal: z.boolean().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -33,7 +47,10 @@ interface GenericACPAgentClientOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
+  clientCapabilityMeta?: ACPClientCapabilityMeta;
+  configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  catalogModelResolver?: ACPCatalogModelResolver;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -43,6 +60,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   private readonly diagnosticPhaseTimeoutMs?: number;
 
   constructor(options: GenericACPAgentClientOptions) {
+    const providerParams = parseGenericACPProviderParams(options.providerParams);
     super({
       provider: "acp",
       logger: options.logger,
@@ -50,10 +68,14 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
-      capabilities: buildGenericACPCapabilities(options),
+      capabilities: buildGenericACPCapabilities(providerParams),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
+      clientCapabilities: providerParams.clientCapabilities,
+      clientCapabilityMeta: options.clientCapabilityMeta,
+      configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      catalogModelResolver: options.catalogModelResolver,
     });
 
     this.command = options.command;
@@ -139,8 +161,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 }
 
-function buildGenericACPCapabilities(options: GenericACPAgentClientOptions): AgentCapabilityFlags {
-  const params = parseGenericACPProviderParams(options.providerParams);
+function buildGenericACPCapabilities(params: GenericACPProviderParams): AgentCapabilityFlags {
   return {
     ...DEFAULT_ACP_CAPABILITIES,
     supportsMcpServers: params.supportsMcpServers ?? DEFAULT_ACP_CAPABILITIES.supportsMcpServers,

@@ -1,10 +1,31 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  shouldSeedWorkspaceSetupTab,
   shouldShowWorkspaceSetup,
   useWorkspaceSetupStore,
+  type WorkspaceSetupSnapshot,
   type WorkspaceSetupStatusClient,
   type WorkspaceSetupStatusResult,
 } from "./workspace-setup-store";
+
+function makeSnapshot(
+  status: WorkspaceSetupSnapshot["status"],
+  error: string | null = null,
+): WorkspaceSetupSnapshot {
+  return {
+    workspaceId: "workspace-1",
+    status,
+    detail: {
+      type: "worktree_setup",
+      worktreePath: "/Users/test/project",
+      branchName: "main",
+      log: "",
+      commands: [],
+    },
+    error,
+    updatedAt: Date.now(),
+  };
+}
 
 const DEFAULT_SNAPSHOT: WorkspaceSetupStatusResult["snapshot"] = {
   status: "running",
@@ -105,6 +126,7 @@ describe("workspace-setup-store", () => {
       pendingWorkspaceSetup: null,
       snapshots: {},
       requestedKeys: new Set(),
+      surfacedFailedSetupKeys: new Set(),
     });
   });
 
@@ -197,6 +219,40 @@ describe("workspace-setup-store", () => {
         updatedAt: Date.now(),
       }),
     ).toBe(true);
+  });
+
+  it("seeds a setup tab only for failed setup", () => {
+    expect(shouldSeedWorkspaceSetupTab(null)).toBe(false);
+    expect(shouldSeedWorkspaceSetupTab(makeSnapshot("running"))).toBe(false);
+    expect(shouldSeedWorkspaceSetupTab(makeSnapshot("completed"))).toBe(false);
+    expect(shouldSeedWorkspaceSetupTab(makeSnapshot("failed", "Setup failed"))).toBe(true);
+  });
+
+  it("claims one failed setup surface until a later setup lifecycle begins", () => {
+    const store = useWorkspaceSetupStore.getState();
+    const identity = { serverId: "server-1", workspaceId: "42" };
+
+    store.upsertProgress({
+      serverId: identity.serverId,
+      payload: { ...makeSnapshot("failed", "Setup failed"), workspaceId: identity.workspaceId },
+    });
+
+    expect(store.claimFailedSetupSurface(identity)).toBe(true);
+    expect(useWorkspaceSetupStore.getState().claimFailedSetupSurface(identity)).toBe(false);
+
+    useWorkspaceSetupStore.getState().upsertProgress({
+      serverId: identity.serverId,
+      payload: { ...makeSnapshot("running"), workspaceId: identity.workspaceId },
+    });
+    useWorkspaceSetupStore.getState().upsertProgress({
+      serverId: identity.serverId,
+      payload: {
+        ...makeSnapshot("failed", "Setup failed again"),
+        workspaceId: identity.workspaceId,
+      },
+    });
+
+    expect(useWorkspaceSetupStore.getState().claimFailedSetupSurface(identity)).toBe(true);
   });
 
   it("ensureSetupStatus fetches setup status once and stores the snapshot", async () => {

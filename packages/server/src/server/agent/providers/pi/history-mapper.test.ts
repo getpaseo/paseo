@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import type { PiAgentMessage } from "./rpc-types.js";
 import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
+import type { PiAgentMessage } from "./rpc-types.js";
 
 async function collectHistory(
   messages: PiAgentMessage[],
@@ -29,6 +29,7 @@ describe("Pi history mapper", () => {
         },
         {
           role: "assistant",
+          responseId: "response-1",
           content: [
             { type: "thinking", thinking: "checking file" },
             { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "note.txt" } },
@@ -77,7 +78,7 @@ describe("Pi history mapper", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "done" },
+        item: { type: "assistant_message", text: "done", messageId: "response-1" },
       },
       {
         type: "timeline",
@@ -127,6 +128,18 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("replays non-notice custom messages as assistant text, matching the live path", async () => {
+    await expect(
+      collectHistory([{ role: "custom", content: "Extension command output" }]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Extension command output" },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(
@@ -153,7 +166,11 @@ describe("Pi history mapper", () => {
       {
         type: "timeline",
         provider: "pi",
-        item: { type: "assistant_message", text: "first answer" },
+        item: {
+          type: "assistant_message",
+          text: "first answer",
+          messageId: "pi-history-assistant-1",
+        },
       },
       {
         type: "timeline",

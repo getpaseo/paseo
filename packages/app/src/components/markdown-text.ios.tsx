@@ -1,11 +1,24 @@
 import { useMemo, type ReactNode } from "react";
-import { View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Text,
+  View,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import { UITextView } from "react-native-uitextview";
 import { resolvePlainMarkdownTextStyle } from "@/components/markdown-text-style";
+import {
+  iosMarkdownTextIsSelectable,
+  useMarkdownTextSurface,
+} from "@/components/markdown-text-selection";
+import type { MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  copyTag?: MarkdownCopyInlineTag;
   children: ReactNode;
   // Links route through this span too (see assistant-file-links/link.tsx). A
   // plain <Text> nested in the paragraph UITextView is dropped, so the link
@@ -29,6 +42,22 @@ export function MarkdownTextSpan({
   accessibilityRole,
 }: MarkdownTextSpanProps) {
   const plainStyle = useMemo(() => resolvePlainMarkdownTextStyle(style), [style]);
+  const surface = useMarkdownTextSurface();
+
+  // Each selectable span creates a UIKit UITextView with a window-level tap recognizer.
+  // A large table would create one per cell and make every app touch fan out across them.
+  if (!iosMarkdownTextIsSelectable(surface)) {
+    return (
+      <Text
+        selectable={false}
+        style={plainStyle}
+        onPress={onPress}
+        accessibilityRole={accessibilityRole}
+      >
+        {children}
+      </Text>
+    );
+  }
 
   return (
     <UITextView

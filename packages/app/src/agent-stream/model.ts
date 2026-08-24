@@ -1,11 +1,8 @@
 import type { ReactNode } from "react";
 import { deriveStreamTurnTiming, type StreamTurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
-import {
-  findMountedWindowStart,
-  getWebMountedRecentStreamItems,
-  getWebPartialVirtualizationThreshold,
-} from "./web-virtualization";
+import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
+import { getWebPartialVirtualizationThreshold } from "./web-virtualization";
 import { orderHeadForStreamRenderStrategy, orderTailForStreamRenderStrategy } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
@@ -35,11 +32,13 @@ export interface AgentStreamRenderModel {
 }
 
 export interface BuildAgentStreamRenderModelInput {
-  agentStatus: string;
+  isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
+  historyStart?: number;
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -90,7 +89,7 @@ function splitOrderedTail(params: {
     platform === "web" &&
     !isMobileBreakpoint &&
     orderedTail.length > getWebPartialVirtualizationThreshold();
-  const cacheKey = `${platform}:${isMobileBreakpoint}:${getWebMountedRecentStreamItems()}:${shouldSplitHistory}`;
+  const cacheKey = `${platform}:${isMobileBreakpoint}:${getMountedRecentStreamItems()}:${shouldSplitHistory}`;
   let cachedByKey = splitHistoryCache.get(orderedTail);
   if (!cachedByKey) {
     cachedByKey = new Map();
@@ -116,7 +115,7 @@ function splitOrderedTail(params: {
 
   const mountedWindowStart = findMountedWindowStart({
     items: orderedTail,
-    minMountedCount: getWebMountedRecentStreamItems(),
+    minMountedCount: getMountedRecentStreamItems(),
   });
   const split = {
     history: orderedTail,
@@ -131,7 +130,8 @@ function splitOrderedTail(params: {
 }
 
 function getTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
@@ -140,17 +140,18 @@ function getTurnTiming(params: {
     cachedByHead = new WeakMap();
     turnTimingCache.set(params.tail, cachedByHead);
   }
-  let cachedByStatus = cachedByHead.get(params.head);
-  if (!cachedByStatus) {
-    cachedByStatus = new Map();
-    cachedByHead.set(params.head, cachedByStatus);
+  let cachedByActivity = cachedByHead.get(params.head);
+  if (!cachedByActivity) {
+    cachedByActivity = new Map();
+    cachedByHead.set(params.head, cachedByActivity);
   }
-  const cached = cachedByStatus.get(params.agentStatus);
+  const activityKey = `${params.isTurnActive}:${params.activeTurnStartedAt?.getTime() ?? "none"}`;
+  const cached = cachedByActivity.get(activityKey);
   if (cached) {
     return cached;
   }
   const timing = deriveStreamTurnTiming(params);
-  cachedByStatus.set(params.agentStatus, timing);
+  cachedByActivity.set(activityKey, timing);
   return timing;
 }
 
@@ -162,9 +163,10 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const orderingCacheKey = `${input.platform}:${input.isMobileBreakpoint}`;
+  const renderedTail = input.historyStart ? input.tail.slice(input.historyStart) : input.tail;
   const orderedTail = getOrderedItems({
     cache: orderedTailCache,
-    source: input.tail,
+    source: renderedTail,
     cacheKey: orderingCacheKey,
     order: (items) =>
       orderTailForStreamRenderStrategy({
@@ -188,8 +190,9 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const turnTiming = getTurnTiming({
-    agentStatus: input.agentStatus,
-    tail: input.tail,
+    isTurnActive: input.isTurnActive,
+    activeTurnStartedAt: input.activeTurnStartedAt,
+    tail: renderedTail,
     head: input.head,
   });
 

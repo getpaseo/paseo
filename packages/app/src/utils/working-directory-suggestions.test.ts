@@ -12,31 +12,53 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/projects/paseo"]);
   });
 
-  it("prioritizes matching recommended directories before server matches", () => {
+  it("keeps fuzzy recommendation matches before de-duplicated daemon suggestions", () => {
     const results = buildWorkingDirectorySuggestions({
-      recommendedPaths: ["/Users/me/projects/paseo", "/Users/me/documents"],
-      serverPaths: [
-        "/Users/me/projects/playground",
-        "/Users/me/projects/paseo",
-        "/Users/me/projects/planbook",
+      recommendedPaths: ["/Users/me/projects/paseo-desktop", "/Users/me/documents"],
+      serverPaths: ["/Users/me/projects/paseo-plan", "/Users/me/projects/paseo-desktop"],
+      query: "pso",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo-desktop", "/Users/me/projects/paseo-plan"]);
+  });
+
+  it("does not reinterpret daemon-ranked suggestions", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["/Users/me/projects/paseo-desktop"],
+      query: "a-query-ranked-by-the-daemon",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
+  });
+
+  it("matches recommended paths using the complete path text", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [
+        "/Users/me/archive/projects/paseo-desktop",
+        "/Users/me/projects/paseo-desktop",
       ],
-      query: "pla",
+      serverPaths: [],
+      query: "projects/pso",
     });
 
-    expect(results).toEqual(["/Users/me/projects/playground", "/Users/me/projects/planbook"]);
+    expect(results).toEqual([
+      "/Users/me/archive/projects/paseo-desktop",
+      "/Users/me/projects/paseo-desktop",
+    ]);
   });
 
-  it("puts matching recommended items first when they also match query", () => {
+  it("fuzzy-matches recommended paths using their full path", () => {
     const results = buildWorkingDirectorySuggestions({
-      recommendedPaths: ["/Users/me/projects/playground", "/Users/me/projects/paseo"],
-      serverPaths: ["/Users/me/projects/planbook", "/Users/me/projects/playground"],
-      query: "pla",
+      recommendedPaths: ["/Users/me/projects/blankpage/editor"],
+      serverPaths: [],
+      query: "blank page editor",
     });
 
-    expect(results).toEqual(["/Users/me/projects/playground", "/Users/me/projects/planbook"]);
+    expect(results).toEqual(["/Users/me/projects/blankpage/editor"]);
   });
 
-  it("treats '~' as an active query and includes server suggestions", () => {
+  it("treats '~' as an active query and includes daemon suggestions", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: ["/Users/me/projects/paseo"],
       serverPaths: ["/Users/me/documents", "/Users/me/projects"],

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { TFunction } from "i18next";
+import React from "react";
 import {
   CircleDot,
   FileText,
@@ -12,6 +13,7 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { isPullRequestContextAttachment } from "@/attachments/workspace-attachment-utils";
+import { getForgePresentation } from "@/git/forge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 export interface AttachmentPillContent {
@@ -27,10 +29,16 @@ function getReviewSubtitle(count: number, t: TFunction): string {
 }
 
 function getPullRequestContextSubtitle(attachment: WorkspaceComposerAttachment): string {
-  if (attachment.kind === "github.pull_request_check") {
+  if (
+    attachment.kind === "forge.change_request_check" ||
+    attachment.kind === "github.pull_request_check"
+  ) {
     return "Check logs";
   }
-  if (attachment.kind === "github.pull_request_comment") {
+  if (
+    attachment.kind === "forge.change_request_comment" ||
+    attachment.kind === "github.pull_request_comment"
+  ) {
     return "Comment";
   }
   return "Review";
@@ -57,12 +65,21 @@ export function getAgentAttachmentPillContent(
         title: t("message.attachments.review"),
         subtitle: getReviewSubtitle(attachment.comments.length, t),
       };
+    case "forge_change_request": {
+      const presentation = getForgePresentation(attachment.forge ?? "github");
+      return {
+        icon: attachmentGithubPrIcon,
+        title: attachment.title,
+        subtitle: `${presentation.changeRequestAbbrev} ${presentation.numberPrefix}${attachment.number}`,
+      };
+    }
     case "github_pr":
       return {
         icon: attachmentGithubPrIcon,
         title: attachment.title,
         subtitle: `PR #${attachment.number}`,
       };
+    case "forge_issue":
     case "github_issue":
       return {
         icon: attachmentGithubIssueIcon,
@@ -70,6 +87,13 @@ export function getAgentAttachmentPillContent(
         subtitle: `Issue #${attachment.number}`,
       };
     case "text":
+      if (attachment.externalResource) {
+        return {
+          icon: attachmentGithubIssueIcon,
+          title: attachment.externalResource.title,
+          subtitle: `${attachment.externalResource.providerLabel} ${attachment.externalResource.identifier}`,
+        };
+      }
       return {
         icon: attachmentFileIcon,
         title: attachment.title ?? t("message.attachments.textAttachment"),

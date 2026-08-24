@@ -196,14 +196,20 @@ describe("sendOsNotification", () => {
 
     await sendOsNotification({
       title: "Agent finished",
-      data: { serverId: "srv with space", agentId: "agent/1" },
+      data: {
+        serverId: "srv with space",
+        workspaceId: "workspace-1",
+        agentId: "agent/1",
+      },
     });
 
     const clicked = created[0];
     expect(clicked.clickListeners).toHaveLength(1);
     clicked.clickListeners[0]?.({} as Event);
 
-    expect(assign).toHaveBeenCalledWith("/h/srv%20with%20space/agent/agent%2F1");
+    expect(assign).toHaveBeenCalledWith(
+      "/h/srv%20with%20space/workspace/workspace-1?open=agent%3Aagent%2F1",
+    );
   });
 
   it("returns false when the Notification API is unavailable", async () => {

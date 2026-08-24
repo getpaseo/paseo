@@ -1,17 +1,11 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  Text,
-  View,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { EditorAppIcon } from "@/components/icons/editor-app-icons";
-import { GitHubIcon } from "@/components/icons/github-icon";
+import { EditorTargetIcon } from "@/components/icons/editor-target-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
+import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
@@ -30,6 +25,9 @@ import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-op
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
 import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
 import type { Theme } from "@/styles/theme";
+import { ForgeBrandIcon } from "@/git/forge-icon";
+import { getForgePresentation } from "@/git/forge";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -45,14 +43,17 @@ interface OpenTarget {
   onOpen: () => Promise<void> | void;
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedEditorAppIcon = withUnistyles(EditorAppIcon);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedEditorTargetIcon = withUnistyles(EditorTargetIcon);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheckIcon = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function renderForgeOpenTargetIcon(icon: string): ReactElement {
+  return <ForgeBrandIcon iconKind={icon} size={16} uniProps={mutedColorMapping} />;
+}
 
 interface OpenTargetMenuItemProps {
   target: OpenTarget;
@@ -111,6 +112,10 @@ export function WorkspaceOpenInEditorButton({
     serverId,
     cwd: shouldQueryCheckout ? cwd : "",
   });
+  const { resolvedForge } = useCheckoutPrStatusQuery({
+    serverId,
+    cwd: shouldQueryCheckout ? cwd : "",
+  });
 
   const targets = useMemo<OpenTarget[]>(
     () =>
@@ -122,19 +127,23 @@ export function WorkspaceOpenInEditorButton({
         canUseDesktopBridge: isDesktopOpenAvailable,
         isLocalExecution: isLocalDaemon,
         checkoutStatus,
+        forge: resolvedForge,
       }).map((target) => {
-        if (target.source === "github") {
+        if (target.source === "forge") {
+          const presentation = getForgePresentation(target.forge);
           return {
             id: target.id,
             label: target.label,
-            icon: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+            icon: renderForgeOpenTargetIcon(presentation.icon),
             onOpen: () => openExternalUrl(target.url),
           };
         }
         return {
           id: target.id,
           label: target.label,
-          icon: <ThemedEditorAppIcon editorId={target.id} size={16} uniProps={mutedColorMapping} />,
+          icon: (
+            <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
+          ),
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),
@@ -143,6 +152,7 @@ export function WorkspaceOpenInEditorButton({
       checkoutStatus,
       cwd,
       desktopOpenTargets,
+      resolvedForge,
       isDesktopOpenAvailable,
       isLocalDaemon,
       resolvedFile,
@@ -221,7 +231,7 @@ export function WorkspaceOpenInEditorButton({
           }
         >
           {openMutation.isPending ? (
-            <ThemedActivityIndicator
+            <ThemedLoadingSpinner
               size="small"
               uniProps={foregroundColorMapping}
               style={styles.splitButtonSpinnerOnly}
@@ -275,9 +285,10 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
+    height: buttonControlHeight.xs,
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
@@ -285,14 +296,12 @@ const styles = StyleSheet.create((theme) => ({
   splitButtonPrimary: {
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
   },
   splitButtonPrimaryIconOnly: {
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
   },
@@ -303,8 +312,8 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.6,
   },
   splitButtonText: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.5,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.5,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
   },
@@ -313,7 +322,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[2],
-    minHeight: theme.fontSize.sm * 1.5,
+    minHeight: theme.fontSize.base * 1.5,
   },
   splitButtonSpinnerOnly: {
     transform: [{ scale: 0.8 }],

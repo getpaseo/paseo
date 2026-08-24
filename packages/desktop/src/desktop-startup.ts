@@ -1,17 +1,15 @@
 export interface DesktopStartupDependencies {
-  hasPendingOpenProjectPath: boolean;
+  hasPendingGuiLaunchRequest: boolean;
   runCliPassthroughIfRequested: () => Promise<boolean>;
   inheritLoginShellEnv: () => void;
   bootstrapGui: () => Promise<void>;
-  autoUpdateInstalledSkills?: () => void;
 }
 
 export async function runDesktopStartup(deps: DesktopStartupDependencies): Promise<void> {
-  if (!deps.hasPendingOpenProjectPath && (await deps.runCliPassthroughIfRequested())) {
+  if (!deps.hasPendingGuiLaunchRequest && (await deps.runCliPassthroughIfRequested())) {
     return;
   }
 
   deps.inheritLoginShellEnv();
   await deps.bootstrapGui();
-  deps.autoUpdateInstalledSkills?.();
 }

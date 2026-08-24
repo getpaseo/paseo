@@ -30,6 +30,15 @@ const BACKTICK_RUN_RE = /`+/g;
 const SAFE_IMAGE_SRC_RE = /^(https?:\/\/|data:image\/(?:png|gif|jpe?g);base64,)/i;
 const SAFE_LINK_HREF_RE = /^(https?:\/\/|#(?:$|[\w-]))/i;
 const VOID_HTML_TAGS = new Set(["br", "img"]);
+const MARKDOWN_TAG_WRAPPERS: Readonly<Record<string, readonly [string, string]>> = {
+  b: ["**", "**"],
+  del: ["~~", "~~"],
+  em: ["*", "*"],
+  i: ["*", "*"],
+  s: ["~~", "~~"],
+  strike: ["~~", "~~"],
+  strong: ["**", "**"],
+};
 
 interface ProtectedMarkdownRange {
   start: number;
@@ -313,34 +322,81 @@ function renderInlineTokens(tokens: HtmlToken[]): string {
     }
 
     const children = tokens.slice(index + 1, closeIndex);
-    if (token.name === "a") {
-      output += renderLinkToken(token, children);
-      index = closeIndex;
-      continue;
-    }
-    if (token.name === "sub") {
-      output += renderInlineTokens(children);
-      index = closeIndex;
-      continue;
-    }
-    if (token.name === "code" && children.every((child) => child.kind === "text")) {
-      output += `\`${renderInlineTokens(children)}\``;
-      index = closeIndex;
-      continue;
-    }
-    const rawTag = token.raw;
-    const tagName = token.name;
-    if (isHeadingTag(token)) {
-      output += renderInlineTokens(children);
-      index = closeIndex;
-      continue;
-    }
-
-    output += `${rawTag}${renderInlineTokens(children)}</${tagName}>`;
+    output += renderHtmlTag(token, children);
     index = closeIndex;
   }
 
   return output;
+}
+
+function renderHtmlTag(token: HtmlTagToken, children: HtmlToken[]): string {
+  if (token.name === "a") {
+    return renderLinkToken(token, children);
+  }
+  if (token.name === "sub" || isHeadingTagName(token.name)) {
+    return renderInlineTokens(children);
+  }
+  if (token.name === "code" && children.every((child) => child.kind === "text")) {
+    return `\`${renderInlineTokens(children)}\``;
+  }
+  const wrapper = MARKDOWN_TAG_WRAPPERS[token.name];
+  if (wrapper) {
+    return `${wrapper[0]}${renderInlineTokens(children)}${wrapper[1]}`;
+  }
+  if (token.name === "table") {
+    return renderTableTokens(children);
+  }
+  if (token.name === "p" || token.name === "div") {
+    return `\n\n${renderInlineTokens(children).trim()}\n\n`;
+  }
+  return `${token.raw}${renderInlineTokens(children)}</${token.name}>`;
+}
+
+function renderTableTokens(tokens: HtmlToken[]): string {
+  const rows: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!isOpenTag(tokens[index], "tr")) {
+      continue;
+    }
+    const closeIndex = findMatchingClose(tokens, index, "tr");
+    if (closeIndex === null) {
+      continue;
+    }
+    const cells = renderTableCells(tokens.slice(index + 1, closeIndex));
+    if (cells.length === 1) {
+      rows.push(`- ${cells[0]}`);
+    } else if (cells.length > 1) {
+      const label =
+        cells[0].startsWith("**") && cells[0].endsWith("**") ? cells[0] : `**${cells[0]}**`;
+      rows.push(`- ${label}: ${cells.slice(1).join(" ")}`);
+    }
+    index = closeIndex;
+  }
+
+  return rows.length > 0 ? `\n${rows.join("\n")}\n` : "";
+}
+
+function renderTableCells(tokens: HtmlToken[]): string[] {
+  const cells: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!isOpenTag(token, "td") && !isOpenTag(token, "th")) {
+      continue;
+    }
+    const closeIndex = findMatchingClose(tokens, index, token.name);
+    if (closeIndex === null) {
+      continue;
+    }
+    const cell = renderInlineTokens(tokens.slice(index + 1, closeIndex)).trim();
+    if (cell) {
+      cells.push(cell);
+    }
+    index = closeIndex;
+  }
+
+  return cells;
 }
 
 function renderImageToken(token: HtmlTagToken): string {

@@ -1,5 +1,6 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useMemo } from "react";
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -98,14 +99,14 @@ export function DictationControls({
         </Pressable>
         {actionsDisabled ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
+            <LoadingSpinner size="small" color={theme.colors.foreground} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed ? (
           <Pressable
             onPress={onRetry}
             accessibilityLabel={t("message.dictation.retry")}
-            style={ACTION_CONFIRM_STYLE}
+            style={[styles.actionButton, styles.actionButtonConfirm]}
           >
             <RefreshCcw size={theme.iconSize.sm} color={theme.colors.surface0} />
           </Pressable>
@@ -115,14 +116,14 @@ export function DictationControls({
             <Pressable
               onPress={onAccept}
               accessibilityLabel={t("message.dictation.insert")}
-              style={ACTION_SECONDARY_STYLE}
+              style={[styles.actionButton, styles.actionButtonSecondary]}
             >
               <Check size={theme.iconSize.sm} color={theme.colors.foreground} />
             </Pressable>
             <Pressable
               onPress={onAcceptAndSend}
               accessibilityLabel={t("message.dictation.insertAndSend")}
-              style={ACTION_CONFIRM_STYLE}
+              style={[styles.actionButton, styles.actionButtonConfirm]}
             >
               <ArrowUp size={theme.iconSize.sm} color={theme.colors.surface0} />
             </Pressable>
@@ -221,7 +222,7 @@ export function DictationOverlay({
       <View style={overlayStyles.actionButtonsContainer}>
         {actionsDisabled ? (
           <View style={overlayStyles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.accentForeground} />
+            <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed ? (
@@ -240,7 +241,7 @@ export function DictationOverlay({
               onPress={onAccept}
               accessibilityRole="button"
               accessibilityLabel={t("message.dictation.insert")}
-              style={OVERLAY_ACCEPT_BUTTON_STYLE}
+              style={[overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG]}
             >
               <Pencil
                 size={theme.iconSize.lg}
@@ -287,7 +288,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   timerText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
@@ -325,7 +326,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   statusLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
 }));
@@ -366,12 +367,12 @@ const overlayStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[4],
   },
   timerText: {
-    fontSize: theme.fontSize.xl,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
   transcriptText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     textAlign: "center",
     paddingHorizontal: theme.spacing[2],
@@ -400,7 +401,4 @@ const overlayStyles = StyleSheet.create((theme) => ({
   },
 }));
 
-const ACTION_CONFIRM_STYLE = [styles.actionButton, styles.actionButtonConfirm];
-const ACTION_SECONDARY_STYLE = [styles.actionButton, styles.actionButtonSecondary];
 const OVERLAY_ACCEPT_BUTTON_BG = { backgroundColor: "rgba(255, 255, 255, 0.25)" };
-const OVERLAY_ACCEPT_BUTTON_STYLE = [overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG];

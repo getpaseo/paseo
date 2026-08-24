@@ -13,7 +13,7 @@ export function showProviderNoticeToast(
     return;
   }
   toast.show(notice.message, {
-    variant: "default",
-    durationMs: notice.type === "warning" ? 3200 : undefined,
+    variant: notice.type,
+    durationMs: notice.type === "warning" ? 5000 : undefined,
   });
 }

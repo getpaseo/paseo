@@ -29,7 +29,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --workspace=@getpaseo/website --include-workspace-root
+        run: node scripts/npm-retry.mjs ci --workspace=@getpaseo/website --include-workspace-root
 
       - name: Typecheck
         run: npm run typecheck --workspace=@getpaseo/website

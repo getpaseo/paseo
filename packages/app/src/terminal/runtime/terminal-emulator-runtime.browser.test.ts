@@ -15,6 +15,7 @@ interface TerminalSize {
   rows: number;
   cols: number;
   shouldClaim: boolean;
+  forceClaim?: boolean;
 }
 
 interface TerminalKeyRecord {
@@ -26,6 +27,7 @@ interface TerminalKeyRecord {
 }
 
 type BrowserTerminal = TerminalSize & {
+  input: (data: string, wasUserInput?: boolean) => void;
   refresh: (start: number, end: number) => void;
   reset: () => void;
 };
@@ -64,6 +66,10 @@ async function waitFor(input: { predicate: () => boolean; timeoutMs?: number }):
     }
     await nextFrame();
   }
+}
+
+function settleMountRefits(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 2_600));
 }
 
 function createTerminalHost(input: {
@@ -129,6 +135,23 @@ function latestSize(sizes: TerminalSize[]): TerminalSize {
     throw new Error("Terminal did not report a size");
   }
   return size;
+}
+
+function expectNoForcedSameSizeClaim(input: {
+  sizes: TerminalSize[];
+  startIndex: number;
+  baseline: TerminalSize;
+}): void {
+  const forcedSameSizeClaims = input.sizes
+    .slice(input.startIndex)
+    .filter(
+      (size) =>
+        size.rows === input.baseline.rows &&
+        size.cols === input.baseline.cols &&
+        size.shouldClaim &&
+        size.forceClaim,
+    );
+  expect(forcedSameSizeClaims).toEqual([]);
 }
 
 function getBrowserTerminal(): BrowserTerminal {
@@ -204,8 +227,17 @@ describe("terminal emulator runtime in a real browser", () => {
     const mounted = createTerminalHost({ width: 720, height: 360 });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
 
-    expect(mounted.sizes[0]?.shouldClaim).toBe(false);
+    expect(mounted.sizes.length).toBeGreaterThan(1);
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+
+    const settledSize = latestSize(mounted.sizes);
+    mounted.runtime.resize({ forceClaim: true, shouldClaim: true });
+
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([
+      { ...settledSize, shouldClaim: true, forceClaim: true },
+    ]);
   });
 
   it("reports a larger PTY size when the terminal container grows", async () => {
@@ -218,7 +250,7 @@ describe("terminal emulator runtime in a real browser", () => {
     mounted.root.style.width = "720px";
     mounted.root.style.height = "360px";
     await nextFrame();
-    mounted.runtime.resize({ force: true });
+    mounted.runtime.resize({ forceRefresh: true, shouldClaim: true });
 
     await waitFor({
       predicate: () => {
@@ -231,6 +263,92 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(grownSize.cols).toBeGreaterThan(initialSize.cols);
     expect(grownSize.rows).toBeGreaterThan(initialSize.rows);
     expect(grownSize.shouldClaim).toBe(true);
+  });
+
+  it("keeps passive container measurements local after another client can claim", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 360, height: 180 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+    const initialSize = latestSize(mounted.sizes);
+    mounted.sizes.length = 0;
+
+    mounted.root.style.width = "720px";
+    mounted.root.style.height = "360px";
+
+    await waitFor({
+      predicate: () =>
+        mounted.sizes.some((size) => size.cols > initialSize.cols && size.rows > initialSize.rows),
+    });
+
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+  });
+
+  it("keeps visual viewport keyboard refits passive", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 360, height: 180 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+    mounted.sizes.length = 0;
+
+    mounted.root.style.width = "720px";
+    mounted.root.style.height = "360px";
+    expect(window.visualViewport).not.toBeNull();
+    window.visualViewport?.dispatchEvent(new Event("resize"));
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+  });
+
+  it("keeps browser window refits passive", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 360, height: 180 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+    mounted.sizes.length = 0;
+
+    mounted.root.style.width = "720px";
+    mounted.root.style.height = "360px";
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    expect(mounted.sizes.filter((size) => size.shouldClaim)).toEqual([]);
+  });
+
+  it("does not force-claim a same-size resize while forwarding ordinary terminal input", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const sizeCount = mounted.sizes.length;
+    const sizeBeforeInput = latestSize(mounted.sizes);
+    const terminal = getBrowserTerminal();
+
+    terminal.input("a", true);
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+
+    expect(mounted.inputs.at(-1)).toBe("a");
+    expectNoForcedSameSizeClaim({
+      sizes: mounted.sizes,
+      startIndex: sizeCount,
+      baseline: sizeBeforeInput,
+    });
+  });
+
+  it("pastes through xterm's input producer", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    mounted.runtime.paste("legacy renderer paste");
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+    expect(mounted.inputs).toEqual(["legacy renderer paste"]);
   });
 
   it("refreshes visible rows on a forced same-size resize", async () => {
@@ -247,7 +365,7 @@ describe("terminal emulator runtime in a real browser", () => {
       originalRefresh(start, end);
     };
 
-    mounted.runtime.resize({ force: true });
+    mounted.runtime.resize({ forceRefresh: true, shouldClaim: false });
 
     await waitFor({ predicate: () => refreshCalls.length > 0 });
     expect(refreshCalls.at(-1)).toEqual([0, terminal.rows - 1]);
@@ -318,6 +436,32 @@ describe("terminal emulator runtime in a real browser", () => {
         meta: false,
       },
     ]);
+
+    const sizeCount = mounted.sizes.length;
+    const sizeBeforeKey = latestSize(mounted.sizes);
+    mounted.terminalKeys.length = 0;
+
+    dispatchTerminalKey({
+      host: mounted.host,
+      key: "Enter",
+      shiftKey: true,
+    });
+    await nextFrame();
+
+    expect(mounted.terminalKeys).toEqual([
+      {
+        key: "Enter",
+        ctrl: false,
+        shift: true,
+        alt: false,
+        meta: false,
+      },
+    ]);
+    expectNoForcedSameSizeClaim({
+      sizes: mounted.sizes,
+      startIndex: sizeCount,
+      baseline: sizeBeforeKey,
+    });
   });
 
   it.each([

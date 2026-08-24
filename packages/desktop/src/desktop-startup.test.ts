@@ -5,7 +5,7 @@ describe("desktop startup", () => {
   it("runs CLI passthrough before GUI login-shell env inheritance", async () => {
     const calls: string[] = [];
     await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
+      hasPendingGuiLaunchRequest: false,
       runCliPassthroughIfRequested: vi.fn(async () => {
         calls.push("cli");
         return true;
@@ -22,7 +22,7 @@ describe("desktop startup", () => {
   it("keeps login-shell env inheritance on normal GUI startup", async () => {
     const calls: string[] = [];
     await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
+      hasPendingGuiLaunchRequest: false,
       runCliPassthroughIfRequested: vi.fn(async () => {
         calls.push("cli");
         return false;
@@ -36,30 +36,12 @@ describe("desktop startup", () => {
     expect(calls).toEqual(["cli", "env", "gui"]);
   });
 
-  it("starts skills auto-update after GUI startup", async () => {
-    const calls: string[] = [];
-    await runDesktopStartup({
-      hasPendingOpenProjectPath: false,
-      runCliPassthroughIfRequested: vi.fn(async () => {
-        calls.push("cli");
-        return false;
-      }),
-      inheritLoginShellEnv: vi.fn(() => calls.push("env")),
-      bootstrapGui: vi.fn(async () => {
-        calls.push("gui");
-      }),
-      autoUpdateInstalledSkills: vi.fn(() => calls.push("skills")),
-    });
-
-    expect(calls).toEqual(["cli", "env", "gui", "skills"]);
-  });
-
   it("does not route open-project launches through CLI passthrough", async () => {
     const runCliPassthroughIfRequested = vi.fn(async () => true);
     const calls: string[] = [];
 
     await runDesktopStartup({
-      hasPendingOpenProjectPath: true,
+      hasPendingGuiLaunchRequest: true,
       runCliPassthroughIfRequested,
       inheritLoginShellEnv: vi.fn(() => calls.push("env")),
       bootstrapGui: vi.fn(async () => {

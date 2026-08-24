@@ -1,0 +1,261 @@
+import { execSync } from "node:child_process";
+import { mkdtemp, readFile, writeFile, rm, mkdir, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const TEMP_CLEANUP_RETRIES = 5;
+const TEMP_CLEANUP_RETRY_DELAY_MS = 100;
+
+interface TempRepo {
+  path: string;
+  branchHeads: Record<string, string>;
+  cleanup: () => Promise<void>;
+}
+
+export interface TempDirectory {
+  path: string;
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * The temp root for E2E fixtures. On macOS we resolve symlinks (/tmp →
+ * /private/tmp) so fixture paths match the daemon's resolved paths; on Windows
+ * `/tmp` doesn't exist, so fall back to the OS temp dir.
+ */
+export async function resolveTempRoot(): Promise<string> {
+  return process.platform === "win32" ? tmpdir() : await realpath("/tmp");
+}
+
+async function configureRemote(input: {
+  repoPath: string;
+  withRemote: boolean;
+  originUrl: string | undefined;
+}): Promise<void> {
+  const { repoPath, withRemote, originUrl } = input;
+  if (withRemote) {
+    // Deterministic local remote to avoid relying on external auth/network in e2e.
+    const remoteDir = path.join(repoPath, "remote.git");
+    await mkdir(remoteDir, { recursive: true });
+    execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
+    execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    if (originUrl) {
+      // Relabel origin to a display URL after the local tracking remote is set
+      // up, so project grouping shows the remote's owner/repo while branch
+      // tracking refs still resolve locally (no fetch from the synthetic URL).
+      execSync(`git remote set-url origin ${JSON.stringify(originUrl)}`, {
+        cwd: repoPath,
+        stdio: "ignore",
+      });
+    }
+    return;
+  }
+  if (originUrl) {
+    // Daemon reads origin for project grouping; no fetch occurs, so a synthetic URL is fine.
+    execSync(`git remote add origin ${JSON.stringify(originUrl)}`, {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
+  }
+}
+
+export const createTempGitRepo = async (
+  prefix = "paseo-e2e-",
+  options?: {
+    withRemote?: boolean;
+    originUrl?: string;
+    paseoConfig?: Record<string, unknown>;
+    files?: Array<{ path: string; content: string }>;
+    branches?: string[];
+  },
+): Promise<TempRepo> => {
+  // Keep E2E repo paths short so terminal prompt + typed commands stay visible without zsh clipping.
+  const repoPath = await mkdtemp(path.join(await resolveTempRoot(), prefix));
+  const withRemote = options?.withRemote ?? false;
+
+  execSync("git init -b main", { cwd: repoPath, stdio: "ignore" });
+  execSync('git config user.email "e2e@paseo.test"', { cwd: repoPath, stdio: "ignore" });
+  execSync('git config user.name "Paseo E2E"', { cwd: repoPath, stdio: "ignore" });
+  execSync("git config commit.gpgsign false", { cwd: repoPath, stdio: "ignore" });
+  await writeFile(path.join(repoPath, "README.md"), "# Temp Repo\n");
+  if (options?.paseoConfig) {
+    await writeFile(
+      path.join(repoPath, "paseo.json"),
+      JSON.stringify(options.paseoConfig, null, 2),
+    );
+  }
+  for (const file of options?.files ?? []) {
+    const filePath = path.join(repoPath, file.path);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, file.content);
+  }
+  execSync("git add README.md", { cwd: repoPath, stdio: "ignore" });
+  if (options?.paseoConfig) {
+    execSync("git add paseo.json", { cwd: repoPath, stdio: "ignore" });
+  }
+  for (const file of options?.files ?? []) {
+    execSync(`git add ${JSON.stringify(file.path)}`, { cwd: repoPath, stdio: "ignore" });
+  }
+  execSync('git commit -m "Initial commit"', { cwd: repoPath, stdio: "ignore" });
+
+  const branchHeads: Record<string, string> = {};
+  const branches = Array.from(new Set(options?.branches ?? []));
+  for (const branch of branches) {
+    if (branch !== "main") {
+      execSync(`git checkout -b ${JSON.stringify(branch)} main`, {
+        cwd: repoPath,
+        stdio: "ignore",
+      });
+    }
+    const markerPath = `.paseo-e2e-${branch.replace(/[^a-zA-Z0-9._-]/g, "-")}.txt`;
+    await writeFile(path.join(repoPath, markerPath), `branch ${branch}\n`);
+    execSync(`git add ${JSON.stringify(markerPath)}`, { cwd: repoPath, stdio: "ignore" });
+    execSync(`git commit -m ${JSON.stringify(`Add ${branch} marker`)}`, {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
+    branchHeads[branch] = execSync(`git rev-parse ${JSON.stringify(branch)}`, {
+      cwd: repoPath,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim();
+    execSync("git checkout main", { cwd: repoPath, stdio: "ignore" });
+  }
+
+  await configureRemote({ repoPath, withRemote, originUrl: options?.originUrl });
+
+  return {
+    path: repoPath,
+    branchHeads,
+    cleanup: async () => {
+      await rm(repoPath, {
+        recursive: true,
+        force: true,
+        maxRetries: TEMP_CLEANUP_RETRIES,
+        retryDelay: TEMP_CLEANUP_RETRY_DELAY_MS,
+      });
+    },
+  };
+};
+
+/**
+ * A plain (non-git) directory opened as a project. The daemon shows its
+ * basename as the project name, since there's no remote to group under.
+ */
+export async function createTempDirectory(prefix = "paseo-e2e-dir-"): Promise<TempDirectory> {
+  const dirPath = await mkdtemp(path.join(await resolveTempRoot(), prefix));
+  await writeFile(path.join(dirPath, "README.md"), "# Temp Directory\n");
+  return {
+    path: dirPath,
+    cleanup: async () => {
+      await rm(dirPath, {
+        recursive: true,
+        force: true,
+        maxRetries: TEMP_CLEANUP_RETRIES,
+        retryDelay: TEMP_CLEANUP_RETRY_DELAY_MS,
+      });
+    },
+  };
+}
+
+/**
+ * A commit that exists only in the local checkout. The whole point of defaulting a new
+ * worktree to the upstream is that these commits do not leak into it.
+ */
+export function commitLocalOnly(repoPath: string, marker: string): string {
+  execSync(`git commit --allow-empty -m ${JSON.stringify(`local only ${marker}`)}`, {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+  return execSync("git rev-parse HEAD", { cwd: repoPath, stdio: "pipe" }).toString().trim();
+}
+
+/**
+ * A fork checkout: `origin` is the fork, `upstream` is the source repo, and the current
+ * branch tracks `upstream/main`. Upstream carries a commit origin does not, so a worktree
+ * based on the wrong remote is provable rather than coincidentally identical.
+ */
+export async function trackForkUpstream(repoPath: string): Promise<string> {
+  const upstreamDir = path.join(repoPath, "upstream.git");
+  const upstreamClone = await mkdtemp(path.join(await resolveTempRoot(), "paseo-e2e-upstream-"));
+  await mkdir(upstreamDir, { recursive: true });
+  execSync(`git init --bare -b main ${upstreamDir}`, { cwd: repoPath, stdio: "ignore" });
+  execSync(`git remote add upstream ${upstreamDir}`, { cwd: repoPath, stdio: "ignore" });
+  execSync("git push upstream main", { cwd: repoPath, stdio: "ignore" });
+
+  execSync(`git clone ${upstreamDir} ${upstreamClone}`, { stdio: "ignore" });
+  execSync('git config user.email "e2e@paseo.test"', { cwd: upstreamClone, stdio: "ignore" });
+  execSync('git config user.name "Paseo E2E"', { cwd: upstreamClone, stdio: "ignore" });
+  execSync("git config commit.gpgsign false", { cwd: upstreamClone, stdio: "ignore" });
+  execSync('git commit --allow-empty -m "upstream only"', {
+    cwd: upstreamClone,
+    stdio: "ignore",
+  });
+  execSync("git push origin main", { cwd: upstreamClone, stdio: "ignore" });
+  await rm(upstreamClone, { recursive: true, force: true });
+
+  execSync("git fetch upstream", { cwd: repoPath, stdio: "ignore" });
+  execSync("git branch --set-upstream-to=upstream/main main", {
+    cwd: repoPath,
+    stdio: "ignore",
+  });
+  return execSync("git rev-parse refs/remotes/upstream/main", { cwd: repoPath, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+export function readRepoRef(repoPath: string, ref: string): string {
+  return execSync(`git rev-parse ${JSON.stringify(ref)}`, { cwd: repoPath, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+/**
+ * The base identity the daemon recorded in worktree.json: the display name the UI reads back,
+ * and the exact ref every comparison and action resolves through.
+ */
+export async function readWorktreeBaseMetadata(
+  worktreePath: string,
+): Promise<{ baseRefName: string; baseRef?: string }> {
+  const gitDir = execSync("git rev-parse --absolute-git-dir", { cwd: worktreePath, stdio: "pipe" })
+    .toString()
+    .trim();
+  const metadata = JSON.parse(
+    await readFile(path.join(gitDir, "paseo", "worktree.json"), "utf8"),
+  ) as { baseRefName?: string; baseRef?: string };
+  if (!metadata.baseRefName) {
+    throw new Error(`worktree.json has no baseRefName: ${worktreePath}`);
+  }
+  return {
+    baseRefName: metadata.baseRefName,
+    ...(metadata.baseRef ? { baseRef: metadata.baseRef } : {}),
+  };
+}
+
+export async function readWorktreeBranchInfo({ worktreePath }: { worktreePath: string }): Promise<{
+  currentBranch: string;
+  hasAncestor: (ref: string) => boolean;
+}> {
+  const currentBranch = execSync("git branch --show-current", {
+    cwd: worktreePath,
+    stdio: "pipe",
+  })
+    .toString()
+    .trim();
+
+  return {
+    currentBranch,
+    hasAncestor: (ref: string) => {
+      try {
+        execSync(`git merge-base --is-ancestor ${JSON.stringify(ref)} HEAD`, {
+          cwd: worktreePath,
+          stdio: "ignore",
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}

@@ -51,23 +51,26 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("unwraps shell wrapper strings for commandExecution", () => {
-    const item = expectMapped(
-      mapCodexToolCallFromThreadItem({
-        type: "commandExecution",
-        id: "codex-call-wrapper-string",
-        status: "running",
-        command: '/bin/zsh -lc "echo hello"',
-        cwd: "/tmp/repo",
-      }),
-    );
+  it.each(['/bin/zsh -lc "echo hello"', '/usr/bin/zsh -lc "echo hello"'])(
+    "unwraps zsh wrapper strings for commandExecution: %s",
+    (command) => {
+      const item = expectMapped(
+        mapCodexToolCallFromThreadItem({
+          type: "commandExecution",
+          id: "codex-call-wrapper-string",
+          status: "running",
+          command,
+          cwd: "/tmp/repo",
+        }),
+      );
 
-    expect(item.detail).toEqual({
-      type: "shell",
-      command: "echo hello",
-      cwd: "/tmp/repo",
-    });
-  });
+      expect(item.detail).toEqual({
+        type: "shell",
+        command: "echo hello",
+        cwd: "/tmp/repo",
+      });
+    },
+  );
 
   it("unwraps pwsh wrapper strings for commandExecution on Windows", () => {
     const item = expectMapped(
@@ -221,6 +224,103 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    ["started", "running"],
+    ["interacted", "running"],
+    ["interrupted", "canceled"],
+  ] as const)("maps subAgentActivity %s into canonical sub-agent detail", (kind, status) => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: `activity-${kind}`,
+      kind,
+      agentThreadId: "child-thread-1",
+      agentPath: "/root/research/investigator",
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: `activity-${kind}`,
+      name: "Sub-agent",
+      status,
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Research / Investigator",
+        description: "research/investigator",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
+  it("preserves an empty subAgentActivity path as an empty description", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-empty-path",
+      kind: "started",
+      agentThreadId: "child-thread-empty-path",
+      agentPath: "",
+    });
+
+    expect(item).toMatchObject({
+      detail: { type: "sub_agent", description: "" },
+    });
+  });
+
+  it("humanizes a subagent task name for display", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-human-name",
+      kind: "started",
+      agentThreadId: "child-thread-human-name",
+      agentPath: "/root/hello_one",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Hello one",
+        description: "hello_one",
+      },
+    });
+  });
+
+  it("uses only the final segment of a subAgentActivity path outside the root namespace", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-external-path",
+      kind: "started",
+      agentThreadId: "child-thread-external-path",
+      agentPath: "/tmp/native/investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Investigator",
+        description: "investigator",
+      },
+    });
+  });
+
+  it("uses only the final segment of a Windows subAgentActivity path", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-windows-path",
+      kind: "started",
+      agentThreadId: "child-thread-windows-path",
+      agentPath: "C:\\Users\\dev\\agents\\investigator",
+    });
+
+    expect(item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Investigator",
+        description: "investigator",
+      },
+    });
+  });
+
   it("does not fail a collabAgentToolCall from child error state alone", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",
@@ -276,6 +376,28 @@ describe("codex tool-call mapper", () => {
         log: "",
         actions: [],
       },
+    });
+  });
+
+  it.each([
+    ["shutdown", "canceled"],
+    ["notFound", "failed"],
+  ] as const)("maps terminal child state %s to %s", (childStatus, expectedStatus) => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: `call-sub-agent-${childStatus}`,
+      tool: "closeAgent",
+      status: "completed",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: childStatus, message: null },
+      },
+    });
+
+    expect(item).toMatchObject({
+      type: "tool_call",
+      callId: `call-sub-agent-${childStatus}`,
+      status: expectedStatus,
     });
   });
 

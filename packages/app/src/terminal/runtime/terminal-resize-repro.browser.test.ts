@@ -161,7 +161,7 @@ describe("terminal resize reflow repro (Paseo terminal)", () => {
     // 3) User resizes the terminal wider.
     m.root.style.width = "1480px";
     await nextFrame();
-    m.runtime.resize({ force: true, shouldClaim: true });
+    m.runtime.resize({ shouldClaim: true });
     await nextFrame();
     await nextFrame();
     const wideCols = m.terminal.cols;

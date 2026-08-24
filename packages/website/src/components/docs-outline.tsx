@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { type DocHeading } from "~/docs";
+import { openEnclosingExamples } from "~/docs-example-target";
 
 interface DocsOutlineProps {
   headings: DocHeading[];
@@ -23,6 +24,7 @@ function OutlineLink({
       event.preventDefault();
       const element = document.getElementById(heading.id);
       if (element) {
+        openEnclosingExamples(element);
         element.scrollIntoView({ behavior: "smooth" });
         window.history.replaceState(null, "", `#${heading.id}`);
         onActivate(heading.id);

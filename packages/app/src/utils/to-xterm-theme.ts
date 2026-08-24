@@ -12,7 +12,6 @@ export function toXtermTheme(terminal: TerminalPalette): ITheme {
     cursorAccent: terminal.cursorAccent,
     selectionBackground: terminal.selectionBackground,
     selectionForeground: terminal.selectionForeground,
-
     black: terminal.black,
     red: terminal.red,
     green: terminal.green,

@@ -47,7 +47,7 @@ jobs:
           scope: "@boudra"
 
       - name: Install JS dependencies
-        run: npm ci
+        run: node scripts/npm-retry.mjs ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

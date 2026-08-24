@@ -45,9 +45,17 @@ function assistant(
   options?: {
     provider?: AgentProvider;
     turnId?: string;
+    messageId?: string;
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
-  return timeline({ type: "assistant_message", text }, options);
+  return timeline(
+    {
+      type: "assistant_message",
+      text,
+      ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+    },
+    options,
+  );
 }
 
 function reasoning(
@@ -281,6 +289,23 @@ describe("AgentStreamCoalescer", () => {
         provider: "codex",
         turnId: "turn-2",
       },
+    ]);
+  });
+
+  test("does not splice concurrent assistant message ids together", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("The", { turnId: "turn-1", messageId: "message-a" }));
+    coalescer.handle("agent-1", assistant("0po", { turnId: "turn-1", messageId: "message-b" }));
+    coalescer.handle("agent-1", assistant(" exact", { turnId: "turn-1", messageId: "message-a" }));
+    coalescer.handle("agent-1", assistant("7/fr", { turnId: "turn-1", messageId: "message-b" }));
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", messageId: "message-a", text: "The" },
+      { type: "assistant_message", messageId: "message-b", text: "0po" },
+      { type: "assistant_message", messageId: "message-a", text: " exact" },
+      { type: "assistant_message", messageId: "message-b", text: "7/fr" },
     ]);
   });
 

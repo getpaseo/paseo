@@ -8,6 +8,7 @@ export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
+  copyTerminalId: string;
   copyFilePath: string;
   rename: string;
   closeAbove: string;
@@ -23,6 +24,7 @@ export interface WorkspaceTabMenuLabels {
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
+  copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
@@ -68,6 +70,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   menuTestIDBase: string;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -84,6 +87,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tabCount: number;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -138,6 +142,24 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "setup") {
     return `workspace-setup-close-${encodeWorkspaceIdForPathSegment(tab.target.workspaceId)}`;
   }
+  if (tab.target.kind === "provider_subagent") {
+    return `workspace-provider-subagent-close-${tab.target.subagentId}`;
+  }
+  if (tab.target.kind === "commit_diff") {
+    return `workspace-commit-diff-close-${encodeFilePathForPathSegment(tab.target.sha)}`;
+  }
+  if (tab.target.kind === "working_diff") {
+    return `workspace-working-diff-close-${encodeFilePathForPathSegment(buildDeterministicWorkspaceTabId(tab.target))}`;
+  }
+  if (tab.target.kind === "files" || tab.target.kind === "pull_request") {
+    return `workspace-${tab.target.kind}-close`;
+  }
+  if (tab.target.kind === "plugin") {
+    return `workspace-plugin-close-${encodeFilePathForPathSegment(buildDeterministicWorkspaceTabId(tab.target))}`;
+  }
+  if (tab.target.kind === "new_tab") {
+    return `workspace-new-tab-close-${tab.tabId}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
@@ -152,6 +174,7 @@ export function buildWorkspaceTabMenuEntries(
     menuTestIDBase,
     onCopyResumeCommand,
     onCopyAgentId,
+    onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
@@ -187,6 +210,21 @@ export function buildWorkspaceTabMenuEntries(
       testID: `${menuTestIDBase}-copy-agent-id`,
       onSelect: () => {
         void onCopyAgentId(agentId);
+      },
+    });
+  }
+
+  if (tab.target.kind === "terminal") {
+    const { terminalId } = tab.target;
+    entries.push({
+      kind: "item",
+      key: "copy-terminal-id",
+      label: labels.copyTerminalId,
+      icon: "copy",
+      hint: terminalId.slice(0, 7),
+      testID: `${menuTestIDBase}-copy-terminal-id`,
+      onSelect: () => {
+        void onCopyTerminalId(terminalId);
       },
     });
   }
@@ -286,7 +324,7 @@ export function buildWorkspaceTabMenuEntries(
 export function buildWorkspaceDesktopTabActions(
   input: BuildWorkspaceDesktopTabActionsInput,
 ): WorkspaceDesktopTabActions {
-  const contextMenuTestId = `workspace-tab-context-${buildDeterministicWorkspaceTabId(input.tab.target)}`;
+  const contextMenuTestId = `workspace-tab-context-${input.tab.tabId}`;
   return {
     contextMenuTestId,
     menuEntries: buildWorkspaceTabMenuEntries({
@@ -297,6 +335,7 @@ export function buildWorkspaceDesktopTabActions(
       menuTestIDBase: contextMenuTestId,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
+      onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,

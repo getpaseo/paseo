@@ -352,12 +352,10 @@ it("refreshes cached terminal size after worker resize", async () => {
   const session = trackTerminal(await manager.createTerminal({ cwd, workspaceId: "ws-test" }));
 
   session.send({ type: "resize", rows: 10, cols: 40 });
+  const snapshot = await manager.getTerminalState(session.id);
 
-  await waitForCondition(() => {
-    const size = session.getSize();
-    return size.rows === 10 && size.cols === 40;
-  }, 10000);
-
+  expect(snapshot?.state.rows).toBe(10);
+  expect(snapshot?.state.cols).toBe(40);
   expect(session.getState().rows).toBe(10);
   expect(session.getState().cols).toBe(40);
 });

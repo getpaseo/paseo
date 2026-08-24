@@ -3,15 +3,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
+import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
+import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
 import {
-  applyProvidersSnapshotUpdate,
   fetchProvidersSnapshot,
   providersSnapshotQueryKey,
   refreshAndApplyProvidersSnapshot,
   selectorOpenRefetchDecision,
   type ProvidersSnapshotClient,
-  type ProvidersSnapshotUpdateMessage,
 } from "./use-providers-snapshot";
 
 type GetProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["getProvidersSnapshot"]>>;
@@ -80,6 +81,21 @@ function codexEntry(
 const readyCodexModel = { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" } as const;
 const serverId = "server-1";
 
+function createCache(initial: CachedProviderSnapshot | null = null): ProviderSnapshotCache & {
+  writes: Parameters<ProviderSnapshotCache["write"]>[0][];
+} {
+  const writes: Parameters<ProviderSnapshotCache["write"]>[0][] = [];
+  return {
+    writes,
+    async read() {
+      return initial;
+    },
+    async write(input) {
+      writes.push(input);
+    },
+  };
+}
+
 describe("providersSnapshotQueryKey", () => {
   it("uses separate keys for home and workspace scopes", () => {
     expect(providersSnapshotQueryKey(serverId)).toEqual(["providersSnapshot", serverId, "home"]);
@@ -96,7 +112,7 @@ describe("fetchProvidersSnapshot", () => {
   it("sends no cwd for the home scope", async () => {
     const client = createClient({ snapshots: [providersSnapshot([])] });
 
-    await fetchProvidersSnapshot({ client, cwd: null });
+    await fetchProvidersSnapshot({ client, serverId, cwd: null, cache: createCache() });
 
     expect(client.getCalls).toEqual([{}]);
   });
@@ -104,9 +120,77 @@ describe("fetchProvidersSnapshot", () => {
   it("sends the workspace cwd for the workspace scope", async () => {
     const client = createClient({ snapshots: [providersSnapshot([])] });
 
-    await fetchProvidersSnapshot({ client, cwd: "/repo-a" });
+    await fetchProvidersSnapshot({
+      client,
+      serverId,
+      cwd: "/repo-a",
+      cache: createCache(),
+    });
 
     expect(client.getCalls).toEqual([{ cwd: "/repo-a" }]);
+  });
+
+  it("reuses a cached snapshot when the daemon reports its hash unchanged", async () => {
+    const entries = [codexEntry("ready", [readyCodexModel])];
+    const compactSnapshot = compactProviderSnapshot(entries);
+    const cache = createCache({
+      version: 1,
+      hash: "snapshot-hash",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      compactSnapshot,
+      entries,
+    });
+    const client = createClient({
+      snapshots: [
+        {
+          entries: [],
+          snapshotHash: "snapshot-hash",
+          notModified: true,
+          generatedAt: "2026-01-02T00:00:00.000Z",
+          requestId: "snapshot-2",
+        },
+      ],
+    });
+
+    const snapshot = await fetchProvidersSnapshot({
+      client,
+      serverId,
+      cwd: "/repo-a",
+      cache,
+    });
+
+    expect(client.getCalls).toEqual([{ cwd: "/repo-a", ifNoneMatch: "snapshot-hash" }]);
+    expect(snapshot.entries).toBe(entries);
+    expect(cache.writes).toEqual([]);
+  });
+
+  it("persists a changed compact snapshot for the next launch", async () => {
+    const entries = [codexEntry("ready", [readyCodexModel])];
+    const compactSnapshot = compactProviderSnapshot(entries);
+    const cache = createCache();
+    const client = createClient({
+      snapshots: [
+        {
+          entries,
+          compactSnapshot,
+          snapshotHash: "next-hash",
+          generatedAt: "2026-01-02T00:00:00.000Z",
+          requestId: "snapshot-2",
+        },
+      ],
+    });
+
+    await fetchProvidersSnapshot({ client, serverId, cwd: "/repo-a", cache });
+
+    expect(cache.writes).toEqual([
+      {
+        serverId,
+        cwd: "/repo-a",
+        hash: "next-hash",
+        generatedAt: "2026-01-02T00:00:00.000Z",
+        compactSnapshot,
+      },
+    ]);
   });
 });
 
@@ -128,6 +212,7 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       serverId,
       cwd: null,
       providers: ["codex"],
+      cache: createCache(),
     });
 
     expect(client.refreshCalls).toEqual([{ providers: ["codex"] }]);
@@ -148,6 +233,7 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       serverId,
       cwd: "/repo-a",
       providers: ["codex"],
+      cache: createCache(),
     });
 
     expect(client.refreshCalls).toEqual([{ cwd: "/repo-a", providers: ["codex"] }]);
@@ -167,6 +253,7 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       queryClient,
       serverId,
       cwd: null,
+      cache: createCache(),
     });
 
     expect(
@@ -187,6 +274,7 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       queryClient,
       serverId,
       cwd: "/repo-a",
+      cache: createCache(),
     });
 
     expect(queryClient.getQueryState(providersSnapshotQueryKey(serverId))?.isInvalidated).toBe(
@@ -210,6 +298,7 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       queryClient,
       serverId,
       cwd: "/repo-a",
+      cache: createCache(),
     });
 
     expect(queryClient.getQueryState(commandsKey)?.isInvalidated).toBe(true);
@@ -223,10 +312,7 @@ describe("applyProvidersSnapshotUpdate", () => {
     queryClient = new QueryClient();
   });
 
-  function updateMessage(
-    entries: ProviderSnapshotEntry[],
-    cwd?: string,
-  ): ProvidersSnapshotUpdateMessage {
+  function updateMessage(entries: ProviderSnapshotEntry[], cwd?: string): ProvidersSnapshotUpdate {
     return {
       type: "providers_snapshot_update",
       payload: {
@@ -268,6 +354,27 @@ describe("applyProvidersSnapshotUpdate", () => {
     expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, "/repo-b"))).toEqual(
       providersSnapshot([]),
     );
+  });
+
+  it("persists compact push updates", () => {
+    const entries = [codexEntry("ready", [readyCodexModel])];
+    const compactSnapshot = compactProviderSnapshot(entries);
+    const cache = createCache();
+    const message = updateMessage(entries, "/repo-a");
+    message.payload.compactSnapshot = compactSnapshot;
+    message.payload.snapshotHash = "push-hash";
+
+    applyProvidersSnapshotUpdate({ serverId, queryClient, message, cache });
+
+    expect(cache.writes).toEqual([
+      {
+        serverId,
+        cwd: "/repo-a",
+        hash: "push-hash",
+        generatedAt: "2026-01-01T00:00:01.000Z",
+        compactSnapshot,
+      },
+    ]);
   });
 
   it("applies Windows daemon updates to app-normalized workspace paths", () => {

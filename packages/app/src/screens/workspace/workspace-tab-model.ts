@@ -1,18 +1,13 @@
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   deriveWorkspacePaneState,
   type WorkspaceDerivedTab,
 } from "@/screens/workspace/workspace-pane-state";
-import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
 export interface WorkspaceTabModel {
   tabs: WorkspaceDerivedTab[];
   activeTabId: string | null;
   activeTab: WorkspaceDerivedTab | null;
-}
-
-export function buildWorkspaceTabId(target: WorkspaceTabTarget): string {
-  return buildDeterministicWorkspaceTabId(target);
 }
 
 export function deriveWorkspaceTabModel(input: {

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
+import { createWorkspaceFileAttachment } from "@/attachments/workspace-file";
 
 const { asyncStorage } = vi.hoisted(() => ({
   asyncStorage: new Map<string, string>(),
@@ -159,7 +160,11 @@ describe("useAgentInputDraft live contract", () => {
       configurable: true,
     });
 
-    useDraftStore.setState({ drafts: {}, createModalDraft: null });
+    useDraftStore.setState({
+      drafts: {},
+      createModalDraft: null,
+      attachmentFocusRequestByDraftKey: {},
+    });
   });
 
   it("hydrates persisted text and attachments and returns draft-mode composer state for a caller-provided key", async () => {
@@ -219,9 +224,23 @@ describe("useAgentInputDraft live contract", () => {
       thinkingOptionId: "high",
     });
 
+    const hydratedReplacementKey = getLatest().textReplacementKey;
+
     await act(async () => {
-      getLatest().setText("hello world");
+      getLatest().editText("hello world");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
+    });
+
+    expect(getLatest().textReplacementKey).toBe(hydratedReplacementKey);
+
+    await act(async () => {
+      getLatest().replaceText("replacement text");
+    });
+
+    expect(getLatest().textReplacementKey).not.toBe(hydratedReplacementKey);
+
+    await act(async () => {
+      getLatest().editText("hello world");
     });
 
     await act(async () => {
@@ -413,7 +432,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("with attachment");
+      getLatest().editText("with attachment");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
     });
 
@@ -421,6 +440,39 @@ describe("useAgentInputDraft live contract", () => {
     expect(useDraftStore.getState().drafts["draft:attachments"]?.input).toEqual({
       text: "with attachment",
       attachments: [{ kind: "image", metadata: image }],
+    });
+  });
+
+  it("attaches to an unmounted legacy draft without losing its input", async () => {
+    const image: AttachmentMetadata = {
+      id: "legacy-image",
+      mimeType: "image/png",
+      storageType: "web-indexeddb",
+      storageKey: "attachments/legacy-image",
+      createdAt: 10,
+    };
+    useDraftStore.setState({
+      drafts: {
+        "draft:legacy-workspace-file": {
+          input: { text: "legacy text", images: [image] },
+          lifecycle: "active",
+          updatedAt: Date.now(),
+          version: 1,
+        } as unknown as DraftRecordForTest,
+      },
+    });
+
+    await useDraftStore.getState().attachWorkspaceFile({
+      draftKey: "draft:legacy-workspace-file",
+      attachment: createWorkspaceFileAttachment({ path: "src/app.ts" }),
+    });
+
+    expect(useDraftStore.getState().getDraftInput("draft:legacy-workspace-file")).toEqual({
+      text: "legacy text",
+      attachments: [
+        { kind: "image", metadata: image },
+        createWorkspaceFileAttachment({ path: "src/app.ts" }),
+      ],
     });
   });
 
@@ -462,7 +514,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("queued message");
+      getLatest().editText("queued message");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
     });
 
@@ -516,7 +568,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("queued message");
+      getLatest().editText("queued message");
       getLatest().setAttachments([{ kind: "image", metadata: sentImage }]);
     });
 
@@ -532,7 +584,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("draft again");
+      getLatest().editText("draft again");
     });
 
     await act(async () => {

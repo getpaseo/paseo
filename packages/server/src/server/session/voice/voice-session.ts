@@ -1084,10 +1084,18 @@ export class VoiceSession {
       try {
         await this.host.interruptAgentIfRunning(this.voiceModeAgentId);
       } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId: this.voiceModeAgentId },
-          "Failed to interrupt active voice-mode agent on abort",
-        );
+        const message = `Voice interruption failed: ${getErrorMessage(error)}`;
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "error",
+            content: message,
+            metadata: { voiceAbortFailed: true },
+          },
+        });
+        throw error;
       }
     }
 

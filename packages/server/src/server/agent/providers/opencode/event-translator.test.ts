@@ -29,7 +29,7 @@ function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
     sessionId,
     messageRoles: new Map(),
     accumulatedUsage: {},
-    streamedPartKeys: new Set(),
+    materializedParts: new Map(),
     emittedStructuredMessageIds: new Set(),
     compactionSummaryMessageIds: new Set(),
     emittedCompactionPartIds: new Set(),
@@ -38,6 +38,130 @@ function createState(sessionId = "session-1"): OpenCodeEventTranslationState {
 }
 
 describe("translateOpenCodeEvent", () => {
+  it("emits only the missing suffix from a final full text part", () => {
+    const state = createState();
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: { id: "message-1", sessionID: "session-1", role: "assistant" },
+        },
+      },
+      state,
+    );
+    const first = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "message-1",
+          partID: "part-1",
+          field: "text",
+          delta: "Hello",
+        },
+      },
+      state,
+    );
+    const incomplete = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-1",
+            sessionID: "session-1",
+            messageID: "message-1",
+            type: "text",
+            text: "",
+            time: { start: 1 },
+          },
+        },
+      },
+      state,
+    );
+    const second = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          messageID: "message-1",
+          partID: "part-1",
+          field: "text",
+          delta: " world",
+        },
+      },
+      state,
+    );
+    const final = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-1",
+            sessionID: "session-1",
+            messageID: "message-1",
+            type: "text",
+            text: "Hello world!",
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(incomplete).toEqual([]);
+    expect([first, second, final].flatMap((events) => events)).toMatchObject([
+      { item: { text: "Hello" } },
+      { item: { text: " world" } },
+      { item: { text: "!" } },
+    ]);
+    expect(
+      translateOpenCodeEvent(
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-1",
+            messageID: "message-1",
+            partID: "part-1",
+            field: "text",
+            delta: " delayed",
+          },
+        },
+        state,
+      ),
+    ).toEqual([]);
+  });
+
+  it("diagnoses a non-prefix final text snapshot", () => {
+    const diagnostics: unknown[] = [];
+    const state = createState();
+    state.onMaterializationMismatch = (diagnostic) => diagnostics.push(diagnostic);
+    state.materializedParts.set("part-1", {
+      messageId: "message-1",
+      emittedText: "streamed text",
+      closed: false,
+    });
+
+    expect(
+      translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-1",
+              sessionID: "session-1",
+              messageID: "message-1",
+              type: "text",
+              text: "mutated text",
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+        state,
+      ),
+    ).toEqual([]);
+    expect(diagnostics).toEqual([{ partId: "part-1", messageId: "message-1", kind: "text" }]);
+  });
+
   it("resolves context window max tokens from assistant message.updated model metadata", () => {
     const resolvedContextWindowMaxTokens: number[] = [];
     const state = createState();
@@ -124,7 +248,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! what can I help with?" },
+        item: {
+          type: "assistant_message",
+          text: "hey! what can I help with?",
+          messageId: "message-1",
+        },
       },
     ]);
   });
@@ -167,7 +295,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "final text" },
+        item: { type: "assistant_message", text: "final text", messageId: "message-2" },
       },
     ]);
   });
@@ -269,14 +397,64 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hey! " },
+        item: { type: "assistant_message", text: "hey! ", messageId: "msg-d1" },
       },
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "what's up?" },
+        item: { type: "assistant_message", text: "what's up?", messageId: "msg-d1" },
       },
     ]);
+  });
+
+  it("uses the part id when an assistant delta omits its message id", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "part-without-message",
+          field: "text",
+          delta: "still visible",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: {
+          type: "assistant_message",
+          text: "still visible",
+          messageId: "part-without-message",
+        },
+      },
+    ]);
+  });
+
+  it("suppresses part-id-only assistant deltas by their resolved identity", () => {
+    const state = createState();
+    state.suppressAssistantMessagesUntilIdle = { active: true };
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-1",
+          partID: "compaction-part",
+          field: "text",
+          delta: "hidden summary",
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([]);
+    expect(state.compactionSummaryMessageIds).toEqual(new Set(["compaction-part"]));
   });
 
   it("humanizes permission requests and includes shell detail when command metadata exists", () => {
@@ -626,8 +804,8 @@ describe("translateOpenCodeEvent", () => {
         item: {
           type: "todo",
           items: [
-            { text: "Outline", completed: false },
-            { text: "Ship", completed: true },
+            { text: "Outline", status: "pending", completed: false },
+            { text: "Ship", status: "completed", completed: true },
           ],
         },
       },
@@ -1073,7 +1251,7 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: "hello there" },
+        item: { type: "assistant_message", text: "hello there", messageId: "msg-dd1" },
       },
     ]);
   });
@@ -1131,7 +1309,11 @@ describe("translateOpenCodeEvent", () => {
 
   it("emits turn_completed from session.status idle", () => {
     const state = createState();
-    state.streamedPartKeys.add("text:part-1");
+    state.materializedParts.set("part-1", {
+      messageId: "message-1",
+      emittedText: "partial",
+      closed: false,
+    });
     state.partTypes.set("part-1", "text");
 
     const result = translateOpenCodeEvent(
@@ -1152,13 +1334,17 @@ describe("translateOpenCodeEvent", () => {
         usage: undefined,
       },
     ]);
-    expect(state.streamedPartKeys.size).toBe(0);
+    expect(state.materializedParts.size).toBe(1);
     expect(state.partTypes.size).toBe(0);
   });
 
   it("forwards session.status retry as a non-terminal timeline error item", () => {
     const state = createState();
-    state.streamedPartKeys.add("text:part-1");
+    state.materializedParts.set("part-1", {
+      messageId: "message-1",
+      emittedText: "partial",
+      closed: false,
+    });
     state.partTypes.set("part-1", "text");
 
     const result = translateOpenCodeEvent(
@@ -1186,7 +1372,7 @@ describe("translateOpenCodeEvent", () => {
     ]);
     // Streaming state must NOT be reset — the turn is still alive, opencode
     // will eventually either succeed or emit session.idle / session.error.
-    expect(state.streamedPartKeys.size).toBe(1);
+    expect(state.materializedParts.size).toBe(1);
     expect(state.partTypes.size).toBe(1);
   });
 
@@ -1274,7 +1460,11 @@ describe("translateOpenCodeEvent", () => {
       {
         type: "timeline",
         provider: "opencode",
-        item: { type: "assistant_message", text: '{"summary":"hello"}' },
+        item: {
+          type: "assistant_message",
+          text: '{"summary":"hello"}',
+          messageId: "message-structured-1",
+        },
       },
     ]);
     expect(second).toEqual([]);

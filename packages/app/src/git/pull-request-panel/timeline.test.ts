@@ -45,9 +45,30 @@ describe("buildPrTimeline", () => {
         kind: "thread",
         id: "thread:PRRT_1",
         location: { path: "src/a.ts", line: 12, threadId: "PRRT_1", isResolved: false },
+        isResolved: false,
         comments: [root, reply],
       },
       { kind: "single", id: "c2", activity: between },
+    ]);
+  });
+
+  it("groups comments sharing a top-level threadId with no location into one thread", () => {
+    const root = activity({ id: "n1", threadId: "disc-1" });
+    const between = activity({ id: "c1" });
+    const reply = activity({ id: "n2", author: "bob", threadId: "disc-1" });
+
+    expect(buildPrTimeline([root, between, reply])).toEqual([
+      { kind: "thread", id: "thread:disc-1", comments: [root, reply] },
+      { kind: "single", id: "c1", activity: between },
+    ]);
+  });
+
+  it("surfaces general-discussion resolution as thread isResolved without a location", () => {
+    const root = activity({ id: "g1", threadId: "disc-2", threadIsResolved: true });
+    const reply = activity({ id: "g2", author: "bob", threadId: "disc-2", threadIsResolved: true });
+
+    expect(buildPrTimeline([root, reply])).toEqual([
+      { kind: "thread", id: "thread:disc-2", isResolved: true, comments: [root, reply] },
     ]);
   });
 

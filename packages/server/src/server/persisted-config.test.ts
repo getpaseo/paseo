@@ -125,6 +125,16 @@ describe("PersistedConfigSchema worktrees config", () => {
 
     expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
   });
+
+  test("accepts service port allocation", () => {
+    const parsed = PersistedConfigSchema.parse({
+      worktrees: {
+        servicePorts: { range: "3000-4000" },
+      },
+    });
+
+    expect(parsed.worktrees?.servicePorts).toEqual({ range: "3000-4000" });
+  });
 });
 
 describe("PersistedConfigSchema provider credentials", () => {
@@ -240,6 +250,20 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
         { provider: "codex", model: "gpt-5.4-mini", thinkingOptionId: "low" },
       ],
     });
+  });
+
+  test("accepts a custom provider catalog refresh timeout", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: { catalogRefreshTimeoutMs: 180_000 },
+    });
+
+    expect(parsed.agents?.catalogRefreshTimeoutMs).toBe(180_000);
+  });
+
+  test("rejects provider catalog refresh timeouts that overflow Node timers", () => {
+    expect(() =>
+      PersistedConfigSchema.parse({ agents: { catalogRefreshTimeoutMs: 2_147_483_648 } }),
+    ).toThrow();
   });
 });
 
@@ -638,6 +662,16 @@ describe("PersistedConfigSchema voice mode config", () => {
 });
 
 describe("loadPersistedConfig", () => {
+  test("materializes relay disabled for a new Paseo home", () => {
+    const home = createTempHome();
+    try {
+      const config = loadPersistedConfig(home);
+      expect(config.daemon?.relay?.enabled).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("accepts the documented config schema marker", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");

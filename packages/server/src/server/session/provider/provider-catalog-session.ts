@@ -1,15 +1,22 @@
 import type pino from "pino";
+import { createHash } from "node:crypto";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import {
+  compactProviderSnapshot,
+  type CompactProviderSnapshot,
+} from "@getpaseo/protocol/provider-snapshot-codec";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import {
   isGlobalProviderSnapshotKey,
+  resolveSnapshotCwd,
   type ProviderSnapshotManager,
 } from "../../agent/provider-snapshot-manager.js";
-import type {
-  AgentFeature,
-  AgentProvider,
-  AgentSessionConfig,
-  ProviderSnapshotEntry,
+import {
+  filterSelectableAgentModels,
+  type AgentFeature,
+  type AgentProvider,
+  type AgentSessionConfig,
+  type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
@@ -39,6 +46,7 @@ export interface ProviderCatalogSessionHost {
   isProviderVisibleToClient(provider: string): boolean;
   // COMPAT(customModeIcons): reads clientCapabilities live.
   supportsCustomModeIcons(): boolean;
+  supportsCompactProviderSnapshots(): boolean;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
 }
@@ -48,6 +56,19 @@ export interface ProviderCatalogSessionOptions {
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   logger: pino.Logger;
+}
+
+interface EncodedProviderSnapshot {
+  compactSnapshot: CompactProviderSnapshot;
+  snapshotHash: string;
+}
+
+function encodeProviderSnapshot(entries: ProviderSnapshotEntry[]): EncodedProviderSnapshot {
+  const compactSnapshot = compactProviderSnapshot(entries);
+  const snapshotHash = createHash("sha256")
+    .update(JSON.stringify(compactSnapshot))
+    .digest("base64url");
+  return { compactSnapshot, snapshotHash };
 }
 
 /**
@@ -78,11 +99,25 @@ export class ProviderCatalogSession {
         this.host.isProviderVisibleToClient(entry.provider),
       );
       const snapshotCwd = isGlobalProviderSnapshotKey(cwd) ? undefined : cwd;
+      const clientEntries = this.downgradeEntryModesForClient(visibleEntries);
+      if (this.host.supportsCompactProviderSnapshots()) {
+        const encoded = encodeProviderSnapshot(clientEntries);
+        this.host.emit({
+          type: "providers_snapshot_update",
+          payload: {
+            ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+            entries: [],
+            ...encoded,
+            generatedAt: new Date().toISOString(),
+          },
+        });
+        return;
+      }
       this.host.emit({
         type: "providers_snapshot_update",
         payload: {
           ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
-          entries: this.downgradeEntryModesForClient(visibleEntries),
+          entries: clientEntries,
           generatedAt: new Date().toISOString(),
         },
       });
@@ -169,7 +204,7 @@ export class ProviderCatalogSession {
         type: "list_provider_models_response",
         payload: {
           provider: msg.provider,
-          models: entry.models ?? [],
+          models: filterSelectableAgentModels(entry.models),
           error: null,
           fetchedAt: entry.fetchedAt ?? fetchedAt,
           requestId: msg.requestId,
@@ -357,14 +392,35 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "get_providers_snapshot_request" }>,
   ): Promise<void> {
     // COMPAT(providersSnapshot): keep legacy provider-list RPCs alongside snapshot flow.
+    const snapshotCwd = msg.cwd?.trim() ? resolveSnapshotCwd(expandTilde(msg.cwd)) : undefined;
     const entries = this.providerSnapshotManager
-      .getSnapshot(msg.cwd ? expandTilde(msg.cwd) : undefined)
+      .getSnapshot(snapshotCwd)
       .filter((entry) => this.host.isProviderVisibleToClient(entry.provider));
+    const clientEntries = this.downgradeEntryModesForClient(entries);
+
+    if (this.host.supportsCompactProviderSnapshots()) {
+      const encoded = encodeProviderSnapshot(clientEntries);
+      const notModified = msg.ifNoneMatch === encoded.snapshotHash;
+      this.host.emit({
+        type: "get_providers_snapshot_response",
+        payload: {
+          ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+          entries: [],
+          ...(!notModified ? { compactSnapshot: encoded.compactSnapshot } : {}),
+          snapshotHash: encoded.snapshotHash,
+          ...(notModified ? { notModified: true } : {}),
+          generatedAt: new Date().toISOString(),
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
 
     this.host.emit({
       type: "get_providers_snapshot_response",
       payload: {
-        entries: this.downgradeEntryModesForClient(entries),
+        ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+        entries: clientEntries,
         generatedAt: new Date().toISOString(),
         requestId: msg.requestId,
       },

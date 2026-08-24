@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
-import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
+import { ProjectIconView } from "@/components/project-icon-view";
+import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -18,7 +18,10 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
-import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import type {
   CreateAgentRequestOptions,
   DaemonClient,
@@ -26,7 +29,7 @@ import type {
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
@@ -132,13 +135,20 @@ function buildCreateAgentOptions({
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
 }): CreateAgentRequestOptions {
+  // Reconcile the selected mode against the discovered modes. The mode picker
+  // shows modeOptions[0] when the stored mode isn't in the list (e.g. a stale
+  // globally-remembered mode this workspace's provider config no longer
+  // defines), so the submitted mode must match that display rather than send a
+  // stale mode the provider would reject.
+  const modeOptionIds = composerState.modeOptions.map((mode) => mode.id);
+  const reconciledMode = modeOptionIds.includes(composerState.selectedMode)
+    ? composerState.selectedMode
+    : (modeOptionIds[0] ?? "");
   return {
     provider,
     cwd: workspaceDirectory,
     workspaceId,
-    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-      ? { modeId: composerState.selectedMode }
-      : {}),
+    ...(reconciledMode !== "" ? { modeId: reconciledMode } : {}),
     ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
     ...(composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
@@ -164,6 +174,9 @@ export function WorkspaceSetupDialog() {
   const [pendingAction, setPendingAction] = useState<"chat" | null>(null);
 
   const serverId = pendingWorkspaceSetup?.serverId ?? "";
+  const supportsForgeSearch = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
+  );
   const sourceDirectory = pendingWorkspaceSetup?.sourceDirectory ?? "";
   const displayName = pendingWorkspaceSetup?.displayName?.trim() ?? "";
   const workspace = createdWorkspace;
@@ -184,7 +197,7 @@ export function WorkspaceSetupDialog() {
     throw new Error(t("workspaceSetup.errors.composerStateRequired"));
   }
 
-  const { icon: projectIcon } = useProjectIconQuery({
+  const { icon: projectIcon } = useProjectIcon({
     serverId,
     cwd: sourceDirectory,
   });
@@ -218,7 +231,7 @@ export function WorkspaceSetupDialog() {
         return;
       }
 
-      navigateToPreparedWorkspaceTab({
+      navigateToWorkspace({
         serverId: pendingWorkspaceSetup.serverId,
         workspaceId,
         target,
@@ -302,7 +315,11 @@ export function WorkspaceSetupDialog() {
           throw new Error(t("workspaceSetup.errors.selectModel"));
         }
 
-        const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+        const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+          format: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+        });
         const encodedImages = await encodeImages(wirePayload.images);
         const workspaceDirectory = requireWorkspaceDirectory({
           workspaceId: ensuredWorkspace.id,
@@ -356,6 +373,7 @@ export function WorkspaceSetupDialog() {
       t,
       toast,
       withConnectedClient,
+      supportsForgeSearch,
     ],
   );
 
@@ -364,8 +382,6 @@ export function WorkspaceSetupDialog() {
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
 
-  const isCompact = useIsCompactFormFactor();
-  const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -377,30 +393,22 @@ export function WorkspaceSetupDialog() {
     [composerState, pendingAction],
   );
 
-  const composerFooter = useMemo(
-    () =>
-      isCompact && agentControlsWithDisabled ? (
-        <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
-      ) : undefined,
-    [isCompact, agentControlsWithDisabled],
-  );
-
   const subtitleContent = useMemo(
     () => (
       <View style={styles.subtitleRow}>
-        {iconSource ? (
-          <Image source={iconSource} style={styles.projectIcon} />
-        ) : (
-          <View style={styles.projectIconFallback}>
-            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-          </View>
-        )}
+        <ProjectIconView
+          iconDataUri={iconDataUri}
+          initial={placeholderInitial}
+          projectViewKey={sourceDirectory}
+          size={ICON_SIZE.md}
+          textStyle={styles.projectIconFallbackText}
+        />
         <Text style={styles.projectTitle} numberOfLines={1}>
           {workspaceTitle}
         </Text>
       </View>
     ),
-    [iconSource, placeholderInitial, workspaceTitle],
+    [iconDataUri, placeholderInitial, sourceDirectory, workspaceTitle],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -430,7 +438,8 @@ export function WorkspaceSetupDialog() {
           isSubmitLoading={pendingAction === "chat"}
           blurOnSubmit={true}
           value={chatDraft.text}
-          onChangeText={chatDraft.setText}
+          onChangeText={chatDraft.editText}
+          textReplacementKey={chatDraft.textReplacementKey}
           attachments={chatDraft.attachments}
           onChangeAttachments={chatDraft.setAttachments}
           cwd={sourceDirectory}
@@ -439,7 +448,6 @@ export function WorkspaceSetupDialog() {
           commandDraftConfig={composerState?.commandDraftConfig}
           agentControls={agentControlsWithDisabled}
           inputWrapperStyle={styles.composerInputWrapper}
-          footer={composerFooter}
         />
       </FileDropZone>
 
@@ -454,26 +462,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  projectIcon: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
-  },
-  projectIconFallback: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   projectIconFallbackText: {
-    color: theme.colors.foregroundMuted,
     fontSize: 9,
   },
   projectTitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   section: {
@@ -482,7 +475,7 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: -theme.spacing[2],
   },
   errorText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.destructive,
     lineHeight: 20,
   },

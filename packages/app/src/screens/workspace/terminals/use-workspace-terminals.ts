@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
+import { useReplicaQuery } from "@/data/query";
+import { workspaceTerminalsPushRoute } from "@/data/push-router";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -11,23 +15,18 @@ import {
   collectStandaloneTerminalIds,
   reconcilePendingScriptTerminals,
   removeTerminalFromPayload,
-  TERMINALS_QUERY_STALE_TIME,
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
 
-interface TerminalProfileInput {
-  name: string;
-  command: string;
-  args?: string[];
-}
+export type TerminalTabDestination =
+  | { kind: "open"; paneId?: string }
+  | { kind: "replace"; tabId: string };
 
 interface PendingTerminalCreateInput {
-  paneId?: string;
-  profile?: TerminalProfileInput;
+  destination: TerminalTabDestination;
+  profile?: TerminalProfile;
 }
-
-export type { TerminalProfileInput };
 
 interface UseWorkspaceTerminalsInput {
   client: DaemonClient | null;
@@ -39,7 +38,7 @@ interface UseWorkspaceTerminalsInput {
   workspaceScripts: WorkspaceDescriptor["scripts"];
   hasHydratedWorkspaces: boolean;
   isMissingWorkspaceDirectory: boolean;
-  onTerminalCreated: (input: { terminalId: string; paneId?: string }) => void;
+  onTerminalCreated: (input: { terminalId: string; destination: TerminalTabDestination }) => void;
   onScriptTerminalSelected: (terminalId: string) => void;
   onWorkspacePathUnavailable: () => void;
   onTerminalCreateQueued: () => void;
@@ -77,19 +76,29 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       buildTerminalsQueryKey(normalizedServerId, workspaceDirectory, normalizedWorkspaceId || null),
     [normalizedServerId, normalizedWorkspaceId, workspaceDirectory],
   );
+  const paneWorkspaceId = normalizedWorkspaceId || undefined;
 
-  const query = useQuery({
+  const query = useReplicaQuery({
     queryKey,
     enabled: canCreateNow,
+    pushEvent: "terminals_changed",
+    meta: workspaceTerminalsPushRoute({
+      enabled: canCreateNow,
+      serverId: normalizedServerId,
+      cwd: workspaceDirectory ?? "",
+      ...(paneWorkspaceId ? { workspaceId: paneWorkspaceId } : {}),
+    }),
     queryFn: async () => {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await client.listTerminals(workspaceDirectory, undefined, {
-        workspaceId: normalizedWorkspaceId || undefined,
-      });
+      if (paneWorkspaceId) {
+        return await client.listTerminals(workspaceDirectory, undefined, {
+          workspaceId: paneWorkspaceId,
+        });
+      }
+      return await client.listTerminals(workspaceDirectory, undefined, {});
     },
-    staleTime: TERMINALS_QUERY_STALE_TIME,
   });
   const terminals = useMemo(() => query.data?.terminals ?? [], [query.data]);
   const liveTerminalIds = useMemo(() => terminals.map((terminal) => terminal.id), [terminals]);
@@ -120,14 +129,15 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
   );
 
   const createMutation = useMutation({
-    mutationFn: async (_input?: PendingTerminalCreateInput) => {
+    mutationFn: async (_input: PendingTerminalCreateInput) => {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = _input?.profile
-        ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
-            command: _input.profile.command,
-            args: _input.profile.args,
+      const profile = _input.profile ? resolveTerminalProfileLaunch(_input.profile, "") : undefined;
+      const payload = profile
+        ? await client.createTerminal(workspaceDirectory, profile.name, undefined, {
+            command: profile.command,
+            args: profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
@@ -157,7 +167,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (createdTerminal) {
         onTerminalCreated({
           terminalId: createdTerminal.id,
-          paneId: createInput?.paneId,
+          destination: createInput.destination,
         });
       }
     },
@@ -177,54 +187,6 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       return payload;
     },
   });
-
-  useEffect(() => {
-    if (!isRouteFocused || !client || !isConnected || !workspaceDirectory) {
-      return;
-    }
-
-    const paneWorkspaceId = normalizedWorkspaceId || undefined;
-
-    const unsubscribeChanged = client.on("terminals_changed", (message) => {
-      // The terminal subscription is keyed by cwd at the protocol level, so this
-      // gate only routes the event to the pane watching that cwd; it is not an
-      // ownership decision.
-      if (message.payload.cwd !== workspaceDirectory) {
-        return;
-      }
-
-      // Two workspaces can share a cwd, so the push can carry terminals from a
-      // sibling workspace. A terminal belongs to a workspace only by its
-      // workspaceId, so keep only the ones whose workspaceId matches this pane.
-      const matchingTerminals = message.payload.terminals.filter(
-        (terminal) => terminal.workspaceId === paneWorkspaceId,
-      );
-
-      queryClient.setQueryData<ListTerminalsPayload>(queryKey, (current) => ({
-        cwd: message.payload.cwd,
-        terminals: matchingTerminals,
-        requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
-      }));
-    });
-
-    client.subscribeTerminals({
-      cwd: workspaceDirectory,
-      workspaceId: paneWorkspaceId,
-    });
-
-    return () => {
-      unsubscribeChanged();
-      client.unsubscribeTerminals({ cwd: workspaceDirectory, workspaceId: paneWorkspaceId });
-    };
-  }, [
-    client,
-    isConnected,
-    isRouteFocused,
-    normalizedWorkspaceId,
-    queryClient,
-    queryKey,
-    workspaceDirectory,
-  ]);
 
   useEffect(() => {
     if (!pendingCreateInput) {
@@ -252,7 +214,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
   ]);
 
   const createTerminal = useCallback(
-    (createInput?: PendingTerminalCreateInput) => {
+    (createInput: PendingTerminalCreateInput) => {
       if (createMutation.isPending || pendingCreateInput) {
         return;
       }
@@ -267,7 +229,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         return;
       }
 
-      setPendingCreateInput(createInput ?? {});
+      setPendingCreateInput(createInput);
       onTerminalCreateQueued();
     },
     [

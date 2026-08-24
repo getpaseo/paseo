@@ -6,6 +6,38 @@ import type { AgentSession, AgentStreamEvent } from "../../../agent-sdk-types.js
 
 type JsonObject = Record<string, unknown>;
 type FakeCodexAppServerHandler = (params: unknown) => unknown;
+interface FakeSubAgentActivity {
+  callId: string;
+  threadId: string;
+  agentPath: string;
+  kind: "started" | "interacted" | "interrupted";
+  parentThreadId?: string;
+}
+interface FakeLegacyCommand {
+  threadId: string;
+  callId: string;
+  command: string;
+  output: string;
+}
+interface FakeSilentCommand {
+  threadId: string;
+  callId: string;
+  command: string;
+  cwd: string;
+}
+interface FakeTerminalInput {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  processId: string;
+  text: string;
+}
+interface FakeLegacyPatch {
+  threadId: string;
+  callId: string;
+  path: string;
+  diff: string;
+}
 type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -15,10 +47,42 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
+  requests(): readonly JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
+  waitForRequest(method: string): Promise<JsonObject>;
+  disconnect(): void;
   nextResponse(): Promise<string>;
-  completeTurn(params?: { threadId?: string }): void;
+  startsTurn(params: { threadId: string; turnId?: string }): void;
+  startsCompaction(params: { threadId: string; itemId: string }): void;
+  updatesPlan(params: { threadId: string; steps: string[] }): void;
+  completeTurn(params?: {
+    threadId?: string;
+    status?: "completed" | "failed" | "interrupted";
+    error?: { message: string } | null;
+  }): void;
+  startsSubAgent(params: {
+    callId: string;
+    threadId: string;
+    agentPath: string;
+    parentThreadId?: string;
+  }): void;
+  startsLegacyOnlySubAgent(params: {
+    callId: string;
+    threadId: string;
+    agentPath: string;
+    parentThreadId?: string;
+  }): void;
+  beginsSubAgentActivity(params: FakeSubAgentActivity): void;
+  completesSubAgentActivity(params: FakeSubAgentActivity): void;
+  completesCompaction(params: { threadId: string; itemId: string }): void;
+  runsLegacyCommand(params: FakeLegacyCommand): void;
+  appliesLegacyPatch(params: FakeLegacyPatch): void;
+  completesCommand(params: FakeLegacyCommand): void;
+  completesSilentCommand(params: FakeSilentCommand): void;
+  completesSilentLegacyCommand(params: FakeSilentCommand): void;
+  typesIntoTerminal(params: FakeTerminalInput): void;
+  says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -28,6 +92,28 @@ export interface FakeCodexAppServer {
     reason: string;
   }): void;
   waitForCommandApprovalDecision(itemId: string): Promise<unknown>;
+  requestFileChangeApproval(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    reason: string;
+  }): void;
+  requestUserInput(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    questions: Array<Record<string, unknown>>;
+  }): void;
+  waitForApprovalDecision(itemId: string): Promise<unknown>;
+  requestMcpElicitation(params: {
+    threadId: string;
+    turnId: string | null;
+    serverName: string;
+    message: string;
+    requestedSchema: Record<string, unknown>;
+  }): void;
+  waitForMcpElicitationDecision(): Promise<unknown>;
+  resolvesMcpElicitation(): void;
 }
 
 export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
@@ -106,6 +192,7 @@ export function createFakeCodexAppServer(
   const messages: JsonObject[] = [];
   const errors: Error[] = [];
   const approvalRequestIds = new Map<string, number>();
+  let mcpElicitationRequestId: number | undefined;
   const waiters = new Set<{
     predicate: (message: JsonObject) => boolean;
     resolve: (message: JsonObject) => void;
@@ -134,6 +221,11 @@ export function createFakeCodexAppServer(
 
     Promise.resolve(handler(message.params))
       .then((result) => {
+        const rpcError = toJsonObject(result).__jsonRpcError;
+        if (rpcError) {
+          child.stdout.write(`${JSON.stringify({ id: message.id, error: rpcError })}\n`);
+          return undefined;
+        }
         child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
         return undefined;
       })
@@ -195,9 +287,40 @@ export function createFakeCodexAppServer(
     });
   }
 
+  function writeSubAgentActivity(
+    method: "item/started" | "item/completed",
+    params: FakeSubAgentActivity,
+  ): void {
+    writeNotification(method, {
+      threadId: params.parentThreadId ?? "thread-1",
+      item: {
+        type: "subAgentActivity",
+        id: params.callId,
+        kind: params.kind,
+        agentThreadId: params.threadId,
+        agentPath: params.agentPath,
+      },
+    });
+  }
+
+  function writeNotification(method: string, params: JsonObject): void {
+    child.stdout.write(`${JSON.stringify({ method, params })}\n`);
+  }
+
+  function completeItem(threadId: string, item: JsonObject): void {
+    writeNotification("item/completed", { threadId, item });
+  }
+
+  function writeLegacyEvent(threadId: string, method: string, msg: JsonObject): void {
+    writeNotification(method, { threadId, msg });
+  }
+
   return {
     child,
     recordedRollbacks,
+    requests() {
+      return messages;
+    },
     assertNoErrors() {
       if (errors.length > 0) {
         throw errors[0];
@@ -210,18 +333,187 @@ export function createFakeCodexAppServer(
       );
       return toJsonObject(message.params);
     },
+    async waitForRequest(method) {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === method,
+        `${method} request`,
+      );
+      return toJsonObject(message.params);
+    },
+    disconnect() {
+      child.emit("exit", null, "SIGTERM");
+    },
     nextResponse() {
       return new Promise<string>((resolve) => {
         child.stdin.once("data", (chunk) => resolve(chunk.toString()));
       });
     },
+    startsTurn(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/started",
+          params: {
+            threadId: params.threadId,
+            turn: { id: params.turnId ?? `turn-${params.threadId}` },
+          },
+        })}\n`,
+      );
+    },
+    startsCompaction(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "contextCompaction", id: params.itemId },
+      });
+    },
+    updatesPlan(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/plan/updated",
+          params: {
+            threadId: params.threadId,
+            plan: params.steps.map((step) => ({ step, status: "pending" })),
+          },
+        })}\n`,
+      );
+    },
     completeTurn(params = {}) {
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId: params.threadId ?? "thread-1",
+            turn: {
+              status: params.status ?? "completed",
+              error: params.error ?? null,
+            },
+          },
         })}\n`,
       );
+    },
+    startsSubAgent(params) {
+      writeSubAgentActivity("item/completed", { ...params, kind: "started" });
+    },
+    startsLegacyOnlySubAgent(params) {
+      writeLegacyEvent(params.parentThreadId ?? "thread-1", "codex/event/item_completed", {
+        type: "item_completed",
+        item: {
+          type: "subAgentActivity",
+          id: params.callId,
+          kind: "started",
+          agentThreadId: params.threadId,
+          agentPath: params.agentPath,
+        },
+      });
+    },
+    beginsSubAgentActivity(params) {
+      writeSubAgentActivity("item/started", params);
+    },
+    completesSubAgentActivity(params) {
+      writeSubAgentActivity("item/completed", params);
+    },
+    completesCompaction(params) {
+      completeItem(params.threadId, { type: "contextCompaction", id: params.itemId });
+    },
+    runsLegacyCommand(params) {
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_begin", {
+        type: "exec_command_begin",
+        call_id: params.callId,
+        command: params.command,
+      });
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_output_delta", {
+        type: "exec_command_output_delta",
+        call_id: params.callId,
+        chunk: params.output,
+      });
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_end", {
+        type: "exec_command_end",
+        call_id: params.callId,
+        command: params.command,
+        exit_code: 0,
+        success: true,
+      });
+    },
+    appliesLegacyPatch(params) {
+      const changes = [
+        {
+          path: params.path,
+          kind: "modify",
+          unified_diff: params.diff,
+        },
+      ];
+      for (const [method, type] of [
+        ["codex/event/patch_apply_begin", "patch_apply_begin"],
+        ["codex/event/patch_apply_end", "patch_apply_end"],
+      ] as const) {
+        writeLegacyEvent(params.threadId, method, {
+          type,
+          call_id: params.callId,
+          changes,
+          ...(type === "patch_apply_end" ? { success: true } : {}),
+        });
+      }
+    },
+    completesCommand(params) {
+      completeItem(params.threadId, {
+        type: "commandExecution",
+        id: params.callId,
+        status: "completed",
+        command: params.command,
+        aggregatedOutput: params.output,
+        exitCode: 0,
+      });
+    },
+    completesSilentCommand(params) {
+      completeItem(params.threadId, {
+        type: "commandExecution",
+        id: params.callId,
+        status: "completed",
+        command: params.command,
+        cwd: params.cwd,
+        aggregatedOutput: null,
+        exitCode: 0,
+      });
+    },
+    completesSilentLegacyCommand(params) {
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_end", {
+        type: "exec_command_end",
+        call_id: params.callId,
+        command: params.command,
+        cwd: params.cwd,
+        aggregatedOutput: null,
+        exit_code: 0,
+        success: true,
+      });
+    },
+    typesIntoTerminal(params) {
+      writeNotification("item/commandExecution/terminalInteraction", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        itemId: params.itemId,
+        processId: params.processId,
+        stdin: params.text,
+      });
+    },
+    says(params) {
+      if (params.itemId) {
+        for (const chunk of params.chunks ?? [params.text]) {
+          child.stdout.write(
+            `${JSON.stringify({
+              method: "item/agentMessage/delta",
+              params: {
+                threadId: params.threadId,
+                itemId: params.itemId,
+                delta: chunk,
+              },
+            })}\n`,
+          );
+        }
+      }
+      completeItem(params.threadId, {
+        type: "agentMessage",
+        ...(params.itemId ? { id: params.itemId } : {}),
+        text: params.text,
+      });
     },
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;
@@ -237,6 +529,35 @@ export function createFakeCodexAppServer(
       );
     },
     async waitForCommandApprovalDecision(itemId) {
+      return await this.waitForApprovalDecision(itemId);
+    },
+    requestFileChangeApproval(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/fileChange/requestApproval",
+          params,
+        })}\n`,
+      );
+    },
+    requestUserInput(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/tool/requestUserInput",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForApprovalDecision(itemId) {
       const requestId = approvalRequestIds.get(itemId);
       if (requestId === undefined) {
         throw new Error(`No pending fake Codex app-server approval for ${itemId}`);
@@ -248,6 +569,42 @@ export function createFakeCodexAppServer(
       );
       return message.result;
     },
+    requestMcpElicitation(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      mcpElicitationRequestId = requestId;
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "mcpServer/elicitation/request",
+          params: {
+            ...params,
+            mode: "openai/form",
+            _meta: null,
+          },
+        })}\n`,
+      );
+    },
+    async waitForMcpElicitationDecision() {
+      if (mcpElicitationRequestId === undefined) {
+        throw new Error("No pending fake Codex app-server MCP elicitation");
+      }
+      const message = await waitForMessage(
+        (candidate) =>
+          candidate.id === mcpElicitationRequestId &&
+          !("method" in candidate) &&
+          "result" in candidate,
+        "MCP elicitation response",
+      );
+      return message.result;
+    },
+    resolvesMcpElicitation() {
+      if (mcpElicitationRequestId === undefined) {
+        throw new Error("No pending fake Codex app-server MCP elicitation");
+      }
+      writeNotification("serverRequest/resolved", { requestId: mcpElicitationRequestId });
+    },
   };
 }
 
@@ -258,21 +615,61 @@ function toJsonObject(value: unknown): JsonObject {
   return {};
 }
 
-export function waitForNextPermission(
+type StreamEventType = AgentStreamEvent["type"];
+type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent, { type: TType }>;
+
+function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
-): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>> {
+  type: TType,
+  accepts?: (event: StreamEventOfType<TType>) => boolean,
+): Promise<StreamEventOfType<TType>> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       unsubscribe();
-      reject(new Error("Timed out waiting for permission_requested"));
+      reject(new Error(`Timed out waiting for ${type}`));
     }, 1000);
     const unsubscribe = session.subscribe((event) => {
-      if (event.type !== "permission_requested") {
+      if (event.type !== type) {
+        return;
+      }
+      const typedEvent = event as StreamEventOfType<TType>;
+      if (accepts && !accepts(typedEvent)) {
         return;
       }
       clearTimeout(timeout);
       unsubscribe();
-      resolve(event);
+      resolve(typedEvent);
     });
   });
+}
+
+type TimelineEvent = StreamEventOfType<"timeline">;
+type ProviderSubagentEvent = StreamEventOfType<"provider_subagent">;
+
+export function waitForNextPermission(
+  session: AgentSession,
+): Promise<StreamEventOfType<"permission_requested">> {
+  return waitForNextEvent(session, "permission_requested");
+}
+
+export function waitForNextTimelineItem(session: AgentSession): Promise<TimelineEvent> {
+  return waitForNextEvent(session, "timeline");
+}
+
+export function waitForTimelineToolCall(
+  session: AgentSession,
+  callId: string,
+): Promise<TimelineEvent> {
+  return waitForNextEvent(
+    session,
+    "timeline",
+    (event) => event.item.type === "tool_call" && event.item.callId === callId,
+  );
+}
+
+export function waitForProviderSubagent(
+  session: AgentSession,
+  id: string,
+): Promise<ProviderSubagentEvent> {
+  return waitForNextEvent(session, "provider_subagent", (event) => event.event.id === id);
 }
