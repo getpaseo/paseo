@@ -1018,7 +1018,7 @@ async function bootstrap(): Promise<void> {
   registerWindowManager();
   registerDialogHandlers();
   registerNotificationHandlers();
-  registerOpenerHandlers();
+  registerOpenerHandlers({ settingsStore: getDesktopSettingsStore() });
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
 
