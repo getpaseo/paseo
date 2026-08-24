@@ -545,6 +545,7 @@ export const ko: TranslationResources = {
       devices: {
         label: "장치 크기",
         responsive: "반응형",
+        landscape: "가로 모드",
       },
       errors: {
         failedToLoad: "페이지를 불러오지 못했습니다",

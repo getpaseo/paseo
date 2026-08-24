@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Maximize,
   Monitor,
+  RotateCw,
   Smartphone,
   Tablet,
   type LucideIcon,
@@ -15,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toolbarButtonStyle } from "@/desktop/browser/chrome";
@@ -66,11 +68,51 @@ export const DEVICE_SIZE_PRESETS: readonly DeviceSizePreset[] = [
 ];
 
 const RESPONSIVE_DEVICE_LABEL_KEY = "workspace.browser.devices.responsive";
+const LANDSCAPE_LABEL_KEY = "workspace.browser.devices.landscape";
 
-function formatDevicePresetLabel(preset: DeviceSizePreset, responsiveLabel: string): string {
+export interface DeviceSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * What the menu resolved for the caller: which preset, which way round, and the
+ * dimensions to apply. `size` is null for "responsive", which has no orientation
+ * because it takes the shape of whatever area it is given.
+ */
+export interface DeviceSizeSelection {
+  id: DeviceSizeId;
+  isLandscape: boolean;
+  size: DeviceSize | null;
+}
+
+/**
+ * A preset stores one orientation — phones and tablets upright, laptops and
+ * desktops wide — so `isLandscape` is absolute, not a swap flag: asking for the
+ * orientation a preset is already in returns it unchanged.
+ */
+function isPresetLandscape(preset: DeviceSizePreset): boolean {
+  return preset.width !== null && preset.height !== null && preset.width > preset.height;
+}
+
+function orientedSize(preset: DeviceSizePreset, isLandscape: boolean): DeviceSize | null {
+  if (preset.width === null || preset.height === null) {
+    return null;
+  }
+  if (isPresetLandscape(preset) === isLandscape) {
+    return { width: preset.width, height: preset.height };
+  }
+  return { width: preset.height, height: preset.width };
+}
+
+function formatDevicePresetLabel(
+  preset: DeviceSizePreset,
+  responsiveLabel: string,
+  size: DeviceSize | null,
+): string {
   const name = preset.id === "responsive" ? responsiveLabel : preset.name;
-  if (preset.width && preset.height) {
-    return `${name} · ${preset.width}×${preset.height}`;
+  if (size) {
+    return `${name} · ${size.width}×${size.height}`;
   }
   return name;
 }
@@ -82,6 +124,7 @@ const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedRotateCw = withUnistyles(RotateCw);
 const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -96,18 +139,22 @@ function resolveThemedDeviceIcon(icon: LucideIcon): typeof ThemedMaximize {
 function DeviceSizeMenuItem({
   preset,
   selected,
-  label,
+  isLandscape,
+  responsiveLabel,
   onSelect,
 }: {
   preset: DeviceSizePreset;
   selected: boolean;
-  label: string;
-  onSelect: (id: DeviceSizeId) => void;
+  isLandscape: boolean;
+  responsiveLabel: string;
+  onSelect: (selection: DeviceSizeSelection) => void;
 }) {
   const ThemedIcon = resolveThemedDeviceIcon(preset.icon);
+  const size = useMemo(() => orientedSize(preset, isLandscape), [isLandscape, preset]);
+  const label = formatDevicePresetLabel(preset, responsiveLabel, size);
   const handleSelect = useCallback(() => {
-    onSelect(preset.id);
-  }, [onSelect, preset.id]);
+    onSelect({ id: preset.id, isLandscape, size });
+  }, [isLandscape, onSelect, preset.id, size]);
   const leading = useMemo(
     () => <ThemedIcon size={16} uniProps={deviceMutedIconMapping} />,
     [ThemedIcon],
@@ -131,16 +178,33 @@ function DeviceSizeMenuItem({
  */
 export function DeviceSizeMenu({
   selectedId,
+  isLandscape,
   onSelect,
 }: {
   selectedId: DeviceSizeId | null;
-  onSelect: (id: DeviceSizeId) => void;
+  isLandscape: boolean;
+  onSelect: (selection: DeviceSizeSelection) => void;
 }) {
   const { t } = useTranslation();
   const selectedPreset =
     DEVICE_SIZE_PRESETS.find((preset) => preset.id === selectedId) ?? DEVICE_SIZE_PRESETS[0];
   const SelectedIcon = resolveThemedDeviceIcon(selectedPreset.icon);
   const label = t("workspace.browser.devices.label");
+  const responsiveLabel = t(RESPONSIVE_DEVICE_LABEL_KEY);
+  // "Responsive" fills the pane it is shown in, so it has no orientation of its
+  // own and the row would do nothing.
+  const canRotate = selectedPreset.id !== "responsive";
+  const orientationIcon = useMemo(
+    () => <ThemedRotateCw size={16} uniProps={deviceMutedIconMapping} />,
+    [],
+  );
+  const toggleOrientation = useCallback(() => {
+    onSelect({
+      id: selectedPreset.id,
+      isLandscape: !isLandscape,
+      size: orientedSize(selectedPreset, !isLandscape),
+    });
+  }, [isLandscape, onSelect, selectedPreset]);
   return (
     <DropdownMenu>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -157,12 +221,26 @@ export function DeviceSizeMenu({
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" scrollable maxHeight={360}>
+        {canRotate ? (
+          <>
+            <DropdownMenuItem
+              onSelect={toggleOrientation}
+              selected={isLandscape}
+              showSelectedCheck
+              leading={orientationIcon}
+            >
+              {t(LANDSCAPE_LABEL_KEY)}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         {DEVICE_SIZE_PRESETS.map((preset) => (
           <DeviceSizeMenuItem
             key={preset.id}
             preset={preset}
             selected={preset.id === selectedId}
-            label={formatDevicePresetLabel(preset, t(RESPONSIVE_DEVICE_LABEL_KEY))}
+            isLandscape={preset.id === selectedId ? isLandscape : isPresetLandscape(preset)}
+            responsiveLabel={responsiveLabel}
             onSelect={onSelect}
           />
         ))}

@@ -6,17 +6,19 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { BrowserChrome } from "@/desktop/browser/chrome";
-import {
-  DeviceSizeMenu,
-  DEVICE_SIZE_PRESETS,
-  type DeviceSizeId,
-} from "@/desktop/browser/device-size-menu";
+import { DeviceSizeMenu, type DeviceSizeSelection } from "@/desktop/browser/device-size-menu";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { BrowserMirrorInputSurface } from "./input-surface";
 import type { BrowserMirrorInput } from "./input-surface.types";
 import { useBrowserScreencast } from "./use-screencast";
 import { useRemoteBrowserTab } from "./use-remote-tab";
 import { fitViewport, type PaneSize } from "./viewport";
+
+const INITIAL_DEVICE_SIZE: DeviceSizeSelection = {
+  id: "responsive",
+  isLandscape: false,
+  size: null,
+};
 
 interface BrowserMirrorPaneProps {
   browserId: string;
@@ -37,7 +39,7 @@ export function BrowserMirrorPane({
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
   // An announced tab carries no viewport, so the host's current size is
   // unreadable from here; the menu reflects what this viewer picked.
-  const [deviceSizeId, setDeviceSizeId] = useState<DeviceSizeId>("responsive");
+  const [deviceSize, setDeviceSize] = useState<DeviceSizeSelection>(INITIAL_DEVICE_SIZE);
   const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(
     serverId,
     browserId,
@@ -101,21 +103,19 @@ export function BrowserMirrorPane({
   );
 
   const selectDeviceSize = useCallback(
-    (id: DeviceSizeId) => {
-      const preset =
-        DEVICE_SIZE_PRESETS.find((candidate) => candidate.id === id) ?? DEVICE_SIZE_PRESETS[0];
+    (selection: DeviceSizeSelection) => {
       // "Responsive" has no remote equivalent: the host handler only sets fixed
       // viewports and `resize` requires positive dimensions, so nothing can put
       // the remote tab back into responsive mode. The local pane frees its
       // webview to fill the pane; from the mirror the closest thing is sizing
       // the remote tab to this viewer's pane, so "Responsive" means "fit my
       // window".
-      const width = preset.width ?? paneSize?.width;
-      const height = preset.height ?? paneSize?.height;
+      const width = selection.size?.width ?? paneSize?.width;
+      const height = selection.size?.height ?? paneSize?.height;
       if (!width || !height) {
         return;
       }
-      setDeviceSizeId(id);
+      setDeviceSize(selection);
       run({
         command: "resize",
         args: { browserId, width: Math.round(width), height: Math.round(height) },
@@ -125,8 +125,14 @@ export function BrowserMirrorPane({
   );
 
   const deviceActions = useMemo(
-    () => <DeviceSizeMenu selectedId={deviceSizeId} onSelect={selectDeviceSize} />,
-    [deviceSizeId, selectDeviceSize],
+    () => (
+      <DeviceSizeMenu
+        selectedId={deviceSize.id}
+        isLandscape={deviceSize.isLandscape}
+        onSelect={selectDeviceSize}
+      />
+    ),
+    [deviceSize, selectDeviceSize],
   );
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {

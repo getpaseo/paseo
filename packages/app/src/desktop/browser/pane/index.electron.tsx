@@ -33,6 +33,8 @@ import {
   DeviceSizeMenu,
   DEVICE_SIZE_PRESETS,
   type DeviceSizeId,
+  type DeviceSizePreset,
+  type DeviceSizeSelection,
 } from "@/desktop/browser/device-size-menu";
 import { getOverlayRoot } from "@/lib/overlay-root";
 import {
@@ -350,15 +352,29 @@ function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrow
   return event.action === "focus-url";
 }
 
-function deviceSizeIdForViewport(viewport: BrowserViewport): DeviceSizeId | null {
+interface SelectedDeviceSize {
+  id: DeviceSizeId | null;
+  isLandscape: boolean;
+}
+
+function matchesViewport(preset: DeviceSizePreset, width: number, height: number): boolean {
+  const upright = preset.width === width && preset.height === height;
+  const rotated = preset.width === height && preset.height === width;
+  return upright || rotated;
+}
+
+/**
+ * The store owns the viewport — the automation `resize` handler writes it too —
+ * so which preset is ticked and which way round it is are both read back from
+ * the dimensions rather than remembered alongside them.
+ */
+function deviceSizeForViewport(viewport: BrowserViewport): SelectedDeviceSize {
   if (viewport.mode === "responsive") {
-    return "responsive";
+    return { id: "responsive", isLandscape: false };
   }
-  return (
-    DEVICE_SIZE_PRESETS.find(
-      (preset) => preset.width === viewport.width && preset.height === viewport.height,
-    )?.id ?? null
-  );
+  const { width, height } = viewport;
+  const preset = DEVICE_SIZE_PRESETS.find((candidate) => matchesViewport(candidate, width, height));
+  return { id: preset?.id ?? null, isLandscape: width > height };
 }
 
 function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElement): void {
@@ -1095,22 +1111,19 @@ function LocalBrowserPane({
       });
   }, []);
 
-  const selectedDeviceSizeId = useMemo(
-    () => deviceSizeIdForViewport(browserViewport),
+  const selectedDeviceSize = useMemo(
+    () => deviceSizeForViewport(browserViewport),
     [browserViewport],
   );
   const isResponsiveDevice = browserViewport.mode === "responsive";
 
   const handleSelectDeviceSize = useCallback(
-    (deviceSizeId: DeviceSizeId) => {
-      const preset =
-        DEVICE_SIZE_PRESETS.find((candidate) => candidate.id === deviceSizeId) ??
-        DEVICE_SIZE_PRESETS[0];
+    ({ size }: DeviceSizeSelection) => {
       setBrowserViewport(
         browserId,
-        preset.width === null || preset.height === null
+        size === null
           ? RESPONSIVE_BROWSER_VIEWPORT
-          : createFixedBrowserViewport(preset.width, preset.height),
+          : createFixedBrowserViewport(size.width, size.height),
       );
     },
     [browserId, setBrowserViewport],
@@ -1147,7 +1160,11 @@ function LocalBrowserPane({
   const webviewActions = useMemo(
     () => (
       <>
-        <DeviceSizeMenu selectedId={selectedDeviceSizeId} onSelect={handleSelectDeviceSize} />
+        <DeviceSizeMenu
+          selectedId={selectedDeviceSize.id}
+          isLandscape={selectedDeviceSize.isLandscape}
+          onSelect={handleSelectDeviceSize}
+        />
         <ToolbarButton
           label={t("workspace.browser.controls.openDevTools")}
           onPress={handleOpenDevTools}
@@ -1191,7 +1208,7 @@ function LocalBrowserPane({
       handleSelectDeviceSize,
       handleToggleElementSelector,
       handleToggleScreenshot,
-      selectedDeviceSizeId,
+      selectedDeviceSize,
       selectorMode,
       t,
       theme.colors.accent,

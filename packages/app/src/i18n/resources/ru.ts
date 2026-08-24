@@ -548,6 +548,7 @@ export const ru: TranslationResources = {
       devices: {
         label: "Размер экрана устройства",
         responsive: "Адаптивный режим",
+        landscape: "Альбомная",
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",

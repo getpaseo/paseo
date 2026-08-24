@@ -544,6 +544,7 @@ export const ar: TranslationResources = {
       devices: {
         label: "حجم الجهاز",
         responsive: "متجاوب",
+        landscape: "أفقي",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",

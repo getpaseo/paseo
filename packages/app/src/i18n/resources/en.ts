@@ -542,6 +542,7 @@ export const en = {
       devices: {
         label: "Device size",
         responsive: "Responsive",
+        landscape: "Landscape",
       },
       errors: {
         failedToLoad: "Failed to load page",

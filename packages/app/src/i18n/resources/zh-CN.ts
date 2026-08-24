@@ -544,6 +544,7 @@ export const zhCN: TranslationResources = {
       devices: {
         label: "设备尺寸",
         responsive: "自适应",
+        landscape: "横向",
       },
       errors: {
         failedToLoad: "页面加载失败",

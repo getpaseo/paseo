@@ -25,6 +25,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => children,
   DropdownMenuTrigger: () => null,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => children,
+  DropdownMenuSeparator: () => null,
   DropdownMenuItem: ({ children, onSelect }: { children: ReactNode; onSelect: () => void }) => (
     <button type="button" onClick={onSelect}>
       {children}
@@ -109,6 +110,12 @@ function selectDevice(label: string) {
   act(() => item.click());
 }
 
+function findDevice(label: string) {
+  return [...(container?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent === label,
+  );
+}
+
 describe("BrowserMirrorPane device sizes", () => {
   it("resizes the remote tab to the picked preset", () => {
     selectDevice("iPhone 14 · 390×844");
@@ -119,6 +126,33 @@ describe("BrowserMirrorPane device sizes", () => {
     });
   });
 
+  it("resizes to the swapped dimensions once the preset is rotated", () => {
+    selectDevice("iPhone 14 · 390×844");
+    selectDevice("workspace.browser.devices.landscape");
+
+    expect(remote.run).toHaveBeenLastCalledWith({
+      command: "resize",
+      args: { browserId: "b1", width: 844, height: 390 },
+    });
+    expect(findDevice("iPhone 14 · 844×390")).toBeDefined();
+  });
+
+  it("keeps a preset that is already landscape the way round it is stored", () => {
+    selectDevice("Laptop · 1366×768");
+
+    expect(remote.run).toHaveBeenLastCalledWith({
+      command: "resize",
+      args: { browserId: "b1", width: 1366, height: 768 },
+    });
+
+    selectDevice("workspace.browser.devices.landscape");
+
+    expect(remote.run).toHaveBeenLastCalledWith({
+      command: "resize",
+      args: { browserId: "b1", width: 768, height: 1366 },
+    });
+  });
+
   it("sends this viewer's pane size for responsive, which has no remote equivalent", () => {
     selectDevice("workspace.browser.devices.responsive");
 
@@ -126,5 +160,19 @@ describe("BrowserMirrorPane device sizes", () => {
       command: "resize",
       args: { browserId: "b1", width: 640, height: 481 },
     });
+  });
+
+  it("offers no orientation for responsive, which fills whatever it is given", () => {
+    selectDevice("iPhone 14 · 390×844");
+    selectDevice("workspace.browser.devices.landscape");
+    remote.run.mockClear();
+
+    selectDevice("workspace.browser.devices.responsive");
+
+    expect(remote.run).toHaveBeenLastCalledWith({
+      command: "resize",
+      args: { browserId: "b1", width: 640, height: 481 },
+    });
+    expect(findDevice("workspace.browser.devices.landscape")).toBeUndefined();
   });
 });

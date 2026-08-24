@@ -548,6 +548,7 @@ export const ja: TranslationResources = {
       devices: {
         label: "デバイスサイズ",
         responsive: "レスポンシブ",
+        landscape: "横向き",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",

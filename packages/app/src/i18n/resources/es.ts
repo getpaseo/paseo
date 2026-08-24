@@ -548,6 +548,7 @@ export const es: TranslationResources = {
       devices: {
         label: "Tamaño del dispositivo",
         responsive: "Adaptable",
+        landscape: "Horizontal",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",

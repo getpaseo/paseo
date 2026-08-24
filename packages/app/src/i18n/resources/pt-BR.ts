@@ -548,6 +548,7 @@ export const ptBR: TranslationResources = {
       devices: {
         label: "Tamanho do dispositivo",
         responsive: "Responsivo",
+        landscape: "Paisagem",
       },
       errors: {
         failedToLoad: "Falha ao carregar página",

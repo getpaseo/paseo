@@ -548,6 +548,7 @@ export const fr: TranslationResources = {
       devices: {
         label: "Taille de l'appareil",
         responsive: "Adaptatif",
+        landscape: "Paysage",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
