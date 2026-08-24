@@ -65,6 +65,9 @@ export const fr: TranslationResources = {
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
+      open: "Ouvrir {{name}}",
+      openInSidePanel: "Ouvrir {{name}} dans le panneau latéral",
+      openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
       groupByProject: "Grouper par projet",
@@ -607,7 +610,7 @@ export const fr: TranslationResources = {
         files: "Fichiers",
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "Ouvrir le panneau latéral",
@@ -1677,6 +1680,8 @@ export const fr: TranslationResources = {
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre de jumelage indisponible.",
       hint: "Scannez ce codeQRavecPaseosur votre téléphone ou copiez le lien ci-dessous.",
+      securityWarning:
+        "Traitez ce lien d’association comme un mot de passe. Toute personne qui le possède peut accéder à ce daemon.",
       qrUnavailable: "CodeQRindisponible.",
       qrAccessibility: "Code QR de couplage",
       retry: "Réessayer",
@@ -1750,6 +1755,7 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
+      tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       editor: {
@@ -1778,6 +1784,7 @@ export const fr: TranslationResources = {
       label: "Fichiers",
       subtitle: "Fichiers de l’espace de travail",
       tooltip: "Parcourir les fichiers de l’espace de travail",
+      chooseFile: "Choisissez un fichier",
     },
     pullRequest: {
       label: "Demande de fusion",
@@ -2403,11 +2410,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Notes pour les agents",
+        notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint:
-          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
         save: "Enregistrer",
         saving: "Enregistrement...",
         remove: "Supprimer",

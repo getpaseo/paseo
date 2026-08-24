@@ -495,7 +495,14 @@ export function DiffSurface(props: DiffSurfaceProps) {
         schedulePaint();
         return;
       }
-      if (drag && !moved && hit?.kind === "cell" && hit.target && reviewActions) {
+      if (
+        event.pointerType === "touch" &&
+        drag &&
+        !moved &&
+        hit?.kind === "cell" &&
+        hit.target &&
+        reviewActions
+      ) {
         selectionRef.current = null;
         reviewActions.onStartComment(hit.target);
         schedulePaint();

@@ -17,12 +17,15 @@ export function getAssistantBlockSpacing(params: {
   item: StreamItem;
   aboveItem: StreamItem | null | undefined;
   belowItem: StreamItem | null | undefined;
+  hasFooterBelow?: boolean;
 }): "default" | "compactTop" | "compactBottom" | "compactBoth" {
   if (params.item.kind !== "assistant_message") {
     return "default";
   }
   const compactTop = isSameAssistantBlockGroup({ item: params.item, other: params.aboveItem });
-  const compactBottom = isSameAssistantBlockGroup({ item: params.item, other: params.belowItem });
+  const compactBottom =
+    params.hasFooterBelow ||
+    isSameAssistantBlockGroup({ item: params.item, other: params.belowItem });
   if (compactTop && compactBottom) return "compactBoth";
   if (compactTop) return "compactTop";
   if (compactBottom) return "compactBottom";
@@ -43,6 +46,9 @@ export function getGapBetweenStreamItems(
 
   if (isUserMessageItem(item) && isUserMessageItem(belowItem)) {
     return SPACING[1];
+  }
+  if (item.kind === "user_message" && belowItem.kind === "assistant_message") {
+    return 0;
   }
   if (isToolSequenceItem(item) && isToolSequenceItem(belowItem)) {
     return 0;

@@ -28,18 +28,16 @@ Your daemons keep running agents where they always did. Hub decides when to ask 
 
 ## What lives in your repository
 
-`paseo hub init` creates a project resource file for environments and agents, plus a safe starter workflow:
+Guided setup creates a project resource file for environments and agents, plus one safe starter workflow:
 
 ```text
 .paseo/
 ├── hub.yml
 └── workflows/
-    ├── slack-help.yml
-    └── partials/
-        └── answer.md
+    └── slack-help.yml
 ```
 
-Deploy the bundle, mention the bot, and an agent starts on your machine. [Quickstart](/docs/hub/quickstart) runs the guided setup; [Workflows](/docs/hub/workflows) covers routing and provider-specific replies.
+Guided setup deploys the bundle, and mentioning the bot starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter bundle](/docs/hub/configuration#generated-starter-bundle) shows what it wrote, and [Workflows](/docs/hub/workflows) covers routing, prompt partials, and provider-specific replies.
 
 ## Reading order
 

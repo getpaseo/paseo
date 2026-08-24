@@ -65,10 +65,10 @@ test.describe("Workspace pane mounting", () => {
         .first()
         .elementHandle();
       expect(originalComposer).not.toBeNull();
-      const emptyPanesBeforeSplit = await page.getByTestId("workspace-pane-empty-state").count();
+      const emptyPanesBeforeSplit = await page.getByTestId("workspace-new-tab-panel").count();
 
       await runWorkspaceActionFromCommandCenter(page, "Split pane right");
-      await expect(page.getByTestId("workspace-pane-empty-state")).toHaveCount(
+      await expect(page.getByTestId("workspace-new-tab-panel")).toHaveCount(
         emptyPanesBeforeSplit + 1,
         { timeout: 30_000 },
       );
