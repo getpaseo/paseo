@@ -3564,7 +3564,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       const dispatch = session.startTurn("wait for transport");
       const rejection = expect(dispatch).rejects.toThrow(
-        "OpenCode event stream first record; your message was not sent. opencode-stream attempt=2 phase=first-record elapsedMs=45000 lastOutcome=watchdog",
+        "OpenCode server.connected event; your message was not sent. opencode-stream attempt=2 phase=first-record elapsedMs=45000 lastOutcome=watchdog",
       );
       let settled = false;
       void dispatch.then(
