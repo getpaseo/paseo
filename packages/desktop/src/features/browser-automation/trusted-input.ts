@@ -329,7 +329,7 @@ export function dispatchTrustedKey(
   });
 }
 
-export function electronInputModifiers(
+function electronInputModifiers(
   modifiers: InputModifier[],
 ): NonNullable<KeyboardInputEvent["modifiers"]> {
   return modifiers.map((modifier) => ELECTRON_MODIFIERS[modifier]);

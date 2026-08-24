@@ -90,5 +90,4 @@ export const BrowserTabsChangedSchema = z.object({
 export type BrowserViewerCommand = z.infer<typeof BrowserViewerCommandSchema>;
 export type BrowserTabExecuteRequest = z.infer<typeof BrowserTabExecuteRequestSchema>;
 export type BrowserTabExecuteResponse = z.infer<typeof BrowserTabExecuteResponseSchema>;
-export type BrowserTabsAnnounceRequest = z.infer<typeof BrowserTabsAnnounceRequestSchema>;
 export type BrowserTabsChanged = z.infer<typeof BrowserTabsChangedSchema>;
