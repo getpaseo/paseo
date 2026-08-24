@@ -1,8 +1,13 @@
 import { View, Text, StyleSheet as RNStyleSheet } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
+import Animated, {
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  withTiming,
+} from "react-native-reanimated";
 import { Upload } from "lucide-react-native";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import { useFileDropContext } from "./context";
@@ -18,6 +23,7 @@ export function FileDropBackdrop() {
   const { t } = useTranslation();
   const ctx = useFileDropContext();
   const isDragging = ctx?.isDragging;
+  const isTextDrag = ctx?.isTextDrag;
   const suppressed = ctx?.suppressed;
   const hasSink = ctx?.hasSink;
 
@@ -26,7 +32,22 @@ export function FileDropBackdrop() {
     return { opacity: withTiming(active ? 1 : 0, { duration: 150 }) };
   });
 
+  // The label is a discrete choice made once per drag, not an animated value, so it goes through
+  // React. Only this leaf re-renders — the drag state itself never leaves the UI thread.
+  const [showsTextLabel, setShowsTextLabel] = useState(false);
+  useAnimatedReaction(
+    () => isTextDrag?.value ?? false,
+    (next, previous) => {
+      if (next === previous) return;
+      runOnJS(setShowsTextLabel)(next);
+    },
+    [isTextDrag],
+  );
+
   const overlayStyle = useMemo(() => [positionStyles.overlay, animatedStyle], [animatedStyle]);
+  const labelKey = showsTextLabel
+    ? "composer.attachments.dropTextHere"
+    : "composer.attachments.dropFilesHere";
 
   if (!ctx) return null;
 
@@ -38,7 +59,7 @@ export function FileDropBackdrop() {
       <View style={styles.backdrop} />
       <View style={styles.content}>
         <ThemedUpload size={32} uniProps={primaryIconColorMapping} />
-        <Text style={styles.text}>{t("composer.attachments.dropFilesHere")}</Text>
+        <Text style={styles.text}>{t(labelKey)}</Text>
       </View>
     </Animated.View>
   );

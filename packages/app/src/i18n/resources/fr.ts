@@ -132,6 +132,7 @@ export const fr: TranslationResources = {
       addIssueOrPr_mr: "Ajouter un problème ou MR",
       dropImagesHere: "Déposez des images ici",
       dropFilesHere: "Drop files here",
+      dropTextHere: "Drop text here",
       editQueuedMessage: "Modifier le message en file d'attente",
       sendQueuedMessageNow: "Envoyer le message en file d'attente maintenant",
       openImage: "Ouvrir la pièce jointe de l'image",

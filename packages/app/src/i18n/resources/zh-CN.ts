@@ -130,6 +130,7 @@ export const zhCN: TranslationResources = {
       addIssueOrPr_mr: "添加 issue 或 MR",
       dropImagesHere: "将图片拖放到这里",
       dropFilesHere: "Drop files here",
+      dropTextHere: "Drop text here",
       editQueuedMessage: "编辑排队消息",
       sendQueuedMessageNow: "立即发送排队消息",
       openImage: "打开图片附件",

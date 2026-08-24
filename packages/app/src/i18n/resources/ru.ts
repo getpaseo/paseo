@@ -130,6 +130,7 @@ export const ru: TranslationResources = {
       addIssueOrPr_mr: "Добавить проблему или MR",
       dropImagesHere: "Скиньте изображения сюда",
       dropFilesHere: "Переместите файлы сюда",
+      dropTextHere: "Перетащите текст сюда",
       editQueuedMessage: "Изменить сообщение из очереди",
       sendQueuedMessageNow: "Отправить сообщение из очереди сейчас",
       openImage: "Открыть прикрепленное изображение",
