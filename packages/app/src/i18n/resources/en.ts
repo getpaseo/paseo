@@ -546,6 +546,7 @@ export const en = {
       },
       errors: {
         failedToLoad: "Failed to load page",
+        openTabFailed: "Unable to open a tab on the host",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },

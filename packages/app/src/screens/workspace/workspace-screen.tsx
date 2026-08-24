@@ -106,6 +106,7 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { useCanOpenBrowserTabs } from "@/desktop/browser/capability";
+import { describeMirrorFailure, runMirrorCommand } from "@/desktop/browser/mirror/command";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { useWorkspaceBrowsers } from "@/desktop/browser/use-workspace-browsers";
 import { getDesktopHost } from "@/desktop/host";
@@ -1824,13 +1825,13 @@ function WorkspaceScreenContent({
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
   const { closingTabIds, closeTab } = useCloseTabs();
   const closeWorkspaceTabWithCleanup = useCallback(
-    function closeWorkspaceTabWithCleanup(input: {
+    async function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
       target?: WorkspaceTabTarget | null;
-    }) {
+    }): Promise<boolean> {
       const normalizedTabId = trimNonEmpty(input.tabId);
       if (!normalizedTabId || !persistenceKey) {
-        return;
+        return false;
       }
 
       if (input.target?.kind === "agent") {
@@ -1840,19 +1841,26 @@ function WorkspaceScreenContent({
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
         const isLocalBrowser = Boolean(useBrowserStore.getState().browsersById[browserId]);
-        useBrowserStore.getState().removeBrowser(browserId);
-        removeResidentBrowserWebview(browserId);
-        void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
-        // A mirrored tab lives on another host; closing it only here would let
-        // the next reconcile adopt it straight back.
-        if (!isLocalBrowser && client) {
-          void client.runBrowserCommand({
+        // A mirrored tab lives on another host. Dropping the pane before the host
+        // answers leaves the tab open there with nothing on screen to close it,
+        // so the local close waits for the confirmation and reports a refusal.
+        if (!isLocalBrowser) {
+          const outcome = await runMirrorCommand({
+            sender: client,
             command: { command: "close_tab", args: { browserId } },
             workspaceId: normalizedWorkspaceId,
           });
+          if (outcome.status !== "ok") {
+            toast.error(describeMirrorFailure(outcome, t("common.errors.daemonClientUnavailable")));
+            return false;
+          }
         }
+        useBrowserStore.getState().removeBrowser(browserId);
+        removeResidentBrowserWebview(browserId);
+        void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
+      return true;
     },
     [
       client,
@@ -1860,6 +1868,8 @@ function WorkspaceScreenContent({
       hideWorkspaceAgent,
       normalizedWorkspaceId,
       persistenceKey,
+      t,
+      toast,
       unpinWorkspaceAgent,
     ],
   );
@@ -2331,26 +2341,27 @@ function WorkspaceScreenContent({
   // signed-in browser. The host that owns it adds its own tab locally; anyone
   // else opens a mirror.
   const openBrowserTabOnHost = useCallback(
-    (url: string | undefined, openTarget: (target: WorkspaceTab["target"]) => void) => {
-      if (!client) {
+    async (url: string | undefined, openTarget: (target: WorkspaceTab["target"]) => void) => {
+      const outcome = await runMirrorCommand({
+        sender: client,
+        command: { command: "new_tab", args: url ? { url } : {} },
+        workspaceId: normalizedWorkspaceId,
+      });
+      if (outcome.status !== "ok") {
+        toast.error(describeMirrorFailure(outcome, t("common.errors.daemonClientUnavailable")));
         return;
       }
-      void (async () => {
-        const payload = await client.runBrowserCommand({
-          command: { command: "new_tab", args: url ? { url } : {} },
-          workspaceId: normalizedWorkspaceId,
-        });
-        if (!payload.ok || payload.result.command !== "new_tab") {
-          return;
-        }
-        const { browserId } = payload.result;
-        if (useBrowserStore.getState().browsersById[browserId]) {
-          return;
-        }
-        openTarget({ kind: "browser", browserId });
-      })();
+      if (outcome.result.command !== "new_tab") {
+        toast.error(t("workspace.browser.errors.openTabFailed"));
+        return;
+      }
+      const { browserId } = outcome.result;
+      if (useBrowserStore.getState().browsersById[browserId]) {
+        return;
+      }
+      openTarget({ kind: "browser", browserId });
     },
-    [client, normalizedWorkspaceId],
+    [client, normalizedWorkspaceId, t, toast],
   );
 
   const handleCreateBrowserTab = useCallback(
@@ -2358,7 +2369,7 @@ function WorkspaceScreenContent({
       if (!persistenceKey) {
         return;
       }
-      openBrowserTabOnHost(undefined, (target) =>
+      void openBrowserTabOnHost(undefined, (target) =>
         openWorkspaceTabFocused(persistenceKey, target, paneLocalPlacement(input?.paneId)),
       );
     },
@@ -2405,7 +2416,7 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      openBrowserTabOnHost(undefined, openTarget);
+      void openBrowserTabOnHost(undefined, openTarget);
     },
     [
       createTerminal,
@@ -2421,7 +2432,7 @@ function WorkspaceScreenContent({
       if (!persistenceKey) {
         return;
       }
-      openBrowserTabOnHost(url, (target) =>
+      void openBrowserTabOnHost(url, (target) =>
         openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT),
       );
     },
@@ -2473,7 +2484,7 @@ function WorkspaceScreenContent({
         removeTerminalFromCache(terminalId);
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
+          await closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "terminal", terminalId },
           });
@@ -2542,7 +2553,7 @@ function WorkspaceScreenContent({
 
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
+          await closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "agent", agentId },
           });
@@ -2568,13 +2579,21 @@ function WorkspaceScreenContent({
   );
 
   const handleClosePassiveTab = useCallback(
-    function handleClosePassiveTab(input: { tabId: string; target?: WorkspaceTabTarget | null }) {
+    async function handleClosePassiveTab(input: {
+      tabId: string;
+      target?: WorkspaceTabTarget | null;
+    }) {
       setHoveredCloseTabKey((current) => (current === input.tabId ? null : current));
-      if (persistenceKey) {
-        closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
+      if (!persistenceKey) {
+        return;
       }
+      // A mirrored browser tab waits on its host, so the tab shows the same
+      // closing state an agent or terminal tab does instead of hanging silent.
+      await closeTab(input.tabId, async () => {
+        await closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
+      });
     },
-    [closeWorkspaceTabWithCleanup, persistenceKey],
+    [closeTab, closeWorkspaceTabWithCleanup, persistenceKey],
   );
 
   const confirmDiscardModifiedTab = useCallback(
@@ -2616,7 +2635,7 @@ function WorkspaceScreenContent({
         await handleCloseAgentTab({ tabId, agentId: tab.target.agentId });
         return;
       }
-      handleClosePassiveTab({ tabId, target: tab.target });
+      await handleClosePassiveTab({ tabId, target: tab.target });
     },
     [
       allTabDescriptorsById,
@@ -2816,7 +2835,7 @@ function WorkspaceScreenContent({
         return false;
       }
 
-      await closeBulkWorkspaceTabs({
+      const allClosed = await closeBulkWorkspaceTabs({
         client,
         groups,
         closeTab,
@@ -2834,11 +2853,11 @@ function WorkspaceScreenContent({
             await archiveAgent({ serverId: normalizedServerId, agentId });
           }
         },
-        closeWorkspaceTabWithCleanup: (cleanupInput) => {
+        closeWorkspaceTabWithCleanup: async (cleanupInput) => {
           if (!persistenceKey) {
-            return;
+            return false;
           }
-          closeWorkspaceTabWithCleanup(cleanupInput);
+          return await closeWorkspaceTabWithCleanup(cleanupInput);
         },
         logLabel,
         warn: (message, payload) => {
@@ -2848,7 +2867,7 @@ function WorkspaceScreenContent({
 
       const closedKeys = new Set(tabsToClose.map((tab) => tab.key));
       setHoveredCloseTabKey((current) => (current && closedKeys.has(current) ? null : current));
-      return true;
+      return allClosed;
     },
     [
       archiveAgent,

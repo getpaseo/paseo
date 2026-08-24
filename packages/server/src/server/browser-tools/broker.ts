@@ -66,6 +66,7 @@ export class BrowserToolsBroker {
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
   private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
+  private readonly browserWorkspaceByBrowserId = new Map<string, string>();
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -127,6 +128,16 @@ export class BrowserToolsBroker {
 
   public getMirrorCapableClientCount(): number {
     return this.eligibleHosts("mirror").length;
+  }
+
+  /** The connected host that owns a tab, or null while no host claims it. */
+  public getBrowserHostClientId(browserId: string): string | null {
+    return this.browserHostByBrowserId.get(browserId) ?? null;
+  }
+
+  /** The workspace a host reported the tab in, or null when it reported none. */
+  public getBrowserWorkspaceId(browserId: string): string | null {
+    return this.browserWorkspaceByBrowserId.get(browserId) ?? null;
   }
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
@@ -403,6 +414,7 @@ export class BrowserToolsBroker {
       for (const tab of payload.result.tabs) {
         this.browserHostByBrowserId.set(tab.browserId, clientId);
         this.strandedBrowserHostByBrowserId.delete(tab.browserId);
+        this.rememberBrowserWorkspace(tab.browserId, tab.workspaceId);
       }
       return;
     }
@@ -410,13 +422,25 @@ export class BrowserToolsBroker {
     if (payload.result.command === "close_tab") {
       this.browserHostByBrowserId.delete(payload.result.browserId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      this.browserWorkspaceByBrowserId.delete(payload.result.browserId);
       return;
     }
 
     if ("browserId" in payload.result) {
       this.browserHostByBrowserId.set(payload.result.browserId, clientId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      if ("workspaceId" in payload.result) {
+        this.rememberBrowserWorkspace(payload.result.browserId, payload.result.workspaceId);
+      }
     }
+  }
+
+  /** Hosts that scope tabs to a workspace report it; the ones that do not leave it unset. */
+  private rememberBrowserWorkspace(browserId: string, workspaceId: string | undefined): void {
+    if (!workspaceId) {
+      return;
+    }
+    this.browserWorkspaceByBrowserId.set(browserId, workspaceId);
   }
 
   private sendRequest(params: {

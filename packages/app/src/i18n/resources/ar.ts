@@ -548,6 +548,7 @@ export const ar: TranslationResources = {
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
+        openTabFailed: "تعذر فتح علامة تبويب على المضيف",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
       },

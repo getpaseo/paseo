@@ -552,6 +552,7 @@ export const ru: TranslationResources = {
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",
+        openTabFailed: "Не удалось открыть вкладку на хосте",
         invalidUrl: "Недопустимый URL браузера",
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",

@@ -11,7 +11,6 @@ export function workspaceBrowsersQueryKey(serverId: string, workspaceId: string)
   return ["browsers", serverId, workspaceId] as const;
 }
 
-/** The workspace a cached browser tab list belongs to, or null for other queries. */
 export function readWorkspaceBrowsersQueryWorkspaceId(
   queryKey: QueryKey,
   serverId: string,

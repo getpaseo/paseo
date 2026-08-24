@@ -552,6 +552,7 @@ export const ja: TranslationResources = {
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
+        openTabFailed: "ホストでタブを開けませんでした",
         invalidUrl: "無効なブラウザURL",
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
       },

@@ -549,6 +549,7 @@ export const ko: TranslationResources = {
       },
       errors: {
         failedToLoad: "페이지를 불러오지 못했습니다",
+        openTabFailed: "호스트에서 탭을 열 수 없습니다",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },

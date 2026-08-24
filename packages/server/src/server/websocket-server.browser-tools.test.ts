@@ -382,11 +382,78 @@ describe("WebSocketServer browser tools wiring", () => {
       args: { browserId: BROWSER_ID },
     });
   });
+
+  it("ignores a tab announcement from a client that is not a browser host", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+
+    viewer.announceBrowserTabs();
+
+    // A viewer has no tab set to announce, so the daemon must not run the
+    // `list_tabs` fan-out every connected host and client pays for.
+    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
+      "Timed out waiting for browser automation request",
+    );
+  });
+
+  it("drops screencast frames from a client that does not host the stream", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const owningHost = await harness.connectBrowserHostClient({ clientId: "owning-host" });
+    const otherHost = await harness.connectBrowserHostClient({ clientId: "other-host" });
+    const viewer = await harness.connectViewerClient();
+
+    const tabsPromise = viewer.runBrowserCommand({ command: { command: "list_tabs", args: {} } });
+    await respondWithTab(owningHost, { browserId: BROWSER_ID, url: "https://one.example" });
+    await respondWithNoTabs(otherHost);
+    await tabsPromise;
+
+    const frames: BrowserScreencastEvent[] = [];
+    viewer.onBrowserScreencastFrame((event) => {
+      frames.push(event);
+    });
+    await startScreencast({ viewer, host: owningHost, browserId: BROWSER_ID });
+
+    otherHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("forged") });
+    owningHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("genuine") });
+    await waitFor(() => frames.length > 0);
+    // The forged frame went first, so anything it would have displaced has landed.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(frames.map((frame) => new TextDecoder().decode(frame.data))).toEqual(["genuine"]);
+  });
+
+  it("refuses a screencast subscribe for a browser outside the requested workspace", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+
+    const tabsPromise = viewer.runBrowserCommand({
+      command: { command: "list_tabs", args: {} },
+      workspaceId: "workspace-1",
+    });
+    await respondWithTab(browserHost, {
+      browserId: BROWSER_ID,
+      url: "https://one.example",
+      workspaceId: "workspace-1",
+    });
+    await tabsPromise;
+
+    await expect(
+      viewer.subscribeBrowserScreencast(BROWSER_ID, { workspaceId: "workspace-2" }),
+    ).resolves.toMatchObject({
+      browserId: BROWSER_ID,
+      error: `Browser tab ${BROWSER_ID} is not in workspace workspace-2.`,
+    });
+    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
+      "Timed out waiting for browser automation request",
+    );
+  });
 });
 
 async function respondWithTab(
   host: BrowserHostClientHandle,
-  tab: { browserId: string; url: string },
+  tab: { browserId: string; url: string; workspaceId?: string },
 ): Promise<void> {
   const request = await host.nextBrowserRequest();
   host.respondToBrowserRequest({
@@ -396,10 +463,43 @@ async function respondWithTab(
       ok: true,
       result: {
         command: "list_tabs",
-        tabs: [{ browserId: tab.browserId, url: tab.url, title: tab.url }],
+        tabs: [
+          {
+            browserId: tab.browserId,
+            url: tab.url,
+            title: tab.url,
+            ...(tab.workspaceId ? { workspaceId: tab.workspaceId } : {}),
+          },
+        ],
       },
     },
   });
+}
+
+async function respondWithNoTabs(host: BrowserHostClientHandle): Promise<void> {
+  const request = await host.nextBrowserRequest();
+  host.respondToBrowserRequest({
+    type: "browser.automation.execute.response",
+    payload: { requestId: request.requestId, ok: true, result: { command: "list_tabs", tabs: [] } },
+  });
+}
+
+async function startScreencast(params: {
+  viewer: DaemonClient;
+  host: BrowserHostClientHandle;
+  browserId: string;
+}): Promise<void> {
+  const subscribePromise = params.viewer.subscribeBrowserScreencast(params.browserId);
+  const startRequest = await params.host.nextBrowserRequest();
+  params.host.respondToBrowserRequest({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: startRequest.requestId,
+      ok: true,
+      result: { command: "screencast_start", browserId: params.browserId, slot: 0 },
+    },
+  });
+  await expect(subscribePromise).resolves.toMatchObject({ browserId: params.browserId, slot: 0 });
 }
 
 async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarness> {

@@ -8,14 +8,25 @@ import { BrowserScreencastRegistry, type BrowserScreencastViewer } from "./scree
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
+const HOST_CLIENT_ID = "browser-host-1";
 
 class FakeBroker {
   public readonly commands: BrowserAutomationCommand[] = [];
   public failure: string | null = null;
+  public hostClientId: string | null = HOST_CLIENT_ID;
+  public workspaceId: string | null = null;
   private readonly latencyMs: number;
 
   public constructor(options?: { latencyMs?: number }) {
     this.latencyMs = options?.latencyMs ?? 0;
+  }
+
+  public getBrowserHostClientId(): string | null {
+    return this.hostClientId;
+  }
+
+  public getBrowserWorkspaceId(): string | null {
+    return this.workspaceId;
   }
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
@@ -68,7 +79,55 @@ function delay(ms: number): Promise<void> {
 
 function createViewer(): BrowserScreencastViewer & { frames: Uint8Array[] } {
   const frames: Uint8Array[] = [];
-  return { frames, sendFrame: (frame) => frames.push(frame) };
+  return {
+    frames,
+    sendFrame: async (frame) => {
+      frames.push(frame);
+    },
+  };
+}
+
+interface StalledViewer extends BrowserScreencastViewer {
+  frames: Uint8Array[];
+  /** Sends handed to the transport that have not completed. */
+  inFlight: () => number;
+  settle: () => void;
+}
+
+/** A viewer whose transport only completes a send when the test says so. */
+function createStalledViewer(): StalledViewer {
+  const frames: Uint8Array[] = [];
+  let pendingSends: Array<() => void> = [];
+  return {
+    frames,
+    inFlight: () => pendingSends.length,
+    settle: () => {
+      const settling = pendingSends;
+      pendingSends = [];
+      for (const complete of settling) {
+        complete();
+      }
+    },
+    sendFrame: (frame) => {
+      frames.push(frame);
+      return new Promise<void>((resolve) => {
+        pendingSends.push(resolve);
+      });
+    },
+  };
+}
+
+function encodedFrame(payload: string, slot = 0): Uint8Array {
+  return encodeBrowserScreencastFrame({
+    slot,
+    metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    payload: new TextEncoder().encode(payload),
+  });
+}
+
+/** Lets the delivery loop run every microtask it has queued. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function jpegFrame(slot: number, payload: string) {
@@ -199,7 +258,7 @@ describe("BrowserScreencastRegistry", () => {
       maxWidth: 1280,
       maxHeight: 800,
     });
-    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
 
     const resized = await registry.subscribe({
       viewer,
@@ -260,8 +319,8 @@ describe("BrowserScreencastRegistry", () => {
     await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
     await registry.subscribe({ viewer: second, browserId: BROWSER_ID });
 
-    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
-    registry.handleFrame(jpegFrame(7, "other-stream"));
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
+    registry.handleFrame({ frame: jpegFrame(7, "other-stream"), sourceClientId: HOST_CLIENT_ID });
 
     const expected = encodeBrowserScreencastFrame({
       slot: 0,
@@ -287,7 +346,7 @@ describe("BrowserScreencastRegistry", () => {
       { command: "screencast_stop", args: { browserId: SECOND_BROWSER_ID } },
     ]);
 
-    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
     expect(leaving.frames).toEqual([]);
     expect(staying.frames).toHaveLength(1);
   });
@@ -339,7 +398,7 @@ describe("BrowserScreencastRegistry", () => {
     // Neither stopped nor re-armed: the host never noticed the remount.
     expect(broker.commandNames()).toEqual(["screencast_start"]);
 
-    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
     expect(viewer.frames).toHaveLength(1);
   });
 
@@ -349,7 +408,7 @@ describe("BrowserScreencastRegistry", () => {
     const first = createViewer();
     await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
 
-    registry.handleFrame(jpegFrame(0, "hello"));
+    registry.handleFrame({ frame: jpegFrame(0, "hello"), sourceClientId: HOST_CLIENT_ID });
     expect(first.frames).toHaveLength(1);
 
     // Chrome only emits on damage, so a static page leaves a late viewer blank.
@@ -367,7 +426,7 @@ describe("BrowserScreencastRegistry", () => {
     const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const viewer = createViewer();
     await registry.subscribe({ viewer, browserId: BROWSER_ID });
-    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
 
     // A second pane on the same browser is the same viewer: the daemon keys
     // viewers by session. The pane has decoded nothing, and a settled page emits
@@ -402,5 +461,127 @@ describe("BrowserScreencastRegistry", () => {
       "screencast_stop",
       "screencast_start",
     ]);
+  });
+
+  test("holds one frame per viewer under pressure instead of queueing them", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createStalledViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID });
+
+    for (let index = 0; index < 50; index += 1) {
+      registry.handleFrame({
+        frame: jpegFrame(0, `frame-${index}`),
+        sourceClientId: HOST_CLIENT_ID,
+      });
+    }
+
+    // Queueing 50 frames onto a stalled socket is what pushes it past the
+    // outbound high-water mark, and crossing that terminates the socket along
+    // with the client's agents and terminals. One frame is on the wire.
+    expect(viewer.inFlight()).toBe(1);
+
+    viewer.settle();
+    await flush();
+    // The newest frame took the waiting slot from every frame before it.
+    expect(viewer.inFlight()).toBe(1);
+    viewer.settle();
+    await flush();
+
+    expect(viewer.frames).toEqual([encodedFrame("frame-0"), encodedFrame("frame-49")]);
+  });
+
+  test("resumes delivery once a stalled viewer drains", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createStalledViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID });
+
+    registry.handleFrame({ frame: jpegFrame(0, "first"), sourceClientId: HOST_CLIENT_ID });
+    viewer.settle();
+    await flush();
+    registry.handleFrame({ frame: jpegFrame(0, "second"), sourceClientId: HOST_CLIENT_ID });
+
+    expect(viewer.frames).toEqual([encodedFrame("first"), encodedFrame("second")]);
+  });
+
+  test("clamps a subscribe past the daemon's encode budget", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createViewer();
+
+    await registry.subscribe({
+      viewer,
+      browserId: BROWSER_ID,
+      maxWidth: 100_000,
+      maxHeight: 100_000,
+    });
+
+    // 4096 per axis, then scaled down to the daemon's 3840x2160 pixel budget.
+    expect(broker.commands).toEqual([startCommand({ maxWidth: 2880, maxHeight: 2880 })]);
+  });
+
+  test("clamps the combined size two viewers ask the host for", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const wide = createViewer();
+    const tall = createViewer();
+
+    await registry.subscribe({ viewer: wide, browserId: BROWSER_ID, maxWidth: 4096, maxHeight: 8 });
+    await registry.subscribe({ viewer: tall, browserId: BROWSER_ID, maxWidth: 8, maxHeight: 4096 });
+
+    // Each viewer is inside the budget on its own; the box that covers both is not.
+    expect(broker.commands.at(-1)).toEqual(startCommand({ maxWidth: 2880, maxHeight: 2880 }));
+  });
+
+  test("drops a frame pushed by a session that does not host the stream", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID });
+
+    registry.handleFrame({ frame: jpegFrame(0, "forged"), sourceClientId: "another-client" });
+    expect(viewer.frames).toEqual([]);
+
+    registry.handleFrame({ frame: jpegFrame(0, "genuine"), sourceClientId: HOST_CLIENT_ID });
+    expect(viewer.frames).toEqual([encodedFrame("genuine")]);
+  });
+
+  test("refuses a subscribe for a browser outside the requested workspace", async () => {
+    const broker = new FakeBroker();
+    broker.workspaceId = "workspace-1";
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createViewer();
+
+    const subscription = await registry.subscribe({
+      viewer,
+      browserId: BROWSER_ID,
+      workspaceId: "workspace-2",
+    });
+
+    expect(subscription).toEqual({
+      ok: false,
+      error: `Browser tab ${BROWSER_ID} is not in workspace workspace-2.`,
+    });
+    expect(broker.commands).toEqual([]);
+  });
+
+  test("refuses a viewer joining a running stream from another workspace", async () => {
+    const broker = new FakeBroker();
+    broker.workspaceId = "workspace-1";
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const owner = createViewer();
+    const intruder = createViewer();
+    await registry.subscribe({ viewer: owner, browserId: BROWSER_ID, workspaceId: "workspace-1" });
+
+    const subscription = await registry.subscribe({
+      viewer: intruder,
+      browserId: BROWSER_ID,
+      workspaceId: "workspace-2",
+    });
+
+    expect(subscription).toMatchObject({ ok: false });
+    registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
+    expect(intruder.frames).toEqual([]);
   });
 });

@@ -24,6 +24,15 @@ function makeTerminalTab(id: string): WorkspaceTabDescriptor {
   };
 }
 
+function makeBrowserTab(browserId: string): WorkspaceTabDescriptor {
+  return {
+    key: `browser_${browserId}`,
+    tabId: `browser_${browserId}`,
+    kind: "browser",
+    target: { kind: "browser", browserId },
+  };
+}
+
 function makeFileTab(path: string): WorkspaceTabDescriptor {
   return {
     key: `file_${path}`,
@@ -119,8 +128,9 @@ describe("workspace bulk close helpers", () => {
         closedTabIds.push(tabId);
         await action();
       },
-      closeWorkspaceTabWithCleanup: (input) => {
+      closeWorkspaceTabWithCleanup: async (input) => {
         cleanupCalls.push(input);
+        return true;
       },
       closeLayoutOnlyAgent: async () => {},
       logLabel: "all tabs",
@@ -145,6 +155,43 @@ describe("workspace bulk close helpers", () => {
     ]);
   });
 
+  it("reports a tab that never left the layout so the pane around it survives", async () => {
+    const groups = classifyBulkClosableTabs([
+      makeBrowserTab("browser-1"),
+      makeFileTab("/repo/README.md"),
+    ]);
+
+    const allClosed = await closeBulkWorkspaceTabs({
+      groups,
+      client: null,
+      closeTab: async (_tabId, action) => action(),
+      // The host refused the mirrored browser tab; the file tab closed here.
+      closeWorkspaceTabWithCleanup: async ({ target }) => target?.kind !== "browser",
+      closeLayoutOnlyAgent: async () => {},
+      logLabel: "from pane close",
+    });
+
+    expect(allClosed).toBe(false);
+  });
+
+  it("reports a fully closed selection so the pane around it can go", async () => {
+    const groups = classifyBulkClosableTabs([
+      makeBrowserTab("browser-1"),
+      makeFileTab("/repo/README.md"),
+    ]);
+
+    const allClosed = await closeBulkWorkspaceTabs({
+      groups,
+      client: null,
+      closeTab: async (_tabId, action) => action(),
+      closeWorkspaceTabWithCleanup: async () => true,
+      closeLayoutOnlyAgent: async () => {},
+      logLabel: "from pane close",
+    });
+
+    expect(allClosed).toBe(true);
+  });
+
   it("still closes all tabs when the mixed closeItems RPC fails", async () => {
     const groups = classifyBulkClosableTabs([
       makeAgentTab("a1"),
@@ -166,8 +213,9 @@ describe("workspace bulk close helpers", () => {
         closedTabIds.push(tabId);
         await action();
       },
-      closeWorkspaceTabWithCleanup: (input) => {
+      closeWorkspaceTabWithCleanup: async (input) => {
         cleanupCalls.push(input);
+        return true;
       },
       closeLayoutOnlyAgent: async () => {},
       warn,
@@ -201,8 +249,9 @@ describe("workspace bulk close helpers", () => {
       closeLayoutOnlyAgent: async (agentId) => {
         preparedSubagents.push(agentId);
       },
-      closeWorkspaceTabWithCleanup: ({ tabId }) => {
+      closeWorkspaceTabWithCleanup: async ({ tabId }) => {
         cleanedTabs.push(tabId);
+        return true;
       },
       logLabel: "others",
     });

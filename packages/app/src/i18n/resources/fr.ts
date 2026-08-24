@@ -552,6 +552,7 @@ export const fr: TranslationResources = {
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
+        openTabFailed: "Impossible d'ouvrir un onglet sur l'hôte",
         invalidUrl: "NavigateurURLinvalide",
         unsupportedProtocol: "Navigateur non pris en charge bloquéURL:{{protocol}}",
       },

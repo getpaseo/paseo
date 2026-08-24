@@ -15,9 +15,21 @@ const SCREENCAST_STOP_GRACE_MS = 250;
 const SCREENCAST_QUALITY = 90;
 // What a viewer that declares no size gets: an app old enough to not send caps.
 const DEFAULT_SCREENCAST_SIZE: BrowserScreencastSize = { maxWidth: 2560, maxHeight: 1600 };
+// The host encodes every frame to the size it is asked for, so an unbounded
+// request is an unbounded encode on someone else's machine. A viewer caps itself
+// to what it can display; this is the ceiling the daemon holds any client to.
+const MAX_SCREENCAST_DIMENSION = 4096;
+const MAX_SCREENCAST_PIXELS = 3840 * 2160;
+
+/** What the registry needs from the broker: run host commands, and who owns a tab. */
+type BrowserScreencastBroker = Pick<
+  BrowserToolsBroker,
+  "execute" | "getBrowserHostClientId" | "getBrowserWorkspaceId"
+>;
 
 export interface BrowserScreencastViewer {
-  sendFrame(frame: Uint8Array): void;
+  /** Settles once the frame has left the daemon's outbound queue. */
+  sendFrame(frame: Uint8Array): Promise<void>;
 }
 
 /** Device pixels a viewer can display. */
@@ -33,6 +45,10 @@ export type BrowserScreencastSubscription =
 interface BrowserScreencastStream {
   browserId: string;
   slot: number;
+  /** The host the capture runs on: the only sender whose frames belong on this slot. */
+  hostClientId: string | null;
+  /** The workspace the capture was started for, forwarded to the host with every re-arm. */
+  workspaceId: string | undefined;
   viewers: Map<BrowserScreencastViewer, BrowserScreencastSize>;
   /** What the host is capturing at: the largest size across `viewers`. */
   size: BrowserScreencastSize;
@@ -42,23 +58,33 @@ interface BrowserScreencastStream {
   lastFrame: Uint8Array | null;
 }
 
+/** The one frame waiting behind the send a viewer has not finished yet. */
+interface BrowserScreencastDelivery {
+  pending: Uint8Array | null;
+}
+
 /**
  * One slot per mirrored browser, shared by the host and every viewer, so JPEG
  * frames are forwarded without re-encoding. The host streams while at least one
  * viewer is subscribed.
  */
 export class BrowserScreencastRegistry {
-  private readonly broker: Pick<BrowserToolsBroker, "execute">;
+  private readonly broker: BrowserScreencastBroker;
   private readonly streams = new Map<string, BrowserScreencastStream>();
   private readonly streamsBySlot = new Map<number, BrowserScreencastStream>();
   /** In-flight `screencast_stop` per browser: the next start queues behind it. */
   private readonly stopping = new Map<string, Promise<unknown>>();
+  /**
+   * Per viewer, the send it has not finished plus the one frame waiting behind
+   * it. Queueing every frame onto a viewer that cannot keep up would push its
+   * socket past the outbound high-water mark, and crossing that terminates the
+   * socket, taking that client's agents and terminals down with the mirror.
+   * Video is lossy under pressure: a stale frame is correct, a dead socket is not.
+   */
+  private readonly deliveries = new WeakMap<BrowserScreencastViewer, BrowserScreencastDelivery>();
   private readonly stopGraceMs: number;
 
-  public constructor(
-    broker: Pick<BrowserToolsBroker, "execute">,
-    options?: { stopGraceMs?: number },
-  ) {
+  public constructor(broker: BrowserScreencastBroker, options?: { stopGraceMs?: number }) {
     this.broker = broker;
     this.stopGraceMs = options?.stopGraceMs ?? SCREENCAST_STOP_GRACE_MS;
   }
@@ -66,13 +92,25 @@ export class BrowserScreencastRegistry {
   public async subscribe(params: {
     viewer: BrowserScreencastViewer;
     browserId: string;
+    workspaceId?: string;
     maxWidth?: number;
     maxHeight?: number;
   }): Promise<BrowserScreencastSubscription> {
-    const size: BrowserScreencastSize = {
+    // Every other browser command is scoped to a workspace. A viewer that
+    // declares one must not reach a tab outside it, including by joining a
+    // stream a viewer in another workspace already started.
+    const tabWorkspaceId = this.broker.getBrowserWorkspaceId(params.browserId);
+    if (params.workspaceId && tabWorkspaceId && tabWorkspaceId !== params.workspaceId) {
+      return {
+        ok: false,
+        error: `Browser tab ${params.browserId} is not in workspace ${params.workspaceId}.`,
+      };
+    }
+
+    const size = clampScreencastSize({
       maxWidth: params.maxWidth ?? DEFAULT_SCREENCAST_SIZE.maxWidth,
       maxHeight: params.maxHeight ?? DEFAULT_SCREENCAST_SIZE.maxHeight,
-    };
+    });
     const existing = this.streams.get(params.browserId);
     if (existing) {
       existing.viewers.set(params.viewer, size);
@@ -91,11 +129,21 @@ export class BrowserScreencastRegistry {
     }
 
     const started = afterSettled(this.stopping.get(params.browserId), () =>
-      this.start({ browserId: params.browserId, slot, size }),
+      this.start({
+        browserId: params.browserId,
+        slot,
+        size,
+        ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
+      }),
     );
     const stream: BrowserScreencastStream = {
       browserId: params.browserId,
       slot,
+      // The host that last claimed this tab, until the start settles which one
+      // is capturing. A frame that beats that response is dropped by the viewer
+      // anyway: it has not mapped the slot yet.
+      hostClientId: this.broker.getBrowserHostClientId(params.browserId),
+      workspaceId: params.workspaceId,
       viewers: new Map([[params.viewer, size]]),
       size,
       started,
@@ -109,6 +157,7 @@ export class BrowserScreencastRegistry {
       this.release(stream);
       return { ok: false, error: payload.error.message };
     }
+    stream.hostClientId = this.broker.getBrowserHostClientId(params.browserId);
     return { ok: true, slot, replay: null };
   }
 
@@ -158,24 +207,61 @@ export class BrowserScreencastRegistry {
     );
   }
 
-  public handleFrame(frame: BrowserScreencastFrame): void {
-    const stream = this.streamsBySlot.get(frame.slot);
-    if (!stream) {
+  /**
+   * Frames are routed by slot alone, so without the owner check any session
+   * could push frames into a browser it does not host.
+   */
+  public handleFrame(params: { frame: BrowserScreencastFrame; sourceClientId: string }): void {
+    const stream = this.streamsBySlot.get(params.frame.slot);
+    if (!stream || stream.hostClientId !== params.sourceClientId) {
       return;
     }
-    const bytes = encodeBrowserScreencastFrame(frame);
+    const bytes = encodeBrowserScreencastFrame(params.frame);
     stream.lastFrame = bytes;
     for (const viewer of stream.viewers.keys()) {
-      viewer.sendFrame(bytes);
+      this.deliver(viewer, bytes);
     }
+  }
+
+  private deliver(viewer: BrowserScreencastViewer, frame: Uint8Array): void {
+    const delivery = this.deliveries.get(viewer);
+    if (delivery) {
+      delivery.pending = frame;
+      return;
+    }
+    const started: BrowserScreencastDelivery = { pending: null };
+    this.deliveries.set(viewer, started);
+    void this.drain(viewer, started, frame);
+  }
+
+  private async drain(
+    viewer: BrowserScreencastViewer,
+    delivery: BrowserScreencastDelivery,
+    first: Uint8Array,
+  ): Promise<void> {
+    let next: Uint8Array | null = first;
+    while (next) {
+      try {
+        await viewer.sendFrame(next);
+      } catch {
+        // The viewer's transport is gone or being torn down, and the frames it
+        // did not take are worthless either way.
+        break;
+      }
+      next = delivery.pending;
+      delivery.pending = null;
+    }
+    this.deliveries.delete(viewer);
   }
 
   private start(params: {
     browserId: string;
     slot: number;
     size: BrowserScreencastSize;
+    workspaceId?: string;
   }): Promise<BrowserToolsResponsePayload> {
     return this.broker.execute({
+      ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
       command: {
         command: "screencast_start",
         args: {
@@ -204,7 +290,12 @@ export class BrowserScreencastRegistry {
     }
     stream.size = size;
     stream.started = afterSettled(stream.started, () =>
-      this.start({ browserId: stream.browserId, slot: stream.slot, size }),
+      this.start({
+        browserId: stream.browserId,
+        slot: stream.slot,
+        size,
+        ...(stream.workspaceId ? { workspaceId: stream.workspaceId } : {}),
+      }),
     );
   }
 
@@ -235,7 +326,23 @@ function largestSize(
     maxWidth = Math.max(maxWidth, size.maxWidth);
     maxHeight = Math.max(maxHeight, size.maxHeight);
   }
-  return { maxWidth, maxHeight };
+  // Two viewers that each fit the budget can still describe a box that does not.
+  return clampScreencastSize({ maxWidth, maxHeight });
+}
+
+/** Both axes bound the box the host fits the tab into, so clamping cannot distort it. */
+function clampScreencastSize(size: BrowserScreencastSize): BrowserScreencastSize {
+  const maxWidth = Math.min(size.maxWidth, MAX_SCREENCAST_DIMENSION);
+  const maxHeight = Math.min(size.maxHeight, MAX_SCREENCAST_DIMENSION);
+  const pixels = maxWidth * maxHeight;
+  if (pixels <= MAX_SCREENCAST_PIXELS) {
+    return { maxWidth, maxHeight };
+  }
+  const scale = Math.sqrt(MAX_SCREENCAST_PIXELS / pixels);
+  return {
+    maxWidth: Math.max(1, Math.floor(maxWidth * scale)),
+    maxHeight: Math.max(1, Math.floor(maxHeight * scale)),
+  };
 }
 
 /**

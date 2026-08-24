@@ -5,6 +5,7 @@ import {
   findWorkspaceBrowserTab,
   useWorkspaceBrowsers,
 } from "@/desktop/browser/use-workspace-browsers";
+import { runMirrorCommand, type MirrorCommandOutcome } from "./command";
 
 export interface RemoteBrowserTab {
   url: string;
@@ -17,7 +18,7 @@ export interface RemoteBrowserTab {
 
 export interface RemoteBrowserTabView {
   tab: RemoteBrowserTab | null;
-  run: (command: BrowserViewerCommand) => void;
+  run: (command: BrowserViewerCommand) => Promise<MirrorCommandOutcome>;
 }
 
 /**
@@ -48,12 +49,7 @@ export function useRemoteBrowserTab(
   }, [browserId, tabs]);
 
   const run = useCallback(
-    (command: BrowserViewerCommand) => {
-      if (!client) {
-        return;
-      }
-      void client.runBrowserCommand({ command, workspaceId });
-    },
+    (command: BrowserViewerCommand) => runMirrorCommand({ sender: client, command, workspaceId }),
     [client, workspaceId],
   );
 

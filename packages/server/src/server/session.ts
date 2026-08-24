@@ -451,6 +451,8 @@ export interface SessionOptions {
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  /** Settles once the frame has left every attached socket's outbound queue. */
+  onScreencastFrame?: (frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
@@ -664,6 +666,7 @@ export class Session {
   private readonly onBinaryMessageToSource:
     | ((source: object, frame: Uint8Array) => Promise<void>)
     | null;
+  private readonly onScreencastFrame: ((frame: Uint8Array) => Promise<void>) | undefined;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly onWorkspaceRecovered:
@@ -734,7 +737,7 @@ export class Session {
   private readonly browserToolsBroker: BrowserToolsBroker | undefined;
   private readonly browserScreencast: BrowserScreencastRegistry | undefined;
   private readonly screencastViewer: BrowserScreencastViewer = {
-    sendFrame: (frame) => this.emitBinary(frame),
+    sendFrame: (frame) => this.emitScreencastFrame(frame),
   };
   private inflightRequests = 0;
   private peakInflightRequests = 0;
@@ -764,6 +767,7 @@ export class Session {
       onMessageToSource,
       onBinaryMessage,
       onBinaryMessageToSource,
+      onScreencastFrame,
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
@@ -822,6 +826,7 @@ export class Session {
     this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.onBinaryMessageToSource = onBinaryMessageToSource ?? null;
+    this.onScreencastFrame = onScreencastFrame;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
@@ -2597,6 +2602,7 @@ export class Session {
     const subscription = await this.browserScreencast.subscribe({
       viewer: this.screencastViewer,
       browserId: msg.browserId,
+      workspaceId: msg.workspaceId,
       maxWidth: msg.maxWidth,
       maxHeight: msg.maxHeight,
     });
@@ -2612,7 +2618,7 @@ export class Session {
         : { requestId: msg.requestId, browserId: msg.browserId, error: subscription.error },
     });
     if (subscription.ok && subscription.replay) {
-      this.screencastViewer.sendFrame(subscription.replay);
+      void this.screencastViewer.sendFrame(subscription.replay);
     }
   }
 
@@ -2705,7 +2711,10 @@ export class Session {
       return;
     }
     if (binaryFrame.kind === "browser_screencast") {
-      this.browserScreencast?.handleFrame(binaryFrame.frame);
+      this.browserScreencast?.handleFrame({
+        frame: binaryFrame.frame,
+        sourceClientId: this.clientId,
+      });
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -7521,6 +7530,18 @@ export class Session {
       );
     }
     this.onMessage(msg);
+  }
+
+  /**
+   * Unlike terminal output, a screencast frame is awaited: the registry keeps
+   * one frame in flight per viewer and replaces what is waiting behind it, so
+   * a viewer that falls behind loses frames instead of filling its socket.
+   */
+  private emitScreencastFrame(frame: Uint8Array): Promise<void> {
+    if (!this.onScreencastFrame) {
+      return Promise.resolve();
+    }
+    return this.onScreencastFrame(frame);
   }
 
   private emitBinary(frame: Uint8Array): void {

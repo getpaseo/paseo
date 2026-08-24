@@ -3576,6 +3576,14 @@ describe("workspace-layout-store actions", () => {
       target: { kind: "agent", agentId: "kept" },
       intent: "reveal",
     });
+    console.log(
+      "AFTER1",
+      JSON.stringify(
+        collectAllTabs(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root).map(
+          (t) => t.tabId,
+        ),
+      ),
+    );
     useWorkspaceLayoutIds("split", "group-1");
     const splitPaneId = store.splitPane(workspaceKey, {
       tabId: keptTabId as string,
@@ -3629,6 +3637,35 @@ describe("workspace-layout-store actions", () => {
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(collectContentTabs(layout.root).map((tab) => tab.tabId)).toEqual([keptTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual([splitPaneId]);
+  });
+
+  it("closePane suppresses the mirrored tabs it drops so reconcile cannot adopt them back", () => {
+    const workspaceKey = createWorkspaceKey();
+    const snapshot = mirroredEntitySnapshot({
+      standaloneTerminalIds: ["terminal-1"],
+      liveBrowserIds: ["browser-1"],
+    });
+    const store = workspaceLayoutStore.getState();
+    store.reconcileTabs(workspaceKey, snapshot);
+    useWorkspaceLayoutIds("split", "group-1");
+    store.splitPane(workspaceKey, {
+      tabId: "terminal_terminal-1",
+      targetPaneId: "main",
+      position: "right",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const browserPaneId = findPaneContainingTab(layout.root, "browser_browser-1")?.id;
+
+    store.closePane(workspaceKey, browserPaneId as string);
+    // The close still has to reach the host and be announced back, so the
+    // snapshot keeps listing the browser for another round-trip.
+    store.reconcileTabs(workspaceKey, snapshot);
+
+    expect(
+      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
+        (tab) => tab.tabId,
+      ),
+    ).toEqual(["terminal_terminal-1"]);
   });
 
   it("closePane refuses to close the last visible pane", () => {

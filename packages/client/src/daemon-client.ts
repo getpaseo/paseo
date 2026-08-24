@@ -517,6 +517,7 @@ type BrowserScreencastSubscribePayload = BrowserScreencastSubscribeResponse["pay
 
 /** `maxWidth`/`maxHeight` are the device pixels the viewer can display. */
 export interface BrowserScreencastSubscribeOptions {
+  workspaceId?: string;
   maxWidth?: number;
   maxHeight?: number;
   requestId?: string;
@@ -4779,6 +4780,7 @@ export class DaemonClient {
         type: "browser.screencast.subscribe.request",
         requestId: resolvedRequestId,
         browserId,
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
         maxWidth: options?.maxWidth,
         maxHeight: options?.maxHeight,
       }),

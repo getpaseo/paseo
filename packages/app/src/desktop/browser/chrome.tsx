@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, RotateCw } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
-import { normalizeBrowserUrl } from "@/desktop/browser/store/state";
+import { resolveBrowserUrlDraft } from "@/desktop/browser/url-draft";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 
@@ -115,11 +115,9 @@ export function BrowserChrome({
   }, [url, urlInputRef]);
 
   const navigateToDraft = useCallback(() => {
-    const draft = urlInputRef.current?.getText().trim();
-    if (draft) {
-      // The daemon only accepts absolute http(s) URLs, so a bare "google.com"
-      // has to gain its scheme here rather than at the webview.
-      onNavigate(normalizeBrowserUrl(draft));
+    const draft = resolveBrowserUrlDraft(urlInputRef.current?.getText());
+    if (draft.status === "navigate") {
+      onNavigate(draft.url);
     }
   }, [onNavigate, urlInputRef]);
 

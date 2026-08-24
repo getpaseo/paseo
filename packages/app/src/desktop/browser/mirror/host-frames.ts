@@ -18,10 +18,7 @@ interface BrowserScreencastFrameClient {
   }) => void;
 }
 
-/**
- * Runs on the host that owns the guest: takes frames the main process captured
- * and pushes them to the daemon, which fans them out to subscribed viewers.
- */
+/** Mounted only on the host that owns the guest, never on a viewer. */
 export function mountBrowserScreencastForwarder(
   client: BrowserScreencastFrameClient,
   getHost: () => DesktopHostBridge | null = getDesktopHost,

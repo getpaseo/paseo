@@ -1,13 +1,16 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { NativeSyntheticEvent, TextInputKeyPressEventData } from "react-native";
+import type { BrowserViewerCommand } from "@getpaseo/protocol/browser-automation/client-command";
 import { Text, View, type LayoutChangeEvent } from "react-native";
 import { Image } from "expo-image";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import { BrowserChrome } from "@/desktop/browser/chrome";
-import { DeviceSizeMenu, type DeviceSizeSelection } from "@/desktop/browser/device-size-menu";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { DeviceSizeMenu } from "@/desktop/browser/device-size-menu";
+import type { DeviceSizeSelection } from "@/desktop/browser/device-sizes";
+import { resolveMirrorDeviceResize } from "./device-resize";
+import { describeMirrorFailure, type MirrorCommandOutcome } from "./command";
 import { BrowserMirrorInputSurface } from "./input-surface";
 import type { BrowserMirrorInput } from "./input-surface.types";
 import { useBrowserScreencast } from "./use-screencast";
@@ -60,14 +63,15 @@ export function BrowserMirrorPane({
   isInteractive = true,
 }: BrowserMirrorPaneProps) {
   const { t } = useTranslation();
-  const client = useHostRuntimeClient(serverId);
   const { tab, run } = useRemoteBrowserTab(serverId, workspaceId, browserId);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [paneSize, setPaneSize] = useState<PaneSize | null>(null);
   // An announced tab carries no viewport, so the host's current size is
   // unreadable from here; the menu reflects what this viewer picked.
   const [deviceSize, setDeviceSize] = useState<DeviceSizeSelection>(INITIAL_DEVICE_SIZE);
   const { uri, deviceWidth, deviceHeight, error } = useBrowserScreencast(
     serverId,
+    workspaceId,
     browserId,
     paneSize,
   );
@@ -90,27 +94,50 @@ export function BrowserMirrorPane({
     [deviceHeight, deviceWidth, fit],
   );
 
-  const sendInput = useCallback(
-    (event: BrowserMirrorInput) => {
-      if (!client) {
-        return;
-      }
-      void client.runBrowserCommand({
-        command: { command: "input_at", args: { browserId, event } },
-        workspaceId,
-      });
-    },
-    [browserId, client, workspaceId],
+  const disconnectedLabel = t("common.errors.daemonClientUnavailable");
+  const failureMessage = useCallback(
+    (outcome: MirrorCommandOutcome) =>
+      outcome.status === "ok" ? null : describeMirrorFailure(outcome, disconnectedLabel),
+    [disconnectedLabel],
   );
 
-  const goBack = useCallback(() => run({ command: "back", args: { browserId } }), [browserId, run]);
+  // A toolbar action is rare and deliberate, so its outcome replaces whatever the
+  // row was showing — including clearing a stale input failure once one succeeds.
+  const runAction = useCallback(
+    (command: BrowserViewerCommand) => {
+      void run(command).then((outcome) => setActionError(failureMessage(outcome)));
+    },
+    [failureMessage, run],
+  );
+
+  const sendInput = useCallback(
+    (event: BrowserMirrorInput) => {
+      void (async () => {
+        const message = failureMessage(
+          await run({ command: "input_at", args: { browserId, event } }),
+        );
+        // Pointer input fires many times a second, so a success may not clear the
+        // row and a repeated failure re-sets the same string, which React drops.
+        // The result is one standing error, not one per event.
+        if (message) {
+          setActionError(message);
+        }
+      })();
+    },
+    [browserId, failureMessage, run],
+  );
+
+  const goBack = useCallback(
+    () => runAction({ command: "back", args: { browserId } }),
+    [browserId, runAction],
+  );
   const goForward = useCallback(
-    () => run({ command: "forward", args: { browserId } }),
-    [browserId, run],
+    () => runAction({ command: "forward", args: { browserId } }),
+    [browserId, runAction],
   );
   const reload = useCallback(
-    () => run({ command: "reload", args: { browserId } }),
-    [browserId, run],
+    () => runAction({ command: "reload", args: { browserId } }),
+    [browserId, runAction],
   );
 
   const handleKeyPress = useCallback(
@@ -131,30 +158,23 @@ export function BrowserMirrorPane({
   );
 
   const navigate = useCallback(
-    (url: string) => run({ command: "navigate", args: { browserId, url } }),
-    [browserId, run],
+    (url: string) => runAction({ command: "navigate", args: { browserId, url } }),
+    [browserId, runAction],
   );
 
   const selectDeviceSize = useCallback(
     (selection: DeviceSizeSelection) => {
-      // "Responsive" has no remote equivalent: the host handler only sets fixed
-      // viewports and `resize` requires positive dimensions, so nothing can put
-      // the remote tab back into responsive mode. The local pane frees its
-      // webview to fill the pane; from the mirror the closest thing is sizing
-      // the remote tab to this viewer's pane, so "Responsive" means "fit my
-      // window".
-      const width = selection.size?.width ?? paneSize?.width;
-      const height = selection.size?.height ?? paneSize?.height;
-      if (!width || !height) {
+      const resize = resolveMirrorDeviceResize({ selection, paneSize });
+      if (resize.status === "unavailable") {
         return;
       }
       setDeviceSize(selection);
-      run({
+      runAction({
         command: "resize",
-        args: { browserId, width: Math.round(width), height: Math.round(height) },
+        args: { browserId, width: resize.width, height: resize.height },
       });
     },
-    [browserId, paneSize, run],
+    [browserId, paneSize, runAction],
   );
 
   const deviceActions = useMemo(
@@ -177,6 +197,10 @@ export function BrowserMirrorPane({
     keyboardRef.current?.focus();
   }, []);
 
+  // Same row, same reading as the local pane's `browser.lastError`. A failed
+  // action is the newer fact, so it sits in front of a stale stream error.
+  const paneError = actionError ?? error;
+
   return (
     <View style={styles.root}>
       <BrowserChrome
@@ -191,6 +215,13 @@ export function BrowserMirrorPane({
         urlInputRef={urlInputRef}
         trailing={deviceActions}
       />
+      {paneError ? (
+        <View style={styles.errorRow}>
+          <Text numberOfLines={1} style={styles.errorText}>
+            {paneError}
+          </Text>
+        </View>
+      ) : null}
       <BrowserMirrorInputSurface
         fit={fit}
         guest={guest}
@@ -209,7 +240,7 @@ export function BrowserMirrorPane({
             accessibilityIgnoresInvertColors
           />
         ) : (
-          <Text style={styles.message}>{error ?? t("workspace.browser.mirror.connecting")}</Text>
+          <Text style={styles.message}>{t("workspace.browser.mirror.connecting")}</Text>
         )}
         <EditingTextInput
           ref={keyboardRef}
@@ -242,5 +273,16 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
     padding: 16,
     color: theme.colors.foregroundMuted,
+  },
+  errorRow: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  errorText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.palette.red[500],
   },
 }));

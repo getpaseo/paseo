@@ -552,6 +552,7 @@ export const ptBR: TranslationResources = {
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
+        openTabFailed: "Não foi possível abrir uma aba no host",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
       },

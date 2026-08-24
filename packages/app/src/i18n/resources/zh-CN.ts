@@ -548,6 +548,7 @@ export const zhCN: TranslationResources = {
       },
       errors: {
         failedToLoad: "页面加载失败",
+        openTabFailed: "无法在主机上打开标签页",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },

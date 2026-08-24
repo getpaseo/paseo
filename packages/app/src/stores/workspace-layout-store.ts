@@ -308,21 +308,34 @@ function addAgentIdToWorkspaceSet(
   };
 }
 
+const EMPTY_DROPPED_TAB_IDS: ReadonlySet<string> = new Set();
+
 /**
- * Records a closed terminal or browser so the next reconcile does not adopt it back
- * while its host still lists it. Reconcile drops the entry once the host agrees.
+ * Records closed terminals and browsers so the next reconcile does not adopt them
+ * back while their host still lists them. Reconcile drops an entry once the host
+ * agrees. Every path that drops a tab from the layout goes through here, whether
+ * it closes one tab or the whole pane around it.
  */
-function rememberClosedEntity(input: {
+function rememberClosedEntities(input: {
   state: Record<string, ReadonlyMap<string, number>>;
   workspaceKey: string;
-  target: WorkspaceTabTarget | null;
+  targets: ReadonlyArray<WorkspaceTabTarget>;
 }): Record<string, ReadonlyMap<string, number>> {
-  const entityId = input.target ? mirroredEntityIdOf(input.target) : null;
-  if (!entityId) {
+  const entityIds: string[] = [];
+  for (const target of input.targets) {
+    const entityId = mirroredEntityIdOf(target);
+    if (entityId) {
+      entityIds.push(entityId);
+    }
+  }
+  if (entityIds.length === 0) {
     return input.state;
   }
+  const expiresAt = Date.now() + CLOSED_ENTITY_SUPPRESSION_MS;
   const nextEntityIds = new Map(input.state[input.workspaceKey] ?? []);
-  nextEntityIds.set(entityId, Date.now() + CLOSED_ENTITY_SUPPRESSION_MS);
+  for (const entityId of entityIds) {
+    nextEntityIds.set(entityId, expiresAt);
+  }
   return {
     ...input.state,
     [input.workspaceKey]: nextEntityIds,
@@ -680,10 +693,10 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              closedEntityIdsByWorkspace: rememberClosedEntity({
+              closedEntityIdsByWorkspace: rememberClosedEntities({
                 state: state.closedEntityIdsByWorkspace,
                 workspaceKey: normalizedWorkspaceKey,
-                target: closingTab?.target ?? null,
+                targets: closingTab ? [closingTab.target] : [],
               }),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -1005,8 +1018,22 @@ export function createWorkspaceLayoutStore(
               return state;
             }
 
+            // Hiding the side panel keeps its tabs, so only a real pane close
+            // drops the entities inside it.
+            const droppedTabIds = isSidePanel
+              ? EMPTY_DROPPED_TAB_IDS
+              : new Set(findPaneById(layout.root, normalizedPaneId)?.tabIds ?? []);
+            const droppedTargets = collectAllTabs(layout.root)
+              .filter((tab) => droppedTabIds.has(tab.tabId))
+              .map((tab) => tab.target);
+
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              closedEntityIdsByWorkspace: rememberClosedEntities({
+                state: state.closedEntityIdsByWorkspace,
+                workspaceKey: normalizedWorkspaceKey,
+                targets: droppedTargets,
+              }),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,

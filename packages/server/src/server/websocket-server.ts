@@ -486,6 +486,7 @@ interface SocketSessionOptions {
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  onScreencastFrame?: (frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
@@ -1270,6 +1271,26 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  /**
+   * Screencast frames are awaited so the registry learns when a socket has
+   * drained and can drop what piled up meanwhile. A socket that fails one frame
+   * keeps the stream running for the others attached to the same client.
+   */
+  private async sendScreencastFrameToConnection(
+    connection: TrustedSessionConnection,
+    frame: Uint8Array,
+  ): Promise<void> {
+    await Promise.all(
+      [...connection.sockets].map(async (ws) => {
+        try {
+          await this.sendBinaryToClientAndWait(ws, frame);
+        } catch {
+          // sendBinaryToClientAndWait already logged why the send failed.
+        }
+      }),
+    );
+  }
+
   private async attachSocket(
     ws: WebSocketLike,
     request?: unknown,
@@ -1371,6 +1392,12 @@ export class VoiceAssistantWebSocketServer {
         }
         await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
       },
+      onScreencastFrame: async (frame) => {
+        if (!connection) {
+          return;
+        }
+        await this.sendScreencastFrameToConnection(connection, frame);
+      },
       getTransportBufferedAmount: () => {
         if (!connection) {
           return null;
@@ -1420,6 +1447,7 @@ export class VoiceAssistantWebSocketServer {
       onMessageToSource: options.onMessageToSource,
       onBinaryMessage: options.onBinaryMessage,
       onBinaryMessageToSource: options.onBinaryMessageToSource,
+      onScreencastFrame: options.onScreencastFrame,
       getTransportBufferedAmount: options.getTransportBufferedAmount,
       onLifecycleIntent: options.onLifecycleIntent,
       logger: options.connectionLogger.child({ module: "session" }),
@@ -2379,7 +2407,16 @@ export class VoiceAssistantWebSocketServer {
       activeConnection.kind === "trusted" &&
       message.message.type === "browser.tabs.announce.request"
     ) {
-      this.broadcastBrowserTabsChanged();
+      // Only a client the daemon registered as a browser host has a tab set to
+      // announce; from anyone else it is a fan-out every other client pays for.
+      if (this.browserToolsRegistrations.has(activeConnection.clientId)) {
+        this.broadcastBrowserTabsChanged();
+        return;
+      }
+      activeConnection.connectionLogger.warn(
+        { clientId: activeConnection.clientId },
+        "ws_browser_tabs_announce_from_non_host",
+      );
       return;
     }
 

@@ -29,13 +29,13 @@ import {
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { BrowserChrome, ToolbarButton } from "@/desktop/browser/chrome";
+import { DeviceSizeMenu } from "@/desktop/browser/device-size-menu";
 import {
-  DeviceSizeMenu,
   DEVICE_SIZE_PRESETS,
   type DeviceSizeId,
   type DeviceSizePreset,
   type DeviceSizeSelection,
-} from "@/desktop/browser/device-size-menu";
+} from "@/desktop/browser/device-sizes";
 import { getOverlayRoot } from "@/lib/overlay-root";
 import {
   getDesktopHost,

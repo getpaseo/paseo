@@ -8,11 +8,17 @@ import { BrowserAutomationBrowserIdSchema } from "./rpc-schemas.js";
  * `maxWidth` and `maxHeight` are the device pixels the viewer can display. One
  * capture is shared by every viewer of a browser, so the host runs at the
  * largest declared size; a viewer that declares nothing gets the daemon default.
+ * They are a request, not a grant: the daemon clamps them to its own budget.
+ *
+ * `workspaceId` scopes the subscription the same way it scopes
+ * `browser.tab.execute.request`. A viewer that declares one cannot reach a tab
+ * the daemon knows belongs to another workspace.
  */
 export const BrowserScreencastSubscribeRequestSchema = z.object({
   type: z.literal("browser.screencast.subscribe.request"),
   requestId: z.string(),
   browserId: BrowserAutomationBrowserIdSchema,
+  workspaceId: z.string().min(1).optional(),
   maxWidth: z.number().int().positive().optional(),
   maxHeight: z.number().int().positive().optional(),
 });
