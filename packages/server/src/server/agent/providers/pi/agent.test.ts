@@ -1888,7 +1888,7 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
-  test("lists Pi compact even when RPC get_commands omits built-in slash commands", async () => {
+  test("lists Pi compact even when RPC get_available_commands omits built-in slash commands", async () => {
     const { pi, session } = await createSession();
     pi.latestSession().commands = [
       { name: "review", description: "Review changes", source: "extension" },
@@ -1908,7 +1908,7 @@ describe("PiRpcAgentClient", () => {
     });
   });
 
-  test("preserves known argument hints when RPC get_commands returns built-in slash commands", async () => {
+  test("preserves known argument hints when RPC get_available_commands returns built-in slash commands", async () => {
     const { pi, session } = await createSession();
     pi.latestSession().commands = [
       { name: "compact", description: "Compact from RPC", source: "extension" },
