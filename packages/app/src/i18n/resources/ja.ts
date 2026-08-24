@@ -1141,6 +1141,7 @@ export const ja: TranslationResources = {
       actions: {
         menu: "ワークスペースアクション",
         newWorkspace: "新しいワークスペース",
+        addHost: "Add host",
         showMore: "さらに表示",
         showLess: "表示を減らす",
         createWorkspaceFor: "{{projectName}}の新しいワークスペースを作成",
@@ -1178,6 +1179,12 @@ export const ja: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "新しいワークスペース",
     create: "作成",
     isolation: {

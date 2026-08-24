@@ -1136,6 +1136,7 @@ export const ko: TranslationResources = {
       actions: {
         menu: "워크스페이스 작업",
         newWorkspace: "새 워크스페이스",
+        addHost: "Add host",
         showMore: "더 보기",
         showLess: "간략히 보기",
         createWorkspaceFor: "{{projectName}}을(를) 위한 새 워크스페이스 생성",
@@ -1173,6 +1174,12 @@ export const ko: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "새 워크스페이스",
     create: "생성",
     isolation: {

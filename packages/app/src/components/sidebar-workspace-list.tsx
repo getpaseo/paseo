@@ -143,6 +143,7 @@ import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attentio
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
+  resolveSidebarLogicalWorkspaceAddHostTarget,
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
   type SidebarProjectIconTarget,
@@ -1656,6 +1657,51 @@ function LogicalWorkspaceExpansionToggle({
   );
 }
 
+function LogicalWorkspaceAddHostRow({
+  logicalWorkspaceRef,
+  projectName,
+  target,
+  onWorkspacePress,
+}: {
+  logicalWorkspaceRef: string;
+  projectName: string;
+  target: SidebarProjectHostTarget;
+  onWorkspacePress?: () => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => {
+    onWorkspacePress?.();
+    router.navigate(
+      buildNewWorkspaceRoute({
+        serverId: target.serverId,
+        sourceDirectory: target.iconWorkingDir,
+        displayName: projectName,
+        projectId: target.projectId,
+        logicalWorkspaceRef,
+      }) as Href,
+    );
+  }, [logicalWorkspaceRef, onWorkspacePress, projectName, target]);
+
+  return (
+    <Pressable
+      accessibilityRole={platformIsWeb ? undefined : "button"}
+      accessibilityLabel={t("sidebar.workspace.actions.addHost")}
+      onPress={handlePress}
+      style={({ hovered = false, pressed }) => [
+        styles.logicalWorkspaceAddHostRow,
+        hovered && !pressed && styles.logicalWorkspaceAddHostRowHovered,
+        pressed && styles.logicalWorkspaceAddHostRowPressed,
+      ]}
+      testID={`sidebar-logical-workspace-add-host-${logicalWorkspaceRef}`}
+    >
+      <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
+      <Text style={styles.logicalWorkspaceAddHostText}>
+        {t("sidebar.workspace.actions.addHost")}
+      </Text>
+    </Pressable>
+  );
+}
+
 function WorkspaceRow({
   workspaceEntry,
   hostBadge,
@@ -1897,6 +1943,12 @@ function ProjectBlock({
   const renderLogicalWorkspaceRow = useCallback(
     (row: SidebarProjectLogicalWorkspaceRow) => {
       const expanded = expandedLogicalWorkspaceKeys.has(row.key);
+      const placementServerIds = new Set(row.placements.map((placement) => placement.serverId));
+      const addHostTarget = resolveSidebarLogicalWorkspaceAddHostTarget({
+        project,
+        occupiedServerIds: placementServerIds,
+        supportsMultiplicityByServerId,
+      });
       return (
         <View key={row.key} testID={`sidebar-logical-workspace-${row.logicalWorkspaceRef}`}>
           {renderWorkspaceRow(row.targetPlacement, {
@@ -1909,6 +1961,14 @@ function ProjectBlock({
               logicalWorkspaceKey={row.key}
               logicalWorkspaceRef={row.logicalWorkspaceRef}
               onToggle={toggleLogicalWorkspaceExpanded}
+            />
+          ) : null}
+          {addHostTarget ? (
+            <LogicalWorkspaceAddHostRow
+              logicalWorkspaceRef={row.logicalWorkspaceRef}
+              projectName={project.projectName}
+              target={addHostTarget}
+              onWorkspacePress={onWorkspacePress}
             />
           ) : null}
           {expanded ? (
@@ -1939,7 +1999,10 @@ function ProjectBlock({
       expandedLogicalWorkspaceKeys,
       placementSublabel,
       onWorkspacePress,
+      project.hosts,
+      project.projectName,
       renderWorkspaceRow,
+      supportsMultiplicityByServerId,
       toggleLogicalWorkspaceExpanded,
     ],
   );
@@ -2808,6 +2871,26 @@ const styles = StyleSheet.create((theme) => ({
   workspaceListContainer: {},
   logicalWorkspaceChildren: {
     paddingLeft: theme.spacing[4],
+  },
+  logicalWorkspaceAddHostRow: {
+    minHeight: 26,
+    marginLeft: theme.spacing[6],
+    marginRight: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  logicalWorkspaceAddHostRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  logicalWorkspaceAddHostRowPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  logicalWorkspaceAddHostText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   retainedHistoryAgentList: {
     paddingLeft: theme.spacing[6],

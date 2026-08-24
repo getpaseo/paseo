@@ -1138,6 +1138,7 @@ export const en = {
       actions: {
         menu: "Workspace actions",
         newWorkspace: "New workspace",
+        addHost: "Add host",
         showMore: "Show more",
         showLess: "Show less",
         createWorkspaceFor: "Create a new workspace for {{projectName}}",
@@ -1175,6 +1176,12 @@ export const en = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "New workspace",
     create: "Create",
     isolation: {

@@ -125,6 +125,23 @@ The logical status is the existing most-urgent aggregate across all hydrated mem
 title comes from the selected target (`title`, then native name), so the declared default controls
 display when placements have drifted titles.
 
+## Native creation flow
+
+When exactly one compatible grouping contribution applies to the selected host, the native New
+Workspace screen shows a logical-workspace picker. It can create a new logical workspace or attach
+the new physical placement to an existing logical ref in the selected native Project. The reserved
+labels are part of the workspace-create request and are persisted in the initial registry record;
+there is no unlabeled intermediate row that can flash as a duplicate in the sidebar.
+
+A logical row offers `Add host` for the first Project host that does not already have a placement
+and can create one (Git worktree support or workspace multiplicity). The action opens the existing
+New Workspace screen on that host and preselects the logical ref. It does not invent a native
+Project placement: cross-host Project availability still comes from Paseo's native `projectKey`
+grouping, most commonly the same Git remote checked out on several hosts.
+
+Invalid route refs, an ambiguous grouping contribution, or a host without creation support fail
+open: no reserved labels are written and the ordinary native creation flow remains available.
+
 ## Pinning, filtering, failures, and rollback
 
 Managed physical members remain inside their logical row instead of being hoisted individually to

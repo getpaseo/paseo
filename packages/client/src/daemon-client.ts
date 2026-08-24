@@ -381,6 +381,7 @@ export interface CreatePaseoWorktreeInput extends Pick<
   CreatePaseoWorktreeRequest,
   | "cwd"
   | "projectId"
+  | "labels"
   | "worktreeSlug"
   | "firstAgentContext"
   | "refName"
@@ -4170,6 +4171,7 @@ export class DaemonClient {
         type: "create_paseo_worktree_request",
         cwd: input.cwd,
         ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+        ...(input.labels !== undefined ? { labels: input.labels } : {}),
         worktreeSlug: input.worktreeSlug,
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
@@ -4187,6 +4189,7 @@ export class DaemonClient {
     input: {
       source: WorkspaceCreateRequest["source"];
       title?: string;
+      labels?: string[];
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
     requestId?: string,
@@ -4197,6 +4200,7 @@ export class DaemonClient {
         type: "workspace.create.request",
         source: input.source,
         ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.labels !== undefined ? { labels: input.labels } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),

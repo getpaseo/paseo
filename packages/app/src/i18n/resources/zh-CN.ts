@@ -1119,6 +1119,7 @@ export const zhCN: TranslationResources = {
       actions: {
         menu: "Workspace 操作",
         newWorkspace: "新建 workspace",
+        addHost: "Add host",
         showMore: "显示更多",
         showLess: "收起",
         createWorkspaceFor: "为 {{projectName}} 新建 workspace",
@@ -1155,6 +1156,12 @@ export const zhCN: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "新建 workspace",
     create: "创建",
     isolation: {

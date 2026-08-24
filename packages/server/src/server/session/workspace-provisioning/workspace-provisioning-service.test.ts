@@ -502,8 +502,25 @@ test("createWorkspaceForDirectory always mints a fresh workspace even when one a
 test("directory creation persists the live branch and a trimmed title", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
-  const workspace = await provisioning.createWorkspaceForDirectory(repo, "  Focused work  ");
-  expect(workspace).toMatchObject({ branch: "main", title: "Focused work" });
+  const workspace = await provisioning.createWorkspaceForDirectory(
+    repo,
+    "  Focused work  ",
+    undefined,
+    {
+      labels: [
+        "paseo:reserved:v1:logical-workspace-ref=lw-focused",
+        "paseo:reserved:v1:placement-role=default",
+      ],
+    },
+  );
+  expect(workspace).toMatchObject({
+    branch: "main",
+    title: "Focused work",
+    labels: [
+      "paseo:reserved:v1:logical-workspace-ref=lw-focused",
+      "paseo:reserved:v1:placement-role=default",
+    ],
+  });
 });
 
 test("createWorkspaceForDirectory honors an explicit active project without cwd containment", async () => {

@@ -1145,6 +1145,7 @@ export const ru: TranslationResources = {
       actions: {
         menu: "Действия рабочего пространства",
         newWorkspace: "Новое рабочее пространство",
+        addHost: "Add host",
         showMore: "Показать ещё",
         showLess: "Показать меньше",
         createWorkspaceFor: "Создать новое рабочее пространство для {{projectName}}",
@@ -1182,6 +1183,12 @@ export const ru: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "Новое рабочее пространство",
     create: "Создать",
     isolation: {

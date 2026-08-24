@@ -520,6 +520,7 @@ export async function handleCreatePaseoWorktreeRequest(
       {
         cwd: request.cwd,
         projectId: request.projectId,
+        labels: request.labels,
         worktreeSlug: request.worktreeSlug,
         firstAgentContext: normalizeFirstAgentContext(request),
         refName: request.refName,

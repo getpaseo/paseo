@@ -1154,6 +1154,7 @@ export const ptBR: TranslationResources = {
       actions: {
         menu: "Ações do workspace",
         newWorkspace: "Novo workspace",
+        addHost: "Add host",
         showMore: "Mostrar mais",
         showLess: "Mostrar menos",
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
@@ -1191,6 +1192,12 @@ export const ptBR: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "Novo workspace",
     create: "Criar",
     isolation: {

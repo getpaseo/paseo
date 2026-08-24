@@ -1163,6 +1163,7 @@ export const fr: TranslationResources = {
       actions: {
         menu: "ActionsWorkspace",
         newWorkspace: "Nouvel espace de travail",
+        addHost: "Add host",
         showMore: "Afficher plus",
         showLess: "Afficher moins",
         createWorkspaceFor: "Créer un nouvel espace de travail pour{{projectName}}",
@@ -1200,6 +1201,12 @@ export const fr: TranslationResources = {
     },
   },
   newWorkspace: {
+    logicalWorkspace: {
+      label: "Logical workspace",
+      new: "New logical workspace",
+      search: "Search logical workspaces",
+      tooltip: "Create a new logical workspace or add this host to an existing one",
+    },
     title: "Nouvel espace de travail",
     create: "Créer",
     isolation: {
