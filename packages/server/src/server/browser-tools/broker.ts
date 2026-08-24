@@ -318,12 +318,12 @@ export class BrowserToolsBroker {
         : { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
 
+    // list_tabs and new_tab are the only commands without a tab, and both are
+    // answered above, so anything here names a browser and must go to its owner.
+    // Falling back to an arbitrary host would run it against the wrong tab.
     const browserId = getBrowserIdForCommand(command);
     if (!browserId) {
-      const host = selectMostRecentlyRegisteredHost(eligible);
-      return host
-        ? { ok: true, value: host }
-        : { ok: false, payload: this.noBrowserHostFailure(requestId) };
+      return { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
 
     const ownerClientId = this.browserHostByBrowserId.get(browserId);

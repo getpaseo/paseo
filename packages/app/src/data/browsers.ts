@@ -3,10 +3,6 @@ import type { BrowserAutomationTabInfo } from "@getpaseo/protocol/browser-automa
 
 export type WorkspaceBrowserTabs = BrowserAutomationTabInfo[];
 
-export function workspaceBrowsersQueryRoot(serverId: string) {
-  return ["browsers", serverId] as const;
-}
-
 export function workspaceBrowsersQueryKey(serverId: string, workspaceId: string) {
   return ["browsers", serverId, workspaceId] as const;
 }
