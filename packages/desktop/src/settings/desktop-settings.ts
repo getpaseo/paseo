@@ -13,12 +13,16 @@ export interface DesktopSettings {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
   };
+  links: {
+    approvedSchemes: string[];
+  };
 }
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
   notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
+  links?: Partial<DesktopSettings["links"]>;
 }
 
 interface PersistedDesktopSettingsDocument {
@@ -49,9 +53,14 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
+  links: {
+    approvedSchemes: [],
+  },
 };
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
+
+const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -71,6 +80,24 @@ function coerceBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function coerceApprovedSchemes(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const schemes = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const scheme = entry.trim().toLowerCase().replace(/:$/, "");
+    if (URL_SCHEME_PATTERN.test(scheme)) {
+      schemes.add(scheme);
+    }
+  }
+  return [...schemes].sort();
+}
+
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error;
 }
@@ -82,6 +109,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
       releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
       notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
       daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
+      links: { approvedSchemes: [...DEFAULT_DESKTOP_SETTINGS.links.approvedSchemes] },
     },
     migrations: {
       legacyRendererSettingsImported: false,
@@ -95,6 +123,7 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
     notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
+    links: { approvedSchemes: [...DEFAULT_DESKTOP_SETTINGS.links.approvedSchemes] },
   };
 
   if (!isRecord(input)) {
@@ -122,6 +151,13 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     const keepRunningAfterQuit = coerceBoolean(input.daemon.keepRunningAfterQuit);
     if (keepRunningAfterQuit !== null) {
       result.daemon.keepRunningAfterQuit = keepRunningAfterQuit;
+    }
+  }
+
+  if (isRecord(input.links)) {
+    const approvedSchemes = coerceApprovedSchemes(input.links.approvedSchemes);
+    if (approvedSchemes) {
+      result.links.approvedSchemes = approvedSchemes;
     }
   }
 
@@ -162,6 +198,13 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
     }
   }
 
+  if (isRecord(input.links)) {
+    const approvedSchemes = coerceApprovedSchemes(input.links.approvedSchemes);
+    if (approvedSchemes) {
+      patch.links = { approvedSchemes };
+    }
+  }
+
   return patch;
 }
 
@@ -194,6 +237,7 @@ function mergeDesktopSettings(
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
     notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
+    links: { ...current.links, ...patch.links },
   };
 }
 

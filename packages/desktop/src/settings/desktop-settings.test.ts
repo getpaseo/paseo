@@ -86,6 +86,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
+      links: { approvedSchemes: [] },
     });
   });
 
@@ -108,6 +109,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
       },
+      links: { approvedSchemes: [] },
     });
     expect(files).toEqual(["desktop-settings.json"]);
   });
@@ -247,6 +249,54 @@ describe("desktop-settings", () => {
     expect(settings.daemon.keepRunningAfterQuit).toBe(true);
   });
 
+  it("normalizes approved link schemes when patching", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    const next = await store.patch({
+      links: { approvedSchemes: ["Obsidian:", "zoommtg", "linear", "obsidian:"] },
+    });
+
+    expect(next.links.approvedSchemes).toEqual(["linear", "obsidian", "zoommtg"]);
+  });
+
+  it("drops invalid approved link schemes from persisted settings", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: {
+          releaseChannel: "stable",
+          links: { approvedSchemes: ["obsidian", 7, "", "not a scheme", "9lives", null] },
+        },
+        migrations: {
+          legacyRendererSettingsImported: true,
+          daemonStopOnQuitDefaultApplied: true,
+        },
+      }),
+    );
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.links.approvedSchemes).toEqual(["obsidian"]);
+  });
+
+  it("keeps approved link schemes across restarts", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+
+    await createDesktopSettingsStore({ userDataPath }).patch({
+      links: { approvedSchemes: ["obsidian"] },
+    });
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.links.approvedSchemes).toEqual(["obsidian"]);
+  });
+
   it("migrates desktop-owned values from legacy renderer settings once", async () => {
     const userDataPath = await createTempUserDataDir();
     directories.add(userDataPath);
@@ -275,6 +325,7 @@ describe("desktop-settings", () => {
         manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,
       },
+      links: { approvedSchemes: [] },
     });
     expect(ignoredSecondMigration).toEqual(migrated);
   });
