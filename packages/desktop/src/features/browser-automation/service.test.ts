@@ -73,6 +73,7 @@ class FakeTab implements TabContents {
   public captureErrorMessage = "capture failed";
   public viewportCaptureFailuresBeforeSuccess = 0;
   public deferCaptures = false;
+  public stopScreencastThrows = false;
   public fullPageScreenshotThrows = false;
   public fullPageScreenshotErrorMessage = "UnknownVizError";
   public fullPageCaptureFailuresBeforeSuccess = 0;
@@ -210,6 +211,9 @@ class FakeTab implements TabContents {
     this.debugCommands.push({ command, ...(params ? { params } : {}) });
     if (command === "Page.getLayoutMetrics") {
       return this.layoutMetrics;
+    }
+    if (command === "Page.stopScreencast" && this.stopScreencastThrows) {
+      throw new Error("stop failed");
     }
     if (command === "Page.captureScreenshot") {
       if (this.fullPageCaptureFailuresBeforeSuccess > 0) {
@@ -1685,6 +1689,74 @@ describe("executeAutomationCommand", () => {
       "Page.stopScreencast",
     ]);
     expect(browser.screencastFrames).toEqual([]);
+  });
+
+  test("a stop before the first-frame timer fires emits nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      await browser.execute({
+        command: "screencast_start",
+        args: {
+          browserId: BROWSER_A,
+          slot: 0,
+          quality: 90,
+          maxWidth: 2560,
+          maxHeight: 1600,
+          everyNthFrame: 1,
+        },
+      });
+
+      await browser.execute({ command: "screencast_stop", args: { browserId: BROWSER_A } });
+      // The daemon reuses slot 0 for another browser the moment the stop lands, so
+      // a late frame here fans this tab's page out to that browser's viewers.
+      await vi.advanceTimersByTimeAsync(700);
+
+      expect(browser.screencastFrames).toEqual([]);
+      expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+        "Page.startScreencast",
+        "Page.stopScreencast",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a rejected stop still tears the stream down", async () => {
+    const browser = new BrowserAutomationHarness();
+    await browser.execute({
+      command: "screencast_start",
+      args: {
+        browserId: BROWSER_A,
+        slot: 0,
+        quality: 60,
+        maxWidth: 1280,
+        maxHeight: 800,
+        everyNthFrame: 1,
+      },
+    });
+    browser.tab.stopScreencastThrows = true;
+
+    const result = await browser.execute({
+      command: "screencast_stop",
+      args: { browserId: BROWSER_A },
+    });
+    browser.tab.emitDebugMessage("Page.screencastFrame", {
+      sessionId: 11,
+      data: "AQ==",
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-screencast_stop",
+      ok: true,
+      result: { command: "screencast_stop", browserId: BROWSER_A },
+    });
+    expect(browser.screencastFrames).toEqual([]);
+    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+      "Page.startScreencast",
+      "Page.stopScreencast",
+    ]);
   });
 
   test("screencast_start re-arms an existing stream on the daemon's new slot", async () => {

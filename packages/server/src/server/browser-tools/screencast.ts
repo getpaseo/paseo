@@ -51,6 +51,8 @@ export class BrowserScreencastRegistry {
   private readonly broker: Pick<BrowserToolsBroker, "execute">;
   private readonly streams = new Map<string, BrowserScreencastStream>();
   private readonly streamsBySlot = new Map<number, BrowserScreencastStream>();
+  /** In-flight `screencast_stop` per browser: the next start queues behind it. */
+  private readonly stopping = new Map<string, Promise<unknown>>();
   private readonly stopGraceMs: number;
 
   public constructor(
@@ -73,14 +75,14 @@ export class BrowserScreencastRegistry {
     };
     const existing = this.streams.get(params.browserId);
     if (existing) {
-      // A viewer already on the stream is re-declaring its size, and is still
-      // showing the last frame, so replaying it would only repeat what it has.
-      const isNewViewer = !existing.viewers.has(params.viewer);
       existing.viewers.set(params.viewer, size);
       this.resize(existing);
-      // The caller sends this after the subscribe response: a frame that beats
-      // the response arrives before the viewer has mapped the slot, and is dropped.
-      return { ok: true, slot: existing.slot, replay: isNewViewer ? existing.lastFrame : null };
+      // Every subscribe replays: a pane that remounts drops its slot mapping and
+      // its decoded frame, and a settled page emits nothing to redraw it with. On
+      // a resize the replay is superseded by the re-armed capture's first frame.
+      // The caller sends it after the subscribe response: a frame that beats the
+      // response arrives before the viewer has mapped the slot, and is dropped.
+      return { ok: true, slot: existing.slot, replay: existing.lastFrame };
     }
 
     const slot = this.allocateSlot();
@@ -88,7 +90,9 @@ export class BrowserScreencastRegistry {
       return { ok: false, error: "All browser screencast slots are in use." };
     }
 
-    const started = this.start({ browserId: params.browserId, slot, size });
+    const started = afterSettled(this.stopping.get(params.browserId), () =>
+      this.start({ browserId: params.browserId, slot, size }),
+    );
     const stream: BrowserScreencastStream = {
       browserId: params.browserId,
       slot,
@@ -127,11 +131,22 @@ export class BrowserScreencastRegistry {
     if (stream.viewers.size > 0 || this.streams.get(params.browserId) !== stream) {
       return;
     }
+    // Registered before the slot is released, so a subscribe arriving while the
+    // stop is in flight queues its start behind it instead of overtaking it.
+    const stop = afterSettled(stream.started, () =>
+      this.broker.execute({
+        command: { command: "screencast_stop", args: { browserId: params.browserId } },
+      }),
+    );
+    this.stopping.set(params.browserId, stop);
     this.release(stream);
-    await stream.started;
-    await this.broker.execute({
-      command: { command: "screencast_stop", args: { browserId: params.browserId } },
-    });
+    try {
+      await stop;
+    } finally {
+      if (this.stopping.get(params.browserId) === stop) {
+        this.stopping.delete(params.browserId);
+      }
+    }
   }
 
   public async removeViewer(viewer: BrowserScreencastViewer): Promise<void> {
@@ -179,6 +194,8 @@ export class BrowserScreencastRegistry {
    * One capture serves every viewer, so it runs at the largest one. Re-arming
    * costs a frame, so only a changed size re-issues; the host stops the running
    * stream before starting the new one, which keeps the slot valid throughout.
+   * The re-arm queues behind the command already in flight, so the host's last
+   * screencast command for the browser is always the registry's last decision.
    */
   private resize(stream: BrowserScreencastStream): void {
     const size = largestSize(stream.viewers);
@@ -186,7 +203,9 @@ export class BrowserScreencastRegistry {
       return;
     }
     stream.size = size;
-    stream.started = this.start({ browserId: stream.browserId, slot: stream.slot, size });
+    stream.started = afterSettled(stream.started, () =>
+      this.start({ browserId: stream.browserId, slot: stream.slot, size }),
+    );
   }
 
   private allocateSlot(): number | null {
@@ -217,6 +236,20 @@ function largestSize(
     maxHeight = Math.max(maxHeight, size.maxHeight);
   }
   return { maxWidth, maxHeight };
+}
+
+/**
+ * Queues a host command behind the one before it, so the host receives them in
+ * the order the registry decided them. A failed command does not block the next.
+ */
+function afterSettled<T>(
+  previous: Promise<unknown> | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!previous) {
+    return run();
+  }
+  return previous.then(run, run);
 }
 
 function delay(ms: number): Promise<void> {

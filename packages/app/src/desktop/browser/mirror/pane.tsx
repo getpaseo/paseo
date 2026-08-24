@@ -27,6 +27,32 @@ interface BrowserMirrorPaneProps {
   isInteractive?: boolean;
 }
 
+type BrowserInputModifier = Extract<BrowserMirrorInput, { kind: "key" }>["modifiers"][number];
+
+// React Native types a key event as just `{ key }`, but web hands over the DOM
+// event, which carries the flags a shortcut needs.
+const KEY_MODIFIER_FLAGS: ReadonlyArray<readonly [string, BrowserInputModifier]> = [
+  ["altKey", "Alt"],
+  ["ctrlKey", "Control"],
+  ["metaKey", "Meta"],
+  ["shiftKey", "Shift"],
+];
+
+function readKeyModifiers(source: object): BrowserInputModifier[] {
+  const held: BrowserInputModifier[] = [];
+  for (const [flag, modifier] of KEY_MODIFIER_FLAGS) {
+    if (Reflect.get(source, flag) === true) {
+      held.push(modifier);
+    }
+  }
+  return held;
+}
+
+/** Shift still types a character; the rest turn a key into a command. */
+function isShortcutModifier(modifier: BrowserInputModifier): boolean {
+  return modifier !== "Shift";
+}
+
 export function BrowserMirrorPane({
   browserId,
   serverId,
@@ -90,9 +116,16 @@ export function BrowserMirrorPane({
   const handleKeyPress = useCallback(
     (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
       const { key } = event.nativeEvent;
-      if (key) {
-        sendInput({ kind: "key", key, modifiers: [] });
+      if (!key) {
+        return;
       }
+      const modifiers = readKeyModifiers(event.nativeEvent);
+      // A shortcut is meant for the guest, so stop the viewer acting on it too:
+      // otherwise Cmd+R reloads Paseo instead of the mirrored page.
+      if (modifiers.some(isShortcutModifier)) {
+        event.preventDefault();
+      }
+      sendInput({ kind: "key", key, modifiers });
     },
     [sendInput],
   );

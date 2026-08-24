@@ -12,9 +12,18 @@ const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
 class FakeBroker {
   public readonly commands: BrowserAutomationCommand[] = [];
   public failure: string | null = null;
+  private readonly latencyMs: number;
+
+  public constructor(options?: { latencyMs?: number }) {
+    this.latencyMs = options?.latencyMs ?? 0;
+  }
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
+    // Recorded on the way out: the order here is the order the host sees.
     this.commands.push(input.command);
+    if (this.latencyMs > 0) {
+      await delay(this.latencyMs);
+    }
     if (this.failure) {
       return browserToolsFailure({
         requestId: "req-1",
@@ -51,6 +60,10 @@ function startCommand(size: { maxWidth: number; maxHeight: number }, slot = 0) {
     command: "screencast_start",
     args: { browserId: BROWSER_ID, slot, quality: 90, ...size, everyNthFrame: 1 },
   };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createViewer(): BrowserScreencastViewer & { frames: Uint8Array[] } {
@@ -195,9 +208,10 @@ describe("BrowserScreencastRegistry", () => {
       maxHeight: 800,
     });
 
-    // No replay: the viewer already shows that frame, and the re-armed stream
-    // sends a fresh one, so a resize costs exactly one frame.
-    expect(resized).toEqual({ ok: true, slot: 0, replay: null });
+    // Replayed even though the viewer already shows it: one repeated decode is
+    // cheaper than telling apart a resize from a remount, and the re-armed
+    // stream's first frame supersedes it.
+    expect(resized).toEqual({ ok: true, slot: 0, replay: viewer.frames[0] });
     expect(broker.commands).toEqual([
       startCommand({ maxWidth: 1280, maxHeight: 800 }),
       startCommand({ maxWidth: 1600, maxHeight: 800 }),
@@ -346,5 +360,47 @@ describe("BrowserScreencastRegistry", () => {
     // response, otherwise it lands before the viewer has mapped the slot.
     expect(subscription).toEqual({ ok: true, slot: 0, replay: first.frames[0] });
     expect(late.frames).toHaveLength(0);
+  });
+
+  test("replays to a viewer that is already on the stream", async () => {
+    const broker = new FakeBroker();
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID });
+    registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
+
+    // A second pane on the same browser is the same viewer: the daemon keys
+    // viewers by session. The pane has decoded nothing, and a settled page emits
+    // nothing further, so without a replay it stays blank until something
+    // repaints the guest.
+    const secondPane = await registry.subscribe({ viewer, browserId: BROWSER_ID });
+
+    expect(secondPane).toEqual({ ok: true, slot: 0, replay: viewer.frames[0] });
+    expect(broker.commandNames()).toEqual(["screencast_start"]);
+  });
+
+  test("a start issued while a stop is in flight reaches the host after it", async () => {
+    const broker = new FakeBroker({ latencyMs: 40 });
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const viewer = createViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID, maxWidth: 1280, maxHeight: 800 });
+    // A resize leaves a start in flight that the stop has to wait out.
+    void registry.subscribe({ viewer, browserId: BROWSER_ID, maxWidth: 1600, maxHeight: 800 });
+
+    const teardown = registry.unsubscribe({ viewer, browserId: BROWSER_ID });
+    // Past the grace, so the stop is committed, and inside the host round trip,
+    // so it has not landed: the window where a fresh subscribe overtakes it.
+    await delay(10);
+    const resubscribed = await registry.subscribe({ viewer, browserId: BROWSER_ID });
+    await teardown;
+
+    expect(resubscribed).toMatchObject({ ok: true, slot: 0 });
+    // The host's last command matches what the registry believes: a live stream.
+    expect(broker.commandNames()).toEqual([
+      "screencast_start",
+      "screencast_start",
+      "screencast_stop",
+      "screencast_start",
+    ]);
   });
 });

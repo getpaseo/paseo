@@ -87,6 +87,7 @@ interface ActiveScreencast {
   stopListening: () => void;
   sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
   hasEmitted: boolean;
+  stopped: boolean;
 }
 
 const SCREENCAST_FIRST_FRAME_MS = 600;
@@ -652,6 +653,7 @@ async function executeScreencastStart(
     stopListening,
     sendDebugCommand,
     hasEmitted: false,
+    stopped: false,
   };
   activeScreencastsByContentsId.set(contentsId, screencast);
   target.contents.onceDestroyed(() => {
@@ -692,8 +694,8 @@ async function executeScreencastStop(
   }
   const screencast = activeScreencastsByContentsId.get(target.contents.id);
   if (screencast) {
-    await screencast.sendDebugCommand("Page.stopScreencast");
     removeScreencast(target.contents.id, screencast);
+    await screencast.sendDebugCommand("Page.stopScreencast").catch(() => {});
   }
   return {
     requestId,
@@ -708,6 +710,9 @@ function handleScreencastFrame(
   params: Record<string, unknown>,
   emitFrame: (frame: BrowserScreencastFrameEvent) => void,
 ): void {
+  if (screencast.stopped) {
+    return;
+  }
   const { sendDebugCommand, slot } = screencast;
   const sessionId = readNumber(params.sessionId);
   if (sessionId === null) {
@@ -744,14 +749,19 @@ async function sendFirstScreencastFrame(
   quality: number,
 ): Promise<void> {
   await delay(SCREENCAST_FIRST_FRAME_MS);
-  if (screencast.hasEmitted) {
+  if (screencast.hasEmitted || screencast.stopped) {
     return;
   }
   const shot = await screencast
     .sendDebugCommand("Page.captureScreenshot", { format: "jpeg", quality })
     .catch(() => null);
   const metrics = await screencast.sendDebugCommand("Page.getLayoutMetrics", {}).catch(() => null);
-  if (screencast.hasEmitted || !isRecord(shot) || typeof shot.data !== "string") {
+  if (
+    screencast.hasEmitted ||
+    screencast.stopped ||
+    !isRecord(shot) ||
+    typeof shot.data !== "string"
+  ) {
     return;
   }
   const viewport =
@@ -771,6 +781,7 @@ async function sendFirstScreencastFrame(
 }
 
 function removeScreencast(contentsId: number, screencast: ActiveScreencast): void {
+  screencast.stopped = true;
   if (activeScreencastsByContentsId.get(contentsId) !== screencast) {
     return;
   }
