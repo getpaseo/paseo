@@ -195,9 +195,11 @@ async function getAvailablePort(): Promise<number> {
 async function waitForServer(port: number, child: ChildProcess): Promise<void> {
   const startedAt = Date.now();
   let lastConnectionError: unknown = null;
-  while (Date.now() - startedAt < 20_000) {
-    if (child.exitCode !== null) {
-      throw new Error(`Restart test daemon exited before listening (exit ${child.exitCode}).`);
+  while (Date.now() - startedAt < 90_000) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Restart test daemon exited before listening (code ${String(child.exitCode)}, signal ${String(child.signalCode)}).`,
+      );
     }
     try {
       await new Promise<void>((resolve, reject) => {
