@@ -18,7 +18,7 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
     version: 1,
     generatedAt: 70_000,
     caps: {},
-    omitted: {},
+    omitted: { runs: 0, children: 0, byteLimitExceeded: false },
     runs: [
       {
         id: "async-1",
@@ -116,7 +116,100 @@ describe("PiSubagentsBridge", () => {
         widgetKey: "other",
         widgetLines: ["text"],
       }),
-    ).toEqual({ handled: false, events: [] });
+    ).toEqual({ handled: false, events: [], inspectionTargets: [] });
+  });
+
+  test("maps a correlated inspection reply into descriptor and timeline events", () => {
+    const bridge = new PiSubagentsBridge();
+    const status = bridge.handleExtensionUiRequest(widget(makeSnapshot()));
+    const child = status.inspectionTargets[1];
+    if (!child) throw new Error("Expected child inspection target");
+    expect(bridge.beginInspection("inspect-1", child.descriptorId)).toEqual({
+      asyncId: "async-1",
+      childId: "child-1",
+    });
+
+    const result = bridge.handleExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "inspect-widget",
+      method: "setWidget",
+      widgetKey: "subagent-inspect",
+      widgetLines: [
+        `PI_SUBAGENT_INSPECT_JSON:${JSON.stringify({
+          kind: "pi-subagents.inspect-reply",
+          version: 1,
+          requestId: "inspect-1",
+          asyncId: "async-1",
+          childId: "child-1",
+          status: "complete",
+          label: "worker",
+          task: "Review the diff",
+          messages: [
+            { role: "user", kind: "text", text: "Review the diff" },
+            { role: "assistant", kind: "text", text: "Done" },
+            { role: "assistant", kind: "toolCall", name: "read", text: "src/a.ts" },
+          ],
+          finalOutput: "No issues",
+          truncated: { task: false, messages: 2, finalOutput: false },
+        })}`,
+      ],
+    });
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: child.descriptorId,
+          title: "worker",
+          description: "Review the diff",
+          status: "completed",
+        }),
+      }),
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: child.descriptorId,
+          item: { type: "user_message", text: "Review the diff" },
+        }),
+      }),
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: child.descriptorId,
+          item: { type: "assistant_message", text: "Done" },
+        }),
+      }),
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: child.descriptorId,
+          item: expect.objectContaining({ type: "tool_call", name: "read" }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: child.descriptorId,
+          item: { type: "assistant_message", text: "No issues" },
+        }),
+      }),
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: child.descriptorId,
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: expect.stringContaining("2 messages omitted"),
+          }),
+        }),
+      }),
+    ]);
   });
 
   test("reports an unsupported protocol version once", () => {

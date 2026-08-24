@@ -322,7 +322,7 @@ describe("PiRpcAgentSession", () => {
           version: 1,
           generatedAt: 70_000,
           caps: {},
-          omitted: {},
+          omitted: { runs: 0, children: 0, byteLimitExceeded: false },
           runs: [
             {
               id: "async-1",

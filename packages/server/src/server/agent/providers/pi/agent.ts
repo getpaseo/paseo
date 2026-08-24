@@ -1202,6 +1202,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private readonly subagentsBridge = new PiSubagentsBridge();
+  private readonly requestedSubagentInspections = new Set<string>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
@@ -1932,6 +1933,9 @@ export class PiRpcAgentSession implements AgentSession {
       for (const bridgeEvent of subagents.events) {
         this.emit(bridgeEvent);
       }
+      for (const inspection of subagents.inspectionTargets) {
+        this.requestSubagentInspection(inspection.descriptorId, inspection.terminal);
+      }
       return;
     }
 
@@ -1972,6 +1976,27 @@ export class PiRpcAgentSession implements AgentSession {
       request,
       turnId: this.currentTurnIdForEvent(),
     });
+  }
+
+  private requestSubagentInspection(descriptorId: string, terminal: boolean): void {
+    const inspectionKey = `${descriptorId}:${terminal ? "terminal" : "live"}`;
+    if (this.requestedSubagentInspections.has(inspectionKey)) {
+      return;
+    }
+    const requestId = randomUUID();
+    const target = this.subagentsBridge.beginInspection(requestId, descriptorId);
+    if (!target) {
+      return;
+    }
+    this.requestedSubagentInspections.add(inspectionKey);
+    const child = target.childId ? ` ${target.childId}` : "";
+    void this.runtimeSession
+      .prompt(`/subagents-inspect-rpc ${requestId} ${target.asyncId}${child} --lines 100`)
+      .catch((error) => {
+        this.subagentsBridge.failInspection(requestId);
+        this.requestedSubagentInspections.delete(inspectionKey);
+        this.logger.debug({ err: error, descriptorId }, "Pi Subagents inspection command failed");
+      });
   }
 
   private respondToCombinedAskUserFollowUp(
