@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ import {
   DaemonClient,
 } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
@@ -29,7 +30,7 @@ const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const localModelsDir =
   process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(homedir(), ".paseo", "models", "local-speech");
 const testFileDir = path.dirname(fileURLToPath(import.meta.url));
-const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/fixtures");
+const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/support/fixtures");
 
 function fixturePath(fileName: string): string {
   return path.join(appE2eFixturesDir, fileName);
@@ -210,105 +211,202 @@ test("createAgent with background initialPrompt returns a running snapshot befor
   }
 });
 
+interface StubAgentOptions {
+  sessionId: string;
+  supportsStreaming: boolean;
+  startError?: string;
+  interruptError?: string;
+}
+
+class StubAgentSession implements AgentSession {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  private activeTurnId: string | null = null;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = {
+      supportsStreaming: options.supportsStreaming,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+      supportsRewindConversation: false,
+      supportsRewindFiles: false,
+      supportsRewindBoth: false,
+    } as const;
+  }
+
+  get id(): string {
+    return this.options.sessionId;
+  }
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(): Promise<{ turnId: string }> {
+    if (this.options.startError) throw new Error(this.options.startError);
+    if (this.activeTurnId) throw new Error("A foreground turn is already active");
+    this.activeTurnId = "provider-owned-turn";
+    return { turnId: this.activeTurnId };
+  }
+
+  subscribe(): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      model: "gpt-5.4-mini",
+      modeId: "full-access",
+    };
+  }
+
+  async getAvailableModes() {
+    return [{ id: "full-access", label: "Full access", description: "No prompts" }];
+  }
+
+  async getCurrentMode(): Promise<string> {
+    return "full-access";
+  }
+
+  async setMode(): Promise<void> {}
+  getPendingPermissions() {
+    return [];
+  }
+  async respondToPermission(): Promise<void> {}
+  describePersistence(): AgentPersistenceHandle {
+    return { provider: this.provider, sessionId: this.id };
+  }
+  async interrupt(): Promise<void> {
+    if (this.options.interruptError) throw new Error(this.options.interruptError);
+  }
+  async close(): Promise<void> {
+    this.activeTurnId = null;
+  }
+}
+
+class StubAgentClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+
+  constructor(private readonly options: StubAgentOptions) {
+    this.capabilities = new StubAgentSession(options).capabilities;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+  async createSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async resumeSession(): Promise<AgentSession> {
+    return new StubAgentSession(this.options);
+  }
+  async fetchCatalog() {
+    return {
+      models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: this.provider }],
+      modes: [{ id: "full-access", label: "Full access", description: "No prompts" }],
+    };
+  }
+}
+
+class RecordingMcpResumeClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
+
+  constructor() {
+    this.capabilities = this.inner.capabilities;
+  }
+
+  isAvailable() {
+    return this.inner.isAvailable();
+  }
+
+  createSession(config: AgentSessionConfig) {
+    return this.inner.createSession(config);
+  }
+
+  resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(overrides);
+    return this.inner.resumeSession(handle, overrides);
+  }
+
+  fetchCatalog(...args: Parameters<AgentClient["fetchCatalog"]>) {
+    return this.inner.fetchCatalog(...args);
+  }
+}
+
+class UnsupportedMcpResumeSession extends StubAgentSession {
+  closed = false;
+
+  constructor() {
+    super({
+      sessionId: "unsupported-mcp-resume-session",
+      supportsStreaming: false,
+    });
+  }
+
+  override async close(): Promise<void> {
+    this.closed = true;
+  }
+}
+
+class RejectingMcpResumeClient implements AgentClient {
+  readonly provider = "codex" as const;
+  readonly capabilities;
+  readonly nativeArchiveCalls: string[] = [];
+  readonly replacement = new UnsupportedMcpResumeSession();
+  private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
+
+  constructor() {
+    this.capabilities = this.inner.capabilities;
+  }
+
+  isAvailable() {
+    return this.inner.isAvailable();
+  }
+
+  createSession(config: AgentSessionConfig) {
+    return this.inner.createSession(config);
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    return this.replacement;
+  }
+
+  fetchCatalog(...args: Parameters<AgentClient["fetchCatalog"]>) {
+    return this.inner.fetchCatalog(...args);
+  }
+
+  async archiveNativeSession(): Promise<void> {
+    this.nativeArchiveCalls.push("archive");
+  }
+
+  async unarchiveNativeSession(): Promise<void> {
+    this.nativeArchiveCalls.push("unarchive");
+  }
+}
+
 test("createAgent fails when the initial turn cannot start", async () => {
-  class StartTurnFailureSession implements AgentSession {
-    readonly provider = "codex" as const;
-    readonly id = "start-turn-failure-session";
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async run(): Promise<AgentRunResult> {
-      return {
-        sessionId: this.id,
-        finalText: "",
-        timeline: [],
-      };
-    }
-
-    async startTurn(): Promise<{ turnId: string }> {
-      throw new Error("Initial turn failed to start");
-    }
-
-    subscribe(): () => void {
-      return () => undefined;
-    }
-
-    async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-      yield* [];
-    }
-
-    async getRuntimeInfo() {
-      return {
-        provider: "codex" as const,
-        sessionId: this.id,
-        model: "gpt-5.4-mini",
-        modeId: "full-access",
-      };
-    }
-
-    async getAvailableModes(): Promise<Array<{ id: string; label: string; description: string }>> {
-      return [{ id: "full-access", label: "Full access", description: "No prompts" }];
-    }
-
-    async getCurrentMode(): Promise<string | null> {
-      return "full-access";
-    }
-
-    async setMode(): Promise<void> {}
-
-    getPendingPermissions() {
-      return [];
-    }
-
-    async respondToPermission(): Promise<void> {}
-
-    describePersistence(): AgentPersistenceHandle | null {
-      return { provider: "codex", sessionId: this.id };
-    }
-
-    async interrupt(): Promise<void> {}
-
-    async close(): Promise<void> {}
-  }
-
-  class StartTurnFailureClient implements AgentClient {
-    readonly provider = "codex" as const;
-    readonly capabilities = {
-      supportsStreaming: false,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-      supportsRewindConversation: false,
-      supportsRewindFiles: false,
-      supportsRewindBoth: false,
-    } as const;
-
-    async isAvailable(): Promise<boolean> {
-      return true;
-    }
-
-    async createSession(_config: AgentSessionConfig): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-
-    async resumeSession(): Promise<AgentSession> {
-      return new StartTurnFailureSession();
-    }
-  }
+  const testAgent = new StubAgentClient({
+    sessionId: "start-turn-failure-session",
+    supportsStreaming: false,
+    startError: "Initial turn failed to start",
+  });
 
   const daemon = await createTestPaseoDaemon({
-    agentClients: { codex: new StartTurnFailureClient() },
+    agentClients: { codex: testAgent },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -334,6 +432,58 @@ test("createAgent fails when the initial turn cannot start", async () => {
     await daemon.close();
   }
 });
+
+function createUninterruptibleClient(): AgentClient {
+  return new StubAgentClient({
+    sessionId: "uninterruptible-session",
+    supportsStreaming: true,
+    interruptError: "Provider did not acknowledge cancellation",
+  });
+}
+
+test("DaemonClient rejects a replacement prompt when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: createUninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working on the first prompt.");
+
+    await expect(client.sendMessage(agent.id, "Replace it with this prompt.")).rejects.toThrow(
+      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("DaemonClient rejects Stop when cancellation is not acknowledged", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex: createUninterruptibleClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "codex", cwd });
+    await client.sendMessage(agent.id, "Keep working until stopped.");
+
+    await expect(client.cancelAgent(agent.id)).rejects.toThrow(
+      `Cannot stop agent ${agent.id} because its active run cancellation was not acknowledged`,
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
 
 function waitForSignal<T>(
   timeoutMs: number,
@@ -793,6 +943,116 @@ test("resume_agent auto-unarchives archived agents", async () => {
   }
 }, 180000);
 
+test("resume_agent rehydrates the newest private MCP config from a redacted persistence handle", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+  const bearerA = "durable-resume-bearer-a";
+  const bearerB = "durable-resume-bearer-b";
+  const externalMcpA = {
+    hub: {
+      type: "http" as const,
+      url: "https://hub.test/mcp/executions/durable-resume",
+      headers: { Authorization: `Bearer ${bearerA}` },
+    },
+  };
+  const externalMcpB = {
+    hub: {
+      ...externalMcpA.hub,
+      headers: { Authorization: `Bearer ${bearerB}` },
+    },
+  };
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        mcpServers: externalMcpA,
+      },
+    });
+    const projectedHandle = created.persistence;
+    if (!projectedHandle) {
+      throw new Error("Expected a projected persistence handle");
+    }
+    expect(projectedHandle.metadata).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(projectedHandle)).not.toContain(bearerA);
+
+    await localCtx.client.archiveAgent(created.id);
+    const resumedWithOverride = await localCtx.client.resumeAgent(projectedHandle, {
+      mcpServers: externalMcpB,
+    });
+    const newestProjectedHandle = resumedWithOverride.persistence;
+    if (!newestProjectedHandle) {
+      throw new Error("Expected a projected persistence handle after resume");
+    }
+    expect(provider.resumeOverrides[0]?.mcpServers?.hub).toEqual(externalMcpB.hub);
+    expect(JSON.stringify(resumedWithOverride)).not.toContain(bearerA);
+    expect(JSON.stringify(resumedWithOverride)).not.toContain(bearerB);
+
+    await localCtx.client.archiveAgent(resumedWithOverride.id);
+    const resumedNewest = await localCtx.client.resumeAgent(newestProjectedHandle);
+
+    expect(provider.resumeOverrides).toHaveLength(2);
+    expect(provider.resumeOverrides[1]?.mcpServers?.hub).toEqual(externalMcpB.hub);
+    expect(provider.resumeOverrides[1]?.mcpServers?.hub).not.toEqual(externalMcpA.hub);
+    expect(resumedNewest.persistence?.metadata).not.toHaveProperty("mcpServers");
+    expect(JSON.stringify(resumedNewest)).not.toContain(bearerA);
+    expect(JSON.stringify(resumedNewest)).not.toContain(bearerB);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resume_agent restores archive state when an MCP-capable provider returns an unsupported session", async () => {
+  const cwd = tmpCwd();
+  const provider = new RejectingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+
+  try {
+    const created = await localCtx.client.createAgent({
+      config: {
+        provider: "codex",
+        cwd,
+        mcpServers: {
+          hub: {
+            type: "http",
+            url: "https://hub.test/mcp/executions/rejected-resume",
+            headers: { Authorization: "Bearer rejected-resume-secret" },
+          },
+        },
+      },
+    });
+    const handle = created.persistence;
+    if (!handle) {
+      throw new Error("Expected a projected persistence handle");
+    }
+    const archived = await localCtx.client.archiveAgent(created.id);
+
+    await expect(localCtx.client.resumeAgent(handle)).rejects.toMatchObject({
+      name: "DaemonRpcError",
+      code: "agent_resume_failed",
+      requestType: "resume_agent_request",
+    });
+
+    const archivedAgents = await localCtx.client.fetchAgents({
+      filter: { includeArchived: true },
+    });
+    const original = archivedAgents.entries.find((entry) => entry.agent.id === created.id)?.agent;
+    expect(original?.archivedAt).toBe(archived.archivedAt);
+    expect(provider.nativeArchiveCalls).toEqual(["archive", "unarchive", "archive"]);
+    expect(provider.replacement.closed).toBe(true);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("update_agent persists unloaded title and labels across auto-unarchive", async () => {
   const cwd = tmpCwd();
   try {
@@ -831,6 +1091,7 @@ test("update_agent persists unloaded title and labels across auto-unarchive", as
 
 test("returns home-scoped directory suggestions", async () => {
   const insideHomeDir = mkdtempSync(path.join(homedir(), "paseo-dir-suggestion-"));
+  const rootBrowseDir = mkdtempSync(path.join(homedir(), "000-paseo-root-browse-"));
   const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "paseo-dir-suggestion-outside-"));
 
   try {
@@ -842,6 +1103,17 @@ test("returns home-scoped directory suggestions", async () => {
     expect(insideResult.error).toBeNull();
     expect(insideResult.directories).toContain(insideHomeDir);
 
+    const rootBrowseResult = await ctx.client.getDirectorySuggestions({
+      query: "~",
+      limit: 100,
+    });
+    expect(rootBrowseResult.error).toBeNull();
+    expect(rootBrowseResult.directories).toContain(rootBrowseDir);
+
+    const blankResult = await ctx.client.getDirectorySuggestions({ query: "", limit: 100 });
+    expect(blankResult.error).toBeNull();
+    expect(blankResult.entries).toEqual([]);
+
     const outsideQuery = path.basename(outsideHomeDir);
     const outsideResult = await ctx.client.getDirectorySuggestions({
       query: outsideQuery,
@@ -851,7 +1123,104 @@ test("returns home-scoped directory suggestions", async () => {
     expect(outsideResult.directories).not.toContain(outsideHomeDir);
   } finally {
     rmSync(insideHomeDir, { recursive: true, force: true });
+    rmSync(rootBrowseDir, { recursive: true, force: true });
     rmSync(outsideHomeDir, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("returns typed relative suggestions within a requested directory", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-workspace-suggestion-"));
+  const target = path.join(cwd, "src", "components", "message-renderer.tsx");
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
+
+    const result = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "msgrndr",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([]);
+    expect(result.entries).toEqual([{ path: "src/components/message-renderer.tsx", kind: "file" }]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("finds workspace files inside the OpenCode directory", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-opencode-suggestion-"));
+  const target = path.join(
+    cwd,
+    ".opencode",
+    "command",
+    "workflow",
+    "00-kickoff",
+    "00-user-stories.md",
+  );
+
+  try {
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "");
+
+    const result = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "00-user-stories.md",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([]);
+    expect(result.entries).toEqual([
+      {
+        path: ".opencode/command/workflow/00-kickoff/00-user-stories.md",
+        kind: "file",
+      },
+    ]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("opens an exact gitignored workspace path without offering it as a suggestion", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-gitignored-suggestion-"));
+  const target = path.join(cwd, "generated", "notes.md");
+
+  try {
+    execSync("git init -q", { cwd });
+    writeFileSync(path.join(cwd, ".gitignore"), "generated/\n");
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "generated notes\n");
+    writeFileSync(path.join(cwd, "notes.md"), "tracked notes\n");
+
+    const exactResult = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "generated/notes.md",
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      limit: 1,
+    });
+    const discoveryResult = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "notes",
+      includeFiles: true,
+      includeDirectories: false,
+      limit: 20,
+    });
+
+    expect(exactResult.error).toBeNull();
+    expect(exactResult.entries).toEqual([{ path: "generated/notes.md", kind: "file" }]);
+    expect(discoveryResult.error).toBeNull();
+    expect(discoveryResult.entries).toEqual([{ path: "notes.md", kind: "file" }]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
   }
 }, 30000);
 
@@ -866,8 +1235,35 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo).not.toBeNull();
   expect(serverInfo?.serverId.length).toBeGreaterThan(0);
   expect(serverInfo?.features?.["terminal-restore-modes"]).toBe(true);
+  expect(serverInfo?.features?.hubRelationship).toBe(true);
+  expect(serverInfo?.features?.commitsList).toBe(true);
+  expect(serverInfo?.features?.commitBaseClassification).toBe(true);
+  expect(serverInfo?.desktopManaged).toBe(false);
+  expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
+  expect(serverInfo?.features?.worktreeRestore).toBe(true);
+  expect(serverInfo?.features?.workspaceRecovery).toBe(true);
 
   await client.close();
+}, 15000);
+
+test("a Desktop-managed daemon does not advertise npm self-update", async () => {
+  const daemon = await createTestPaseoDaemon({ desktopManaged: true });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    clientId: `cid-desktop-managed-${randomUUID()}`,
+    clientType: "cli",
+  });
+
+  try {
+    await client.connect();
+    const serverInfo = client.getLastServerInfoMessage();
+
+    expect(serverInfo?.desktopManaged).toBe(true);
+    expect(serverInfo?.features?.daemonSelfUpdate).toBe(false);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
 }, 15000);
 
 test("emits disabled voice capability reasons on fresh daemon startup", async () => {

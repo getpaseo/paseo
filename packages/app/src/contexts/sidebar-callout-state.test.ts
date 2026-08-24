@@ -4,7 +4,6 @@ import {
   createSidebarCalloutState,
   dismissSidebarCallout,
   loadDismissedCalloutKeys,
-  parseDismissedCalloutKeys,
   selectActiveSidebarCallout,
   serializeDismissedCalloutKeys,
   showSidebarCallout,
@@ -116,12 +115,6 @@ describe("sidebar callout state", () => {
     state = loadDismissedCalloutKeys(state, new Set());
 
     expect(selectActiveSidebarCallout(state)?.title).toBe("Update available");
-  });
-
-  it("parses stored dismissal keys defensively", () => {
-    expect(parseDismissedCalloutKeys(JSON.stringify(["a", 4, "b"]))).toEqual(new Set(["a", "b"]));
-    expect(parseDismissedCalloutKeys("{")).toEqual(new Set());
-    expect(parseDismissedCalloutKeys(JSON.stringify({ key: "a" }))).toEqual(new Set());
   });
 
   it("clears visible callouts without dropping dismissal state", () => {

@@ -4,6 +4,7 @@ import { TerminalStateSchema } from "../messages.js";
 export const TerminalStreamResizeSchema = z.object({
   rows: z.number().int().positive(),
   cols: z.number().int().positive(),
+  intent: z.enum(["claim", "update"]).optional(),
 });
 
 export const TerminalStreamOpcode = {

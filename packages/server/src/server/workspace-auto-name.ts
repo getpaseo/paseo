@@ -24,7 +24,7 @@ type CurrentSelection = GenerateBranchNameFromFirstAgentContextOptions["currentS
 
 interface WorkspaceAutoNameOptions {
   agentManager: AgentManager;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "update">;
   workspaceGitService: WorkspaceGitService;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -41,7 +41,7 @@ interface ScheduleContext {
 
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
-  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
@@ -108,13 +108,14 @@ export class WorkspaceAutoName {
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<void> {
+    const worktreeRoot = input.workspace.worktreeRoot ?? input.workspace.cwd;
     let generated: GeneratedWorkspaceName | null = null;
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
-      cwd: input.workspace.cwd,
+      cwd: worktreeRoot,
       firstAgentContext: input.firstAgentContext,
-      generateBranchNameFromContext: ({ cwd, firstAgentContext }) => {
+      generateBranchNameFromContext: ({ firstAgentContext }) => {
         return this.generateFromContext({
-          cwd,
+          cwd: input.workspace.cwd,
           firstAgentContext,
           currentSelection: input.currentSelection,
         }).then((nextGenerated) => {
@@ -146,7 +147,7 @@ export class WorkspaceAutoName {
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     if (result.renamed) {
-      await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
+      await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
     }
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
@@ -179,19 +180,17 @@ export class WorkspaceAutoName {
     workspaceId: string,
     input: { title: string; branch?: string | null; promptTitle?: string | null },
   ): Promise<void> {
-    const current = await this.workspaceRegistry.get(workspaceId);
-    if (!current) {
-      return;
-    }
-    let title = current.title;
-    if (!title || (input.promptTitle && title === input.promptTitle)) {
-      title = input.title;
-    }
-    await this.workspaceRegistry.upsert({
-      ...current,
-      title,
-      ...(input.branch ? { branch: input.branch } : {}),
-      updatedAt: new Date().toISOString(),
+    await this.workspaceRegistry.update(workspaceId, (current) => {
+      let title = current.title;
+      if (!title || (input.promptTitle && title === input.promptTitle)) {
+        title = input.title;
+      }
+      return {
+        ...current,
+        title,
+        ...(input.branch ? { branch: input.branch } : {}),
+        updatedAt: new Date().toISOString(),
+      };
     });
   }
 

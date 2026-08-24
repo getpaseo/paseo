@@ -27,6 +27,7 @@ interface ExecCommandOptions extends ExternalEnvOptions {
   timeout?: number;
   maxBuffer?: number;
   shell?: boolean | string;
+  signal?: AbortSignal;
 }
 
 interface ExecCommandResult {
@@ -77,6 +78,7 @@ export function spawnProcess(
     ...spawnOptions,
     env: childEnv,
     shell,
+    signal: options?.signal,
     windowsHide: true,
   });
 }
@@ -112,20 +114,4 @@ export async function execCommand(
     shell,
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
-}
-
-export function platformShell(): { command: string; flag: string[] } {
-  if (process.platform === "win32") {
-    return { command: "cmd.exe", flag: ["/c"] };
-  }
-
-  return { command: "/bin/sh", flag: ["-lc"] };
-}
-
-export function platformBash(): { command: string; flag: string[] } {
-  if (process.platform === "win32") {
-    return { command: "cmd.exe", flag: ["/c"] };
-  }
-
-  return { command: "/bin/bash", flag: ["-lc"] };
 }

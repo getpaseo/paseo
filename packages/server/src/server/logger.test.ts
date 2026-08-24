@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { resolveDaemonVersion } from "./daemon-version.js";
 import { resolveLogConfig } from "./logger.js";
 import { loadConfig } from "./config.js";
 import type { PersistedConfig } from "./persisted-config.js";
@@ -153,6 +154,24 @@ describe("loadConfig logger config", () => {
 });
 
 describe("createRootLogger", () => {
+  it("includes the daemon version in child logger entries", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-version-"));
+
+    const { stdout } = await runLoggerFixture(`
+      const logger = createRootLogger(undefined, { paseoHome: ${JSON.stringify(paseoHome)} });
+      logger.child({ name: "fixture" }).info("versioned child logger");
+      logger.flush();
+    `);
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      pid: expect.any(Number),
+      hostname: expect.any(String),
+      daemonVersion: resolveDaemonVersion(),
+      name: "fixture",
+      msg: "versioned child logger",
+    });
+  });
+
   it("writes JSON to stdout by default and does not initialize file logging", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-logger-default-"));
     const missingLogDir = path.join(paseoHome, "logs");

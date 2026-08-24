@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { resolveAssistantTurnBoundaryMessageId } from "./turn-boundary";
+import { resolveAssistantTurnForkBoundary } from "./turn-boundary";
 
 function timestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -29,35 +29,86 @@ function assistantMessage(
   };
 }
 
-describe("resolveAssistantTurnBoundaryMessageId", () => {
-  it("uses the selected assistant message id", () => {
-    const selected = assistantMessage("assistant-1", 2, "msg-assistant-1");
+describe("resolveAssistantTurnForkBoundary", () => {
+  it("forks a failed assistant turn from its Paseo timeline cursor without a provider message id", () => {
+    const failedTurn = {
+      ...assistantMessage("assistant-error", 2),
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+    };
 
     expect(
-      resolveAssistantTurnBoundaryMessageId({
-        items: [userMessage("user-1", 1), selected],
+      resolveAssistantTurnForkBoundary({
+        items: [userMessage("user-1", 1), failedTurn],
         startIndex: 1,
+        supportsTimelineCursor: true,
       }),
-    ).toBe("msg-assistant-1");
+    ).toEqual({
+      boundaryCursor: { epoch: "timeline-1", seq: 42 },
+    });
   });
 
-  it("does not borrow a boundary id from another assistant in the same turn", () => {
+  it("includes the provider message id with a supported timeline cursor", () => {
+    const selected = {
+      ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [selected],
+        startIndex: 0,
+        supportsTimelineCursor: true,
+      }),
+    ).toEqual({
+      boundaryCursor: { epoch: "timeline-1", seq: 42 },
+      boundaryMessageId: "msg-assistant-1",
+    });
+  });
+
+  it("falls back to the provider message id when timeline cursors are unsupported", () => {
+    const selected = {
+      ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
+      timelineCursor: { epoch: "timeline-1", seq: 42 },
+    };
+
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [selected],
+        startIndex: 0,
+        supportsTimelineCursor: false,
+      }),
+    ).toEqual({ boundaryMessageId: "msg-assistant-1" });
+  });
+
+  it("does not borrow a provider message id from another assistant in the same turn", () => {
     const first = assistantMessage("assistant-1", 2, "msg-assistant-1");
     const selected = assistantMessage("assistant-2", 3);
 
     expect(
-      resolveAssistantTurnBoundaryMessageId({
+      resolveAssistantTurnForkBoundary({
         items: [userMessage("user-1", 1), first, selected],
         startIndex: 2,
+        supportsTimelineCursor: false,
       }),
     ).toBeUndefined();
   });
 
   it("requires the selected item to be an assistant message", () => {
     expect(
-      resolveAssistantTurnBoundaryMessageId({
+      resolveAssistantTurnForkBoundary({
         items: [userMessage("user-1", 1), assistantMessage("assistant-1", 2, "msg-assistant-1")],
         startIndex: 0,
+        supportsTimelineCursor: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not offer an unavailable boundary", () => {
+    expect(
+      resolveAssistantTurnForkBoundary({
+        items: [assistantMessage("assistant-1", 2)],
+        startIndex: 0,
+        supportsTimelineCursor: false,
       }),
     ).toBeUndefined();
   });

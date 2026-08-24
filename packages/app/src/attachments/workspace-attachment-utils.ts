@@ -10,6 +10,9 @@ export function isPullRequestContextAttachment(
   attachment: ComposerAttachment | undefined,
 ): attachment is PullRequestContextAttachment {
   return (
+    attachment?.kind === "forge.change_request_comment" ||
+    attachment?.kind === "forge.change_request_review" ||
+    attachment?.kind === "forge.change_request_check" ||
     attachment?.kind === "github.pull_request_comment" ||
     attachment?.kind === "github.pull_request_review" ||
     attachment?.kind === "github.pull_request_check"

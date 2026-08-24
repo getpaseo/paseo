@@ -1,5 +1,6 @@
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 export type DesktopDaemonStopReason =
@@ -28,10 +29,9 @@ export interface DesktopDaemonLogs {
   contents: string;
 }
 
-export interface DesktopPairingOffer {
-  relayEnabled: boolean;
-  url: string | null;
-  qr: string | null;
+export interface DesktopAppLogs {
+  logPath: string;
+  contents: string;
 }
 
 export interface LocalTransportTarget {
@@ -107,17 +107,6 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
-function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected desktop daemon pairing response.");
-  }
-  return {
-    relayEnabled: raw.relayEnabled === true,
-    url: toStringOrNull(raw.url),
-    qr: toStringOrNull(raw.qr),
-  };
-}
-
 export function shouldUseDesktopDaemon(): boolean {
   return isElectronRuntime();
 }
@@ -144,8 +133,15 @@ export async function getDesktopDaemonLogs(): Promise<DesktopDaemonLogs> {
   return parseDesktopDaemonLogs(await invokeDesktopCommand("desktop_daemon_logs"));
 }
 
-export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {
-  return parseDesktopPairingOffer(await invokeDesktopCommand("desktop_daemon_pairing"));
+export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
+  const raw = await invokeDesktopCommand("desktop_app_logs");
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop app logs response.");
+  }
+  return {
+    logPath: toStringOrNull(raw.logPath) ?? "",
+    contents: typeof raw.contents === "string" ? raw.contents : "",
+  };
 }
 
 export async function getCliDaemonStatus(): Promise<string> {
@@ -230,67 +226,12 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
-export type SkillsState = "not-installed" | "up-to-date" | "drift";
-
-export type SkillOp =
-  | { kind: "add"; name: string }
-  | { kind: "update"; name: string }
-  | { kind: "delete"; name: string };
-
-export interface SkillsStatus {
-  state: SkillsState;
-  ops: SkillOp[];
+// COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
+export function readLegacySkillSelection(): Promise<AgentSkillSelection | null> {
+  return invokeDesktopCommand("read_legacy_skill_selection") as Promise<AgentSkillSelection | null>;
 }
 
-function parseSkillsState(value: unknown): SkillsState {
-  switch (value) {
-    case "not-installed":
-    case "up-to-date":
-    case "drift":
-      return value;
-    default:
-      throw new Error(`Unexpected skills status state: ${String(value)}`);
-  }
-}
-
-function parseSkillOp(raw: unknown): SkillOp {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected skill op response.");
-  }
-  const name = toStringOrNull(raw.name);
-  if (!name) throw new Error("Skill op missing name.");
-  switch (raw.kind) {
-    case "add":
-      return { kind: "add", name };
-    case "update":
-      return { kind: "update", name };
-    case "delete":
-      return { kind: "delete", name };
-    default:
-      throw new Error(`Unexpected skill op kind: ${String(raw.kind)}`);
-  }
-}
-
-function parseSkillsStatus(raw: unknown): SkillsStatus {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected skills status response.");
-  }
-  const ops = Array.isArray(raw.ops) ? raw.ops.map(parseSkillOp) : [];
-  return { state: parseSkillsState(raw.state), ops };
-}
-
-export async function getSkillsStatus(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("get_skills_status"));
-}
-
-export async function installSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("install_skills"));
-}
-
-export async function updateSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("update_skills"));
-}
-
-export async function uninstallSkills(): Promise<SkillsStatus> {
-  return parseSkillsStatus(await invokeDesktopCommand("uninstall_skills"));
+// COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
+export async function deleteLegacySkillSelection(): Promise<void> {
+  await invokeDesktopCommand("delete_legacy_skill_selection");
 }

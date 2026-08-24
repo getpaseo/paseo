@@ -14,13 +14,11 @@ export async function createCodexAgent(url: string, cwd: string): Promise<string
 
     const agent = await client.agents.create({
       config: {
-        ...client.providers.codex({
-          model: "gpt-5.2",
-          modeId: "full-auto",
-        }),
-        cwd,
+        provider: "codex/gpt-5.5",
+        modeId: "full-access",
       },
-      initialPrompt: "Inspect this repository and summarize the next useful task.",
+      cwd,
+      prompt: "Inspect this repository and summarize the next useful task.",
     });
 
     return agent.id;
@@ -35,21 +33,34 @@ export async function chooseProviderFromSnapshot(url: string, cwd: string): Prom
   try {
     await client.connect();
 
-    const snapshot = await client.providers.snapshot({ cwd });
+    const snapshot = await client.providers.waitForReady({ cwd });
     const readyProvider = snapshot.entries.find((provider) => provider.status === "ready");
-    const providerConfig = readyProvider
-      ? client.providers.config(readyProvider.provider)
-      : client.providers.claude();
+    const model =
+      readyProvider?.models?.find((candidate) => candidate.isDefault) ?? readyProvider?.models?.[0];
+    if (!readyProvider || !model) throw new Error("No provider model is ready");
 
     const agent = await client.agents.create({
       config: {
-        ...providerConfig,
-        cwd,
+        provider: `${readyProvider.provider}/${model.id}`,
       },
-      initialPrompt: "Start with a quick repository map.",
+      cwd,
+      prompt: "Start with a quick repository map.",
     });
 
     return agent.id;
+  } finally {
+    await client.close();
+  }
+}
+
+export async function runFollowUp(url: string, agentId: string): Promise<string | null> {
+  const client = createClient(url);
+
+  try {
+    await client.connect();
+    const result = await client.agents.ref(agentId).run("Summarize your progress and next step.");
+    if (result.status !== "idle") throw new Error(result.error ?? result.status);
+    return result.lastMessage;
   } finally {
     await client.close();
   }

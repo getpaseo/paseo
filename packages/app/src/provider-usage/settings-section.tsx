@@ -55,7 +55,7 @@ function ProviderUsageBody({
 }) {
   if (view.kind === "loading") {
     return (
-      <View style={EMPTY_CARD_STYLE}>
+      <View style={[settingsStyles.card, styles.emptyCard]}>
         <Text style={styles.emptyText}>{providerUsageCopy.loading}</Text>
       </View>
     );
@@ -73,7 +73,7 @@ function ProviderUsageBody({
 
   if (view.payload.providers.length === 0) {
     return (
-      <View style={EMPTY_CARD_STYLE}>
+      <View style={[settingsStyles.card, styles.emptyCard]}>
         <Text style={styles.emptyText}>{providerUsageCopy.empty}</Text>
       </View>
     );
@@ -89,8 +89,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));
-
-const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];

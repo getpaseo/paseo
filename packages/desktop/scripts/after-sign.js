@@ -1,6 +1,6 @@
 const path = require("node:path");
 
-const { smokePackagedDesktopApp } = require("./smoke-packaged-desktop-app.js");
+const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
 const EXECUTABLE_NAME = "Paseo";
 

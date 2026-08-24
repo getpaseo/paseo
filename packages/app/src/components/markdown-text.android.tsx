@@ -7,10 +7,12 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
+import type { MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  copyTag?: MarkdownCopyInlineTag;
   children: ReactNode;
   onPress?: TextProps["onPress"];
   accessibilityRole?: TextProps["accessibilityRole"];

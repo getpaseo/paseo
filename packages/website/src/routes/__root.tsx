@@ -1,25 +1,22 @@
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import type { ReleaseChannels, ReleaseInfo } from "~/latest-release";
 import { getLatestRelease } from "~/release";
 import { getStarCount } from "~/stars";
-
-interface ReleaseContext {
-  version: string;
-  linuxAppImageAsset: string;
-  windowsX64Asset: string | null;
-  windowsArm64Asset: string | null;
-}
 
 interface StarsContext {
   stars: string;
 }
 
-const ReleaseCtx = createContext<ReleaseContext>({
-  version: "",
-  linuxAppImageAsset: "",
-  windowsX64Asset: null,
-  windowsArm64Asset: null,
+const ReleaseCtx = createContext<ReleaseChannels>({
+  stable: {
+    version: "",
+    linuxAppImageAsset: "",
+    windowsX64Asset: null,
+    windowsArm64Asset: null,
+  },
+  beta: null,
 });
 const StarsCtx = createContext<StarsContext>({ stars: "" });
 
@@ -27,8 +24,14 @@ const PLAUSIBLE_INIT_SCRIPT = {
   __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`,
 };
 
-export function useRelease(): ReleaseContext {
-  return useContext(ReleaseCtx);
+/** The latest stable release. Everything on the site points here by default. */
+export function useRelease(): ReleaseInfo {
+  return useContext(ReleaseCtx).stable;
+}
+
+/** The current beta, or null when there is no beta ahead of stable. */
+export function useBetaRelease(): ReleaseInfo | null {
+  return useContext(ReleaseCtx).beta;
 }
 
 export function useStars(): StarsContext {
@@ -38,7 +41,7 @@ export function useStars(): StarsContext {
 export const Route = createRootRoute({
   loader: async () => {
     const [release, stars] = await Promise.all([getLatestRelease(), getStarCount()]);
-    return { ...release, ...stars };
+    return { release, ...stars };
   },
   head: () => ({
     meta: [
@@ -63,7 +66,7 @@ export const Route = createRootRoute({
 function RootComponent() {
   const data = Route.useLoaderData();
   return (
-    <ReleaseCtx value={data}>
+    <ReleaseCtx value={data.release}>
       <StarsCtx value={data}>
         <RootDocument>
           <Outlet />

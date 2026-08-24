@@ -1,10 +1,79 @@
 import { describe, expect, it } from "vitest";
-import type { ComposerAttachment } from "@/attachments/types";
-import { migratePersistedState, type MigrateLegacyImages } from "./migration";
-import { isAttachmentMetadata } from "./state";
+import type { StateStorage } from "zustand/middleware";
+import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import {
+  migratePersistedState,
+  type MigrateLegacyImages,
+  PersistedDraftStoreSchema,
+} from "./migration";
+import { isAttachmentMetadata, type DraftRecord } from "./state";
 
 const passThroughMigrateLegacyImages: MigrateLegacyImages = async (images) =>
   images.filter(isAttachmentMetadata);
+
+function createMemoryStorage(): StateStorage & { values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: async (key) => values.get(key) ?? null,
+    setItem: async (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: async (key) => {
+      values.delete(key);
+    },
+  };
+}
+
+function activeDraft(
+  text: string,
+  updatedAt: number,
+  attachments: UserComposerAttachment[] = [],
+): DraftRecord {
+  return {
+    input: { text, attachments },
+    lifecycle: "active",
+    updatedAt,
+    version: 1,
+  };
+}
+
+function githubIssueAttachment(
+  number: number,
+): Extract<UserComposerAttachment, { kind: "github_issue" }> {
+  return {
+    kind: "github_issue",
+    item: {
+      kind: "issue",
+      number,
+      title: `Review item ${number}`,
+      url: `https://example.com/issues/${number}`,
+      state: "open",
+      body: null,
+      labels: [],
+    },
+  };
+}
+
+function githubPrAttachment(
+  number: number,
+): Extract<UserComposerAttachment, { kind: "github_pr" }> {
+  return {
+    kind: "github_pr",
+    item: {
+      kind: "change_request",
+      number,
+      title: `Review item ${number}`,
+      url: `https://example.com/pulls/${number}`,
+      state: "open",
+      body: null,
+      labels: [],
+      baseRefName: "main",
+      headRefName: "feature/legacy",
+    },
+  };
+}
 
 function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "review" }> {
   return {
@@ -47,6 +116,81 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("keeps a supported legacy draft for migration", async () => {
+    const backing = createMemoryStorage();
+    const legacyState = {
+      drafts: {
+        "draft:unsent": {
+          text: "do not lose this",
+          attachments: [],
+        },
+      },
+      createModalDraft: null,
+    };
+    backing.values.set("paseo-drafts", JSON.stringify({ state: legacyState, version: 4 }));
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
+
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 1,
+    });
+
+    expect(migrated.drafts["draft:unsent"]?.input.text).toBe("do not lose this");
+    expect(backing.values.has("paseo-drafts")).toBe(true);
+  });
+
+  it("promotes the newest legacy New Workspace draft into the singleton surface", async () => {
+    const forkDraft = activeDraft("fork context", 1700000000003);
+    const agentDraft = activeDraft("agent prompt", 1700000000004);
+
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "new-workspace:server-a:/project/older": activeDraft(
+            "older new workspace prompt",
+            1700000000001,
+          ),
+          "new-workspace:server-b:/project/newer": activeDraft(
+            "newer new workspace prompt",
+            1700000000002,
+          ),
+          "new-workspace:draft:fork-1": forkDraft,
+          "agent:server-a:agent-1": agentDraft,
+        },
+        createModalDraft: null,
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000005 },
+    );
+
+    expect(migrated.drafts).toEqual({
+      "new-workspace": activeDraft("newer new workspace prompt", 1700000000002),
+      "new-workspace:draft:fork-1": forkDraft,
+      "agent:server-a:agent-1": agentDraft,
+    });
+  });
+
+  it("drops unowned checkout PR context when promoting a scoped New Workspace draft", async () => {
+    const issue = githubIssueAttachment(101);
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "new-workspace:server-a:/project/a": activeDraft("keep the prompt", 2, [
+            issue,
+            githubPrAttachment(202),
+          ]),
+        },
+        createModalDraft: null,
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 3 },
+    );
+
+    expect(migrated.drafts["new-workspace"]?.input).toEqual({
+      text: "keep the prompt",
+      attachments: [issue],
+    });
+  });
+
   it("normalizes legacy image metadata into image attachments and strips persisted preview URLs", async () => {
     const migrated = await migratePersistedState(
       {
@@ -142,25 +286,35 @@ describe("draft-store migration", () => {
     });
   });
 
-  it("rejects workspace review attachments from migrated draft attachments", async () => {
-    const migrated = await migratePersistedState(
-      {
-        drafts: {
-          "agent:server:agent": {
-            input: {
-              text: "hello",
-              attachments: [workspaceReviewAttachment()],
-            },
-            lifecycle: "active",
-            updatedAt: 1700000000001,
-            version: 2,
+  it("drops a legacy workspace review attachment without deleting its draft", async () => {
+    const backing = createMemoryStorage();
+    const persistedState = {
+      drafts: {
+        "agent:server:agent": {
+          input: {
+            text: "hello",
+            attachments: [workspaceReviewAttachment()],
           },
+          lifecycle: "active",
+          updatedAt: 1700000000001,
+          version: 2,
         },
-        createModalDraft: null,
       },
-      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000002 },
-    );
+      createModalDraft: null,
+    };
+    backing.values.set("paseo-drafts", JSON.stringify({ state: persistedState, version: 4 }));
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
 
-    expect(migrated.drafts["agent:server:agent"]?.input.attachments).toEqual([]);
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 1700000000002,
+    });
+
+    expect(migrated.drafts["agent:server:agent"]?.input).toEqual({
+      text: "hello",
+      attachments: [],
+    });
+    expect(backing.values.has("paseo-drafts")).toBe(true);
   });
 });

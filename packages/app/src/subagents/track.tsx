@@ -1,11 +1,12 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
+import { useCallback, useMemo, type ReactElement } from "react";
+import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
+import { Archive, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
+import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import {
   WorkspaceTabIcon,
@@ -13,11 +14,14 @@ import {
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { Theme } from "@/styles/theme";
 import type { SubagentRow } from "./select";
-import { buildSubagentRowPresentationData, formatHeaderLabel } from "./track-presentation";
+import type { ArchiveFinishedStatus } from "./use-archive-finished";
+import {
+  buildSubagentPillPresentation,
+  buildSubagentRowPresentationData,
+  countFinishedSubagents,
+} from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
-const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedUnlink = withUnistyles(Unlink);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -28,15 +32,24 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 export interface SubagentsTrackProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
+  onArchiveFinished?: () => void;
+  archiveFinishedStatus?: ArchiveFinishedStatus;
   onDetachSubagent?: (id: string) => void;
 }
 
-const SUBAGENTS_LIST_MAX_HEIGHT = 200;
+const IDLE_ARCHIVE_FINISHED_STATUS: ArchiveFinishedStatus = { kind: "idle" };
+
+/** Leading and action glyphs share one size so rows keep a single icon column. */
+const ROW_ICON_SIZE = 14;
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
+  const data = buildSubagentRowPresentationData(row);
   return {
-    ...buildSubagentRowPresentationData(row),
+    ...data,
+    tooltip: data.label,
+    modified: false,
     icon: getProviderIcon(row.provider),
   };
 }
@@ -44,82 +57,116 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
 export function SubagentsTrack({
   rows,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
+  onArchiveFinished,
+  archiveFinishedStatus = IDLE_ARCHIVE_FINISHED_STATUS,
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
-  const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation();
 
-  const toggleExpanded = useCallback(() => {
-    setExpanded((current) => !current);
-  }, []);
-
-  const surfaceStyle = useMemo(
-    () => [styles.surface, expanded && styles.surfaceExpanded],
-    [expanded],
-  );
-
-  const headerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.header,
-      expanded ? styles.headerDivider : styles.headerCollapsed,
-      (hovered || pressed) && styles.headerActive,
-    ],
-    [expanded],
-  );
-
-  if (rows.length === 0) {
+  const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
+  const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
+  if (rows.length === 0 && !isArchivingFinished && !isArchiveFinishedFailed) {
     return null;
   }
 
-  const headerLabel = formatHeaderLabel(rows);
+  const pill = buildSubagentPillPresentation(t, rows);
+  const finishedCount = countFinishedSubagents(rows);
+  const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
 
   return (
-    <View style={styles.outer} testID="subagents-track">
-      <View style={styles.track}>
-        <View style={surfaceStyle}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={headerLabel}
-            testID="subagents-track-header"
-            onPress={toggleExpanded}
-            style={headerStyle}
-          >
-            {expanded ? (
-              <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
-            ) : (
-              <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
-            )}
-            <Text style={styles.headerLabel} numberOfLines={1}>
-              {headerLabel}
-            </Text>
-          </Pressable>
-          {expanded ? (
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-            >
-              {rows.map((row) => (
-                <SubagentsTrackRow
-                  key={row.id}
-                  row={row}
-                  onOpenSubagent={onOpenSubagent}
-                  onArchiveSubagent={onArchiveSubagent}
-                  onDetachSubagent={onDetachSubagent}
-                />
-              ))}
-            </ScrollView>
-          ) : null}
-        </View>
-      </View>
-    </View>
+    <ComposerTrackPill
+      testID="subagents-track-header"
+      segments={pill.segments}
+      accessibilityLabel={pill.accessibilityLabel}
+      panelTitle={t("subagents.title")}
+    >
+      {showArchiveFinished && onArchiveFinished ? (
+        <ComposerTrackActions divided={rows.length > 0}>
+          <ArchiveFinishedRow
+            status={archiveFinishedStatus}
+            disabled={isArchivingFinished}
+            onPress={onArchiveFinished}
+          />
+        </ComposerTrackActions>
+      ) : null}
+      {rows.map((row) => (
+        <SubagentsTrackRow
+          key={row.id}
+          row={row}
+          onOpenSubagent={onOpenSubagent}
+          onOpenProviderSubagent={onOpenProviderSubagent}
+          onArchiveSubagent={onArchiveSubagent}
+          onDetachSubagent={onDetachSubagent}
+        />
+      ))}
+    </ComposerTrackPill>
+  );
+}
+
+/**
+ * Bulk archive, as a row above the list rather than an icon next to the count. The pill has no
+ * header to hang an icon off, and a destructive-ish action reads better with its name attached.
+ */
+function ArchiveFinishedRow({
+  status,
+  disabled,
+  onPress,
+}: {
+  status: ArchiveFinishedStatus;
+  disabled: boolean;
+  onPress: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+
+  const renderRow = useCallback(
+    ({ active }: { active: boolean }) => (
+      <>
+        <ThemedArchive
+          size={ROW_ICON_SIZE}
+          uniProps={active ? foregroundColorMapping : foregroundMutedColorMapping}
+        />
+        <Text style={styles.rowLabel} numberOfLines={1}>
+          {t("subagents.archiveFinishedAction")}
+        </Text>
+        {status.kind === "archiving" ? (
+          <Text style={styles.rowTrailing} testID="subagents-track-archive-progress">
+            {status.completedCount}/{status.totalCount}
+          </Text>
+        ) : null}
+        {status.kind === "failed" ? (
+          <Text style={styles.rowTrailing} testID="subagents-track-archive-failed">
+            {t("subagents.archiveFinishedRetry", {
+              failed: status.failedCount,
+              total: status.totalCount,
+            })}
+          </Text>
+        ) : null}
+      </>
+    ),
+    [status, t],
+  );
+
+  return (
+    <ComposerTrackRow
+      accessibilityLabel={t("subagents.archiveFinishedAction")}
+      testID="subagents-track-archive-finished"
+      disabled={disabled}
+      // Progress and the retry count land on this row, so the panel is where the result of
+      // pressing it shows up. Dismissing would hide the thing the press produces.
+      closeOnSelect={false}
+      onPress={onPress}
+    >
+      {renderRow}
+    </ComposerTrackRow>
   );
 }
 
 interface SubagentsTrackRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
+  onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
 }
@@ -127,57 +174,73 @@ interface SubagentsTrackRowProps {
 function SubagentsTrackRow({
   row,
   onOpenSubagent,
+  onOpenProviderSubagent,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const [hovered, setHovered] = useState(false);
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {
-    onOpenSubagent(row.id);
-  }, [onOpenSubagent, row.id]);
+    if (row.kind === "provider") {
+      onOpenProviderSubagent(row.parentAgentId, row.id);
+    } else {
+      onOpenSubagent(row.id);
+    }
+  }, [onOpenProviderSubagent, onOpenSubagent, row]);
   const handleArchivePress = useCallback(() => {
     onArchiveSubagent(row.id);
   }, [onArchiveSubagent, row.id]);
   const handleDetachPress = useCallback(() => {
     onDetachSubagent?.(row.id);
   }, [onDetachSubagent, row.id]);
-  const handlePointerEnter = useCallback(() => setHovered(true), []);
-  const handlePointerLeave = useCallback(() => setHovered(false), []);
   const actionsAlwaysVisible = isNative || isCompact;
-  const actionsVisible = actionsAlwaysVisible || hovered;
+
+  const renderRow = useCallback(
+    ({ active }: { active: boolean }) => (
+      <>
+        <WorkspaceTabIcon presentation={presentation} backdrop={active ? "surface2" : "surface1"} />
+        <Text style={styles.rowLabel} numberOfLines={1}>
+          {displayLabel}
+        </Text>
+        {presentation.subtitle ? (
+          <Text style={styles.rowTrailing} numberOfLines={1}>
+            {presentation.subtitle}
+          </Text>
+        ) : null}
+        {row.kind === "paseo" ? (
+          <SubagentRowActions
+            rowId={row.id}
+            displayLabel={displayLabel}
+            visible={actionsAlwaysVisible || active}
+            onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
+            onArchivePress={handleArchivePress}
+          />
+        ) : null}
+      </>
+    ),
+    [
+      actionsAlwaysVisible,
+      displayLabel,
+      handleArchivePress,
+      handleDetachPress,
+      onDetachSubagent,
+      presentation,
+      row.kind,
+      row.id,
+    ],
+  );
 
   return (
-    // Wrapper View handles hover so moving the pointer between the row and
-    // the archive button doesn't drop the hover state — the same pattern
-    // used by sidebar workspace rows.
-    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={displayLabel}
-        testID={`subagents-track-row-${row.id}`}
-        onPress={handlePress}
-      >
-        {({ pressed }) => (
-          <View style={hovered || pressed ? styles.rowActive : styles.row}>
-            <WorkspaceTabIcon presentation={presentation} />
-            <Text style={styles.rowLabel} numberOfLines={1}>
-              {displayLabel}
-            </Text>
-            <SubagentRowActions
-              rowId={row.id}
-              displayLabel={displayLabel}
-              visible={actionsVisible}
-              onDetachPress={onDetachSubagent ? handleDetachPress : undefined}
-              onArchivePress={handleArchivePress}
-            />
-          </View>
-        )}
-      </Pressable>
-    </View>
+    <ComposerTrackRow
+      accessibilityLabel={displayLabel}
+      testID={`subagents-track-row-${row.id}`}
+      onPress={handlePress}
+    >
+      {renderRow}
+    </ComposerTrackRow>
   );
 }
 
@@ -227,9 +290,9 @@ type SubagentActionIcon = "archive" | "detach";
 function renderSubagentActionIcon(icon: SubagentActionIcon, isActive: boolean): ReactElement {
   const uniProps = isActive ? foregroundColorMapping : foregroundMutedColorMapping;
   if (icon === "detach") {
-    return <ThemedUnlink size={14} uniProps={uniProps} />;
+    return <ThemedUnlink size={ROW_ICON_SIZE} uniProps={uniProps} />;
   }
-  return <ThemedArchive size={14} uniProps={uniProps} />;
+  return <ThemedArchive size={ROW_ICON_SIZE} uniProps={uniProps} />;
 }
 
 function SubagentActionButton({
@@ -269,78 +332,24 @@ function SubagentActionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  outer: {
-    width: "100%",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[4],
-  },
-  track: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    marginBottom: -theme.spacing[4],
-  },
-  surface: {
-    alignSelf: "stretch",
-    backgroundColor: theme.colors.surface1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-    overflow: "hidden",
-  },
-  surfaceExpanded: {
-    paddingBottom: theme.spacing[4],
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  headerCollapsed: {
-    paddingBottom: theme.spacing[6],
-  },
-  headerActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-  headerDivider: {
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  headerLabel: {
-    flexShrink: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-  scroll: {
-    maxHeight: SUBAGENTS_LIST_MAX_HEIGHT,
-  },
-  scrollContent: {
-    paddingVertical: theme.spacing[1],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  rowActive: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface2,
-  },
+  // `flexBasis: "auto"` rather than `flex: 1`: a zero-basis label contributes nothing to the row's
+  // intrinsic width, so the panel measures itself at its floor and truncates every label at once.
   rowLabel: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "auto",
+    minWidth: 0,
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foreground,
+  },
+  // Trailing metadata — provider context on a subagent row, progress on the archive row. No width
+  // cap: the panel's own ceiling bounds it. It shrinks twice as fast as the label, so a wordy
+  // provider subtitle gives way first instead of squeezing the thing that names the row.
+  rowTrailing: {
+    flexShrink: 2,
     minWidth: 0,
     fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
+    color: theme.colors.foregroundMuted,
   },
   actionClusterVisible: {
     flexDirection: "row",
@@ -360,7 +369,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   tooltipText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
 }));

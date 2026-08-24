@@ -18,6 +18,9 @@ function inMemoryStorage(initial: Record<string, string> = {}): InMemoryStorage 
       storage.setCallCount += 1;
       items.set(key, value);
     },
+    async removeItem(key) {
+      items.delete(key);
+    },
   };
   return storage;
 }

@@ -1,19 +1,13 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
-import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import type { Theme } from "@/styles/theme";
 import {
@@ -37,6 +31,7 @@ function useSetupPanelDescriptor(
     return {
       label: t("workspace.setup.descriptor.label"),
       subtitle: t("workspace.setup.descriptor.completed"),
+      tooltip: t("workspace.setup.descriptor.completed"),
       titleState: "ready",
       icon: CheckCircle2,
       statusBucket: null,
@@ -47,6 +42,7 @@ function useSetupPanelDescriptor(
     return {
       label: t("workspace.setup.descriptor.label"),
       subtitle: t("workspace.setup.descriptor.failed"),
+      tooltip: t("workspace.setup.descriptor.failed"),
       titleState: "ready",
       icon: CircleAlert,
       statusBucket: null,
@@ -56,6 +52,7 @@ function useSetupPanelDescriptor(
   return {
     label: t("workspace.setup.descriptor.label"),
     subtitle: t("workspace.setup.descriptor.workspace"),
+    tooltip: t("workspace.setup.descriptor.workspace"),
     titleState: "ready",
     icon: SquareTerminal,
     statusBucket: snapshot?.status === "running" ? "running" : null,
@@ -66,7 +63,7 @@ type CommandStatus = "running" | "completed" | "failed";
 
 function CommandStatusIcon({ status }: { status: CommandStatus }) {
   if (status === "running") {
-    return <ThemedActivityIndicator size={14} uniProps={foregroundColorMapping} />;
+    return <ThemedLoadingSpinner size={14} uniProps={foregroundColorMapping} />;
   }
   if (status === "completed") {
     return <ThemedCheckCircle2 size={14} uniProps={greenColorMapping} />;
@@ -244,7 +241,7 @@ function SetupPanel() {
 
       {isWaiting ? (
         <View style={styles.waitingContainer}>
-          <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+          <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
           <Text style={styles.waitingText}>{t("workspace.setup.waiting")}</Text>
         </View>
       ) : null}
@@ -395,6 +392,7 @@ function SetupCommandRow({
 
 export const setupPanelRegistration: PanelRegistration<"setup"> = {
   kind: "setup",
+  resourceKey: (target) => target.workspaceId,
   component: SetupPanel,
   useDescriptor: useSetupPanelDescriptor,
 };
@@ -446,7 +444,7 @@ function TopLevelSetupError({
   );
 }
 
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckCircle2 = withUnistyles(CheckCircle2);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -488,7 +486,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   waitingText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   emptyContainer: {
@@ -497,7 +495,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   emptyText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   commandList: {
@@ -533,11 +531,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   commandText: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   commandDuration: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
   },
@@ -563,7 +561,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   emptyLogText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     fontStyle: "italic",
   },
@@ -572,7 +570,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.red[100],
   },
   errorText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.palette.red[800],
   },
 }));

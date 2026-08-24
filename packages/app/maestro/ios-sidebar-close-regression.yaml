@@ -1,0 +1,40 @@
+appId: sh.paseo.debug
+---
+# Establish History with the sidebar closed. The host filter then proves a close
+# swipe did not activate the row below it.
+- tapOn:
+    id: "menu-button"
+- tapOn:
+    id: "sidebar-sessions"
+- assertVisible:
+    id: "sessions-host-filter-trigger"
+
+# A close swipe over a semantic header row must close without navigating.
+- swipe:
+    direction: RIGHT
+    duration: 300
+- assertVisible:
+    id: "sidebar-schedules"
+- swipe:
+    start: "85%,19%"
+    end: "10%,19%"
+    duration: 300
+- assertNotVisible:
+    id: "sidebar-schedules"
+- assertVisible:
+    id: "sessions-host-filter-trigger"
+
+# A close swipe over the nested workspace list must beat horizontal list intent.
+- swipe:
+    direction: RIGHT
+    duration: 300
+- assertVisible:
+    id: "sidebar-project-workspace-list-scroll"
+- swipe:
+    start: "85%,46%"
+    end: "10%,46%"
+    duration: 300
+- assertNotVisible:
+    id: "sidebar-project-workspace-list-scroll"
+- assertVisible:
+    id: "sessions-host-filter-trigger"

@@ -1,5 +1,6 @@
 export const ADD_HOST_OPTION_ID = "__add_host__";
 export const ALL_HOSTS_OPTION_ID = "__all_hosts__";
+export const ENABLE_BUILT_IN_DAEMON_OPTION_ID = "__enable_built_in_daemon__";
 
 export function getHostPickerLabel(
   hosts: Array<{ label: string; serverId: string }>,

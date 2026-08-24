@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { defaultHostAppearance } from "@/hosts/appearance";
 import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
+  resolveActiveHostServerId,
+  upsertHostConnectionInProfiles,
+  type HostConnection,
   type HostProfile,
 } from "./host-connection";
 
@@ -9,6 +13,7 @@ function makeHost(serverId: string): HostProfile {
   return {
     serverId,
     label: serverId,
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,
@@ -112,5 +117,163 @@ describe("normalizeStoredHostProfile", () => {
       useTls: true,
       daemonPublicKeyB64: "pubkey",
     });
+  });
+
+  it("gives a host stored before appearance existed the default appearance", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_old",
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null });
+  });
+
+  it("loads a stored appearance the user chose", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_new",
+      appearance: { color: "teal", badgeDisplay: "icon" },
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+  });
+});
+
+describe("upsertHostConnectionInProfiles", () => {
+  const connection: HostConnection = {
+    id: "socket:/tmp/paseo.sock",
+    type: "directSocket",
+    path: "/tmp/paseo.sock",
+  };
+
+  it("gives a newly discovered host the default appearance", () => {
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [],
+      serverId: "srv_new",
+      connection,
+    });
+
+    expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null });
+  });
+
+  it("keeps the appearance the user chose when the host reconnects", () => {
+    const existing: HostProfile = {
+      ...makeHost("srv_known"),
+      appearance: { color: "amber", badgeDisplay: "hidden" },
+      connections: [],
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection,
+    });
+
+    expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
+  });
+
+  it("replaces a direct connection when its settings change", () => {
+    const existingConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+      password: "old-secret",
+    };
+    const existing: HostProfile = {
+      ...makeHost("srv_known"),
+      connections: [existingConnection],
+      preferredConnectionId: existingConnection.id,
+    };
+    const replacement: HostConnection = {
+      ...existingConnection,
+      useTls: true,
+      password: "new-secret",
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: replacement,
+    });
+
+    expect(profile.connections).toEqual([replacement]);
+    expect(profile.preferredConnectionId).toBe(replacement.id);
+  });
+});
+
+describe("resolveActiveHostServerId", () => {
+  it("uses the selected host when one is set", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_selected",
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_selected")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_selected")],
+      }),
+    ).toBe("srv_selected");
+  });
+
+  it("falls back to the local host when it is connected", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_remote")],
+      }),
+    ).toBe("srv_local");
+  });
+
+  it("skips a stopped local daemon and uses the first connected host", () => {
+    // Regression: a stopped local daemon's serverId persists but isn't in `hosts`.
+    // Falling back to it would resolve the section to an unknown id ("host not found").
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local_stopped",
+        hosts: [makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_remote")],
+      }),
+    ).toBe("srv_remote");
+  });
+
+  it("returns null when no hosts are connected", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: null,
+        localServerId: "srv_local_stopped",
+        hosts: [],
+        orderedHosts: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores a selected host that is not connected", () => {
+    // A stale selection (e.g. the host was removed) must not be used unless it is
+    // currently connected, or the section resolves to an unknown id ("host not found").
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_stale_selection",
+        localServerId: null,
+        hosts: [makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_remote")],
+      }),
+    ).toBe("srv_remote");
+  });
+
+  it("falls through a disconnected selection to the connected local host", () => {
+    expect(
+      resolveActiveHostServerId({
+        selectedServerId: "srv_stale_selection",
+        localServerId: "srv_local",
+        hosts: [makeHost("srv_local"), makeHost("srv_remote")],
+        orderedHosts: [makeHost("srv_local"), makeHost("srv_remote")],
+      }),
+    ).toBe("srv_local");
   });
 });

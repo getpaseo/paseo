@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyFileMentionReplacement, findActiveFileMention } from "./file-mention-autocomplete";
+import {
+  applyFileMentionReplacement,
+  findActiveFileMention,
+  formatQuotedFileMentionPath,
+} from "./file-mention-autocomplete";
 
 describe("findActiveFileMention", () => {
   it("detects mentions at the start of input", () => {
@@ -43,6 +47,14 @@ describe("findActiveFileMention", () => {
       cursorIndex: 2,
     });
     expect(mention).toBeNull();
+  });
+});
+
+describe("formatQuotedFileMentionPath", () => {
+  it("quotes workspace-relative paths using file mention escaping", () => {
+    expect(formatQuotedFileMentionPath('src/changed "file".ts')).toBe(
+      '"src/changed \\"file\\".ts"',
+    );
   });
 });
 

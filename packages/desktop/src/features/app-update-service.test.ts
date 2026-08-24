@@ -17,7 +17,19 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   > = [];
   private gate: ((info: RuntimeUpdateInfo) => boolean | Promise<boolean>) | null = null;
   private configuration: AppUpdateRuntimeConfiguration | null = null;
+  private downloadableUpdate: RuntimeUpdateInfo | null = null;
+  private downloadedUpdate: RuntimeUpdateInfo | null = null;
+  private activeDownload: {
+    info: RuntimeUpdateInfo;
+    promise: Promise<void>;
+    resolve(): void;
+    reject(error: Error): void;
+  } | null = null;
   checkCount = 0;
+  downloadCallCount = 0;
+  downloadedVersions: string[] = [];
+  installedVersions: string[] = [];
+  installModes: Array<{ isSilent: boolean; isForceRunAfter: boolean }> = [];
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
@@ -59,7 +71,40 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   finishUpdateDownload(info: RuntimeUpdateInfo): void {
+    this.downloadedUpdate = info;
+    this.downloadedVersions.push(info.version);
     this.configuration?.onUpdateDownloaded(info);
+  }
+
+  beginUpdateDownload(info: RuntimeUpdateInfo): {
+    resolve(): void;
+    reject(error: Error): void;
+  } {
+    this.downloadableUpdate = info;
+    this.prepareUpdate(info);
+    let resolvePromise!: () => void;
+    let rejectPromise!: (error: Error) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    void promise.catch(() => undefined);
+    const activeDownload = {
+      info,
+      promise,
+      resolve: () => {
+        this.finishUpdateDownload(info);
+        this.activeDownload = null;
+        resolvePromise();
+      },
+      reject: (error: Error) => {
+        this.configuration?.onError(error);
+        this.activeDownload = null;
+        rejectPromise(error);
+      },
+    };
+    this.activeDownload = activeDownload;
+    return { resolve: activeDownload.resolve, reject: activeDownload.reject };
   }
 
   async checkForUpdates(): Promise<{
@@ -80,12 +125,27 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     }
     if (!result || !this.gate) return result;
     const admitted = await this.gate(result.updateInfo);
-    return { ...result, isUpdateAvailable: result.isUpdateAvailable && admitted };
+    const isUpdateAvailable = result.isUpdateAvailable && admitted;
+    this.downloadableUpdate = isUpdateAvailable ? result.updateInfo : null;
+    return { ...result, isUpdateAvailable };
   }
 
-  async downloadUpdate(): Promise<void> {}
+  async downloadUpdate(): Promise<void> {
+    this.downloadCallCount += 1;
+    if (this.activeDownload) {
+      return this.activeDownload.promise;
+    }
+    if (this.downloadableUpdate) {
+      this.finishUpdateDownload(this.downloadableUpdate);
+    }
+  }
 
-  quitAndInstall(): void {}
+  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+    if (this.downloadedUpdate) {
+      this.installedVersions.push(this.downloadedUpdate.version);
+      this.installModes.push({ isSilent, isForceRunAfter });
+    }
+  }
 }
 
 function createService(input?: { now?: () => number; bucket?: () => Promise<number> }) {
@@ -148,6 +208,33 @@ describe("app update service", () => {
     });
   });
 
+  it("waits for an automatic poll before starting a manual rollout-bypassing check", async () => {
+    const { runtime, service } = createService();
+    const automaticCheck = runtime.deferNextCheck();
+    const automaticPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const manualPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    await Promise.resolve();
+    expect(runtime.checkCount).toBe(1);
+
+    automaticCheck.resolve({ isUpdateAvailable: false, updateInfo: rolledOutUpdate });
+    await automaticPending;
+    const manualResult = await manualPending;
+
+    expect(runtime.checkCount).toBe(2);
+    expect(manualResult.hasUpdate).toBe(true);
+    expect(manualResult.latestVersion).toBe("1.2.4");
+  });
+
   it("performs a fresh manual check when an update is already cached", async () => {
     const { runtime, service } = createService({ bucket: async () => 0 });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
@@ -177,6 +264,218 @@ describe("app update service", () => {
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: null,
     });
+  });
+
+  it("replaces a downloaded update when a newer release is admitted", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.5",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: null,
+    });
+  });
+
+  it("installs the newest admitted release when quitting with an older download", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(runtime.installModes).toEqual([{ isSilent: true, isForceRunAfter: false }]);
+  });
+
+  it("does not install an older download while its replacement is still rolling out", async () => {
+    const now = Date.parse("2026-04-28T12:00:00.000Z");
+    const { runtime, service } = createService({ now: () => now, bucket: async () => 0.4 });
+    const olderUpdate = {
+      ...rolledOutUpdate,
+      releaseDate: "2026-04-27T00:00:00.000Z",
+    };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: olderUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(olderUpdate);
+
+    const newerUpdate = {
+      ...rolledOutUpdate,
+      version: "1.2.5",
+      releaseDate: "2026-04-28T12:00:00.000Z",
+    };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("does not install after quit-time revalidation expires", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const deadline = new AbortController();
+    deadline.abort();
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: deadline.signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("does not install an unvalidated download when the quit-time check fails", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.failNextCheck(new Error("offline"));
+    const installed = await service.installUpdateOnQuit({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("rechecks for the newest release before a manual install", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0.99 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const result = await service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(result.installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(runtime.installModes).toEqual([{ isSilent: false, isForceRunAfter: true }]);
+  });
+
+  it("waits for a stale active download before downloading and installing the rechecked version", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    const staleDownload = runtime.beginUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const installPending = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    await Promise.resolve();
+    expect(runtime.installedVersions).toEqual([]);
+
+    staleDownload.resolve();
+    const result = await installPending;
+
+    expect(result.installed).toBe(true);
+    expect(runtime.downloadedVersions).toEqual(["1.2.4", "1.2.5"]);
+    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+  });
+
+  it("installs the rechecked version when the stale active download fails", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    const staleDownload = runtime.beginUpdateDownload(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const installPending = service.downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.downloadCallCount).toBe(1);
+
+    staleDownload.reject(new Error("old download failed"));
+    const result = await installPending;
+
+    expect(result.installed).toBe(true);
+    expect(runtime.downloadedVersions).toEqual(["1.2.5"]);
+    expect(runtime.installedVersions).toEqual(["1.2.5"]);
   });
 
   it("trusts the runtime availability decision before comparing versions", async () => {
@@ -322,28 +621,26 @@ describe("app update service", () => {
     });
   });
 
-  it("keeps preparation errors emitted before the update check rejects", async () => {
-    const { runtime, service } = createService();
-    const deferredCheck = runtime.deferNextCheck();
-    const pending = service.checkForAppUpdate({
+  it("surfaces preparation errors without blocking newer releases", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
-      intent: "automatic",
+      intent: "manual",
     });
-
     runtime.prepareUpdate(rolledOutUpdate);
     runtime.failRuntime(new Error("sha512 checksum mismatch"));
-    deferredCheck.reject(new Error("sha512 checksum mismatch"));
-    const checkResult = await pending;
-    expect(checkResult.errorMessage).toBe("sha512 checksum mismatch");
 
-    const automaticResult = await service.checkForAppUpdate({
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const failedPreparation = await service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "automatic",
     });
 
-    expect(automaticResult).toEqual({
+    expect(failedPreparation).toEqual({
       hasUpdate: true,
       readyToInstall: false,
       currentVersion: "1.2.3",
@@ -352,19 +649,9 @@ describe("app update service", () => {
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: "sha512 checksum mismatch",
     });
-  });
 
-  it("returns runtime update errors after an update fails to prepare", async () => {
-    const { runtime, service } = createService();
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-    runtime.failRuntime(new Error("sha512 checksum mismatch"));
-
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
     const result = await service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
@@ -375,11 +662,41 @@ describe("app update service", () => {
       hasUpdate: true,
       readyToInstall: false,
       currentVersion: "1.2.3",
-      latestVersion: "1.2.4",
+      latestVersion: "1.2.5",
       body: null,
       date: "2026-04-28T00:00:00.000Z",
-      errorMessage: "sha512 checksum mismatch",
+      errorMessage: null,
     });
+  });
+
+  it("attributes a late preparation failure to the download that started it", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.prepareUpdate(rolledOutUpdate);
+
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.failRuntime(new Error("old download failed"));
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result.latestVersion).toBe("1.2.5");
+    expect(result.errorMessage).toBeNull();
   });
 
   it("performs a fresh manual check after an update preparation error", async () => {
@@ -391,6 +708,7 @@ describe("app update service", () => {
       releaseChannel: "stable",
       intent: "manual",
     });
+    runtime.prepareUpdate(rolledOutUpdate);
     runtime.failRuntime(new Error("sha512 checksum mismatch"));
 
     runtime.nextCheck({
@@ -443,93 +761,6 @@ describe("app update service", () => {
       body: null,
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: null,
-    });
-  });
-
-  it("returns runtime update errors to multiple automatic checks before a manual retry clears them", async () => {
-    const { runtime, service } = createService();
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-    runtime.failRuntime(new Error("sha512 checksum mismatch"));
-
-    const firstAutomaticResult = await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-    const secondAutomaticResult = await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-
-    expect(firstAutomaticResult).toEqual({
-      hasUpdate: true,
-      readyToInstall: false,
-      currentVersion: "1.2.3",
-      latestVersion: "1.2.4",
-      body: null,
-      date: "2026-04-28T00:00:00.000Z",
-      errorMessage: "sha512 checksum mismatch",
-    });
-    expect(secondAutomaticResult).toEqual(firstAutomaticResult);
-
-    runtime.nextCheck(null);
-    const retryResult = await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-
-    expect(runtime.checkCount).toBe(2);
-    expect(retryResult).toEqual({
-      hasUpdate: false,
-      readyToInstall: false,
-      currentVersion: "1.2.3",
-      latestVersion: "1.2.3",
-      body: null,
-      date: null,
-      errorMessage: null,
-    });
-  });
-
-  it("keeps runtime update errors visible after a manual retry fails", async () => {
-    const { runtime, service } = createService();
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-    runtime.failRuntime(new Error("sha512 checksum mismatch"));
-
-    runtime.failNextCheck(new Error("network down"));
-    const retryResult = await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "manual",
-    });
-    const automaticResult = await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-
-    expect(retryResult.errorMessage).toBe("network down");
-    expect(automaticResult).toEqual({
-      hasUpdate: true,
-      readyToInstall: false,
-      currentVersion: "1.2.3",
-      latestVersion: "1.2.4",
-      body: null,
-      date: "2026-04-28T00:00:00.000Z",
-      errorMessage: "sha512 checksum mismatch",
     });
   });
 });

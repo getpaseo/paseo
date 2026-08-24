@@ -1,20 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
   type PressableStateCallbackType,
 } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { router } from "expo-router";
 import { Server } from "lucide-react-native";
 import { create } from "zustand";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDotSlot } from "@/components/hosts/host-picker";
-import { isNative } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import {
+  OverlayLayerProvider,
+  useGlobalWebOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 import { buildSettingsAddHostRoute } from "@/utils/host-routes";
@@ -140,9 +148,10 @@ export function HostChooserModal() {
   const hosts = useHosts();
   const request = useHostChooserStore((state) => state.request);
   const close = useHostChooserStore((state) => state.close);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && request != null);
 
   const requestHosts = useMemo(() => {
     if (!request) return [];
@@ -161,6 +170,7 @@ export function HostChooserModal() {
 
   useEffect(() => {
     if (!request) return;
+    inputRef.current?.replaceText("");
     setQuery("");
     setActiveIndex(0);
     const id = setTimeout(() => inputRef.current?.focus(), 0);
@@ -182,63 +192,65 @@ export function HostChooserModal() {
     [close, request],
   );
 
-  useEffect(() => {
-    if (!request || isNative || typeof window === "undefined") return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
       if (
         event.key !== "ArrowDown" &&
         event.key !== "ArrowUp" &&
         event.key !== "Enter" &&
         event.key !== "Escape"
       ) {
-        return;
+        return false;
       }
 
       if (event.key === "Escape") {
         event.preventDefault();
         close();
-        return;
+        return true;
       }
 
       if (event.key === "Enter") {
         const host = options[activeOptionIndex];
-        if (!host) return;
+        if (!host) return false;
         event.preventDefault();
         chooseHost(host.serverId);
-        return;
+        return true;
       }
 
-      if (options.length === 0) return;
+      if (options.length === 0) return false;
       event.preventDefault();
       const next = event.key === "ArrowDown" ? activeOptionIndex + 1 : activeOptionIndex - 1;
       if (next < 0) {
         setActiveIndex(options.length - 1);
-        return;
+        return true;
       }
       if (next >= options.length) {
         setActiveIndex(0);
-        return;
+        return true;
       }
       setActiveIndex(next);
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeOptionIndex, chooseHost, close, options, request]);
+      return true;
+    },
+    [activeOptionIndex, chooseHost, close, options],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && request != null,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   if (!request) return null;
 
-  return (
+  const modal = (
     <Modal visible transparent animationType="fade" onRequestClose={close} testID="host-chooser">
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={close} />
-        <View style={styles.panel}>
+        <View ref={setWebOverlayScope} style={styles.panel}>
           <View style={styles.header}>
             <Text style={styles.title}>{request.title}</Text>
             <TextInput
               ref={inputRef}
-              value={query}
+              initialValue={query}
               onChangeText={handleQueryChange}
               placeholder="Search hosts..."
               placeholderTextColor={theme.colors.foregroundMuted}
@@ -268,6 +280,8 @@ export function HostChooserModal() {
       </View>
     </Modal>
   );
+
+  return createElement(OverlayLayerProvider, { layer: isWeb ? modalLayer : 0 }, modal);
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -306,7 +320,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   input: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     padding: 0,
     outlineStyle: "none",
   } as object,
@@ -343,11 +357,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowSubtitle: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
   },

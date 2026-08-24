@@ -58,4 +58,28 @@ describe("terminal restore schemas", () => {
       }).features?.["terminal-restore-modes"],
     ).toBe(true);
   });
+
+  test("keeps terminal input mode replay metadata optional for older daemons", () => {
+    const parsed = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "server-1",
+      features: {
+        "terminal-restore-modes": true,
+      },
+    });
+
+    expect(parsed.features?.["terminal-input-mode-replay"]).toBeUndefined();
+  });
+
+  test("accepts terminal input mode replay feature metadata", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "server-1",
+        features: {
+          "terminal-input-mode-replay": true,
+        },
+      }).features?.["terminal-input-mode-replay"],
+    ).toBe(true);
+  });
 });

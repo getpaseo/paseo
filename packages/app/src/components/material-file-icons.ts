@@ -1,4 +1,8 @@
-// Auto-generated from material-icon-theme. Do not edit manually.
+// Vendor icon table, transcribed from material-icon-theme. The SVGs are copied verbatim,
+// including their colours — see file-icon-svg.ts for the module that tones them down for our
+// surfaces. Keeping this file a faithful copy is what makes re-copying an icon a mechanical edit.
+//
+// See docs/file-icons.md for how to add one.
 
 const SVG_ICONS: Record<string, string> = {
   _default: `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="m8.668 6h3.6641l-3.6641-3.668v3.668m-4.668-4.668h5.332l4 4v8c0 0.73828-0.59375 1.3359-1.332 1.3359h-8c-0.73828 0-1.332-0.59766-1.332-1.3359v-10.664c0-0.74219 0.59375-1.3359 1.332-1.3359m3.332 1.3359h-3.332v10.664h8v-6h-4.668z" fill="#90a4ae" /></svg>`,
@@ -125,7 +129,7 @@ const EXTENSION_TO_ICON: Record<string, string> = {
   zig: "zig",
 };
 
-export function getFileIconSvg(fileName: string): string {
+export function getRawFileIconSvg(fileName: string): string {
   const ext = getExtension(fileName);
   if (ext) {
     const iconName = EXTENSION_TO_ICON[ext];

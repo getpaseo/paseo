@@ -1,12 +1,55 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentForkContextRequestMessageSchema,
+  AgentForkContextResponseMessageSchema,
   CreateAgentRequestMessageSchema,
   CreatePaseoWorktreeRequestSchema,
   SendAgentMessageRequestSchema,
 } from "./messages.js";
 
 describe("shared messages attachments", () => {
+  it("preserves an optional timeline cursor on fork-context messages", () => {
+    const boundaryCursor = { epoch: "timeline-1", seq: 42 };
+    const request = AgentForkContextRequestMessageSchema.parse({
+      type: "agent.fork_context.request",
+      agentId: "agent-1",
+      requestId: "fork-1",
+      boundaryCursor,
+    });
+    const response = AgentForkContextResponseMessageSchema.parse({
+      type: "agent.fork_context.response",
+      payload: {
+        requestId: "fork-1",
+        agentId: "agent-1",
+        attachment: null,
+        itemCount: 2,
+        boundaryMessageId: null,
+        boundaryCursor,
+        error: null,
+      },
+    });
+
+    expect(request.boundaryCursor).toEqual(boundaryCursor);
+    expect(response.payload.boundaryCursor).toEqual(boundaryCursor);
+  });
+
+  it("accepts a legacy fork-context response without a timeline cursor", () => {
+    expect(
+      AgentForkContextResponseMessageSchema.parse({
+        type: "agent.fork_context.response",
+        payload: {
+          requestId: "fork-1",
+          agentId: "agent-1",
+          attachment: null,
+          itemCount: 2,
+          boundaryMessageId: "assistant-1",
+          error: null,
+        },
+      }).payload.boundaryCursor,
+    ).toBeUndefined();
+  });
+
   it("keeps valid review attachments", () => {
     const parsed = SendAgentMessageRequestSchema.parse({
       type: "send_agent_message_request",
@@ -263,6 +306,50 @@ describe("shared messages attachments", () => {
         mimeType: "text/plain",
         title: "Future context",
         text: "Future client hint",
+      },
+    ]);
+  });
+
+  it("preserves neutral external-resource presentation on text attachments", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-external-resource",
+      agentId: "agent-1",
+      text: "Implement this",
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          title: "ENG-123 Plugin attachments",
+          text: "Linear issue ENG-123: Plugin attachments",
+          externalResource: {
+            provider: "linear",
+            providerLabel: "Linear issue",
+            resourceType: "issue",
+            id: "issue-uuid",
+            identifier: "ENG-123",
+            title: "Plugin attachments",
+            url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "text",
+        mimeType: "text/plain",
+        title: "ENG-123 Plugin attachments",
+        text: "Linear issue ENG-123: Plugin attachments",
+        externalResource: {
+          provider: "linear",
+          providerLabel: "Linear issue",
+          resourceType: "issue",
+          id: "issue-uuid",
+          identifier: "ENG-123",
+          title: "Plugin attachments",
+          url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+        },
       },
     ]);
   });

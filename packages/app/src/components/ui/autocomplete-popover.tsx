@@ -8,7 +8,7 @@ import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
-import { useKeyboardShift } from "@/hooks/use-keyboard-shift-style";
+import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
 import { SPACING } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 

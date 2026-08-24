@@ -53,6 +53,7 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
     parentAgentId: null,
     labels: {},
     ...overrides,
+    activeTurn: overrides.activeTurn ?? null,
   };
 }
 

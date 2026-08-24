@@ -1,20 +1,49 @@
 import { AppState } from "react-native";
 import { isNative } from "@/constants/platform";
 
-export function getIsAppActivelyVisible(appState: string = AppState.currentState): boolean {
-  if (appState !== "active") {
-    return false;
-  }
+interface AppVisibilityInput {
+  appState: string;
+  native: boolean;
+  documentVisible: boolean;
+}
 
-  if (isNative) {
-    return true;
-  }
+interface ActiveAppVisibilityInput extends AppVisibilityInput {
+  windowFocused: boolean;
+}
 
-  const documentVisible = typeof document === "undefined" || document.visibilityState === "visible";
-  const windowFocused =
+export function isAppVisible(input: AppVisibilityInput): boolean {
+  return input.appState === "active" && (input.native || input.documentVisible);
+}
+
+export function isAppActivelyVisible(input: ActiveAppVisibilityInput): boolean {
+  return isAppVisible(input) && (input.native || input.windowFocused);
+}
+
+function getDocumentVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
+function getWindowFocused(): boolean {
+  return (
     typeof document === "undefined" ||
     typeof document.hasFocus !== "function" ||
-    document.hasFocus();
+    document.hasFocus()
+  );
+}
 
-  return documentVisible && windowFocused;
+export function getIsAppVisible(appState: string = AppState.currentState): boolean {
+  return isAppVisible({
+    appState,
+    native: isNative,
+    documentVisible: getDocumentVisible(),
+  });
+}
+
+export function getIsAppActivelyVisible(appState: string = AppState.currentState): boolean {
+  return isAppActivelyVisible({
+    appState,
+    native: isNative,
+    documentVisible: getDocumentVisible(),
+    windowFocused: getWindowFocused(),
+  });
 }

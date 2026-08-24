@@ -29,11 +29,15 @@ describe("snapshot mutation ownership boundary", () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), "snapshot-owner-live-"));
 
     try {
-      const snapshot = await daemonHandle.daemon.agentManager.createAgent({
-        provider: "codex",
-        cwd,
-        model: "gpt-5.2-codex",
-      });
+      const snapshot = await daemonHandle.daemon.agentManager.createAgent(
+        {
+          provider: "codex",
+          cwd,
+          model: "gpt-5.2-codex",
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
       await daemonHandle.daemon.agentManager.flush();
 
       const applySnapshotSpy = vi.spyOn(daemonHandle.daemon.agentStorage, "applySnapshot");
@@ -95,10 +99,11 @@ describe("snapshot mutation ownership boundary", () => {
     const session = asInternals<SessionInternals>(
       new Session({
         clientId: "test-client",
+        scopes: ["*"],
         onMessage,
         logger: createStub<SessionOptions["logger"]>(logger),
         downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
-        pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
+        pushNotifications: createStub<SessionOptions["pushNotifications"]>({}),
         paseoHome: "/tmp/paseo-test",
         agentManager: createStub<SessionOptions["agentManager"]>({
           subscribe: () => () => {},
@@ -114,6 +119,7 @@ describe("snapshot mutation ownership boundary", () => {
           upsert: directStorageWrite,
         }),
         projectRegistry: createStub<SessionOptions["projectRegistry"]>({
+          subscribeToMutations: () => () => {},
           initialize: async () => {},
           existsOnDisk: async () => true,
           list: async () => [],
@@ -123,6 +129,7 @@ describe("snapshot mutation ownership boundary", () => {
           remove: async () => {},
         }),
         workspaceRegistry: createStub<SessionOptions["workspaceRegistry"]>({
+          subscribeToMutations: () => () => {},
           initialize: async () => {},
           existsOnDisk: async () => true,
           list: async () => [],

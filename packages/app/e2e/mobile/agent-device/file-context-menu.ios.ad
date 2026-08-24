@@ -1,0 +1,13 @@
+context platform=ios timeout=60000 retries=1
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-header-menu-trigger\"" 20000
+press "id=\"workspace-explorer-toggle\""
+wait "id=\"explorer-tab-files\"" 10000
+press "id=\"explorer-tab-files\""
+wait "id=\"file-explorer-row-0\"" 10000
+longpress "id=\"file-explorer-row-0\"" 600
+wait "id=\"file-explorer-row-0-context-menu-content\"" 10000
+is visible "text=\"Copy path\""
+close

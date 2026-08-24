@@ -473,27 +473,6 @@ const routedToolCases = [
 
 const brokerErrorCases = [
   {
-    name: "disabled browser tools",
-    toolName: "browser_list_tabs",
-    input: {},
-    payload: {
-      requestId: "req-disabled",
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled. Enable daemon.browserTools.enabled to use them.",
-        retryable: false,
-      },
-    },
-    content: [
-      {
-        type: "text",
-        text: "Browser tools are disabled. Enable browser tools on the host, then try again.",
-      },
-    ],
-    context: { agentId: "agent-1", cwd: "/repo", workspaceId: "wks_workspace_a" },
-  },
-  {
     name: "typed timeout errors",
     toolName: "browser_snapshot",
     input: { browserId: BROWSER_ID },

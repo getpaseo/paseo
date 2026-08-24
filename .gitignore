@@ -84,6 +84,7 @@ valknut-report.json/
 .plans/
 packages/server/src/server/fixtures/dictation/dictation-debug-largest.wav
 packages/server/src/server/fixtures/dictation/dictation-debug-largest.transcript.txt
+packages/protocol/src/generated/validation/*.aot.ts
 
 /artifacts
 packages/desktop/.cache/

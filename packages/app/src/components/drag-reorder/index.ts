@@ -1,8 +1,9 @@
 export { reorderItemsOnDragEnd } from "./reorder-items";
 export type { DragEndInput } from "./reorder-items";
 export {
-  getPointerActivationConstraint,
-  type PointerActivationConfig,
+  getDragActivationConstraints,
+  type DragActivationConfig,
+  type DragActivationConstraints,
   type PointerActivationConstraint,
 } from "./pointer-activation";
 export {

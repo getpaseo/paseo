@@ -21,6 +21,17 @@ export function shouldReplayTerminalSnapshotForRenderer(input: {
   return input.change.isReady && input.change.streamKey === input.terminalStreamKey;
 }
 
+export function resolveTerminalStreamTarget(input: {
+  terminalId: string;
+  terminalStreamKey: string;
+  rendererReadyStreamKey: string | null;
+  isWorkspaceFocused: boolean;
+}): string | null {
+  return input.isWorkspaceFocused && input.rendererReadyStreamKey === input.terminalStreamKey
+    ? input.terminalId
+    : null;
+}
+
 export function shouldShowTerminalLoadingOverlay(input: {
   isWorkspaceFocused: boolean;
   hasStreamError: boolean;

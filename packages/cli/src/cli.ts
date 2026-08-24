@@ -1,18 +1,23 @@
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
-import { createChatCommand } from "./commands/chat/index.js";
-import { createLoopCommand } from "./commands/loop/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
+import { createPluginCommand } from "./commands/plugin/index.js";
+import { createProjectCommand } from "./commands/project/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
+import { createScriptCommand } from "./commands/script/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
+import { createWorkspaceCommand } from "./commands/workspace/index.js";
+import { createHeartbeatCommand } from "./commands/heartbeat/index.js";
+import { createHubCommand } from "./commands/hub/index.js";
 import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
 import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
+import { runDaemonReloadCommand } from "./commands/daemon/reload.js";
 import { addLsOptions, runLsCommand } from "./commands/agent/ls.js";
 import { addRunOptions, runRunCommand } from "./commands/agent/run.js";
 import { addLogsOptions, runLogsCommand } from "./commands/agent/logs.js";
@@ -25,6 +30,7 @@ import { addArchiveOptions, runArchiveCommand } from "./commands/agent/archive.j
 import { addAttachOptions, runAttachCommand } from "./commands/agent/attach.js";
 import { addImportOptions, runImportCommand } from "./commands/agent/import.js";
 import { withOutput } from "./output/index.js";
+import { runCloneCommand } from "./commands/clone.js";
 import { onboardCommand } from "./commands/onboard.js";
 import {
   addDaemonHostOption,
@@ -65,6 +71,20 @@ export function createCli(): Command {
   addJsonAndDaemonHostOptions(addImportOptions(program.command("import"))).action(
     withOutput(runImportCommand),
   );
+
+  addJsonAndDaemonHostOptions(
+    program
+      .command("clone")
+      .description("Clone a GitHub repo and register it as a Paseo workspace")
+      .argument("<repo>", "GitHub repo in owner/repo format or a full git remote URL")
+      .requiredOption("--dir <path>", "Parent directory to clone into (for example: ~/workspace)"),
+  )
+    .addOption(
+      new Option("--protocol <protocol>", "Protocol for owner/repo shorthand repositories").choices(
+        ["https", "ssh"],
+      ),
+    )
+    .action(withOutput(runCloneCommand));
 
   addDaemonHostOption(addAttachOptions(program.command("attach"))).action(runAttachCommand);
 
@@ -107,6 +127,10 @@ export function createCli(): Command {
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(withOutput(runDaemonStatusCommand));
 
+  addJsonAndDaemonHostOptions(
+    program.command("reload").description('Reload daemon config (alias for "paseo daemon reload")'),
+  ).action(withOutput(runDaemonReloadCommand));
+
   addJsonOption(
     program
       .command("restart")
@@ -120,6 +144,7 @@ export function createCli(): Command {
       "Listen target for restarted daemon (host:port, port, or unix socket)",
     )
     .option("--port <port>", "Port for restarted daemon listen target")
+    .option("--relay", "Enable relay on restarted daemon")
     .option("--no-relay", "Disable relay on restarted daemon")
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option(
@@ -145,30 +170,36 @@ export function createCli(): Command {
 
   // Daemon commands
   program.addCommand(createDaemonCommand());
+  program.addCommand(createHubCommand());
 
   // Chat commands
-  program.addCommand(createChatCommand());
 
   // Terminal commands
   program.addCommand(createTerminalCommand());
 
-  // Loop commands
-  program.addCommand(createLoopCommand());
+  // Workspace script commands
+  program.addCommand(createScriptCommand());
 
   // Schedule commands
   program.addCommand(createScheduleCommand());
+  program.addCommand(createHeartbeatCommand());
 
   // Permission commands
   program.addCommand(createPermitCommand());
 
   // Provider commands
   program.addCommand(createProviderCommand());
+  program.addCommand(createPluginCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());
 
-  // Worktree commands
-  program.addCommand(createWorktreeCommand());
+  // Workspace commands
+  program.addCommand(createProjectCommand());
+  program.addCommand(createWorkspaceCommand());
+  // COMPAT(worktreeCli): legacy command alias added before workspace was the product unit.
+  // Added in v0.2.0; remove after 2027-01-17.
+  program.addCommand(createWorktreeCommand(), { hidden: true });
 
   return program;
 }

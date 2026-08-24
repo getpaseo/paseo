@@ -16,6 +16,7 @@ export interface DaemonSelfUpdateResult {
 
 export interface DaemonSelfUpdateInput {
   daemonVersion: string | null;
+  desktopManaged: boolean;
   onProgress: (phase: DaemonSelfUpdatePhase) => void;
   logger: DaemonSelfUpdateLogger;
 }
@@ -42,12 +43,19 @@ const defaultRuntime: DaemonSelfUpdateRuntime = {
   installOrigin: daemonInstallOriginRuntime,
 };
 
+const DESKTOP_MANAGED_UPDATE_ERROR =
+  "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.";
+
 export class DaemonSelfUpdater {
   private inProgress = false;
 
   constructor(private readonly runtime: DaemonSelfUpdateRuntime = defaultRuntime) {}
 
   async update(input: DaemonSelfUpdateInput): Promise<DaemonSelfUpdateResult> {
+    if (input.desktopManaged) {
+      return { success: false, error: DESKTOP_MANAGED_UPDATE_ERROR, newVersion: null };
+    }
+
     if (this.inProgress) {
       throw new DaemonSelfUpdateInProgressError();
     }

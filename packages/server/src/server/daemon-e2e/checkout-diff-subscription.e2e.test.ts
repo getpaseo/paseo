@@ -138,3 +138,34 @@ test("pushes updates when subscribed from a subdirectory and files change outsid
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 60000);
+
+test("keeps the socket usable after rejecting an oversized structured diff", async () => {
+  const cwd = tmpCwd();
+
+  try {
+    initGitRepo(cwd);
+    commitFile(cwd, "large-a.js", "const value = 0;\n");
+    commitFile(cwd, "large-b.js", "const value = 0;\n");
+    const denseExpression = `const value = ${"a+".repeat(450_000)}a;\n`;
+    writeFileSync(path.join(cwd, "large-a.js"), denseExpression);
+    writeFileSync(path.join(cwd, "large-b.js"), denseExpression);
+
+    const initial = await ctx.client.subscribeCheckoutDiff(
+      cwd,
+      { mode: "uncommitted" },
+      { subscriptionId: "oversized-checkout-diff" },
+    );
+
+    expect(initial).toMatchObject({
+      cwd,
+      files: [],
+      diffTooLarge: true,
+      error: { code: "UNKNOWN" },
+    });
+
+    const status = await ctx.client.getCheckoutStatus(cwd);
+    expect(status).toMatchObject({ cwd, isGit: true });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 120000);

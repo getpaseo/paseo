@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords } from "./state";
+import { applyClearDraftRecord, pruneFinalizedDraftRecords, toDraftInputIfReady } from "./state";
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
@@ -66,6 +66,106 @@ describe("draft-store lifecycle", () => {
       lifecycle: "sent",
       updatedAt: 2,
       version: 2,
+    });
+  });
+});
+
+describe("draft-store normalization", () => {
+  it("preserves plugin resources when hydrating a draft", () => {
+    const attachment = {
+      kind: "plugin_resource" as const,
+      pluginId: "linear",
+      sourceId: "issues",
+      sourceTitle: "Linear issue",
+      sourceIcon: "CircleDot",
+      item: {
+        id: "issue-uuid",
+        identifier: "ENG-123",
+        title: "Plugin attachments",
+        subtitle: "In progress",
+        url: "https://linear.app/acme/issue/ENG-123/plugin-attachments",
+        text: "Linear issue ENG-123: Plugin attachments",
+        resourceType: "issue",
+      },
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Implement this", attachments: [attachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({ text: "Implement this", attachments: [attachment] });
+  });
+
+  it("preserves uploaded file attachments when hydrating a draft", () => {
+    const attachment = {
+      kind: "file" as const,
+      attachment: {
+        type: "uploaded_file" as const,
+        id: "file-1",
+        fileName: "context.json",
+        mimeType: "application/json",
+        size: 42,
+        path: "/tmp/context.json",
+      },
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Review this", attachments: [attachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({ text: "Review this", attachments: [attachment] });
+  });
+
+  it("preserves workspace file selections when hydrating a draft", () => {
+    const attachment = {
+      kind: "workspace_file" as const,
+      path: "src/app.ts",
+      selection: { kind: "line_range" as const, startLine: 12, endLine: 24 },
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Review this", attachments: [attachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({ text: "Review this", attachments: [attachment] });
+  });
+
+  it("preserves New Workspace picker ownership when hydrating a draft", () => {
+    const pickerAttachment = {
+      kind: "github_pr" as const,
+      owner: "new-workspace-picker" as const,
+      item: {
+        kind: "change_request" as const,
+        number: 202,
+        title: "Persist picker ownership",
+        url: "https://example.com/pull/202",
+        state: "open" as const,
+        body: null,
+        labels: [],
+        baseRefName: "main",
+        headRefName: "feature/picker-ownership",
+      },
+    };
+
+    expect(
+      toDraftInputIfReady({
+        input: { text: "Keep this prompt", attachments: [pickerAttachment] },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({
+      text: "Keep this prompt",
+      attachments: [pickerAttachment],
     });
   });
 });

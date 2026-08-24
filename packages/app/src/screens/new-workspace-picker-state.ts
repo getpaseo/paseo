@@ -1,54 +1,97 @@
-import type { UserComposerAttachment } from "@/attachments/types";
+import {
+  NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  type UserComposerAttachment,
+} from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
 
-// The picker "owns" at most one PR attachment at a time. When the user selects
-// a different item the previously-owned PR is removed before the new one is added.
-// User-added attachments for other PRs/issues are left untouched.
+export interface PickerSelectionState {
+  selectedItem: PickerItem | null;
+  allowAutoPrSelection: boolean;
+}
+
+export type PickerSelectionEvent =
+  | { type: "pr-detected" }
+  | { type: "pr-added"; item: Extract<PickerItem, { kind: "github-pr" }> }
+  | { type: "picker-selected"; item: PickerItem }
+  | { type: "target-changed" };
+
+export const initialPickerSelectionState: PickerSelectionState = {
+  selectedItem: null,
+  allowAutoPrSelection: false,
+};
+
+export function reducePickerSelection(
+  state: PickerSelectionState,
+  event: PickerSelectionEvent,
+): PickerSelectionState {
+  switch (event.type) {
+    case "pr-detected":
+      return { ...state, allowAutoPrSelection: true };
+    case "pr-added":
+      return state.allowAutoPrSelection
+        ? { selectedItem: event.item, allowAutoPrSelection: false }
+        : state;
+    case "picker-selected":
+      return { selectedItem: event.item, allowAutoPrSelection: false };
+    case "target-changed":
+      return initialPickerSelectionState;
+  }
+}
+
+function isPrAttachment(
+  attachment: UserComposerAttachment,
+): attachment is Extract<UserComposerAttachment, { kind: "forge_change_request" | "github_pr" }> {
+  return attachment.kind === "forge_change_request" || attachment.kind === "github_pr";
+}
+
+function isPickerOwnedPrAttachment(attachment: UserComposerAttachment): attachment is Extract<
+  UserComposerAttachment,
+  { kind: "github_pr" }
+> & {
+  owner: typeof NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER;
+} {
+  return (
+    attachment.kind === "github_pr" && attachment.owner === NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER
+  );
+}
+
+// Ownership lives on the attachment because drafts outlive this component.
+// The picker owns at most one PR; user-added PRs and issues remain untouched.
 export function syncPickerPrAttachment(input: {
   attachments: UserComposerAttachment[];
-  previousPickerPrNumber: number | null;
-  item: PickerItem;
-}): { attachments: UserComposerAttachment[]; attachedPrNumber: number | null } {
-  let nextAttachments = input.attachments;
-  let attachedPrNumber: number | null = null;
+  item: PickerItem | null;
+}): UserComposerAttachment[] {
+  const nextAttachments = input.attachments.filter(
+    (attachment) => !isPickerOwnedPrAttachment(attachment),
+  );
 
-  if (input.previousPickerPrNumber !== null) {
-    nextAttachments = nextAttachments.filter(
-      (attachment) =>
-        attachment.kind !== "github_pr" || attachment.item.number !== input.previousPickerPrNumber,
-    );
-  }
-
-  if (input.item.kind === "github-pr") {
+  if (input.item?.kind === "github-pr") {
     const selectedPr = input.item.item;
     const hasExistingPrAttachment = nextAttachments.some(
-      (attachment) =>
-        attachment.kind === "github_pr" && attachment.item.number === selectedPr.number,
+      (attachment) => isPrAttachment(attachment) && attachment.item.number === selectedPr.number,
     );
     if (!hasExistingPrAttachment) {
-      nextAttachments = [...nextAttachments, { kind: "github_pr", item: selectedPr }];
-      attachedPrNumber = selectedPr.number;
+      return [
+        ...nextAttachments,
+        {
+          kind: "github_pr",
+          item: selectedPr,
+          owner: NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+        },
+      ];
     }
   }
 
-  return { attachments: nextAttachments, attachedPrNumber };
+  return nextAttachments;
 }
 
-export function findCheckoutHintPrAttachment(input: {
-  attachments: ReadonlyArray<UserComposerAttachment>;
-  selectedItem: PickerItem | null;
-  dismissedPrNumbers: ReadonlySet<number>;
-}): Extract<UserComposerAttachment, { kind: "github_pr" }> | null {
-  const selectedPrNumber =
-    input.selectedItem?.kind === "github-pr" ? input.selectedItem.item.number : null;
-
-  for (const attachment of input.attachments) {
-    if (attachment.kind !== "github_pr") continue;
-    const prNumber = attachment.item.number;
-    if (prNumber === selectedPrNumber) continue;
-    if (input.dismissedPrNumbers.has(prNumber)) continue;
-    return attachment;
+export function clearPickerPrAttachmentForTargetChange(input: {
+  attachments: UserComposerAttachment[];
+  currentTargetId: string;
+  nextTargetId: string;
+}): UserComposerAttachment[] {
+  if (input.currentTargetId === input.nextTargetId) {
+    return input.attachments;
   }
-
-  return null;
+  return input.attachments.filter((attachment) => !isPrAttachment(attachment));
 }

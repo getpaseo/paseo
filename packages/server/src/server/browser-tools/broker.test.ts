@@ -7,7 +7,6 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BrowserToolsBroker, type BrowserHostClient } from "./broker.js";
-import { StaticBrowserToolsPolicy } from "./policy.js";
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
@@ -65,9 +64,8 @@ class FailingBrowserHostClient implements BrowserHostClient {
   }
 }
 
-function createBroker(options: { enabled: boolean; timeoutMs?: number }): BrowserToolsBroker {
+function createBroker(options: { timeoutMs?: number } = {}): BrowserToolsBroker {
   return new BrowserToolsBroker({
-    policy: new StaticBrowserToolsPolicy(options.enabled),
     defaultTimeoutMs: options.timeoutMs ?? 100,
     createRequestId: () => "req-1",
   });
@@ -82,22 +80,8 @@ describe("BrowserToolsBroker", () => {
     vi.useRealTimers();
   });
 
-  test("disabled returns browser_disabled", async () => {
-    const broker = createBroker({ enabled: false });
-
-    await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
-      requestId: "req-1",
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled. Enable daemon.browserTools.enabled to use them.",
-        retryable: false,
-      },
-    });
-  });
-
   test("no connected browser host returns a retryable browser_no_host error", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
 
     await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
       requestId: "req-1",
@@ -111,7 +95,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("invalid browser requests return structured failures without contacting a host", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
@@ -136,7 +120,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("capable browser host receives request and returns response", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
@@ -194,7 +178,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("single browser host receives snapshot requests", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
@@ -246,7 +230,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("new tabs target the most recently registered host and tab commands stay with that host", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const firstHost = new FakeBrowserHostClient("host-1");
     const recentHost = new FakeBrowserHostClient("host-2");
     broker.registerClient(firstHost);
@@ -319,7 +303,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("list tabs aggregates all hosts and seeds browser id affinity", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const firstHost = new FakeBrowserHostClient("host-1");
     const secondHost = new FakeBrowserHostClient("host-2");
     broker.registerClient(firstHost);
@@ -489,7 +473,7 @@ describe("BrowserToolsBroker", () => {
         : never
       : never;
   }>)("routes $name to the host that owns the browser id", async ({ command, result }) => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const other = new FakeBrowserHostClient("host-1");
     const owner = new FakeBrowserHostClient("host-2");
     broker.registerClient(other);
@@ -531,7 +515,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("successful close_tab clears browser id host affinity", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const other = new FakeBrowserHostClient("host-1");
     const owner = new FakeBrowserHostClient("host-2");
     broker.registerClient(other);
@@ -586,7 +570,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("failed list tabs aggregation does not seed browser id affinity", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const firstHost = new FakeBrowserHostClient("host-1");
     const secondHost = new FakeBrowserHostClient("host-2");
     broker.registerClient(firstHost);
@@ -651,7 +635,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("unsupported commands are rejected before sending to the routed host", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1", {
       supportedCommands: ["list_tabs"],
       hostKind: "desktop app",
@@ -700,7 +684,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("unregistering a host strands its browser ids instead of routing them to another host", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const owner = new FakeBrowserHostClient("host-1");
     const unregisterOwner = broker.registerClient(owner);
 
@@ -742,7 +726,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("reconnecting the same host reclaims its stranded browser ids", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const owner = new FakeBrowserHostClient("host-1");
     const unregisterOwner = broker.registerClient(owner);
 
@@ -803,7 +787,7 @@ describe("BrowserToolsBroker", () => {
 
   test("timeout resolves browser_timeout and clears pending state", async () => {
     vi.useFakeTimers();
-    const broker = createBroker({ enabled: true, timeoutMs: 50 });
+    const broker = createBroker({ timeoutMs: 50 });
     broker.registerClient(new FakeBrowserHostClient("host-1"));
 
     const resultPromise = broker.execute({ command: snapshotCommand() });
@@ -824,7 +808,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("disconnect resolves retryable failure and clears pending request", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     const unregister = broker.registerClient(client);
 
@@ -846,7 +830,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("replacing a host registration resolves pending requests from the old registration", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const oldHost = new FakeBrowserHostClient("host-1");
     const newHost = new FakeBrowserHostClient("host-1");
     broker.registerClient(oldHost);
@@ -884,7 +868,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("browser host send failure resolves structured failure and clears pending request", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     broker.registerClient(new FailingBrowserHostClient());
 
     await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
@@ -900,7 +884,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("explicit browser failure response propagates typed error", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
@@ -929,7 +913,7 @@ describe("BrowserToolsBroker", () => {
   });
 
   test("invalid browser response resolves a structured failure and clears pending state", async () => {
-    const broker = createBroker({ enabled: true });
+    const broker = createBroker();
     const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 

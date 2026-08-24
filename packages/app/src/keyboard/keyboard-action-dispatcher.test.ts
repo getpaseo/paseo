@@ -186,4 +186,34 @@ describe("keyboard-action-dispatcher", () => {
     expect(handled).toBe(false);
     expect(handle).not.toHaveBeenCalled();
   });
+
+  it("does not let an old registration remove its same-id replacement", () => {
+    const oldHandle = vi.fn(() => true);
+    const replacementHandle = vi.fn(() => true);
+    const action: KeyboardActionDefinition = {
+      id: "workspace.tab.target.agent",
+      scope: "workspace",
+    };
+
+    const unregisterOld = dispatcher.registerHandler({
+      handlerId: "workspace-new-tab-menu:server:pane",
+      actions: [action.id],
+      enabled: true,
+      priority: 200,
+      handle: oldHandle,
+    });
+    dispatcher.registerHandler({
+      handlerId: "workspace-new-tab-menu:server:pane",
+      actions: [action.id],
+      enabled: true,
+      priority: 200,
+      handle: replacementHandle,
+    });
+
+    unregisterOld();
+
+    expect(dispatcher.dispatch(action)).toBe(true);
+    expect(replacementHandle).toHaveBeenCalledOnce();
+    expect(oldHandle).not.toHaveBeenCalled();
+  });
 });

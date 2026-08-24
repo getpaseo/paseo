@@ -85,7 +85,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
   },
   shortcut: {},

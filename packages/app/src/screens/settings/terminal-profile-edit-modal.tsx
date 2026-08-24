@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { FormField, FormTextInput } from "@/components/ui/form-field";
+import { Field, FormTextInput } from "@/components/ui/form-field";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 export interface ProfileDraft {
   name: string;
@@ -41,9 +42,9 @@ export function TerminalProfileEditModal({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  const nameInputRef = useRef<TextInput>(null);
-  const commandInputRef = useRef<TextInput>(null);
-  const argsInputRef = useRef<TextInput>(null);
+  const nameInputRef = useRef<EditingTextInputHandle>(null);
+  const commandInputRef = useRef<EditingTextInputHandle>(null);
+  const argsInputRef = useRef<EditingTextInputHandle>(null);
 
   const handleNameChange = useCallback((value: string) => {
     setName(value);
@@ -139,7 +140,7 @@ export function TerminalProfileEditModal({
       desktopMaxWidth={480}
     >
       <View style={styles.body}>
-        <FormField
+        <Field
           label={t("settings.host.terminalProfiles.nameLabel")}
           error={nameError}
           testID="terminal-profile-name-field"
@@ -159,9 +160,9 @@ export function TerminalProfileEditModal({
             accessibilityLabel={t("settings.host.terminalProfiles.nameLabel")}
             testID="terminal-profile-name-input"
           />
-        </FormField>
+        </Field>
 
-        <FormField
+        <Field
           label={t("settings.host.terminalProfiles.commandLabel")}
           error={commandError}
           testID="terminal-profile-command-field"
@@ -181,9 +182,9 @@ export function TerminalProfileEditModal({
             accessibilityLabel={t("settings.host.terminalProfiles.commandLabel")}
             testID="terminal-profile-command-input"
           />
-        </FormField>
+        </Field>
 
-        <FormField
+        <Field
           label={t("settings.host.terminalProfiles.argsLabel")}
           hint={t("settings.host.terminalProfiles.argsHint")}
           testID="terminal-profile-args-field"
@@ -203,7 +204,7 @@ export function TerminalProfileEditModal({
             accessibilityLabel={t("settings.host.terminalProfiles.argsLabel")}
             testID="terminal-profile-args-input"
           />
-        </FormField>
+        </Field>
 
         {submitError ? (
           <Text style={styles.submitError} testID="terminal-profile-submit-error">
@@ -254,6 +255,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   submitError: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

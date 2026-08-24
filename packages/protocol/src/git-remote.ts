@@ -1,4 +1,6 @@
-const GITHUB_HOSTS = new Set(["github.com", "ssh.github.com"]);
+import { getForgeDefinition } from "./forge-manifest.js";
+
+const GITHUB_HOSTS = new Set(getForgeDefinition("github")?.cloudHosts ?? []);
 
 const TRANSPORT_BY_PROTOCOL: Record<string, GitRemoteLocation["transport"]> = {
   "https:": "https",
@@ -6,9 +8,22 @@ const TRANSPORT_BY_PROTOCOL: Record<string, GitRemoteLocation["transport"]> = {
   "ssh:": "ssh",
 };
 
+const DEFAULT_PORT_BY_PROTOCOL: Record<string, string> = {
+  "https:": "443",
+  "http:": "80",
+  "ssh:": "22",
+};
+
 export interface GitRemoteLocation {
   transport: "scp" | "ssh" | "http" | "https";
   host: string;
+  /**
+   * Explicit non-default port from the remote (e.g. a self-hosted forge on
+   * `:60443`), or undefined for a default-port or scp-form remote. Kept separate
+   * from `host` so host-identity matching (forge detection, cloud-host checks)
+   * stays port-agnostic; only consumers that reconstruct a URL (web links) use it.
+   */
+  port?: string;
   path: string;
 }
 
@@ -24,11 +39,26 @@ export function parseGitHubRemoteUrl(remoteUrl: string): GitHubRemoteIdentity | 
   return parseGitHubRemoteIdentity(location.path);
 }
 
+/**
+ * Whether `repo` is already a complete git remote (a URL or scp-like address)
+ * rather than `owner/repo` shorthand that still needs a clone protocol picked.
+ *
+ * Clients (app + CLI) and the daemon must agree on this classification: the
+ * daemon treats `parseGitRemoteLocation(repo) !== null` as "complete remote"
+ * and everything else as shorthand, so reuse the same parser here instead of a
+ * separate regex that would drift (e.g. accepting `git://` the parser rejects).
+ */
+export function isCompleteGitRemote(repo: string): boolean {
+  return parseGitRemoteLocation(repo) !== null;
+}
+
 export function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
   const trimmed = remoteUrl.trim();
   if (!trimmed) return null;
 
-  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/u);
+  // scp form has no scheme. Testing it first would match `ssh://git@host:22/x`
+  // — `[^@]+` happily eats `ssh://git` — and swallow the port into the path.
+  const scpLike = trimmed.includes("://") ? null : trimmed.match(/^[^@]+@([^:]+):(.+)$/u);
   if (scpLike) {
     const host = normalizeHost(scpLike[1] ?? "");
     const path = normalizeRemotePath(scpLike[2] ?? "");
@@ -56,7 +86,10 @@ export function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | n
   const normalizedPath = normalizeRemotePath(path);
   if (!isValidRemoteHost(host) || !normalizedPath) return null;
 
-  return { transport, host, path: normalizedPath };
+  const protocol = parsed.protocol.toLowerCase();
+  const port =
+    parsed.port && parsed.port !== DEFAULT_PORT_BY_PROTOCOL[protocol] ? parsed.port : undefined;
+  return { transport, host, port, path: normalizedPath };
 }
 
 export function parseGitHubRemoteIdentity(path: string): GitHubRemoteIdentity | null {

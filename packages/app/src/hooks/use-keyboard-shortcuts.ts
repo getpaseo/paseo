@@ -1,26 +1,35 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
+import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,
+  type KeyboardShortcutInput,
   resolveKeyboardShortcut,
   buildEffectiveBindings,
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
+  buildBrowserKeyboardPolicy,
+  parseBrowserShortcutInput,
+  shouldPublishBrowserShortcutPolicy,
+} from "@/desktop/browser/shortcuts";
+import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
+import {
   routeKeyboardShortcut,
   type ShortcutAction,
   type ShortcutCallbackName,
 } from "@/keyboard/route-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
-import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
+import { keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import {
@@ -28,35 +37,59 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 
 export function useKeyboardShortcuts({
   enabled,
   isMobile,
+  isWorkspaceFocusModeEnabled,
   toggleAgentList,
   toggleBothSidebars,
-  toggleFocusMode,
+  exitFocusMode,
   cycleTheme,
 }: {
   enabled: boolean;
   isMobile: boolean;
+  isWorkspaceFocusModeEnabled: boolean;
   toggleAgentList: () => void;
   toggleBothSidebars?: () => void;
-  toggleFocusMode?: () => void;
+  exitFocusMode: () => void;
   cycleTheme?: () => void;
 }) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const pathname = usePathname();
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
+  const isDesktopApp = getIsElectronRuntime();
+  const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
     candidateIndices: [],
     step: 0,
     timeoutId: null,
   });
-  const openProjectPickerAction = useOpenProjectPicker();
+  const openProjectPickerAction = useOpenAddProject();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
+  const badgeModifierKeyRef = useRef<string | null | undefined>(undefined);
+
+  const publishBrowserShortcutPolicy = useCallback(
+    (chordState?: ChordState) => {
+      const policy =
+        enabled && shortcutsAvailable
+          ? buildBrowserKeyboardPolicy({
+              bindings,
+              chordState,
+              isMac,
+              isDesktop: isDesktopApp,
+            })
+          : { menuPrefixes: [], prefixes: [] };
+      void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
+    },
+    [bindings, enabled, isDesktopApp, isMac, shortcutsAvailable],
+  );
 
   useEffect(() => {
     if (activeWorkspaceSelection) {
@@ -65,18 +98,28 @@ export function useKeyboardShortcuts({
   }, [activeWorkspaceSelection]);
 
   useEffect(() => {
-    if (!enabled) return;
-    if (isNative) return;
-    if (isMobile) return;
+    if (!isDesktopApp) {
+      return;
+    }
 
-    const isDesktopApp = getIsElectronRuntime();
-    const isMac = getShortcutOs() === "mac";
+    publishBrowserShortcutPolicy();
+  }, [isDesktopApp, publishBrowserShortcutPolicy]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (!shortcutsAvailable) return;
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
     // desktop Mac, Ctrl on desktop non-Mac). The store ORs altDown/cmdOrCtrlDown
     // to drive badge visibility, so we set the flag matching this runtime.
-    const badgeModifierKey = getWorkspaceIndexJumpModifierKey({ isMac, isDesktop: isDesktopApp });
+    // Derived from the effective bindings: `null` when the user unassigned or
+    // rebound the jump shortcut, and no `event.key` ever equals null, so the
+    // badges simply never appear.
+    const badgeModifierKey = getWorkspaceIndexJumpModifierKey(
+      { isMac, isDesktop: isDesktopApp },
+      bindings,
+    );
     const setBadgeModifierDown = (down: boolean) => {
       const state = useKeyboardShortcutsStore.getState();
       if (isDesktopApp) {
@@ -85,6 +128,16 @@ export function useKeyboardShortcuts({
         state.setAltDown(down);
       }
     };
+
+    // The keyup listener matches the released key against the modifier derived
+    // when the effect last ran, so a modifier held while the jump binding
+    // changes can never be released -- the badges would stay up until a blur.
+    // Clear on change only: this effect also re-runs on every navigation, and
+    // clearing unconditionally would drop the badges mid Cmd+1, Cmd+2.
+    if (badgeModifierKeyRef.current !== badgeModifierKey) {
+      badgeModifierKeyRef.current = badgeModifierKey;
+      resetModifiers();
+    }
 
     const shouldHandle = () => {
       if (typeof document === "undefined") return false;
@@ -105,11 +158,14 @@ export function useKeyboardShortcuts({
     const callbacksByName: Record<ShortcutCallbackName, (() => void) | undefined> = {
       "toggle-agent-list": toggleAgentList,
       "toggle-both-sidebars": toggleBothSidebars,
-      "toggle-focus-mode": toggleFocusMode,
       "cycle-theme": cycleTheme,
     };
 
-    const performShortcutAction = (action: ShortcutAction, event: KeyboardEvent): boolean => {
+    const performShortcutAction = (
+      action: ShortcutAction,
+      event: KeyboardEvent | null,
+      browserFocusRestoreElement: HTMLElement | null = null,
+    ): boolean => {
       switch (action.kind) {
         case "none":
           return false;
@@ -120,7 +176,7 @@ export function useKeyboardShortcuts({
             serverId: action.serverId,
             workspaceId: action.workspaceId,
           };
-          navigateToWorkspace(action.serverId, action.workspaceId);
+          navigateToWorkspace({ serverId: action.serverId, workspaceId: action.workspaceId });
           return true;
         case "navigate-last-workspace":
           return navigateToLastWorkspace();
@@ -141,9 +197,15 @@ export function useKeyboardShortcuts({
           return true;
         case "command-center-toggle": {
           if (action.nextOpen) {
-            captureCommandCenterFocusRestore(event);
+            if (event) {
+              captureCommandCenterFocusRestore(event);
+            } else {
+              setCommandCenterFocusRestoreElement(browserFocusRestoreElement);
+            }
           }
-          useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen);
+          useKeyboardShortcutsStore
+            .getState()
+            .setCommandCenterOpen(action.nextOpen, action.scope ?? null);
           return true;
         }
         case "shortcuts-dialog-toggle":
@@ -152,8 +214,107 @@ export function useKeyboardShortcuts({
       }
     };
 
+    const routeAndPerformShortcut = (input: {
+      action: string;
+      payload: KeyboardShortcutPayload;
+      domEvent: KeyboardEvent | null;
+      browserFocusRestoreElement?: HTMLElement | null;
+    }): boolean => {
+      const store = useKeyboardShortcutsStore.getState();
+      const shortcutAction = routeKeyboardShortcut(
+        { action: input.action, payload: input.payload },
+        {
+          pathname,
+          isMobile,
+          sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
+          navigationActiveWorkspace:
+            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
+          commandCenterOpen: store.commandCenterOpen,
+          shortcutsDialogOpen: store.shortcutsDialogOpen,
+        },
+      );
+      const handled = performShortcutAction(
+        shortcutAction,
+        input.domEvent,
+        input.browserFocusRestoreElement,
+      );
+      if (handled && isWorkspaceFocusModeEnabled && input.action.startsWith("sidebar.")) {
+        exitFocusMode();
+      }
+      return handled;
+    };
+
+    const resolveAndPerformShortcut = (input: {
+      event: KeyboardShortcutInput;
+      focusScope: KeyboardFocusScope;
+      domEvent: KeyboardEvent | null;
+      browserFocusRestoreElement?: HTMLElement | null;
+    }) => {
+      const store = useKeyboardShortcutsStore.getState();
+      const previousChordState = chordStateRef.current;
+      const result = resolveKeyboardShortcut({
+        event: input.event,
+        context: {
+          isMac,
+          isDesktop: isDesktopApp,
+          focusScope: input.focusScope,
+          commandCenterOpen: store.commandCenterOpen,
+        },
+        chordState: chordStateRef.current,
+        onChordReset: () => {
+          chordStateRef.current = {
+            candidateIndices: [],
+            step: 0,
+            timeoutId: null,
+          };
+          publishBrowserShortcutPolicy();
+        },
+        bindings,
+      });
+      chordStateRef.current = result.nextChordState;
+      if (
+        shouldPublishBrowserShortcutPolicy({
+          isBrowserInput: "browserId" in input.event,
+          previousChordState,
+          nextChordState: result.nextChordState,
+        })
+      ) {
+        publishBrowserShortcutPolicy(result.nextChordState);
+      }
+
+      if (result.preventDefault && input.domEvent) {
+        input.domEvent.preventDefault();
+        input.domEvent.stopPropagation();
+      }
+
+      if (!result.match) {
+        return;
+      }
+
+      const handled = routeAndPerformShortcut({
+        action: result.match.action,
+        payload: result.match.payload,
+        domEvent: input.domEvent,
+        browserFocusRestoreElement: input.browserFocusRestoreElement,
+      });
+      if (!handled || !input.domEvent) {
+        return;
+      }
+
+      if (result.match.preventDefault) {
+        input.domEvent.preventDefault();
+      }
+      if (result.match.stopPropagation) {
+        input.domEvent.stopPropagation();
+      }
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
+        return;
+      }
+
+      if (dispatchTopWebOverlayKeyDown(event)) {
         return;
       }
 
@@ -183,60 +344,11 @@ export function useKeyboardShortcuts({
         target: event.target,
         commandCenterOpen: store.commandCenterOpen,
       });
-      const result = resolveKeyboardShortcut({
+      resolveAndPerformShortcut({
         event,
-        context: {
-          isMac,
-          isDesktop: isDesktopApp,
-          focusScope,
-          commandCenterOpen: store.commandCenterOpen,
-        },
-        chordState: chordStateRef.current,
-        onChordReset: () => {
-          chordStateRef.current = {
-            candidateIndices: [],
-            step: 0,
-            timeoutId: null,
-          };
-        },
-        bindings,
+        focusScope,
+        domEvent: event,
       });
-
-      chordStateRef.current = result.nextChordState;
-
-      if (result.preventDefault) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-
-      if (!result.match) {
-        return;
-      }
-
-      const shortcutAction = routeKeyboardShortcut(
-        { action: result.match.action, payload: result.match.payload },
-        {
-          pathname,
-          isMobile,
-          sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
-          navigationActiveWorkspace:
-            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
-          commandCenterOpen: store.commandCenterOpen,
-          shortcutsDialogOpen: store.shortcutsDialogOpen,
-        },
-      );
-
-      const handled = performShortcutAction(shortcutAction, event);
-      if (!handled) {
-        return;
-      }
-
-      if (result.match.preventDefault) {
-        event.preventDefault();
-      }
-      if (result.match.stopPropagation) {
-        event.stopPropagation();
-      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -255,25 +367,20 @@ export function useKeyboardShortcuts({
     window.addEventListener("blur", handleBlurOrHide);
     document.addEventListener("visibilitychange", handleBlurOrHide);
 
-    const forwardedKeySubscription = isElectronRuntime()
-      ? getDesktopHost()?.events?.on?.("browser-forwarded-key", (payload) => {
-          if (!payload || typeof payload !== "object") return;
-          const p = payload as Record<string, unknown>;
-          if (typeof p.key !== "string") return;
-          window.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: p.key,
-              code: typeof p.code === "string" ? p.code : "",
-              metaKey: p.meta === true,
-              ctrlKey: p.control === true,
-              shiftKey: p.shift === true,
-              altKey: p.alt === true,
-              bubbles: true,
-            }),
-          );
+    const browserShortcutSubscription = isElectronRuntime()
+      ? getDesktopHost()?.events?.on?.("browser-shortcut-input", (payload) => {
+          const input = parseBrowserShortcutInput(payload);
+          if (!input) {
+            return;
+          }
+          resolveAndPerformShortcut({
+            event: input,
+            focusScope: "browser",
+            domEvent: null,
+            browserFocusRestoreElement: getResidentBrowserWebview(input.browserId),
+          });
         })
       : null;
-
     return () => {
       if (chordStateRef.current.timeoutId !== null) {
         clearTimeout(chordStateRef.current.timeoutId);
@@ -287,24 +394,30 @@ export function useKeyboardShortcuts({
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("blur", handleBlurOrHide);
       document.removeEventListener("visibilitychange", handleBlurOrHide);
-      if (typeof forwardedKeySubscription === "function") {
-        forwardedKeySubscription();
+      if (typeof browserShortcutSubscription === "function") {
+        browserShortcutSubscription();
       } else {
-        void forwardedKeySubscription?.then((dispose) => dispose());
+        void browserShortcutSubscription?.then((dispose) => dispose());
       }
     };
   }, [
     bindings,
     cycleTheme,
     enabled,
+    exitFocusMode,
     activeWorkspaceSelection,
+    isDesktopApp,
+    isMac,
     isMobile,
+    isWorkspaceFocusModeEnabled,
+    keyboardActionDispatcher,
     openProjectPickerAction,
     pathname,
+    publishBrowserShortcutPolicy,
     resetModifiers,
     router,
+    shortcutsAvailable,
     toggleAgentList,
     toggleBothSidebars,
-    toggleFocusMode,
   ]);
 }

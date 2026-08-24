@@ -15,6 +15,7 @@ export interface UseDictationOptions {
 
 export interface UseDictationResult {
   isRecording: boolean;
+  isRecordingActive: () => boolean;
   isProcessing: boolean;
   partialTranscript: string;
   volume: number;

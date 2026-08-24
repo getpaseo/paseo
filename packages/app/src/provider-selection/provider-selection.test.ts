@@ -3,6 +3,7 @@ import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/prot
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { i18n } from "@/i18n/i18next";
 import {
+  buildProviderQualifiedDescription,
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
@@ -64,6 +65,24 @@ describe("combined model selector data", () => {
         },
       },
     ]);
+  });
+
+  it("hides compatibility-only model entries from new clients", () => {
+    const compatibilityModel: AgentModelDefinition = {
+      ...codexModel,
+      id: "gpt-5.4-legacy",
+      label: "GPT-5.4 legacy",
+      isSelectable: false,
+    };
+
+    const [provider] = buildSelectableProviderSelectorProviders([
+      snapshotEntry({ provider: "codex", models: [codexModel, compatibilityModel] }),
+    ]);
+
+    expect(provider?.modelSelection).toMatchObject({
+      kind: "models",
+      rows: [{ modelId: "gpt-5.4" }],
+    });
   });
 
   it("synthesizes a default model row for ready enabled providers without explicit models", () => {
@@ -228,6 +247,20 @@ describe("combined model selector data", () => {
     expect(buildSelectedTriggerLabel("GPT-5.4")).toBe("GPT-5.4");
   });
 
+  it("names the provider first when a model row is shown outside its provider", () => {
+    const row = {
+      favoriteKey: "copilot:claude-opus-5",
+      provider: "copilot",
+      providerLabel: "Copilot",
+      modelId: "claude-opus-5",
+      modelLabel: "Opus 5",
+      description: "claude-opus-5",
+    };
+
+    expect(buildProviderQualifiedDescription(row)).toBe("Copilot · claude-opus-5");
+    expect(buildProviderQualifiedDescription({ ...row, description: undefined })).toBe("Copilot");
+  });
+
   it("resolves selected labels from explicit provider model-selection state", () => {
     const providers = buildSelectableProviderSelectorProviders([
       snapshotEntry({
@@ -258,6 +291,44 @@ describe("combined model selector data", () => {
         isLoading: false,
       }),
     ).toBe("Default");
+  });
+
+  it("distinguishes a loading selection from a resolved empty selection", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: true,
+      }),
+    ).toBe("Loading...");
+    expect(
+      resolveSelectedModelLabel({
+        providers: [],
+        selectedProvider: "",
+        selectedModel: "",
+        isLoading: false,
+      }),
+    ).toBe("Select model");
+  });
+
+  it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "codex",
+        label: "Codex",
+        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
+      }),
+    ]);
+
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "gpt-5.3",
+        isLoading: false,
+      }),
+    ).toBe("gpt-5.3");
   });
 
   it("keeps provider snapshot errors visible in the selected trigger label", () => {

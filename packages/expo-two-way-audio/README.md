@@ -88,7 +88,7 @@ npx expo run:ios --device --configuration Release
 npx expo run:android --device --variant release
 ```
 
-For Android, the following permissions are needed: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`. In Expo apps they can bee added in your `app.json` file:
+For Android, the following permissions are needed: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`. In Expo apps they can be added in your `app.json` file:
 
 ```javascript
 expo.android.permissions: ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"]

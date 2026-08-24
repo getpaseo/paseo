@@ -14,12 +14,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
-import { StaticBrowserToolsPolicy } from "./browser-tools/policy.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
-import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import { createStub } from "./test-utils/class-mocks.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
@@ -256,7 +253,6 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
 function createBroker(): BrowserToolsBroker {
   return new BrowserToolsBroker({
-    policy: new StaticBrowserToolsPolicy(true),
     defaultTimeoutMs: 500,
     createRequestId: createRequestIdSequence(),
   });
@@ -286,6 +282,7 @@ function createVoiceAssistantWebSocketServer(params: {
     }),
   };
   const daemonConfigStore = {
+    onApply: () => () => {},
     onChange: () => () => {},
   };
 
@@ -309,8 +306,6 @@ function createVoiceAssistantWebSocketServer(params: {
     undefined,
     undefined,
     undefined,
-    createStub<FileBackedChatService>({}),
-    createStub<LoopService>({}),
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: () => {},

@@ -9,7 +9,6 @@ import { i18n } from "@/i18n/i18next";
 export interface WorkspaceArchiveTarget {
   serverId: string;
   workspaceId: string;
-  workspaceDirectory?: string | null;
 }
 
 interface WorkspaceArchiveClient {
@@ -50,7 +49,6 @@ function hideWorkspaceOptimistically(
   markWorkspaceArchivePending({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
-    workspaceDirectory: workspace.workspaceDirectory,
   });
   useSessionStore.getState().removeWorkspace(workspace.serverId, workspace.workspaceId);
   return { workspace: snapshot };
@@ -83,10 +81,8 @@ async function archiveWorkspaceOrThrow(input: {
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
-  afterHide?: () => void;
 }): Promise<void> {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
-  input.afterHide?.();
 
   try {
     await archiveWorkspaceOrThrow({

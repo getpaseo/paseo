@@ -19,6 +19,7 @@ import {
   dispatchTrustedScroll,
   dispatchTrustedText,
   type ClickInputOptions,
+  type IsolatedKeyboardInputEvent,
 } from "./trusted-input.js";
 
 export interface TabContents {
@@ -36,6 +37,7 @@ export interface TabContents {
   reload(): void;
   capturePage(options?: TabCapturePageOptions): Promise<TabImage>;
   invalidate(): void;
+  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -1066,13 +1068,6 @@ async function executeKeypress(
     return target;
   }
   return withDialogCapture(target.contents, async () => {
-    if (!target.contents.sendDebugCommand) {
-      return fail(
-        requestId,
-        "browser_unsupported",
-        "browser_keypress requires trusted browser input",
-      );
-    }
     let actionable: ActionabilityResult | null = null;
     if (ref) {
       const elementExpression = snapshotEngine.runtimeElementExpression({
@@ -1094,10 +1089,17 @@ async function executeKeypress(
         return staleRefFailure(requestId, ref);
       }
       if (focused === "editable") {
+        if (!target.contents.sendDebugCommand) {
+          return fail(
+            requestId,
+            "browser_unsupported",
+            "browser_keypress requires trusted browser input",
+          );
+        }
         await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
       }
     }
-    await dispatchTrustedKey(cdpSender(target.contents), key);
+    dispatchTrustedKey((event) => target.contents.sendInputEvent(event), key);
     return {
       requestId,
       ok: true,

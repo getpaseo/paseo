@@ -1,3 +1,4 @@
+import type { KeyboardInputEvent } from "electron";
 import type { ActionablePoint } from "./actionability.js";
 import type { CdpCommandSender } from "./cdp-session-queue.js";
 
@@ -17,24 +18,21 @@ const MODIFIER_MASKS: Record<InputModifier, number> = {
   Shift: 8,
 };
 
-const SPECIAL_KEY_DEFINITIONS: Record<
-  string,
-  { key: string; code: string; windowsVirtualKeyCode: number; text?: string }
-> = {
-  Enter: { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
-  Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
-  Tab: { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, text: "\t" },
-  Escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
-  Backspace: { key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 },
-  Delete: { key: "Delete", code: "Delete", windowsVirtualKeyCode: 46 },
-  ArrowUp: { key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 },
-  ArrowDown: { key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 },
-  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 },
-  ArrowRight: { key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 },
-  Home: { key: "Home", code: "Home", windowsVirtualKeyCode: 36 },
-  End: { key: "End", code: "End", windowsVirtualKeyCode: 35 },
-  PageUp: { key: "PageUp", code: "PageUp", windowsVirtualKeyCode: 33 },
-  PageDown: { key: "PageDown", code: "PageDown", windowsVirtualKeyCode: 34 },
+export interface IsolatedKeyboardInputEvent extends KeyboardInputEvent {
+  type: "char" | "keyDown" | "keyUp";
+  // Electron accepts this NativeWebKeyboardEvent flag even though its public
+  // TypeScript declarations omit it. It stops an unhandled webview key from
+  // being redispatched to the embedder's active DOM element or application menu.
+  skipIfUnhandled: true;
+}
+
+type KeyboardInputSender = (event: IsolatedKeyboardInputEvent) => void;
+
+const ELECTRON_KEY_CODE_ALIASES: Record<string, string> = {
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  ArrowUp: "Up",
 };
 
 export async function dispatchTrustedClick(
@@ -163,43 +161,31 @@ export async function dispatchTrustedText(send: CdpCommandSender, text: string):
   await send("Input.insertText", { text });
 }
 
-export async function dispatchTrustedKey(send: CdpCommandSender, key: string): Promise<void> {
-  const definition = keyDefinition(key);
-  await send("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: definition.key,
-    code: definition.code,
-    windowsVirtualKeyCode: definition.windowsVirtualKeyCode,
-    nativeVirtualKeyCode: definition.windowsVirtualKeyCode,
-    ...(definition.text ? { text: definition.text, unmodifiedText: definition.text } : {}),
-  });
-  await send("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: definition.key,
-    code: definition.code,
-    windowsVirtualKeyCode: definition.windowsVirtualKeyCode,
-    nativeVirtualKeyCode: definition.windowsVirtualKeyCode,
-  });
-}
-
-function keyDefinition(key: string): {
-  key: string;
-  code: string;
-  windowsVirtualKeyCode: number;
-  text?: string;
-} {
-  const special = SPECIAL_KEY_DEFINITIONS[key];
-  if (special) {
-    return special;
+export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void {
+  const keyCode = ELECTRON_KEY_CODE_ALIASES[key] ?? key;
+  let character: string | null = null;
+  if (key === "Space") {
+    character = " ";
+  } else if (key.length === 1) {
+    character = key;
   }
-  const text = key.length === 1 ? key : "";
-  const upper = text.toUpperCase();
-  return {
-    key,
-    code: upper ? `Key${upper}` : key,
-    windowsVirtualKeyCode: upper ? upper.charCodeAt(0) : 0,
-    ...(text ? { text, unmodifiedText: text } : {}),
-  };
+  send({
+    type: "keyDown",
+    keyCode,
+    skipIfUnhandled: true,
+  });
+  if (character !== null) {
+    send({
+      type: "char",
+      keyCode: character,
+      skipIfUnhandled: true,
+    });
+  }
+  send({
+    type: "keyUp",
+    keyCode,
+    skipIfUnhandled: true,
+  });
 }
 
 function modifierMask(modifiers: InputModifier[] | undefined): number {

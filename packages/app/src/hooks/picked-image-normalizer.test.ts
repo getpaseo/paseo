@@ -53,6 +53,30 @@ describe("native image attachment picker", () => {
     expect(recordedUris).toEqual([]);
   });
 
+  it("uses explicit native MIME metadata before the URI extension", async () => {
+    const { exportAsPng, recordedUris } = fakeExportAsPng();
+
+    const result = await normalizePickedImageAssetsWith(
+      [
+        {
+          uri: "file:///photos/screenshot.jpg",
+          mimeType: "image/png",
+          fileName: "screenshot.png",
+        },
+      ],
+      exportAsPng,
+    );
+
+    expect(result).toEqual([
+      {
+        source: { kind: "file_uri", uri: "file:///photos/screenshot.jpg" },
+        mimeType: "image/png",
+        fileName: "screenshot.png",
+      },
+    ]);
+    expect(recordedUris).toEqual([]);
+  });
+
   it("turns a native picked HEIC-like asset into a PNG attachment input", async () => {
     const { exportAsPng, recordedUris } = fakeExportAsPng();
 

@@ -1,30 +1,32 @@
-import { useMemo, useSyncExternalStore } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { useMemo } from "react";
+import { useFetchQuery } from "@/data/query";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeConnectionStatuses,
+  useHosts,
+} from "@/runtime/host-runtime";
 import {
   fetchAggregatedSchedules,
+  schedulesQueryBaseKey,
+  type AggregateLoadState,
   type AggregatedSchedule,
   type ScheduleHostError,
   type ScheduleHostInput,
 } from "@/schedules/aggregated-schedules";
 
-export type { AggregatedSchedule, ScheduleHostError } from "@/schedules/aggregated-schedules";
+export type {
+  AggregateLoadState,
+  AggregatedSchedule,
+  ScheduleHostError,
+} from "@/schedules/aggregated-schedules";
 
-export const schedulesQueryBaseKey = ["schedules"] as const;
-
-// Cache identity for the host set. The query also carries the runtime version
-// (below) so it retries as connectivity changes and reliably fetches once a host
-// comes online — even on a cold deep-link. The full-screen spinner flash that
-// keying on the version used to cause is prevented by keepPreviousData plus the
-// isInitialLoad(data === undefined) gate, not by dropping the version.
 export function schedulesQueryKey(serverIds: readonly string[]) {
   return [...schedulesQueryBaseKey, [...serverIds].sort().join("|")] as const;
 }
 
 export interface UseSchedulesResult {
-  schedules: AggregatedSchedule[];
+  loadState: AggregateLoadState<AggregatedSchedule>;
   hostErrors: ScheduleHostError[];
-  isInitialLoad: boolean;
   isError: boolean;
   error: Error | null;
   refetch: () => void;
@@ -34,27 +36,36 @@ export interface UseSchedulesResult {
 export function useSchedules(): UseSchedulesResult {
   const hosts = useHosts();
   const runtime = getHostRuntimeStore();
-  const runtimeVersion = useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => runtime.getVersion(),
-    () => runtime.getVersion(),
-  );
   const hostInputs = useMemo<ScheduleHostInput[]>(
     () => hosts.map((host) => ({ serverId: host.serverId, serverName: host.label })),
     [hosts],
   );
+  const serverIds = useMemo(() => hostInputs.map((host) => host.serverId), [hostInputs]);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
+  const connectionStatusKey = useMemo(
+    () => serverIds.map((serverId) => connectionStatuses.get(serverId) ?? "connecting").join("|"),
+    [connectionStatuses, serverIds],
+  );
 
-  const query = useQuery({
-    queryKey: [...schedulesQueryKey(hostInputs.map((host) => host.serverId)), runtimeVersion],
+  const query = useFetchQuery({
+    queryKey: [...schedulesQueryKey(serverIds), connectionStatusKey],
     queryFn: () => fetchAggregatedSchedules({ hosts: hostInputs, runtime }),
-    staleTime: 5_000,
-    placeholderData: keepPreviousData,
+    dataShape: "list",
+    staleTimeMs: 5_000,
   });
 
+  let loadState: AggregateLoadState<AggregatedSchedule>;
+  if (query.data?.status === "connecting") {
+    loadState = { status: "connecting" };
+  } else if (query.data?.status === "loaded") {
+    loadState = { status: "loaded", data: query.data.data };
+  } else {
+    loadState = { status: "loading" };
+  }
+
   return {
-    schedules: query.data?.schedules ?? [],
-    hostErrors: query.data?.hostErrors ?? [],
-    isInitialLoad: query.isLoading && query.data === undefined,
+    loadState,
+    hostErrors: query.data?.status === "loaded" ? query.data.hostErrors : [],
     isError: query.isError,
     error: query.error,
     refetch: () => {
