@@ -1,6 +1,7 @@
 import type { WorkspaceRuntimeDriver } from "../drivers/index.js";
 import type { WorkspaceRuntimeJsonValue } from "../index.js";
 import { createCommandRuntime } from "./internal/command-runtime.js";
+export { isWorkspaceRuntimeRegistrationError } from "./internal/command-runtime.js";
 
 export interface CommandRuntimeAdapterConfig {
   command: readonly [string, ...string[]];
@@ -13,6 +14,7 @@ export function createCommandRuntimeAdapter(
   runtimeInstanceId: string,
   packageResolutionBase: string,
   pathResolutionBase: string,
+  daemonAuthenticationConfigured: boolean,
 ): WorkspaceRuntimeDriver {
   return createCommandRuntime(
     runtimeId,
@@ -20,5 +22,6 @@ export function createCommandRuntimeAdapter(
     runtimeInstanceId,
     packageResolutionBase,
     pathResolutionBase,
+    daemonAuthenticationConfigured,
   );
 }

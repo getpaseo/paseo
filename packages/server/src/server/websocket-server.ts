@@ -211,6 +211,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     bindWorkspace: ({ workspaceId }) => {
       throw new Error(`Workspace Git runtime is not available: ${workspaceId}`);
     },
+    releaseWorkspace: async () => {},
     bindLegacy: () => {
       throw new Error("Workspace Git service is not available");
     },
@@ -245,6 +246,9 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     mergeFromBase: async () => {},
     pull: async () => {},
     push: async () => {},
+    createPullRequest: async () => {
+      throw new Error("Workspace Git service is not available");
+    },
     renameBranch: async (_cwd, branch) => ({ previousBranch: null, currentBranch: branch }),
     getCheckoutDiff: async () => ({ diff: "" }),
     validateBranchRef: async () => ({ kind: "not-found" }),

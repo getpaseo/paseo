@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -237,6 +237,89 @@ describe("createProviderEnv", () => {
     expect(Object.keys(env).length).toBeGreaterThanOrEqual(3);
   });
 
+  test.runIf(process.platform !== "win32")(
+    "reads provider-only secrets on every environment construction",
+    () => {
+      const dir = makeTempDir();
+      const secret = path.join(dir, "claude-token");
+      writeFileSync(secret, "first-token\n", { mode: 0o600 });
+      const runtime: ProviderRuntimeSettings = {
+        env: { ORDINARY: "unchanged" },
+        envFromFiles: { CLAUDE_CODE_OAUTH_TOKEN: secret },
+      };
+
+      const first = createProviderEnv({ baseEnv: { PATH: "/usr/bin" }, runtimeSettings: runtime });
+      writeFileSync(secret, "second-token\n\n", { mode: 0o600 });
+      const second = createProviderEnv({ baseEnv: { PATH: "/usr/bin" }, runtimeSettings: runtime });
+      const otherProvider = createProviderEnv({
+        baseEnv: { PATH: "/usr/bin" },
+        runtimeSettings: { env: { OTHER: "provider" } },
+      });
+
+      expect(first.CLAUDE_CODE_OAUTH_TOKEN).toBe("first-token");
+      expect(first.ORDINARY).toBe("unchanged");
+      expect(second.CLAUDE_CODE_OAUTH_TOKEN).toBe("second-token\n");
+      expect(otherProvider.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "rejects symlinks and permissive files without exposing secret values",
+    () => {
+      const dir = makeTempDir();
+      const secret = path.join(dir, "secret");
+      const link = path.join(dir, "secret-link");
+      writeFileSync(secret, "do-not-log-this", { mode: 0o600 });
+      symlinkSync(secret, link);
+
+      expect(() =>
+        createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: link } } }),
+      ).toThrow();
+      chmodSync(secret, 0o644);
+      try {
+        createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: secret } } });
+        throw new Error("Expected provider secret permissions to be rejected");
+      } catch (error) {
+        expect(String(error)).toContain("mode 0600");
+        expect(String(error)).not.toContain("do-not-log-this");
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")("rejects oversized provider secrets", () => {
+    const dir = makeTempDir();
+    const secret = path.join(dir, "secret");
+    writeFileSync(secret, "x".repeat(64 * 1024 + 1), { mode: 0o600 });
+
+    expect(() =>
+      createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: secret } } }),
+    ).toThrow("exceeds 64 KiB");
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "rejects invalid text and special permission bits",
+    () => {
+      const dir = makeTempDir();
+      const invalidUtf8 = path.join(dir, "invalid-utf8");
+      const nul = path.join(dir, "nul");
+      const specialMode = path.join(dir, "special-mode");
+      writeFileSync(invalidUtf8, Buffer.from([0xc3, 0x28]), { mode: 0o600 });
+      writeFileSync(nul, "before\0after", { mode: 0o600 });
+      writeFileSync(specialMode, "secret", { mode: 0o600 });
+      chmodSync(specialMode, 0o4600);
+
+      expect(() =>
+        createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: invalidUtf8 } } }),
+      ).toThrow("not valid UTF-8");
+      expect(() =>
+        createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: nul } } }),
+      ).toThrow("contains a NUL byte");
+      expect(() =>
+        createProviderEnv({ runtimeSettings: { envFromFiles: { TOKEN: specialMode } } }),
+      ).toThrow("mode 0600");
+    },
+  );
+
   test("runtimeSettings env wins over base env", () => {
     const base = { PATH: "/usr/bin" };
     const runtime: ProviderRuntimeSettings = { env: { PATH: "/custom/path" } };
@@ -274,12 +357,16 @@ describe("ProviderOverrideSchema", () => {
       env: {
         FOO: "bar",
       },
+      envFromFiles: {
+        TOKEN: "/run/paseo/token",
+      },
       enabled: false,
       order: 2,
     });
 
     expect(parsed.command).toEqual(["custom-claude", "--json"]);
     expect(parsed.env?.FOO).toBe("bar");
+    expect(parsed.envFromFiles?.TOKEN).toBe("/run/paseo/token");
     expect(parsed.enabled).toBe(false);
     expect(parsed.order).toBe(2);
   });

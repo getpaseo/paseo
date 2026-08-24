@@ -4627,6 +4627,7 @@ export class DaemonClient {
 
   async createFileEntry(input: {
     cwd: string;
+    workspaceId?: string;
     parentPath: string;
     name: string;
     kind: "file" | "directory";
@@ -4638,6 +4639,7 @@ export class DaemonClient {
 
   async renameFileEntry(input: {
     cwd: string;
+    workspaceId?: string;
     path: string;
     name: string;
   }): Promise<CorrelatedResponsePayload<"fs.entry.rename.response">> {
@@ -4648,6 +4650,7 @@ export class DaemonClient {
 
   async duplicateFileEntry(input: {
     cwd: string;
+    workspaceId?: string;
     path: string;
   }): Promise<CorrelatedResponsePayload<"fs.entry.duplicate.response">> {
     return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.duplicate.response">({
@@ -4657,6 +4660,7 @@ export class DaemonClient {
 
   async deleteFileEntry(input: {
     cwd: string;
+    workspaceId?: string;
     path: string;
   }): Promise<CorrelatedResponsePayload<"fs.entry.delete.response">> {
     return this.sendNamespacedCorrelatedSessionRequest<"fs.entry.delete.response">({

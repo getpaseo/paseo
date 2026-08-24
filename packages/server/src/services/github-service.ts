@@ -617,6 +617,7 @@ interface GitHubServiceDependencies {
    * call routes to the workspace's instance instead of github.com.
    */
   resolveRepoHost: (cwd: string) => Promise<string | null>;
+  resolveRepoSlug: (cwd: string) => Promise<string | null>;
 }
 
 export interface GitHubCommandRunnerOptions {
@@ -689,12 +690,13 @@ export class GitHubEnterpriseHostProbeError extends Error {
   }
 }
 
-interface CreateGitHubServiceOptions {
+export interface CreateGitHubServiceOptions {
   ttlMs?: number;
   runner?: GitHubCommandRunner;
   resolveGhPath?: () => Promise<string | null>;
   now?: () => number;
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
+  resolveRepoSlug?: (cwd: string) => Promise<string | null>;
 }
 
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
@@ -740,6 +742,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     resolveGhPath: options.resolveGhPath ?? resolveGhPath,
     now: options.now ?? Date.now,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
+    resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
   };
   // A resolved enterprise host is cached permanently; a null resolution (no
   // host, or the auth probe said no) expires so `gh auth login --hostname`
@@ -1426,7 +1429,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       // transient `gh repo view` failure can't block PR creation on github.com.
       // `gh repo view` is the fallback: it auto-routes to the cwd remote's host
       // (covering GitHub Enterprise Server) and survives a renamed repo.
-      let slug = await resolveGitHubSlugFromOrigin(input.cwd);
+      let slug = await deps.resolveRepoSlug(input.cwd);
       if (!slug) {
         const repoView = await getGitHubRepoView({ cwd: input.cwd, run });
         slug =

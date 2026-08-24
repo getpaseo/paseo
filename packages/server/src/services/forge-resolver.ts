@@ -26,6 +26,7 @@ export interface CreateForgeResolverOptions {
   createService?: (forge: string) => ForgeService | null;
   probeForge?: ForgeHostProbe;
   resolveSshHostname?: SshHostnameResolver;
+  resolveForgeForHost?: (host: string) => string | null;
   now?: () => number;
 }
 
@@ -66,6 +67,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
   const create = options.createService ?? createForgeService;
   const probeForge = options.probeForge ?? probeRegisteredForgeHost;
   const resolveSsh = options.resolveSshHostname ?? resolveSshHostname;
+  const resolveKnownForge = options.resolveForgeForHost ?? forgeForHost;
   const now = options.now ?? Date.now;
   const services = new Map<string, ForgeService>();
   // Cache the per-host probe result so the synchronous resolveFromRemoteUrl can
@@ -170,7 +172,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!host) {
       return null;
     }
-    const forge = forgeForHost(host) ?? readFreshProbe(host) ?? null;
+    const forge = resolveKnownForge(host) ?? readFreshProbe(host) ?? null;
     if (!forge) {
       return null;
     }
@@ -187,7 +189,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!location) {
       return null;
     }
-    const directForge = forgeForHost(location.host);
+    const directForge = resolveKnownForge(location.host);
     if (directForge) {
       return buildResolution(directForge, location.host);
     }
@@ -231,7 +233,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
       return { host: location.host };
     }
 
-    const resolvedForge = forgeForHost(resolvedHost);
+    const resolvedForge = resolveKnownForge(resolvedHost);
     if (resolvedForge) {
       return { host: resolvedHost, forge: resolvedForge };
     }

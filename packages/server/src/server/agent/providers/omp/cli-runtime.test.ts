@@ -1,11 +1,16 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import { OmpCliRuntime } from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
+import type { ProviderWorkspace } from "../../agent-sdk-types.js";
+import type { ProviderWorkspaceLaunchInput } from "../workspace/index.js";
 
 type OmpChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
@@ -94,6 +99,53 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test.skipIf(process.platform === "win32")(
+    "passes file-backed provider environment to a selected runtime process",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-provider-env-"));
+      const secret = path.join(root, "secret");
+      await writeFile(secret, "file-secret\n", { mode: 0o600 });
+      const child = createOmpChild();
+      const launches: ProviderWorkspaceLaunchInput[] = [];
+      const workspace = {
+        async resolveExecutable(command: string) {
+          return command;
+        },
+        async launch(input: ProviderWorkspaceLaunchInput) {
+          launches.push(input);
+          return child;
+        },
+      } as ProviderWorkspace;
+      const runtime = new OmpCliRuntime({
+        logger: pino({ level: "silent" }),
+        runtimeSettings: {
+          env: { PASEO_ORDINARY_PROVIDER_ENV: "ordinary" },
+          envFromFiles: { PASEO_FILE_PROVIDER_ENV: secret },
+        },
+      });
+
+      const session = await runtime.startSession({
+        cwd: "/workspace/project",
+        workspace,
+        env: { PASEO_LAUNCH_ENV: "launch" },
+      });
+
+      try {
+        expect(launches).toHaveLength(1);
+        expect(launches[0]?.environment).toEqual([
+          expect.objectContaining({
+            PASEO_ORDINARY_PROVIDER_ENV: "ordinary",
+            PASEO_FILE_PROVIDER_ENV: "file-secret",
+            PASEO_LAUNCH_ENV: "launch",
+          }),
+        ]);
+      } finally {
+        await session.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("validates session state with the documented queued message count", async () => {
     const child = createOmpChild();
     replyToCommands(child, () => ({

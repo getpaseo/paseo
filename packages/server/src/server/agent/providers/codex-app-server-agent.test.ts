@@ -16,6 +16,7 @@ import type {
   AgentStreamEvent,
   ProviderWorkspace,
 } from "../agent-sdk-types.js";
+import type { ProviderWorkspaceLaunchInput } from "./workspace/index.js";
 import {
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
@@ -112,15 +113,16 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createCodexProviderWorkspace(
   child: ChildProcessWithoutNullStreams,
-  options: { prompt?: string; onLaunch?: () => void } = {},
+  options: { prompt?: string; onLaunch?: (input: ProviderWorkspaceLaunchInput) => void } = {},
 ): ProviderWorkspace {
   return {
     cwd: ".",
+    processIsolation: false,
     async resolveExecutable() {
       return "codex";
     },
-    async launch() {
-      options.onLaunch?.();
+    async launch(input) {
+      options.onLaunch?.(input);
       return child;
     },
     launchDeferred() {
@@ -172,7 +174,11 @@ function createCodexProviderWorkspace(
 
 function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
+  options: {
+    goalsEnabled?: boolean;
+    autoReviewEnabled?: boolean;
+    workspace?: ProviderWorkspace;
+  } = {},
 ): CodexTestSession {
   const session = new CodexAppServerAgentSession(
     createConfig(configOverrides),
@@ -185,6 +191,9 @@ function createSession(
     false,
     options.goalsEnabled === true,
     options.autoReviewEnabled === true,
+    undefined,
+    "interactive",
+    options.workspace,
   ) as CodexTestSession;
   session.connected = true;
   session.currentThreadId = "test-thread";
@@ -295,10 +304,13 @@ type CapturedFakeCodexRecord = Record<string, unknown>;
 async function runCustomCodexProviderTurn(
   providerId: string,
   baseUrl: string,
+  apiKeyFromFile = false,
 ): Promise<CapturedFakeCodexRecord[]> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "codex-custom-provider-"));
   const fakeAppServerPath = path.join(tempDir, "fake-codex-app-server.cjs");
   const capturedRequestsPath = path.join(tempDir, "requests.jsonl");
+  const secretPath = path.join(tempDir, "openai-api-key");
+  writeFileSync(secretPath, "sk-custom\n", { mode: 0o600 });
   writeFileSync(
     fakeAppServerPath,
     `
@@ -352,10 +364,11 @@ process.stdin.on("data", (chunk) => {
         label: "Custom Codex",
         command: [process.execPath, fakeAppServerPath],
         env: {
-          OPENAI_API_KEY: "sk-custom",
+          ...(apiKeyFromFile ? {} : { OPENAI_API_KEY: "sk-custom" }),
           OPENAI_BASE_URL: baseUrl,
           PASEO_FAKE_CODEX_CAPTURE: capturedRequestsPath,
         },
+        ...(apiKeyFromFile ? { envFromFiles: { OPENAI_API_KEY: secretPath } } : {}),
       },
     },
   });
@@ -586,6 +599,33 @@ describe("Codex app-server provider", () => {
         approvalsReviewer: "auto_review",
       }),
     );
+  });
+
+  test("outer process isolation replaces the native sandbox but preserves auto-review", async () => {
+    const session = createSession(
+      { modeId: "auto-review" },
+      {
+        autoReviewEnabled: true,
+        workspace: createStub<ProviderWorkspace>({ processIsolation: true }),
+      },
+    );
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("run inside the runtime sandbox");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      approvalPolicy: "on-request",
+      approvalsReviewer: "auto_review",
+      sandboxPolicy: { type: "dangerFullAccess" },
+      config: { sandbox_mode: "danger-full-access" },
+    });
   });
 
   test("omitted mode preserves Codex resolved approval and sandbox config", async () => {
@@ -1261,26 +1301,48 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
-  test("unarchives a selected Codex thread through the bound launch capability", async () => {
-    const appServer = createFakeCodexAppServer({
-      "thread/unarchive": () => ({ thread: { id: "selected-thread" } }),
-    });
-    let launchCalls = 0;
-    const workspace = createCodexProviderWorkspace(appServer.child, {
-      onLaunch: () => {
-        launchCalls += 1;
-      },
-    });
-    const provider = new CodexAppServerAgentClient(createTestLogger());
+  test.skipIf(process.platform === "win32")(
+    "unarchives a selected Codex thread with its provider environment",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "paseo-codex-provider-env-"));
+      const secret = path.join(root, "secret");
+      writeFileSync(secret, "file-secret\n", { mode: 0o600 });
+      const appServer = createFakeCodexAppServer({
+        "thread/unarchive": () => ({ thread: { id: "selected-thread" } }),
+      });
+      const launches: ProviderWorkspaceLaunchInput[] = [];
+      const workspace = createCodexProviderWorkspace(appServer.child, {
+        onLaunch: (input) => launches.push(input),
+      });
+      const provider = new CodexAppServerAgentClient(createTestLogger(), {
+        env: { PASEO_ORDINARY_PROVIDER_ENV: "ordinary" },
+        envFromFiles: { PASEO_FILE_PROVIDER_ENV: secret },
+      });
 
-    await provider.unarchiveNativeSession(
-      { provider: "codex", sessionId: "selected-thread" },
-      { agentId: "selected-agent", workspace },
-    );
+      try {
+        await provider.unarchiveNativeSession(
+          { provider: "codex", sessionId: "selected-thread" },
+          {
+            agentId: "selected-agent",
+            env: { PASEO_LAUNCH_ENV: "launch" },
+            workspace,
+          },
+        );
 
-    expect(launchCalls).toBe(1);
-    appServer.assertNoErrors();
-  });
+        expect(launches).toHaveLength(1);
+        expect(launches[0]?.environment).toEqual([
+          expect.objectContaining({
+            PASEO_ORDINARY_PROVIDER_ENV: "ordinary",
+            PASEO_FILE_PROVIDER_ENV: "file-secret",
+            PASEO_LAUNCH_ENV: "launch",
+          }),
+        ]);
+        appServer.assertNoErrors();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("unarchives a persisted Codex thread using sessionId when nativeHandle is absent", async () => {
     const threadRequests: Array<{ method: string; params: unknown }> = [];
@@ -1455,6 +1517,35 @@ describe("Codex app-server provider", () => {
       },
     });
   });
+
+  test.skipIf(process.platform === "win32")(
+    "configures a custom Codex provider with a file-backed API key",
+    async () => {
+      const capturedRequests = await runCustomCodexProviderTurn(
+        "codex-file-secret",
+        "https://custom-relay.example.com",
+        true,
+      );
+
+      expect(capturedRequests[0]).toEqual({
+        kind: "env",
+        OPENAI_API_KEY: "sk-custom",
+        OPENAI_BASE_URL: "https://custom-relay.example.com",
+      });
+      expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+        model_provider: "codex-file-secret",
+        model_providers: {
+          "codex-file-secret": {
+            name: "Custom Codex",
+            base_url: "https://custom-relay.example.com/v1",
+            env_key: "OPENAI_API_KEY",
+            requires_openai_auth: false,
+            wire_api: "responses",
+          },
+        },
+      });
+    },
+  );
 
   test("does not append v1 twice for custom Codex provider base URLs", async () => {
     const capturedRequests = await runCustomCodexProviderTurn(

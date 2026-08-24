@@ -27,6 +27,8 @@ posixDescribe("ACP workspace terminal execution", () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-runtime-"));
     const cwd = path.join(root, "workspace");
     await mkdir(cwd);
+    const secret = path.join(root, "provider-secret");
+    await writeFile(secret, "terminal-secret\n", { mode: 0o600 });
     const runtimeIds = new Map<string, string>();
     const runtime = createWorkspaceRuntimeService({
       paseoHome: path.join(root, "home"),
@@ -61,6 +63,10 @@ posixDescribe("ACP workspace terminal execution", () => {
           supportsMcp: false,
           supportsSlashCommands: false,
         },
+        runtimeSettings: {
+          env: { PASEO_ORDINARY_PROVIDER_ENV: "ordinary-visible" },
+          envFromFiles: { PASEO_FILE_PROVIDER_ENV: secret },
+        },
         workspace: bindProviderWorkspace({
           runtime: await runtime.bind("acp-workspace"),
           cwd: ".",
@@ -76,7 +82,10 @@ posixDescribe("ACP workspace terminal execution", () => {
       const terminal = await session.createTerminal({
         sessionId: "session",
         command: process.execPath,
-        args: ["-e", "process.stdout.write(`${process.cwd()}|λ`);process.exit(12)"],
+        args: [
+          "-e",
+          "process.stdout.write(`${process.cwd()}|${process.env.PASEO_ORDINARY_PROVIDER_ENV}|${process.env.PASEO_FILE_PROVIDER_ENV ?? '<absent>'}|λ`);process.exit(12)",
+        ],
         cwd,
       });
       await expect(
@@ -84,7 +93,7 @@ posixDescribe("ACP workspace terminal execution", () => {
       ).resolves.toEqual({ exitCode: 12, signal: null });
       await expect(
         session.terminalOutput({ sessionId: "session", terminalId: terminal.terminalId }),
-      ).resolves.toMatchObject({ output: `${await realpath(cwd)}|λ` });
+      ).resolves.toMatchObject({ output: `${await realpath(cwd)}|ordinary-visible|<absent>|λ` });
     } finally {
       await session.close();
       await runtime.destroy("acp-workspace");
@@ -98,6 +107,8 @@ posixDescribe("ACP workspace terminal execution", () => {
       const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-provider-runtime-"));
       const cwd = path.join(root, "workspace");
       await mkdir(cwd);
+      const secret = path.join(root, "provider-secret");
+      await writeFile(secret, "file-visible\n", { mode: 0o600 });
       await copyFile(fixtureAgent, path.join(cwd, "fixture-agent.mjs"));
       await chmod(path.join(cwd, "fixture-agent.mjs"), 0o755);
       await writeFile(path.join(cwd, "committed.txt"), "before\n");
@@ -152,6 +163,7 @@ posixDescribe("ACP workspace terminal execution", () => {
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
         command: ["./fixture-agent.mjs"],
+        envFromFiles: { PASEO_FILE_PROVIDER_ENV: secret },
       });
 
       try {
@@ -185,7 +197,7 @@ posixDescribe("ACP workspace terminal execution", () => {
           "runtime edit\n",
         );
         await expect(workspace.readWorkspaceText("stdio-agent-env.txt")).resolves.toBe(
-          "daemon-visible\n",
+          "daemon-visible|file-visible\n",
         );
         await session.close();
       } finally {

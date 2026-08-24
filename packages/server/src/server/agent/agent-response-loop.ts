@@ -73,6 +73,7 @@ export interface StructuredAgentGenerationOptions<T> {
   manager: AgentManager;
   agentConfig: AgentSessionConfig;
   agentId?: string;
+  workspaceId?: string;
   persistSession?: boolean;
   prompt: string;
   schema: z.ZodType<T> | JsonSchema;
@@ -83,6 +84,7 @@ export interface StructuredAgentGenerationOptions<T> {
 export interface StructuredAgentGenerationWithFallbackOptions<T> {
   manager: AgentManager;
   cwd: string;
+  workspaceId?: string;
   prompt: string;
   schema: z.ZodType<T> | JsonSchema;
   providers: readonly StructuredGenerationProvider[];
@@ -354,11 +356,20 @@ export async function getStructuredAgentResponse<T>(
 export async function generateStructuredAgentResponse<T>(
   options: StructuredAgentGenerationOptions<T>,
 ): Promise<T> {
-  const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
-    options;
+  const {
+    manager,
+    agentConfig,
+    agentId,
+    workspaceId,
+    persistSession,
+    prompt,
+    schema,
+    maxRetries,
+    schemaName,
+  } = options;
   const agent = await manager.createAgent(agentConfig, agentId, {
     persistSession,
-    workspaceId: undefined,
+    workspaceId,
   });
   try {
     const caller: AgentCaller = async (nextPrompt) => {
@@ -401,6 +412,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   const {
     manager,
     cwd,
+    workspaceId,
     prompt,
     schema,
     providers,
@@ -422,25 +434,28 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   const attempts: StructuredGenerationAttempt[] = [];
 
   for (const candidate of providers) {
-    const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
-    if (!availabilityEntry.available) {
-      const reason = availabilityEntry.error ?? "unavailable";
-      attempts.push({
-        provider: candidate.provider,
-        model: candidate.model ?? null,
-        available: false,
-        error: availabilityEntry.error ?? null,
-      });
-      logger?.warn(
-        { provider: candidate.provider, model: candidate.model, schemaName, reason },
-        "Structured generation: skipping unavailable provider",
-      );
-      continue;
+    if (!workspaceId) {
+      const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
+      if (!availabilityEntry.available) {
+        const reason = availabilityEntry.error ?? "unavailable";
+        attempts.push({
+          provider: candidate.provider,
+          model: candidate.model ?? null,
+          available: false,
+          error: availabilityEntry.error ?? null,
+        });
+        logger?.warn(
+          { provider: candidate.provider, model: candidate.model, schemaName, reason },
+          "Structured generation: skipping unavailable provider",
+        );
+        continue;
+      }
     }
 
     try {
       const result = await runStructured({
         manager,
+        workspaceId,
         prompt,
         schema,
         maxRetries,

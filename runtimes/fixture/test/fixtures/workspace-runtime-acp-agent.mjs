@@ -48,7 +48,7 @@ for await (const line of lines) {
     await writeFile(path.join(session.cwd, "stdio-agent-output.txt"), `${text}\n`);
     await writeFile(
       path.join(session.cwd, "stdio-agent-env.txt"),
-      `${process.env.PASEO_DAEMON_ONLY_PROVIDER_ENV ?? "<absent>"}\n`,
+      `${process.env.PASEO_DAEMON_ONLY_PROVIDER_ENV ?? "<absent>"}|${process.env.PASEO_FILE_PROVIDER_ENV ?? "<absent>"}\n`,
     );
     notify("session/update", {
       sessionId: message.params.sessionId,

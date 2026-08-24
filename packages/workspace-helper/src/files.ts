@@ -48,6 +48,10 @@ export type WorkspaceFileWriteResult =
   | { status: "conflict"; version: WorkspaceFileStat }
   | { status: "error"; error: string };
 
+export type WorkspaceEntryMutationResult =
+  | { status: "ok"; path: string }
+  | { status: "error"; error: string };
+
 export type WorkspaceWatchEvent =
   | { type: "changed"; paths: string[] }
   | { type: "overflow" }
@@ -67,6 +71,14 @@ export interface WorkspaceFiles {
     expectedModifiedAt?: string;
     expectedRevision?: string;
   }): Promise<WorkspaceFileWriteResult>;
+  createEntry(input: {
+    parentPath: string;
+    name: string;
+    kind: "file" | "directory";
+  }): Promise<WorkspaceEntryMutationResult>;
+  renameEntry(input: { path: string; name: string }): Promise<WorkspaceEntryMutationResult>;
+  duplicateEntry(path: string): Promise<WorkspaceEntryMutationResult>;
+  deleteEntry(path: string): Promise<WorkspaceEntryMutationResult>;
   subscribe(
     input: { paths: readonly string[]; recursive?: boolean; ignoredPaths?: readonly string[] },
     listener: (event: WorkspaceWatchEvent) => void,

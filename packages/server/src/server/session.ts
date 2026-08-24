@@ -4704,6 +4704,7 @@ export class Session {
 
   private buildWorkspaceGitRuntimePayload(
     snapshot: WorkspaceGitRuntimeSnapshot,
+    canMergeToBase: boolean,
   ): NonNullable<WorkspaceDescriptorPayload["gitRuntime"]> | null {
     if (!snapshot.git.isGit) {
       return null;
@@ -4717,6 +4718,7 @@ export class Session {
       aheadBehind: snapshot.git.aheadBehind,
       aheadOfOrigin: snapshot.git.aheadOfOrigin,
       behindOfOrigin: snapshot.git.behindOfOrigin,
+      canMergeToBase,
     };
   }
 
@@ -4742,12 +4744,15 @@ export class Session {
 
     const checkout = checkoutLiteFromGitSnapshot(workspace.cwd, snapshot.git);
     const displayName = deriveWorkspaceDisplayName({ cwd: workspace.cwd, checkout });
+    const canMergeToBase = workspace.runtime
+      ? ((await this.workspaceRuntime?.canMergeToBase(workspace.workspaceId)) ?? false)
+      : true;
 
     return {
       ...base,
       name: resolveWorkspaceName({ title: workspace.title, derivedDisplayName: displayName }),
       diffStat: snapshot.git.diffStat ?? null,
-      gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
+      gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot, canMergeToBase) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
       // Reuse the forge already resolved on the snapshot (probe-aware; GitHub-only
       // resolves to "github") so the sidebar/hover-card brand mark matches the
@@ -4793,6 +4798,7 @@ export class Session {
         aheadBehind: null,
         aheadOfOrigin: null,
         behindOfOrigin: null,
+        canMergeToBase: true,
       },
       githubRuntime: null,
     };

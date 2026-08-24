@@ -5,9 +5,14 @@ import {
   resolveSelectedWorkspaceRuntimeId,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { isPathInsideRoot } from "../utils/path.js";
 
 export type WorkspaceGitAddress =
-  | { readonly kind: "selected"; readonly workspaceId: string; readonly cwd: string }
+  | {
+      readonly kind: "selected";
+      readonly workspaceId: string;
+      readonly cwd: string;
+    }
   | { readonly kind: "legacy"; readonly cwd: string };
 
 export interface WorkspaceGitDirectory {
@@ -23,12 +28,16 @@ export interface WorkspaceGitDirectory {
     address: WorkspaceGitAddress;
     workspaceGit: WorkspaceGitWorkspace;
   };
+  release(workspaceId: string): Promise<void>;
 }
 
 /** Commits request compatibility once, before ordinary Git callers receive a capability. */
 export function createWorkspaceGitDirectory(options: {
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list">;
-  workspaceGitService: Pick<WorkspaceGitService, "bindLegacy" | "bindWorkspace">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    "bindLegacy" | "bindWorkspace" | "releaseWorkspace"
+  >;
 }): WorkspaceGitDirectory {
   const { workspaceRegistry, workspaceGitService } = options;
   const boundRecords = new Map<
@@ -80,6 +89,10 @@ export function createWorkspaceGitDirectory(options: {
         workspaceGit: bound.workspaceGit,
       };
     },
+    async release(workspaceId) {
+      boundRecords.delete(workspaceId);
+      await workspaceGitService.releaseWorkspace(workspaceId);
+    },
     async resolve(address) {
       if (address.kind === "selected") {
         const workspaceId = address.workspaceId.trim();
@@ -98,16 +111,16 @@ export function createWorkspaceGitDirectory(options: {
         return bindRecord(record);
       }
 
-      const cwd = resolve(address.cwd);
-      const runtimeOnlyAtCwd = (await workspaceRegistry.list()).some(
+      const requestedCwd = address.cwd.trim();
+      const selectedRuntimeAtCwd = (await workspaceRegistry.list()).some(
         (record) =>
           resolveSelectedWorkspaceRuntimeId(record) !== null &&
-          resolve(record.cwd) === cwd &&
-          record.hostVisiblePath === null,
+          isPathInsideRoot(record.cwd, requestedCwd),
       );
-      if (runtimeOnlyAtCwd) {
+      if (selectedRuntimeAtCwd) {
         throw new Error("workspaceId is required for a selected workspace Git operation");
       }
+      const cwd = resolve(requestedCwd);
       return workspaceGitService.bindLegacy(cwd);
     },
   };

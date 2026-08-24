@@ -143,6 +143,7 @@ const BEARER_AUTH_BYPASS_PATHS = new Set([
   // the token nor a valid daemon password, so dropping the global bearer here
   // does not make the endpoint unauthenticated.
   "/mcp/agents",
+  "/mcp/agents/agent",
 ]);
 
 export function shouldBypassBearerAuth(method: string, path: string): boolean {

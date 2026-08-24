@@ -2549,6 +2549,7 @@ export const FileEntryCreateRequestSchema = z.object({
   name: z.string(),
   kind: z.enum(["file", "directory"]),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileEntryRenameRequestSchema = z.object({
@@ -2557,6 +2558,7 @@ export const FileEntryRenameRequestSchema = z.object({
   path: z.string(),
   name: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileEntryDuplicateRequestSchema = z.object({
@@ -2564,6 +2566,7 @@ export const FileEntryDuplicateRequestSchema = z.object({
   cwd: z.string(),
   path: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileEntryDeleteRequestSchema = z.object({
@@ -2571,6 +2574,7 @@ export const FileEntryDeleteRequestSchema = z.object({
   cwd: z.string(),
   path: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const ProjectIconRequestSchema = z.object({
@@ -3559,6 +3563,8 @@ const WorkspaceGitRuntimePayloadSchema = z
       .optional(),
     aheadOfOrigin: z.number().nullable().optional(),
     behindOfOrigin: z.number().nullable().optional(),
+    // COMPAT(runtimeMergeToBase): added in v0.4.0, remove after 2027-02-23.
+    canMergeToBase: z.boolean().optional(),
   })
   .optional()
   .nullable();

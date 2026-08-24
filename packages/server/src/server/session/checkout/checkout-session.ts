@@ -41,11 +41,7 @@ import type {
   PullRequestTimelineItem,
   SearchResult,
 } from "../../../services/forge-service.js";
-import {
-  createPullRequest,
-  forgeAuthStateFromError,
-  isForgeAuthError,
-} from "../../../utils/checkout-git.js";
+import { forgeAuthStateFromError, isForgeAuthError } from "../../../utils/checkout-git.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
@@ -719,10 +715,10 @@ export class CheckoutSession {
       const workspaceGit = await this.resolveWorkspaceGit(msg);
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        if (msg.workspaceId) {
-          throw new Error("Selected workspace Git requires an explicit commit message");
-        }
-        message = await this.gitMetadataGenerator.generateCommitMessage(cwd);
+        message = await this.gitMetadataGenerator.generateCommitMessage({
+          workspaceGit,
+          ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+        });
       }
       if (!message) {
         throw new Error("Commit message is required");
@@ -776,17 +772,17 @@ export class CheckoutSession {
       }
 
       let baseRef = msg.baseRef ?? snapshot.git.baseRef;
-      if (!baseRef) {
-        throw new Error("Base branch is required for merge");
+      let mutatedCwd: string;
+      if (msg.workspaceId !== undefined) {
+        mutatedCwd = await workspaceGit.mergeToBase();
+      } else {
+        if (!baseRef) throw new Error("Base branch is required for merge");
+        if (baseRef.startsWith("origin/")) baseRef = baseRef.slice("origin/".length);
+        mutatedCwd = await workspaceGit.mergeToBase({
+          baseRef,
+          mode: msg.strategy === "squash" ? "squash" : "merge",
+        });
       }
-      if (baseRef.startsWith("origin/")) {
-        baseRef = baseRef.slice("origin/".length);
-      }
-
-      const mutatedCwd = await workspaceGit.mergeToBase({
-        baseRef,
-        mode: msg.strategy === "squash" ? "squash" : "merge",
-      });
       const mutatedWorkspaceGit =
         mutatedCwd === workspaceGit.cwd
           ? workspaceGit
@@ -795,6 +791,12 @@ export class CheckoutSession {
         invalidateForge: true,
       });
       this.scheduleDiffRefresh(mutatedWorkspaceGit);
+      if (msg.workspaceId !== undefined && mutatedWorkspaceGit !== workspaceGit) {
+        await this.gitMutation.bind(workspaceGit).notify("merge-to-base", {
+          invalidateForge: true,
+        });
+        this.scheduleDiffRefresh(workspaceGit);
+      }
 
       this.host.emit({
         type: "checkout_merge_response",
@@ -934,21 +936,21 @@ export class CheckoutSession {
 
     try {
       const workspaceGit = await this.resolveWorkspaceGit(msg);
-      if (msg.workspaceId) {
-        throw new Error("Selected workspace Git does not support pull requests");
-      }
       let title = msg.title?.trim() ?? "";
       let body = msg.body?.trim() ?? "";
 
       if (!title || !body) {
-        const generated = await this.gitMetadataGenerator.generatePullRequestText(cwd, msg.baseRef);
+        const generated = await this.gitMetadataGenerator.generatePullRequestText({
+          workspaceGit,
+          ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+          ...(msg.baseRef ? { baseRef: msg.baseRef } : {}),
+        });
         if (!title) title = generated.title;
         if (!body) body = generated.body;
       }
 
       const { service } = await this.requireForgeService(workspaceGit);
-      const result = await createPullRequest(
-        cwd,
+      const result = await workspaceGit.createPullRequest(
         {
           title,
           body,
@@ -996,7 +998,7 @@ export class CheckoutSession {
       });
       const { service } = await this.requireForgeService(workspaceGit);
       await service.mergePullRequest({
-        cwd,
+        cwd: workspaceGit.cwd,
         prNumber: pullRequest.number,
         mergeMethod: msg.mergeMethod,
         status: pullRequest,
@@ -1053,7 +1055,7 @@ export class CheckoutSession {
           throw new Error("mergeMethod is required when enabling auto-merge");
         }
         await service.enablePullRequestAutoMerge({
-          cwd,
+          cwd: workspaceGit.cwd,
           prNumber: pullRequest.number,
           mergeMethod,
           status: pullRequest,
@@ -1063,7 +1065,7 @@ export class CheckoutSession {
           throw new Error("mergeMethod is not allowed when disabling auto-merge");
         }
         await service.disablePullRequestAutoMerge({
-          cwd,
+          cwd: workspaceGit.cwd,
           prNumber: pullRequest.number,
           status: pullRequest,
         });
@@ -1200,7 +1202,7 @@ export class CheckoutSession {
     let featuresEnabled: boolean;
     let probeAuthState: ForgeAuthState | undefined;
     try {
-      featuresEnabled = await service.isAuthenticated({ cwd });
+      featuresEnabled = await service.isAuthenticated({ cwd: workspaceGit.cwd });
     } catch (error) {
       featuresEnabled = false;
       probeAuthState = forgeAuthStateFromError(error);
@@ -1227,7 +1229,7 @@ export class CheckoutSession {
 
     try {
       const timeline = await service.getPullRequestTimeline({
-        cwd,
+        cwd: workspaceGit.cwd,
         prNumber,
         repoOwner,
         repoName,
@@ -1300,7 +1302,7 @@ export class CheckoutSession {
       const workspaceGit = await this.resolveWorkspaceGit(msg);
       const { service } = await this.requireForgeService(workspaceGit);
       const details = await service.getCheckDetails({
-        cwd,
+        cwd: workspaceGit.cwd,
         repoOwner,
         repoName,
         checkRunId,
@@ -1337,18 +1339,24 @@ export class CheckoutSession {
   async handleForgeSearchRequest(
     msg: Extract<SessionInboundMessage, { type: "forge.search.request" | "github_search_request" }>,
   ): Promise<void> {
-    const { cwd, query, limit, kinds, requestId } = msg;
+    const { query, limit, kinds, requestId } = msg;
 
     try {
-      const resolvedCwd = expandTilde(cwd);
       const workspaceGit = await this.resolveWorkspaceGit(msg);
       // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 —
       // the legacy github_search RPC is GitHub by definition; the modern
       // forge.search RPC resolves the cwd's forge.
       let resolvedForge: { forge: string; service: ForgeService } | null;
       if (msg.type === "github_search_request") {
-        await workspaceGit.resolveForge();
-        resolvedForge = { forge: "github", service: this.github };
+        const resolution = await workspaceGit.resolveForge();
+        if (msg.workspaceId !== undefined) {
+          resolvedForge =
+            resolution?.forge === "github"
+              ? { forge: "github", service: resolution.service }
+              : null;
+        } else {
+          resolvedForge = { forge: "github", service: this.github };
+        }
       } else {
         resolvedForge = await this.resolveForgeService(workspaceGit);
       }
@@ -1380,7 +1388,7 @@ export class CheckoutSession {
       }
       const { forge, service } = resolvedForge;
       const result = await service.searchIssuesAndPrs({
-        cwd: resolvedCwd,
+        cwd: workspaceGit.cwd,
         query,
         limit,
         kinds,

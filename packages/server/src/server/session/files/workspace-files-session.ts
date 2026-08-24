@@ -1,5 +1,5 @@
 import type pino from "pino";
-import { areEquivalentPaths } from "../../../utils/path.js";
+import { isPathInsideRoot } from "../../../utils/path.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
   encodeFileTransferFrame,
@@ -223,12 +223,19 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryCreateRequest(request: FileEntryCreateRequest): Promise<void> {
-    const result = await createExplorerEntry({
-      root: request.cwd,
-      parentPath: request.parentPath,
-      name: request.name,
-      kind: request.kind,
-    });
+    const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+    const result = selectedFiles
+      ? await selectedFiles.createEntry({
+          parentPath: request.parentPath,
+          name: request.name,
+          kind: request.kind,
+        })
+      : await createExplorerEntry({
+          root: request.cwd,
+          parentPath: request.parentPath,
+          name: request.name,
+          kind: request.kind,
+        });
     this.host.emit({
       type: "fs.entry.create.response",
       payload: {
@@ -243,11 +250,14 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryRenameRequest(request: FileEntryRenameRequest): Promise<void> {
-    const result = await renameExplorerEntry({
-      root: request.cwd,
-      relativePath: request.path,
-      name: request.name,
-    });
+    const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+    const result = selectedFiles
+      ? await selectedFiles.renameEntry({ path: request.path, name: request.name })
+      : await renameExplorerEntry({
+          root: request.cwd,
+          relativePath: request.path,
+          name: request.name,
+        });
     this.host.emit({
       type: "fs.entry.rename.response",
       payload: {
@@ -262,10 +272,13 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryDuplicateRequest(request: FileEntryDuplicateRequest): Promise<void> {
-    const result = await duplicateExplorerEntry({
-      root: request.cwd,
-      relativePath: request.path,
-    });
+    const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+    const result = selectedFiles
+      ? await selectedFiles.duplicateEntry(request.path)
+      : await duplicateExplorerEntry({
+          root: request.cwd,
+          relativePath: request.path,
+        });
     this.host.emit({
       type: "fs.entry.duplicate.response",
       payload: {
@@ -280,10 +293,13 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryDeleteRequest(request: FileEntryDeleteRequest): Promise<void> {
-    const result = await deleteExplorerEntry({
-      root: request.cwd,
-      relativePath: request.path,
-    });
+    const selectedFiles = await this.resolveSelectedFiles(request.cwd, request.workspaceId);
+    const result = selectedFiles
+      ? await selectedFiles.deleteEntry(request.path)
+      : await deleteExplorerEntry({
+          root: request.cwd,
+          relativePath: request.path,
+        });
     this.host.emit({
       type: "fs.entry.delete.response",
       payload: {
@@ -621,7 +637,7 @@ export class WorkspaceFilesSession {
         (workspace) =>
           workspace.archivedAt === null &&
           workspace.runtime &&
-          areEquivalentPaths(workspace.cwd, cwd),
+          isPathInsideRoot(workspace.cwd, cwd),
       )
     ) {
       throw new Error("workspaceId is required for a selected workspace file operation");

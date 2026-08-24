@@ -422,6 +422,11 @@ export function FileExplorerPane({
   const isCompact = useIsCompactFormFactor();
 
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
+  const hostVisibleWorkspaceRoot = useSessionStore((state) =>
+    workspaceId
+      ? state.sessions[serverId]?.workspaces.get(workspaceId)?.hostVisiblePath
+      : normalizedWorkspaceRoot,
+  );
   const workspaceStateKey = useMemo(
     () =>
       buildWorkspaceExplorerStateKey({
@@ -454,7 +459,9 @@ export function FileExplorerPane({
   const { targets: desktopOpenTargets } = useDesktopOpenTargets({
     isLocalExecution: isLocalDaemon,
   });
-  const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
+  const fileManagerTarget = hostVisibleWorkspaceRoot
+    ? desktopOpenTargets.find((target) => target.kind === "file-manager")
+    : undefined;
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
   const fsEntryOpsEnabled = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryOps === true,
@@ -603,15 +610,15 @@ export function FileExplorerPane({
 
   const handleRevealEntry = useCallback(
     async (entry: ExplorerEntry) => {
-      if (!fileManagerTarget) {
+      if (!fileManagerTarget || !hostVisibleWorkspaceRoot) {
         return;
       }
       try {
         await openDesktopTarget({
           editorId: fileManagerTarget.id,
-          workspacePath: normalizedWorkspaceRoot,
+          workspacePath: hostVisibleWorkspaceRoot,
           filePath: buildAbsoluteExplorerPath({
-            workspaceRoot: normalizedWorkspaceRoot,
+            workspaceRoot: hostVisibleWorkspaceRoot,
             entryPath: entry.path,
           }),
         });
@@ -621,7 +628,7 @@ export function FileExplorerPane({
         );
       }
     },
-    [fileManagerTarget, normalizedWorkspaceRoot, t, toast],
+    [fileManagerTarget, hostVisibleWorkspaceRoot, t, toast],
   );
 
   const handleDownloadEntry = useCallback(

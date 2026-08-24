@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
 
@@ -91,7 +92,9 @@ import type {
   PaseoToolDefinition,
   PaseoToolExecutionContext,
   PaseoToolResult,
+  PaseoToolRuntimeTarget,
 } from "./types.js";
+import type { WorkspaceRuntimeAgentToolGroup } from "../../workspace-runtime/index.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -144,7 +147,29 @@ export interface PaseoToolHostDependencies {
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  runtimeScope?: {
+    workspaceId: string;
+    toolGroups: ReadonlySet<WorkspaceRuntimeAgentToolGroup>;
+  };
+  assertCallerAuthorized?: () => Promise<void>;
   logger: Logger;
+}
+
+function selectStringProperty(name: string): (input: unknown) => string {
+  return (input) => {
+    if (!input || typeof input !== "object") throw new Error(`Missing ${name}`);
+    const value = (input as Record<string, unknown>)[name];
+    if (typeof value !== "string") throw new Error(`Missing ${name}`);
+    return value;
+  };
+}
+
+function selectOptionalStringProperty(name: string): (input: unknown) => string | undefined {
+  return (input) => {
+    if (!input || typeof input !== "object") return undefined;
+    const value = (input as Record<string, unknown>)[name];
+    return typeof value === "string" ? value : undefined;
+  };
 }
 
 function parseTimestamp(value: string | null | undefined): number {
@@ -551,9 +576,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     callerAgentId,
     resolveSpeakHandler,
     resolveCallerContext,
+    runtimeScope,
+    assertCallerAuthorized,
     logger,
   } = options;
-  const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
+  const childLogger = logger.child({
+    module: "agent",
+    component: "paseo-tool-catalog",
+  });
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
 
   const parseToolInput = async (tool: PaseoToolDefinition, input: unknown): Promise<unknown> => {
@@ -571,18 +601,138 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
+  const runtimeWorkspaceId = runtimeScope?.workspaceId;
+
+  function authorizeCallerWorkspaceTarget(
+    target: Extract<PaseoToolRuntimeTarget, { kind: "caller-workspace" }>,
+    input: unknown,
+    callerCwd: string,
+  ): void {
+    const cwd = target.selectCwd?.(input);
+    if (!cwd) return;
+    const resolved = resolvePathFromBase(callerCwd, cwd);
+    if (!isSameOrDescendantPath(callerCwd, resolved)) {
+      throw new Error("Paseo tool cwd is outside the caller workspace");
+    }
+  }
+
+  function authorizeCreateChildAgent(input: unknown, workspaceId: string): void {
+    if (!input || typeof input !== "object") throw new Error("Invalid create_agent input");
+    const value = input as Record<string, unknown>;
+    if (value.workspaceId !== undefined && value.workspaceId !== workspaceId) {
+      throw new Error("Runtime-scoped agents may only create same-workspace subagents");
+    }
+    const prohibited = [
+      "relationship",
+      "workspace",
+      "cwd",
+      "worktreeName",
+      "branchName",
+      "baseBranch",
+      "refName",
+      "githubPrNumber",
+    ];
+    if (prohibited.some((key) => value[key] !== undefined)) {
+      throw new Error("Runtime-scoped agents may only create same-workspace subagents");
+    }
+  }
+
+  async function authorizeAgentTarget(
+    target: Extract<PaseoToolRuntimeTarget, { kind: "agent" | "direct-child-agent" }>,
+    input: unknown,
+    workspaceId: string,
+  ): Promise<void> {
+    const agentId = target.selectAgentId(input);
+    const agent = agentManager.getAgent(agentId) ?? (await agentStorage.get(agentId));
+    if (!agent || agent.workspaceId !== workspaceId) {
+      throw new Error("Paseo tool target is outside the caller workspace");
+    }
+    if (
+      target.kind === "direct-child-agent" &&
+      getParentAgentIdFromLabels(agent.labels) !== callerAgentId
+    ) {
+      throw new Error("Permission target is not a direct child of the caller");
+    }
+  }
+
+  async function authorizeRuntimeTool(tool: PaseoToolDefinition, input: unknown): Promise<void> {
+    if (!runtimeScope) return;
+    const access = tool.runtimeAccess;
+    if (!access) throw new Error(`Paseo tool is unavailable to workspace runtimes: ${tool.name}`);
+    if (!callerAgentId || !runtimeWorkspaceId) {
+      throw new Error("Runtime-scoped Paseo tools require a live workspace agent");
+    }
+
+    const caller = agentManager.getAgent(callerAgentId);
+    if (!caller || caller.workspaceId !== runtimeWorkspaceId) {
+      throw new Error("Runtime-scoped Paseo tool caller is no longer active");
+    }
+    authorizeReservedAgentLabels(tool.name, input);
+    return authorizeRuntimeTarget(access.target, input, caller.cwd, runtimeWorkspaceId);
+  }
+
+  function authorizeReservedAgentLabels(toolName: string, input: unknown): void {
+    if (toolName !== "update_agent" || !input || typeof input !== "object") return;
+    const labels = (input as { labels?: unknown }).labels;
+    if (
+      labels &&
+      typeof labels === "object" &&
+      Object.keys(labels).some((label) => label.startsWith("paseo."))
+    ) {
+      throw new Error(
+        `Runtime-scoped agents cannot update reserved Paseo labels such as ${PARENT_AGENT_ID_LABEL}`,
+      );
+    }
+  }
+
+  async function authorizeRuntimeTarget(
+    target: PaseoToolRuntimeTarget,
+    input: unknown,
+    callerCwd: string,
+    workspaceId: string,
+  ): Promise<void> {
+    switch (target.kind) {
+      case "caller":
+        return;
+      case "caller-workspace":
+        return authorizeCallerWorkspaceTarget(target, input, callerCwd);
+      case "workspace": {
+        const selectedWorkspaceId = target.selectWorkspaceId(input);
+        if (selectedWorkspaceId !== undefined && selectedWorkspaceId !== workspaceId) {
+          throw new Error("Paseo tool target is outside the caller workspace");
+        }
+        return;
+      }
+      case "terminal": {
+        const terminal = terminalManager?.getTerminal(target.selectTerminalId(input));
+        if (!terminal || terminal.workspaceId !== workspaceId) {
+          throw new Error("Paseo tool target is outside the caller workspace");
+        }
+        return;
+      }
+      case "create-child-agent":
+        return authorizeCreateChildAgent(input, workspaceId);
+      case "agent":
+      case "direct-child-agent":
+        return authorizeAgentTarget(target, input, workspaceId);
+    }
+  }
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
+    if (runtimeScope) {
+      if (!config.runtimeAccess || !runtimeScope.toolGroups.has(config.runtimeAccess.group)) return;
+    }
     tools.set(name, {
       name,
       title: config.title,
       description: config.description ?? name,
       inputSchema: config.inputSchema,
       outputSchema: config.outputSchema,
+      runtimeAccess: config.runtimeAccess,
       handler: handler as PaseoToolDefinition["handler"],
     });
   };
@@ -600,7 +750,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (!tool) {
         throw new Error(`Paseo tool not found: ${name}`);
       }
-      return tool.handler(await parseToolInput(tool, input), context);
+      const parsed = await parseToolInput(tool, input);
+      await authorizeRuntimeTool(tool, parsed);
+      await assertCallerAuthorized?.();
+      return tool.handler(parsed, context);
     },
   });
 
@@ -841,7 +994,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           return false;
         }
       },
-      { message: "provider must be provider or provider/model, for example codex/gpt-5.4" },
+      {
+        message: "provider must be provider or provider/model, for example codex/gpt-5.4",
+      },
     );
   const CreateAgentSettingsInputSchema = z
     .object({
@@ -1162,6 +1317,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       "speak",
       {
         title: "Speak",
+        runtimeAccess: { group: "voice", target: { kind: "caller" } },
         description:
           "Speak text to the user via daemon-managed voice output. Blocks until playback completes.",
         inputSchema: {
@@ -1202,7 +1358,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({
-      registerTool,
+      registerTool: (name, config, handler) =>
+        registerTool(
+          name,
+          {
+            ...config,
+            runtimeAccess: { group: "browser", target: { kind: "caller" } },
+          },
+          handler,
+        ),
       broker: options.browserToolsBroker,
       callerAgentId,
       resolveCallerAgent,
@@ -1337,6 +1501,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_workspaces",
     {
       title: "List workspaces",
+      runtimeAccess: {
+        group: "workspace",
+        target: { kind: "caller-workspace" },
+      },
       description: "List active workspaces.",
       inputSchema: {},
       outputSchema: { workspaces: z.array(WorkspaceAutomationSummarySchema) },
@@ -1347,6 +1515,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       const workspaces = (await options.workspaceRegistry.list())
         .filter((workspace) => !workspace.archivedAt)
+        .filter((workspace) => !runtimeWorkspaceId || workspace.workspaceId === runtimeWorkspaceId)
         .map(toWorkspaceAutomationSummary);
       return {
         content: [],
@@ -1403,6 +1572,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "create_agent",
     {
       title: "Create agent",
+      runtimeAccess: {
+        group: "agents",
+        target: { kind: "create-child-agent" },
+      },
       description:
         "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
@@ -1865,6 +2038,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "send_agent_prompt",
     {
       title: "Send agent prompt",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description:
         "Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default.",
       inputSchema: sendAgentPromptInputSchema,
@@ -1955,6 +2135,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "get_agent_status",
     {
       title: "Get agent status",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description:
         "Return the latest snapshot for an agent, including lifecycle state, capabilities, and pending permissions.",
       inputSchema: {
@@ -2005,6 +2192,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_agents",
     {
       title: "List agents",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "caller-workspace",
+          selectCwd: selectOptionalStringProperty("cwd"),
+        },
+      },
       description: "List recent agents as compact metadata.",
       inputSchema: {
         includeArchived: z.boolean().optional().default(false),
@@ -2028,7 +2222,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
       const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
       const sinceMs = Date.now() - sinceHours * 60 * 60 * 1000;
-      const liveSnapshots = agentManager.listAgents();
+      const liveSnapshots = agentManager
+        .listAgents()
+        .filter((agent) => !runtimeWorkspaceId || agent.workspaceId === runtimeWorkspaceId);
       const liveAgents = await Promise.all(
         liveSnapshots.map((snapshot) =>
           serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
@@ -2039,6 +2235,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
+        .filter((record) => !runtimeWorkspaceId || record.workspaceId === runtimeWorkspaceId)
         .filter((record) => includeArchived || !record.archivedAt)
         .filter(
           (record) =>
@@ -2064,6 +2261,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "cancel_agent",
     {
       title: "Cancel agent run",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description: "Abort the agent's current run but keep the agent alive for future tasks.",
       inputSchema: {
         agentId: z.string(),
@@ -2088,6 +2292,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "archive_agent",
     {
       title: "Archive agent",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description:
         "Archive an agent (soft-delete). The agent is interrupted if running and removed from the active list.",
       inputSchema: {
@@ -2117,6 +2328,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "kill_agent",
     {
       title: "Kill agent",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description: "Terminate an agent session permanently.",
       inputSchema: {
         agentId: z.string(),
@@ -2138,6 +2356,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "update_agent",
     {
       title: "Update agent",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description: "Update an agent name, labels, and/or runtime settings.",
       inputSchema: {
         agentId: z.string(),
@@ -2180,6 +2405,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "rename_workspace",
     {
       title: "Rename workspace",
+      runtimeAccess: {
+        group: "workspace",
+        target: {
+          kind: "workspace",
+          selectWorkspaceId: selectOptionalStringProperty("workspaceId"),
+        },
+      },
       description:
         "Rename a workspace by setting its user-visible title. Omit workspaceId to rename your current workspace.",
       inputSchema: {
@@ -2240,6 +2472,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_workspace_scripts",
     {
       title: "List workspace scripts",
+      runtimeAccess: {
+        group: "scripts",
+        target: {
+          kind: "workspace",
+          selectWorkspaceId: selectStringProperty("workspaceId"),
+        },
+      },
       description:
         "List configured workspace scripts and their lifecycle, service port, proxy URL, health, and terminal ID.",
       inputSchema: {
@@ -2255,7 +2494,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       return {
         content: [],
-        structuredContent: ensureValidJson({ scripts: await workspaceScripts.list(workspaceId) }),
+        structuredContent: ensureValidJson({
+          scripts: await workspaceScripts.list(workspaceId),
+        }),
       };
     },
   );
@@ -2264,6 +2505,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "start_workspace_script",
     {
       title: "Start workspace script",
+      runtimeAccess: {
+        group: "scripts",
+        target: {
+          kind: "workspace",
+          selectWorkspaceId: selectStringProperty("workspaceId"),
+        },
+      },
       description:
         "Start one configured workspace script through Paseo's managed workspace-script launcher.",
       inputSchema: {
@@ -2291,6 +2539,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "stop_workspace_script",
     {
       title: "Stop workspace script",
+      runtimeAccess: {
+        group: "scripts",
+        target: {
+          kind: "workspace",
+          selectWorkspaceId: selectStringProperty("workspaceId"),
+        },
+      },
       description: "Stop a running workspace script through its supervised terminal lifecycle.",
       inputSchema: {
         workspaceId: z.string().describe("Workspace ID containing the running script."),
@@ -2317,6 +2572,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_terminals",
     {
       title: "List terminals",
+      runtimeAccess: {
+        group: "terminals",
+        target: {
+          kind: "caller-workspace",
+          selectCwd: selectOptionalStringProperty("cwd"),
+        },
+      },
       description: "List terminals for a working directory or across all working directories.",
       inputSchema: {
         cwd: z
@@ -2345,7 +2607,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
                 })),
               ),
             )
-          ).flat()
+          )
+            .flat()
+            .filter((terminal) => {
+              if (!runtimeWorkspaceId) return true;
+              return terminalManager.getTerminal(terminal.id)?.workspaceId === runtimeWorkspaceId;
+            })
         : (await terminalManager.getTerminals(resolveScopedCwd(cwd, { required: true }))).map(
             (terminal) => ({
               id: terminal.id,
@@ -2365,6 +2632,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "create_terminal",
     {
       title: "Create terminal",
+      runtimeAccess: {
+        group: "terminals",
+        target: {
+          kind: "caller-workspace",
+          selectCwd: selectOptionalStringProperty("cwd"),
+        },
+      },
       description: "Create a terminal session for a working directory.",
       inputSchema: {
         cwd: z
@@ -2404,6 +2678,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "kill_terminal",
     {
       title: "Kill terminal",
+      runtimeAccess: {
+        group: "terminals",
+        target: {
+          kind: "terminal",
+          selectTerminalId: selectStringProperty("terminalId"),
+        },
+      },
       description: "Kill an existing terminal session.",
       inputSchema: {
         terminalId: z.string(),
@@ -2435,6 +2716,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "capture_terminal",
     {
       title: "Capture terminal",
+      runtimeAccess: {
+        group: "terminals",
+        target: {
+          kind: "terminal",
+          selectTerminalId: selectStringProperty("terminalId"),
+        },
+      },
       description: "Capture plain-text terminal output lines from a terminal session.",
       inputSchema: {
         terminalId: z.string(),
@@ -2479,6 +2767,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "send_terminal_keys",
     {
       title: "Send terminal keys",
+      runtimeAccess: {
+        group: "terminals",
+        target: {
+          kind: "terminal",
+          selectTerminalId: selectStringProperty("terminalId"),
+        },
+      },
       description: "Send literal text or special key tokens to a terminal session.",
       inputSchema: {
         terminalId: z.string(),
@@ -2565,6 +2860,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "create_heartbeat",
     {
       title: "Create heartbeat",
+      runtimeAccess: { group: "heartbeats", target: { kind: "caller" } },
       description: "Create a recurring heartbeat that sends you a prompt on a cron cadence.",
       inputSchema: {
         prompt: z.string().trim().min(1, "prompt is required"),
@@ -2614,6 +2910,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "delete_heartbeat",
     {
       title: "Delete heartbeat",
+      runtimeAccess: { group: "heartbeats", target: { kind: "caller" } },
       description: "Delete one of your heartbeats.",
       inputSchema: { id: z.string().min(1) },
       outputSchema: { success: z.boolean() },
@@ -2880,6 +3177,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_providers",
     {
       title: "List providers",
+      runtimeAccess: {
+        group: "providers",
+        target: { kind: "caller-workspace" },
+      },
       description: "List configured agent providers, availability, and their modes.",
       inputSchema: {},
       outputSchema: {
@@ -2887,9 +3188,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async () => {
-      const providers = (await providerSnapshotManager.listProviders({ wait: true })).map(
-        toProviderSummary,
-      );
+      const caller = runtimeWorkspaceId ? resolveCallerAgent() : null;
+      const providers = (
+        await providerSnapshotManager.listProviders({
+          wait: true,
+          ...(caller ? { cwd: caller.cwd, workspaceId: runtimeWorkspaceId } : {}),
+        })
+      ).map(toProviderSummary);
       return {
         content: [],
         structuredContent: ensureValidJson({ providers }),
@@ -2901,6 +3206,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_models",
     {
       title: "List models",
+      runtimeAccess: {
+        group: "providers",
+        target: { kind: "caller-workspace" },
+      },
       description: "List models for an agent provider.",
       inputSchema: {
         provider: AgentProviderEnum,
@@ -2911,9 +3220,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ provider }) => {
+      const caller = runtimeWorkspaceId ? resolveCallerAgent() : null;
       const models = await providerSnapshotManager.listModels({
         provider,
         wait: true,
+        ...(caller ? { cwd: caller.cwd, workspaceId: runtimeWorkspaceId } : {}),
       });
       return {
         content: [],
@@ -2929,6 +3240,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_profiles",
     {
       title: "List agent profiles",
+      runtimeAccess: {
+        group: "providers",
+        target: { kind: "caller-workspace" },
+      },
       description:
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
@@ -2953,6 +3268,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "inspect_provider",
     {
       title: "Inspect provider",
+      runtimeAccess: {
+        group: "providers",
+        target: {
+          kind: "caller-workspace",
+          selectCwd: selectOptionalStringProperty("cwd"),
+        },
+      },
       description:
         "Inspect compact provider capabilities for orchestration, including modes and draft feature settings. Use list_models for the full model list.",
       inputSchema: inspectProviderInputSchema,
@@ -2978,6 +3300,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         cwd: resolvedCwd,
         provider: providerId,
         wait: true,
+        ...(runtimeWorkspaceId ? { workspaceId: runtimeWorkspaceId } : {}),
       });
       const summary = toProviderSummary(entry);
       if (!entry.enabled) {
@@ -3015,6 +3338,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "get_agent_activity",
     {
       title: "Get agent activity",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description: "Return recent agent timeline entries as a curated summary.",
       inputSchema: {
         agentId: z.string(),
@@ -3071,6 +3401,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "set_agent_mode",
     {
       title: "Set agent session mode",
+      runtimeAccess: {
+        group: "agents",
+        target: {
+          kind: "agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description:
         "Switch the agent's session mode (plan, bypassPermissions, read-only, auto, etc.).",
       inputSchema: {
@@ -3086,7 +3423,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const result = await setAgentModeCommand({ agentManager }, { agentId, modeId });
       return {
         content: [],
-        structuredContent: ensureValidJson({ success: true, newMode: result.modeId }),
+        structuredContent: ensureValidJson({
+          success: true,
+          newMode: result.modeId,
+        }),
       };
     },
   );
@@ -3095,6 +3435,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "list_pending_permissions",
     {
       title: "List pending permissions",
+      runtimeAccess: { group: "permissions", target: { kind: "caller" } },
       description:
         "Return all pending permission requests across all agents with the normalized payloads.",
       inputSchema: {},
@@ -3110,6 +3451,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
     async () => {
       const permissions = agentManager.listAgents().flatMap((agent) => {
+        if (
+          runtimeWorkspaceId &&
+          (!callerAgentId || getParentAgentIdFromLabels(agent.labels) !== callerAgentId)
+        ) {
+          return [];
+        }
         const payload = toAgentPayload(agent);
         return payload.pendingPermissions.map((request) => ({
           agentId: agent.id,
@@ -3129,6 +3476,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "respond_to_permission",
     {
       title: "Respond to permission",
+      runtimeAccess: {
+        group: "permissions",
+        target: {
+          kind: "direct-child-agent",
+          selectAgentId: selectStringProperty("agentId"),
+        },
+      },
       description:
         "Approve or deny a pending permission request with an AgentManager-compatible response payload.",
       inputSchema: {

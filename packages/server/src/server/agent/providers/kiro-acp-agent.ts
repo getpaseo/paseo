@@ -8,6 +8,7 @@ interface KiroACPAgentClientOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
+  envFromFiles?: Record<string, string>;
   providerId?: string;
   label?: string;
   providerParams?: unknown;
@@ -90,6 +91,7 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
       logger: options.logger,
       command: options.command,
       env: options.env,
+      envFromFiles: options.envFromFiles,
       providerId: options.providerId,
       label: options.label,
       providerParams: options.providerParams,

@@ -186,6 +186,22 @@ describe("generateStructuredAgentResponseWithFallback", () => {
     expect(manager.checkedProviders).toEqual(["claude"]);
   });
 
+  it("uses runtime-scoped discovery without host availability checks", async () => {
+    const manager = createManager([{ provider: "claude", available: false, error: "host only" }]);
+    const result = await generateStructuredAgentResponseWithFallback({
+      manager,
+      cwd: "/workspace/runtime",
+      workspaceId: "workspace-runtime",
+      prompt: "Return JSON",
+      schema,
+      providers: [{ provider: "claude", model: "haiku" }],
+      runner: async () => ({ summary: "runtime available" }),
+    });
+
+    expect(result).toEqual({ summary: "runtime available" });
+    expect(manager.checkedProviders).toEqual([]);
+  });
+
   it("skips unavailable providers and uses the next available one", async () => {
     const calls: Array<{ provider: string; model?: string }> = [];
     const manager = createManager([

@@ -13,8 +13,10 @@ import {
   CommandRuntimeDescribeResponseSchema,
   CommandRuntimeLifecycleRequestSchema,
   CommandRuntimeLifecycleResponseSchema,
+  CommandRuntimeMergeToBaseResponseSchema,
   createCommandRuntimeProcessEventDecoder,
   encodeCommandRuntimeMessage,
+  type CommandRuntimeDescribeResponse,
   type CommandRuntimeProcessEvent,
 } from "@getpaseo/workspace-runtime-contract";
 
@@ -25,14 +27,38 @@ import type {
   WorkspaceDriverSpawnInput,
   WorkspacePipeProcess,
   WorkspacePtyProcess,
+  WorkspacePublicPlacement,
   WorkspaceRuntimeDriver,
 } from "../../drivers/index.js";
 import type { WorkspaceRuntimeJsonValue } from "../../index.js";
 const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 750;
+const COMMAND_RUNTIME_OPERATION_TIMEOUT_MS = 10 * 60_000;
 
 export interface CommandRuntimeConfig {
   command: readonly [string, ...string[]];
   options?: Readonly<Record<string, WorkspaceRuntimeJsonValue>>;
+}
+
+export class WorkspaceRuntimeRegistrationError extends Error {
+  constructor(runtimeId: string, cause: unknown) {
+    super(
+      `Workspace runtime ${runtimeId} registration failed${
+        cause instanceof Error ? `: ${cause.message}` : ""
+      }`,
+      { cause },
+    );
+    this.name = "WorkspaceRuntimeRegistrationError";
+  }
+}
+
+export function isWorkspaceRuntimeRegistrationError(
+  error: unknown,
+): error is WorkspaceRuntimeRegistrationError {
+  return (
+    error instanceof WorkspaceRuntimeRegistrationError ||
+    (error instanceof AggregateError &&
+      error.errors.some((nested) => isWorkspaceRuntimeRegistrationError(nested)))
+  );
 }
 
 export function createCommandRuntime(
@@ -41,22 +67,31 @@ export function createCommandRuntime(
   runtimeInstanceId: string,
   packageResolutionBase: string,
   pathResolutionBase: string,
+  daemonAuthenticationConfigured: boolean,
 ): WorkspaceRuntimeDriver {
   const command = resolveRuntimeCommand(config.command, packageResolutionBase, pathResolutionBase);
-  let described: Promise<ReadonlySet<"pipes" | "pty">> | null = null;
-  let supportsReconciliation = false;
+  let described: Promise<CommandRuntimeDescribeResponse> | null = null;
+  let processIsolation = false;
+  const runtimeGeneration = randomBytes(16).toString("hex");
 
-  function describe(): Promise<ReadonlySet<"pipes" | "pty">> {
-    described ??= runCommand(["describe"], undefined).then((output) => {
-      const value: unknown = JSON.parse(output);
-      assertProtocolVersion(runtimeId, value);
-      const description = CommandRuntimeDescribeResponseSchema.parse(value);
-      if (!description.modes.includes("pipes")) {
-        throw new Error(`Workspace runtime ${runtimeId} does not support pipes`);
-      }
-      supportsReconciliation = description.reconcile;
-      return new Set(description.modes);
-    });
+  function describe(): Promise<CommandRuntimeDescribeResponse> {
+    described ??= runCommand(["describe"], undefined)
+      .then((output) => {
+        const value: unknown = JSON.parse(output);
+        assertProtocolVersion(runtimeId, value);
+        const description = CommandRuntimeDescribeResponseSchema.parse(value);
+        if (!description.modes.includes("pipes")) {
+          throw new Error(`Workspace runtime ${runtimeId} does not support pipes`);
+        }
+        if (description.requirements.daemonAuthentication && !daemonAuthenticationConfigured) {
+          throw new Error(`Workspace runtime ${runtimeId} requires daemon authentication`);
+        }
+        processIsolation = description.capabilities.processIsolation;
+        return description;
+      })
+      .catch((error) => {
+        throw new WorkspaceRuntimeRegistrationError(runtimeId, error);
+      });
     return described;
   }
 
@@ -71,6 +106,7 @@ export function createCommandRuntime(
       encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
         protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
         runtimeInstanceId,
+        runtimeGeneration,
         input: input ? commandCreateInput(input) : undefined,
         options: config.options ?? {},
       }),
@@ -80,16 +116,48 @@ export function createCommandRuntime(
     return CommandRuntimeLifecycleResponseSchema.parse(value);
   }
 
+  async function runTypedLifecycleOperation(
+    operation: "release-backing" | "merge-to-base",
+    workspaceId: string,
+  ): Promise<unknown> {
+    await describe();
+    const output = await runCommand(
+      [operation, "--workspace-id", workspaceId],
+      encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
+        protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+        runtimeInstanceId,
+        runtimeGeneration,
+        options: config.options ?? {},
+      }),
+    );
+    const value: unknown = JSON.parse(output);
+    assertProtocolVersion(runtimeId, value);
+    return value;
+  }
+
   return {
     id: runtimeId,
     requiresGitProject: true,
-    reconciliationDomainId: JSON.stringify({ command, options: config.options }),
+    reconciliationDomainId: JSON.stringify({
+      command,
+      options: config.options,
+    }),
     workspaceHelper: {
       command: ["paseo-workspace-helper"],
       env: {},
     },
-    scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
-    provider: { environment: "isolated", sharedHostProviders: new Set() },
+    scriptTerminal: {
+      kind: "direct-command",
+      command: "/bin/sh",
+      argsPrefix: ["-lc"],
+    },
+    provider: {
+      environment: "isolated",
+      sharedHostProviders: new Set(),
+      get processIsolation() {
+        return processIsolation;
+      },
+    },
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);
@@ -117,12 +185,19 @@ export function createCommandRuntime(
       return response.inspection as WorkspaceDriverInspection;
     },
     async spawn(input) {
-      const modes = await describe();
+      const description = await describe();
       if (input.stdio.kind === "pty") {
-        if (!modes.has("pty")) {
+        if (!description.modes.includes("pty")) {
           throw new Error(`Workspace runtime ${runtimeId} does not support PTY mode`);
         }
-        return spawnCommandPty(runtimeId, command, input, config.options ?? {}, runtimeInstanceId);
+        return spawnCommandPty(
+          runtimeId,
+          command,
+          input,
+          config.options ?? {},
+          runtimeInstanceId,
+          runtimeGeneration,
+        );
       }
       return spawnCommandProcess(
         runtimeId,
@@ -130,11 +205,36 @@ export function createCommandRuntime(
         input,
         config.options ?? {},
         runtimeInstanceId,
+        runtimeGeneration,
       );
     },
     async pause(workspaceId) {
       const response = await lifecycle("pause", workspaceId);
       if (response.type !== "ok") throw new Error(`Invalid pause response from ${runtimeId}`);
+    },
+    async releaseBacking(workspaceId) {
+      const description = await describe();
+      if (!description.capabilities.releaseBacking) {
+        throw new Error(`Workspace runtime ${runtimeId} cannot release backing storage`);
+      }
+      const value = await runTypedLifecycleOperation("release-backing", workspaceId);
+      const response = CommandRuntimeLifecycleResponseSchema.parse(value);
+      if (response.type !== "ok") {
+        throw new Error(`Invalid release-backing response from ${runtimeId}`);
+      }
+    },
+    async mergeToBase(workspaceId) {
+      const description = await describe();
+      if (!description.capabilities.mergeToBase) {
+        throw new Error(`Workspace runtime ${runtimeId} does not support Merge locally`);
+      }
+      const target = CommandRuntimeMergeToBaseResponseSchema.parse(
+        await runTypedLifecycleOperation("merge-to-base", workspaceId),
+      ).localIntegrationTarget;
+      if (!path.isAbsolute(target) || path.normalize(target) !== target) {
+        throw new Error(`Workspace runtime ${runtimeId} returned an invalid integration target`);
+      }
+      return target;
     },
     async resume(workspaceId) {
       const response = await lifecycle("resume", workspaceId);
@@ -146,13 +246,14 @@ export function createCommandRuntime(
       if (response.type !== "ok") throw new Error(`Invalid destroy response from ${runtimeId}`);
     },
     async reconcile(workspaceIds) {
-      await describe();
-      if (!supportsReconciliation) return;
+      const description = await describe();
+      if (!description.capabilities.reconcile) return;
       const output = await runCommand(
         ["reconcile"],
         encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           runtimeInstanceId,
+          runtimeGeneration,
           workspaceIds,
           options: config.options ?? {},
         }),
@@ -170,26 +271,46 @@ export function createCommandRuntime(
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, COMMAND_RUNTIME_OPERATION_TIMEOUT_MS);
+    timeout.unref();
     if (stdin === undefined) child.stdin.end();
     else child.stdin.end(stdin);
-    const [stdout, stderr, exit] = await Promise.all([
-      collect(child.stdout),
-      collect(child.stderr),
-      new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", (code, signal) => resolve({ code, signal }));
-      }),
-    ]);
+    let result: [string, string, { code: number | null; signal: NodeJS.Signals | null }];
+    try {
+      result = await Promise.all([
+        collect(child.stdout),
+        collect(child.stderr),
+        new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", (code, signal) => resolve({ code, signal }));
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    const [stdout, stderr, exit] = result;
+    if (timedOut) {
+      throw new Error(`Workspace runtime ${runtimeId} ${args[0]} timed out after 10 minutes`);
+    }
     if (exit.code !== 0) {
       throw new Error(
-        `Workspace runtime ${runtimeId} ${args[0]} failed (${exit.code ?? exit.signal}): ${stderr.trim()}`,
+        `Workspace runtime ${runtimeId} ${args[0]} failed (${
+          exit.code ?? exit.signal
+        }): ${stderr.trim()}`,
       );
     }
     return stdout;
   }
 }
 
-function commandReady(state: WorkspaceDriverState, placement: { cwd: string } | undefined) {
+function commandReady(
+  state: WorkspaceDriverState,
+  placement: WorkspacePublicPlacement | undefined,
+) {
   if (!placement) {
     throw new Error("Workspace runtime did not return public placement");
   }
@@ -230,7 +351,9 @@ function assertProtocolVersion(runtimeId: string, value: unknown): void {
       : undefined;
   if (version === COMMAND_RUNTIME_PROTOCOL_VERSION) return;
   throw new Error(
-    `Workspace runtime ${runtimeId} uses unsupported command protocol version ${String(version)}; expected ${COMMAND_RUNTIME_PROTOCOL_VERSION}`,
+    `Workspace runtime ${runtimeId} uses unsupported command protocol version ${String(
+      version,
+    )}; expected ${COMMAND_RUNTIME_PROTOCOL_VERSION}`,
   );
 }
 
@@ -240,6 +363,7 @@ function spawnCommandPty(
   input: WorkspaceDriverSpawnInput,
   options: Readonly<Record<string, unknown>>,
   runtimeInstanceId: string,
+  runtimeGeneration: string,
 ): WorkspacePtyProcess {
   if (input.stdio.kind !== "pty") throw new Error("PTY spawn requires PTY stdio");
   const execId = randomBytes(16).toString("hex");
@@ -264,23 +388,30 @@ function spawnCommandPty(
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
   let pendingWrites = "";
   let settled = false;
-  let workloadExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let workloadExit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null = null;
   let eventsEnded = false;
   let wrapperClosed = false;
   let resolveWrapperClosed!: () => void;
   const wrapperClosedPromise = new Promise<void>((resolve) => {
     resolveWrapperClosed = resolve;
   });
-  let wrapperExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let wrapperExit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null = null;
   let failureCleanup: Promise<void> | null = null;
   let resolveExit!: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void;
   let rejectExit!: (error: Error) => void;
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve, reject) => {
-      resolveExit = resolve;
-      rejectExit = reject;
-    },
-  );
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve, reject) => {
+    resolveExit = resolve;
+    rejectExit = reject;
+  });
   exited.catch(() => undefined);
 
   child.stdout.on("data", (chunk: Buffer) => emitData(decoder.write(chunk)));
@@ -310,7 +441,10 @@ function spawnCommandPty(
       failPty(new Error(`Workspace runtime ${runtimeId} PTY failed: ${event.message}`));
       return;
     }
-    workloadExit = { code: event.code, signal: parseSignal(runtimeId, event.signal) };
+    workloadExit = {
+      code: event.code,
+      signal: parseSignal(runtimeId, event.signal),
+    };
     child.stdin.end();
     control.end();
   }).then(
@@ -345,6 +479,7 @@ function spawnCommandPty(
       purpose: commandPurpose(input.purpose),
       options,
       runtimeInstanceId,
+      runtimeGeneration,
       execId,
       stdio: input.stdio,
     }),
@@ -444,6 +579,7 @@ function spawnCommandPty(
           execId,
           options,
           runtimeInstanceId,
+          runtimeGeneration,
           child,
           wrapperClosedPromise,
         );
@@ -469,6 +605,7 @@ async function forceKillCommandRuntime(
   execId: string,
   options: Readonly<Record<string, unknown>>,
   runtimeInstanceId: string,
+  runtimeGeneration: string,
   wrapper: { pid?: number; kill(signal?: NodeJS.Signals): boolean },
   wrapperClosed: Promise<void>,
 ): Promise<void> {
@@ -509,7 +646,9 @@ async function forceKillCommandRuntime(
         code === 0
           ? null
           : new Error(
-              `signal helper failed (${code ?? signal ?? "unknown"})${signalStderr.trim() ? `: ${signalStderr.trim()}` : ""}`,
+              `signal helper failed (${code ?? signal ?? "unknown"})${
+                signalStderr.trim() ? `: ${signalStderr.trim()}` : ""
+              }`,
             ),
       ),
     );
@@ -518,6 +657,7 @@ async function forceKillCommandRuntime(
     encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
       protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
       runtimeInstanceId,
+      runtimeGeneration,
       options,
     }),
   );
@@ -586,6 +726,7 @@ function spawnCommandProcess(
   input: WorkspaceDriverSpawnInput,
   options: Readonly<Record<string, unknown>>,
   runtimeInstanceId: string,
+  runtimeGeneration: string,
 ): WorkspacePipeProcess {
   const execId = randomBytes(16).toString("hex");
   const child = spawn(
@@ -603,10 +744,16 @@ function spawnCommandProcess(
   let stderr = "";
   let signalable = false;
   let pendingSignal: NodeJS.Signals | null = null;
-  let workloadExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let workloadExit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null = null;
   let eventsEnded = false;
   let wrapperClosed = false;
-  let wrapperExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let wrapperExit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null = null;
   let settled = false;
   let cleanup: Promise<void> | null = null;
   let resolveWrapperClosed!: () => void;
@@ -615,12 +762,13 @@ function spawnCommandProcess(
   });
   let resolveExit!: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void;
   let rejectExit!: (error: Error) => void;
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve, reject) => {
-      resolveExit = resolve;
-      rejectExit = reject;
-    },
-  );
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve, reject) => {
+    resolveExit = resolve;
+    rejectExit = reject;
+  });
   exited.catch(() => undefined);
   child.stderr.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
@@ -639,7 +787,10 @@ function spawnCommandProcess(
       return;
     }
     if (event.type === "resized") return;
-    workloadExit = { code: event.code, signal: parseSignal(runtimeId, event.signal) };
+    workloadExit = {
+      code: event.code,
+      signal: parseSignal(runtimeId, event.signal),
+    };
   }).then(
     () => {
       eventsEnded = true;
@@ -669,6 +820,7 @@ function spawnCommandProcess(
       purpose: commandPurpose(input.purpose),
       options,
       runtimeInstanceId,
+      runtimeGeneration,
       execId,
       stdio: input.stdio,
     }),
@@ -698,6 +850,7 @@ function spawnCommandProcess(
             execId,
             options,
             runtimeInstanceId,
+            runtimeGeneration,
             child,
             wrapperClosedPromise,
           );
@@ -742,6 +895,7 @@ function spawnCommandProcess(
           execId,
           options,
           runtimeInstanceId,
+          runtimeGeneration,
           child,
           wrapperClosedPromise,
         );

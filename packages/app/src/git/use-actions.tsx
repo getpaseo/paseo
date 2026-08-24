@@ -317,6 +317,16 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const { t } = useTranslation();
   const toast = useToast();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
+  const canMergeToBase = useMemo(() => {
+    if (!activeWorkspaceSelection) return true;
+    const workspaceKey = resolveWorkspaceMapKeyByIdentity({
+      workspaces: sessionWorkspaces,
+      workspaceId: activeWorkspaceSelection.workspaceId,
+    });
+    if (!workspaceKey) return true;
+    return sessionWorkspaces?.get(workspaceKey)?.gitRuntime?.canMergeToBase ?? true;
+  }, [activeWorkspaceSelection, sessionWorkspaces]);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
 
@@ -704,6 +714,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       mergeCapability: deriveMergeCapability(prStatus?.forgeSpecific, prStatus?.github),
       hasRemote,
       isPaseoOwnedWorktree,
+      canMergeToBase,
       isOnBaseBranch,
       hasUncommittedChanges,
       baseRefAvailable: Boolean(baseRef),
@@ -821,6 +832,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     aheadCount,
     behindBaseCount,
     isPaseoOwnedWorktree,
+    canMergeToBase,
     isOnBaseBranch,
     githubFeaturesEnabled,
     forge,

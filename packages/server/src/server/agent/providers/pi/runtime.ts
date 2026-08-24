@@ -7,7 +7,10 @@ import type {
   PiSessionState,
   PiSessionStats,
 } from "./rpc-types.js";
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import {
+  resolveProviderEnvironment,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 import type { ProviderWorkspace } from "../../agent-sdk-types.js";
 
 export interface PiRuntimeLaunch {
@@ -88,14 +91,15 @@ export function buildPiLaunch(input: {
 
   const protocolMode = input.session.protocolMode ?? "rpc";
   appendPiLaunchArgs(argv, input.session, protocolMode);
+  const providerEnvironment = resolveProviderEnvironment(input.runtimeSettings);
 
   return {
     cwd: input.session.cwd,
     argv,
     env:
-      input.runtimeSettings?.env || input.session.env
+      providerEnvironment || input.session.env
         ? {
-            ...input.runtimeSettings?.env,
+            ...providerEnvironment,
             ...input.session.env,
           }
         : undefined,

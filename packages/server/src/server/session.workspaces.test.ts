@@ -6433,9 +6433,47 @@ test("lists Git runtime for a checkout explicitly owned by a non-Git project", a
   ) as Array<{ gitRuntime?: { currentBranch: string | null }; githubRuntime?: unknown }>;
 
   expect(descriptors[0]).toMatchObject({
-    gitRuntime: { currentBranch: "main" },
+    gitRuntime: { currentBranch: "main", canMergeToBase: true },
     githubRuntime: expect.any(Object),
   });
+});
+
+test("publishes Merge locally availability without exposing the runtime integration target", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-runtime-url",
+    rootPath: "git@example.com:owner/repository.git",
+    kind: "git",
+    displayName: "repository",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-runtime-url",
+    projectId: project.projectId,
+    cwd: "/workspace/ws-runtime-url",
+    kind: "local_checkout",
+    displayName: "main",
+    runtime: { runtimeId: "bubblewrap" },
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceGitService.peekSnapshot = () => createWorkspaceRuntimeSnapshot(workspace.cwd);
+  session.workspaceRuntime.canMergeToBase = vi.fn(async () => false);
+
+  const descriptor = (await session.buildWorkspaceDescriptorMap({ includeGitData: true })).get(
+    workspace.workspaceId,
+  ) as WorkspaceDescriptorPayload;
+
+  expect(descriptor.gitRuntime).toMatchObject({
+    currentBranch: "main",
+    canMergeToBase: false,
+  });
+  expect(descriptor).not.toHaveProperty("localIntegrationTarget");
+  expect(session.workspaceRuntime.canMergeToBase).toHaveBeenCalledWith(workspace.workspaceId);
 });
 
 test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fields", async () => {
@@ -7051,6 +7089,7 @@ test("fetch_workspaces_response reads runtime fields from passive workspace git 
         aheadBehind: { ahead: 3, behind: 1 },
         aheadOfOrigin: 3,
         behindOfOrigin: 1,
+        canMergeToBase: true,
       },
       githubRuntime: {
         featuresEnabled: true,

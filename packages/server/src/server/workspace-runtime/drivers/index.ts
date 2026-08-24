@@ -35,6 +35,7 @@ export interface WorkspaceDriverState {
 export interface WorkspacePublicPlacement {
   cwd: string;
   hostVisiblePath?: string;
+  localIntegrationTarget?: string;
 }
 
 export interface WorkspaceDriverReady {
@@ -118,6 +119,7 @@ export interface WorkspaceRuntimeDriver {
   pause(workspaceId: WorkspaceId): Promise<void>;
   /** Release restorable backing owned by this driver after the runtime is paused. */
   releaseBacking?(workspaceId: WorkspaceId): Promise<void>;
+  mergeToBase?(workspaceId: WorkspaceId): Promise<string>;
   resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverReady>;
   destroy(workspaceId: WorkspaceId): Promise<void>;
   reconcile?(workspaceIds: readonly WorkspaceId[]): Promise<void>;

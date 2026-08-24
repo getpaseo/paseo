@@ -24,9 +24,19 @@ import {
 const operation = process.argv
   .slice(2)
   .find((value) =>
-    ["describe", "create", "inspect", "exec", "signal", "pause", "resume", "destroy"].includes(
-      value,
-    ),
+    [
+      "describe",
+      "create",
+      "inspect",
+      "exec",
+      "signal",
+      "pause",
+      "resume",
+      "destroy",
+      "reconcile",
+      "release-backing",
+      "merge-to-base",
+    ].includes(value),
   );
 const workspaceId = argument("--workspace-id");
 let pipeChild = null;
@@ -51,18 +61,48 @@ try {
     const response = {
       protocolVersion,
       modes: argument("--modes") === "pipes" ? ["pipes"] : ["pipes", "pty"],
+      capabilities: {
+        reconcile: argument("--reconcile") === "true",
+        releaseBacking: argument("--release-backing") === "true",
+        mergeToBase: argument("--merge-to-base-target") !== undefined,
+        processIsolation: argument("--process-isolation") === "true",
+      },
+      requirements: { daemonAuthentication: argument("--require-daemon-auth") === "true" },
     };
     if (protocolVersion === COMMAND_RUNTIME_PROTOCOL_VERSION) {
       writeJson(CommandRuntimeDescribeResponseSchema, response);
     } else {
       process.stdout.write(`${JSON.stringify(response)}\n`);
     }
+  } else if (operation === "reconcile") {
+    const request = CommandRuntimeLifecycleRequestSchema.parse(
+      JSON.parse(await readStream(process.stdin)),
+    );
+    await reconcile(request.options);
+    writeJson(CommandRuntimeLifecycleResponseSchema, {
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      type: "ok",
+    });
   } else if (!workspaceId) {
     throw new Error("--workspace-id is required");
   } else if (operation === "exec") {
     await execute(workspaceId);
   } else if (operation === "signal") {
     await signal(workspaceId, requireArgument("--exec-id"), requireArgument("--signal"));
+  } else if (operation === "release-backing") {
+    const request = CommandRuntimeLifecycleRequestSchema.parse(
+      JSON.parse(await readStream(process.stdin)),
+    );
+    await destroy(workspaceId, request.options);
+    writeJson(CommandRuntimeLifecycleResponseSchema, {
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      type: "ok",
+    });
+  } else if (operation === "merge-to-base") {
+    CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStream(process.stdin)));
+    process.stdout.write(
+      `${JSON.stringify({ type: "merge-to-base", protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION, localIntegrationTarget: requireArgument("--merge-to-base-target") })}\n`,
+    );
   } else {
     const request = CommandRuntimeLifecycleRequestSchema.parse(
       JSON.parse(await readStream(process.stdin)),
@@ -150,6 +190,7 @@ async function create(id, request) {
       : (request.options.displayCwd ?? root),
     lifecycle: "ready",
     lifecycleEnvironment: request.options.lifecycleEnvironment,
+    localIntegrationTarget: request.options.localIntegrationTarget,
     ownedRoot,
     createInput: request.input,
   };
@@ -162,6 +203,10 @@ async function destroy(id, options) {
   const state = await readState(id, options);
   if (state?.ownedRoot) await rm(state.ownedRoot, { recursive: true, force: true });
   await rm(stateFile(id, options), { force: true });
+}
+
+async function reconcile(options) {
+  if (!options.stateDirectory) throw new Error("stateDirectory is required");
 }
 
 async function inspect(id, options) {
@@ -181,7 +226,12 @@ function publicState(state) {
 }
 
 function publicPlacement(state) {
-  return { cwd: state.displayCwd };
+  return {
+    cwd: state.displayCwd,
+    ...(state.localIntegrationTarget
+      ? { localIntegrationTarget: state.localIntegrationTarget }
+      : {}),
+  };
 }
 
 async function setLifecycle(id, options, lifecycle) {

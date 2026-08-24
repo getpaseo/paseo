@@ -311,6 +311,15 @@ export function createService(
       }
       return { status: inspection.status };
     },
+    async canMergeToBase(workspaceId) {
+      const runtimeId = await records.resolveRuntimeId(workspaceId);
+      if (!runtimeId) return false;
+      const driver = requireRegistered(runtimeId);
+      if (!driver.mergeToBase) return false;
+      const inspection = await driver.inspect(workspaceId);
+      if (inspection.status !== "ready" && inspection.status !== "paused") return false;
+      return inspection.placement.localIntegrationTarget !== undefined;
+    },
     async requireHostVisiblePath(workspaceId) {
       const runtimeId = await records.resolveRuntimeId(workspaceId);
       if (!runtimeId) throw new Error(`Workspace runtime is not selected: ${workspaceId}`);
@@ -337,6 +346,15 @@ export function createService(
         unavailableFiles.delete(workspaceId);
       });
     },
+    async releaseBacking(workspaceId) {
+      await sequence(workspaceId, async () => {
+        const driver = await resolve(workspaceId);
+        if (!driver.releaseBacking) {
+          throw new Error(`Workspace runtime ${driver.id} cannot release backing storage`);
+        }
+        await driver.releaseBacking(workspaceId);
+      });
+    },
     async archive(workspaceId, archiveOptions) {
       await sequence(workspaceId, async () => {
         if (!records.archiveWorkspaceRecord) {
@@ -350,6 +368,23 @@ export function createService(
           await driver.releaseBacking?.(workspaceId);
         }
         await records.archiveWorkspaceRecord(workspaceId);
+      });
+    },
+    async mergeToBase(workspaceId) {
+      return sequence(workspaceId, async () => {
+        assertWorkspaceAvailable(workspaceId);
+        const driver = await resolve(workspaceId);
+        if (!driver.mergeToBase) {
+          throw new Error(`Workspace runtime ${driver.id} does not support Merge locally`);
+        }
+        const inspection = await driver.inspect(workspaceId);
+        if (
+          inspection.status !== "ready" ||
+          inspection.placement.localIntegrationTarget === undefined
+        ) {
+          throw new Error(`Workspace runtime ${driver.id} cannot merge this workspace locally`);
+        }
+        return driver.mergeToBase(workspaceId);
       });
     },
     async restore(workspaceId) {
@@ -480,6 +515,18 @@ export function createService(
       },
       async write(input) {
         return (await requireFiles(workspaceId)).write(input);
+      },
+      async createEntry(input) {
+        return (await requireFiles(workspaceId)).createEntry(input);
+      },
+      async renameEntry(input) {
+        return (await requireFiles(workspaceId)).renameEntry(input);
+      },
+      async duplicateEntry(path) {
+        return (await requireFiles(workspaceId)).duplicateEntry(path);
+      },
+      async deleteEntry(path) {
+        return (await requireFiles(workspaceId)).deleteEntry(path);
       },
       async subscribe(input, listener) {
         const logical = { input, listener, bound: null as WorkspaceFilesSubscription | null };

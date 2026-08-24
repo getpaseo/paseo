@@ -60,6 +60,7 @@ import {
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
+  resolveProviderEnvironment,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -3187,7 +3188,10 @@ function buildCodexCustomProviderConfig(
     base_url: normalizedBaseUrl,
     wire_api: "responses",
   };
-  if (runtimeSettings?.env?.OPENAI_API_KEY?.trim()) {
+  if (
+    runtimeSettings?.env?.OPENAI_API_KEY?.trim() ||
+    runtimeSettings?.envFromFiles?.OPENAI_API_KEY
+  ) {
     providerConfig.env_key = "OPENAI_API_KEY";
     providerConfig.requires_openai_auth = false;
   }
@@ -3979,8 +3983,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandboxPolicyType =
-      this.providerOptions.sandbox_mode ??
-      (this.hasWorkflowModeOverride ? preset.sandbox : undefined);
+      this.workspace?.processIsolation === true
+        ? "danger-full-access"
+        : (this.providerOptions.sandbox_mode ??
+          (this.hasWorkflowModeOverride ? preset.sandbox : undefined));
     if (approvalPolicy && this.providerOptions.approval_policy === undefined) {
       params.approvalPolicy = approvalPolicy;
     }
@@ -4847,7 +4853,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   } {
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
-    const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
+    let sandbox: string | undefined;
+    if (this.workspace?.processIsolation === true) {
+      sandbox = "danger-full-access";
+    } else if (this.hasWorkflowModeOverride) {
+      sandbox = preset.sandbox;
+    }
     const innerConfig = this.buildCodexInnerConfig();
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
@@ -4859,7 +4870,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(approvalPolicy && this.providerOptions.approval_policy === undefined
         ? { approvalPolicy }
         : {}),
-      ...(sandbox && this.providerOptions.sandbox_mode === undefined ? { sandbox } : {}),
+      ...(sandbox &&
+      (this.workspace?.processIsolation === true || this.providerOptions.sandbox_mode === undefined)
+        ? { sandbox }
+        : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
       ...(innerConfig ? { config: innerConfig } : {}),
       ...(this.ephemeral ? { ephemeral: true } : {}),
@@ -4875,6 +4889,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     Object.assign(innerConfig, this.providerOptions);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
+    }
+    if (this.workspace?.processIsolation === true) {
+      innerConfig.sandbox_mode = "danger-full-access";
     }
     if (this.config.mcpServers) {
       const mcpServers: Record<string, CodexMcpServerConfig> = {};
@@ -6748,7 +6765,10 @@ export class CodexAppServerAgentClient implements AgentClient {
       return await spawnWorkspaceProviderProcess({
         workspace: options.workspace,
         argv: [launchPrefix.command, ...args],
-        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, launchEnv]),
+        env: providerWorkspaceEnvironment([
+          resolveProviderEnvironment(this.runtimeSettings),
+          launchEnv,
+        ]),
         purpose: options.agentId
           ? { kind: "agent", agentId: options.agentId, provider: CODEX_PROVIDER }
           : { kind: "provider-probe", provider: CODEX_PROVIDER },
@@ -6776,7 +6796,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       const { stdout, stderr } = await runWorkspaceProviderCommand({
         workspace,
         argv: [launch.command, ...launch.args, "--version"],
-        env: this.runtimeSettings?.env,
+        env: resolveProviderEnvironment(this.runtimeSettings),
         provider: CODEX_PROVIDER,
       });
       return codexVersionAtLeast(`${stdout}\n${stderr}`, minimum);

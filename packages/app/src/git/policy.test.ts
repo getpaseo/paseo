@@ -71,6 +71,7 @@ function createInput(
     mergeCapability: deriveMergeCapability(pullRequestGithub),
     hasRemote: false,
     isPaseoOwnedWorktree: false,
+    canMergeToBase: true,
     isOnBaseBranch: true,
     hasUncommittedChanges: false,
     baseRefAvailable: true,
@@ -612,6 +613,20 @@ describe("git-actions-policy", () => {
       id: "merge-branch",
       label: "Merge locally",
     });
+  });
+
+  it("hides local merge when the workspace has no integration target", () => {
+    const actions = buildGitActions(
+      createInput({
+        canMergeToBase: false,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        shipDefault: "merge",
+      }),
+    );
+
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary.some((action) => action.id === "merge-branch")).toBe(false);
   });
 
   it("promotes ready PR merge over local merge", () => {

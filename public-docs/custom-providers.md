@@ -133,6 +133,32 @@ Create as many entries as you want against the same first-class provider. Each o
 }
 ```
 
+## Secrets from files
+
+Use `envFromFiles` when a provider needs a secret that should not appear in `config.json`:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "claude": {
+        "envFromFiles": {
+          "CLAUDE_CODE_OAUTH_TOKEN": "/home/user/.local/state/paseo/secrets/claude-token"
+        }
+      }
+    }
+  }
+}
+```
+
+Paseo reads the file for each launch and injects its value only into that provider's environment.
+The source file is not mounted or copied into the workspace. It must be an absolute, canonical,
+daemon-owned regular file with mode `0600` and a maximum size of 64 KiB. Symlinks, invalid UTF-8,
+and NUL bytes are rejected. Paseo removes one trailing newline.
+
+Run `paseo reload` after changing the mapping. Changes to the file contents apply to the next
+provider launch without a reload.
+
 ## ACP providers
 
 Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be added with `extends: "acp"` and a `command`. Paseo spawns the process, sends an `initialize` JSON-RPC request, and the agent reports its capabilities, modes, and models at runtime.
@@ -192,4 +218,4 @@ Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be a
 
 ## Full reference
 
-For the complete field reference (`extends`, `label`, `command`, `env`, `models`, `additionalModels`, `disallowedTools`, `enabled`, `order`), model and thinking-option schemas, and deeper examples for each plan, see [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) on GitHub.
+For the complete field reference (`extends`, `label`, `command`, `env`, `envFromFiles`, `models`, `additionalModels`, `disallowedTools`, `enabled`, `order`), model and thinking-option schemas, and deeper examples for each plan, see [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) on GitHub.

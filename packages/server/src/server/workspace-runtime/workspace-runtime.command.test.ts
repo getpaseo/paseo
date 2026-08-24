@@ -81,12 +81,76 @@ test("the fixture executable receives generic discovery purpose through the stri
     workspaceId: fixture.workspaceId,
     project: {
       projectId: fixture.createInput.project.id,
-      source: { kind: "directory", path: fixture.createInput.project.source.path },
+      source: {
+        kind: "directory",
+        path: fixture.createInput.project.source.path,
+      },
     },
     placement: fixture.createInput.placement,
     purpose: "discovery",
   });
   await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("command runtime requirements fail closed before workspace creation", async () => {
+  const unauthenticated = await createFixture("daemon-auth-required", false, "pty", {
+    requiresDaemonAuthentication: true,
+  });
+  await expect(unauthenticated.service.reconcile()).rejects.toThrow(
+    "Workspace reconciliation failed",
+  );
+  await expect(unauthenticated.service.create(unauthenticated.createInput)).rejects.toThrow(
+    "requires daemon authentication",
+  );
+
+  const authenticated = await createFixture("daemon-auth-configured", false, "pty", {
+    requiresDaemonAuthentication: true,
+    daemonAuthenticationConfigured: true,
+  });
+  await expect(authenticated.service.create(authenticated.createInput)).resolves.toMatchObject({
+    workspaceId: authenticated.workspaceId,
+  });
+  await authenticated.service.destroy(authenticated.workspaceId);
+});
+
+test("command runtime capabilities drive process isolation and typed lifecycle operations", async () => {
+  const fixture = await createFixture("typed-capabilities", false, "pty", {
+    processIsolation: true,
+    releaseBacking: true,
+    mergeToBaseTarget: "/source/project",
+    localIntegrationTarget: "/source/project",
+  });
+  const placement = await fixture.service.create(fixture.createInput);
+  expect(placement.localIntegrationTarget).toBe("/source/project");
+  await expect(fixture.service.canMergeToBase(fixture.workspaceId)).resolves.toBe(true);
+  expect((await fixture.service.bind(fixture.workspaceId)).provider.processIsolation).toBe(true);
+  await expect(fixture.service.mergeToBase(fixture.workspaceId)).resolves.toBe("/source/project");
+  await fixture.service.pause(fixture.workspaceId);
+  await fixture.service.releaseBacking(fixture.workspaceId);
+  await expect(fixture.service.inspect(fixture.workspaceId)).resolves.toEqual({
+    status: "missing",
+  });
+});
+
+test("workspaces without a local integration target cannot merge locally", async () => {
+  const fixture = await createFixture("no-local-integration-target");
+  await fixture.service.create(fixture.createInput);
+
+  await expect(fixture.service.canMergeToBase(fixture.workspaceId)).resolves.toBe(false);
+  await expect(fixture.service.mergeToBase(fixture.workspaceId)).rejects.toThrow(
+    "cannot merge this workspace locally",
+  );
+});
+
+test("command runtimes cannot return relative local integration targets", async () => {
+  const fixture = await createFixture("relative-integration-target", false, "pty", {
+    mergeToBaseTarget: "relative/source",
+    localIntegrationTarget: "/source/project",
+  });
+  await fixture.service.create(fixture.createInput);
+  await expect(fixture.service.mergeToBase(fixture.workspaceId)).rejects.toThrow(
+    "invalid integration target",
+  );
 });
 
 test("resolves package, filesystem, and PATH runtime executables without shell parsing", async () => {
@@ -127,7 +191,10 @@ test("resolves package, filesystem, and PATH runtime executables without shell p
       service.create({
         workspaceId,
         runtimeId,
-        project: { id: runtimeId, source: { kind: "host-directory", path: source } },
+        project: {
+          id: runtimeId,
+          source: { kind: "host-directory", path: source },
+        },
         placement: { kind: "existing" },
       }),
     ).resolves.toMatchObject({ workspaceId, runtimeId });
@@ -144,7 +211,11 @@ test("launches JavaScript package bins with Node and preserves configured argv",
   await Promise.all([mkdir(source), mkdir(packageRoot, { recursive: true })]);
   await writeFile(
     path.join(packageRoot, "package.json"),
-    JSON.stringify({ name: "@fixture/runtime", type: "module", bin: "runtime.js" }),
+    JSON.stringify({
+      name: "@fixture/runtime",
+      type: "module",
+      bin: "runtime.js",
+    }),
   );
   await writeFile(
     path.join(packageRoot, "runtime.js"),
@@ -175,7 +246,10 @@ test("launches JavaScript package bins with Node and preserves configured argv",
   await service.create({
     workspaceId: "package-bin",
     runtimeId: "package",
-    project: { id: "package", source: { kind: "host-directory", path: source } },
+    project: {
+      id: "package",
+      source: { kind: "host-directory", path: source },
+    },
     placement: { kind: "existing" },
   });
   const launches = (await readFile(argvFile, "utf8"))
@@ -206,7 +280,9 @@ test("equal display cwd values never share external runtime execution, files, Gi
   await Promise.all([...sources, ...stateDirectories].map((directory) => mkdir(directory)));
   for (const [index, source] of sources.entries()) {
     execFileSync("git", ["init", "-b", "main"], { cwd: source });
-    execFileSync("git", ["config", "user.email", "paseo@example.com"], { cwd: source });
+    execFileSync("git", ["config", "user.email", "paseo@example.com"], {
+      cwd: source,
+    });
     execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: source });
     await writeFile(path.join(source, "tracked.txt"), "base\n");
     execFileSync("git", ["add", "tracked.txt"], { cwd: source });
@@ -247,8 +323,14 @@ test("equal display cwd values never share external runtime execution, files, Gi
       placement: { kind: "existing" },
     });
   }
-  await expect(service.inspect("equal-a")).resolves.toEqual({ status: "ready", cwd: "/workspace" });
-  await expect(service.inspect("equal-b")).resolves.toEqual({ status: "ready", cwd: "/workspace" });
+  await expect(service.inspect("equal-a")).resolves.toEqual({
+    status: "ready",
+    cwd: "/workspace",
+  });
+  await expect(service.inspect("equal-b")).resolves.toEqual({
+    status: "ready",
+    cwd: "/workspace",
+  });
   await expect(service.requireHostVisiblePath("equal-a")).rejects.toThrow("no host-visible path");
   expect(await service.bind("equal-a")).not.toBe(await service.bind("equal-b"));
 
@@ -460,7 +542,10 @@ test("the command runtime transports PTY input, Unicode output, resize, and sign
     cols: 80,
   });
   signaled.kill("SIGTERM");
-  await expect(signaled.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+  await expect(signaled.exited).resolves.toEqual({
+    code: null,
+    signal: "SIGTERM",
+  });
   const forced = await fixture.service.openTerminal({
     workspaceId: fixture.workspaceId,
     argv: ["/bin/sleep", "30"],
@@ -470,7 +555,10 @@ test("the command runtime transports PTY input, Unicode output, resize, and sign
     cols: 80,
   });
   forced.kill("SIGKILL");
-  await expect(forced.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
+  await expect(forced.exited).resolves.toEqual({
+    code: null,
+    signal: "SIGKILL",
+  });
   await fixture.service.destroy(fixture.workspaceId);
 });
 
@@ -506,7 +594,9 @@ test.each(["success", "error", "hang"] as const)(
       argv: [
         processExecPath(),
         "-e",
-        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+        `require('node:fs').writeFileSync(${JSON.stringify(
+          pidFile,
+        )},String(process.pid));setInterval(()=>{},1000)`,
       ],
       env: {},
       purpose: { kind: "workspace-script", script: "wrapper-crash" },
@@ -590,7 +680,9 @@ test("an invalid fd4 event rejects and terminates the wrapper workload", async (
     argv: [
       processExecPath(),
       "-e",
-      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+      `require('node:fs').writeFileSync(${JSON.stringify(
+        pidFile,
+      )},String(process.pid));setInterval(()=>{},1000)`,
     ],
     env: {},
     purpose: { kind: "terminal", terminalId: "invalid-event" },
@@ -680,7 +772,9 @@ test("a failed PTY control channel rejects and terminates the wrapper workload",
     argv: [
       processExecPath(),
       "-e",
-      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+      `require('node:fs').writeFileSync(${JSON.stringify(
+        pidFile,
+      )},String(process.pid));setInterval(()=>{},1000)`,
     ],
     env: {},
     purpose: { kind: "terminal", terminalId: "failed-control" },
@@ -744,10 +838,15 @@ test.each(["error", "hang"] as const)(
       argv: [
         processExecPath(),
         "-e",
-        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+        `require('node:fs').writeFileSync(${JSON.stringify(
+          pidFile,
+        )},String(process.pid));setInterval(()=>{},1000)`,
       ],
       env: {},
-      purpose: { kind: "terminal", terminalId: `signal-helper-${signalHelperFailure}` },
+      purpose: {
+        kind: "terminal",
+        terminalId: `signal-helper-${signalHelperFailure}`,
+      },
       rows: 24,
       cols: 80,
     });
@@ -774,7 +873,9 @@ test("archive and permanent deletion reap runtime-owned processes when forced cl
     argv: [
       processExecPath(),
       "-e",
-      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`,
+      `require('node:fs').writeFileSync(${JSON.stringify(
+        pidFile,
+      )},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`,
     ],
     env: {},
     purpose: { kind: "provider-probe", provider: "codex" },
@@ -840,7 +941,10 @@ test("run admission racing pause cannot leave an unregistered workload running",
       workspaceId: fixture.workspaceId,
       argv: ["/bin/true"],
       env: {},
-      purpose: { kind: "workspace-script", script: "paused-admission-contract" },
+      purpose: {
+        kind: "workspace-script",
+        script: "paused-admission-contract",
+      },
     }),
   ).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
   await fixture.service.resume(fixture.workspaceId);
@@ -924,6 +1028,7 @@ async function createFixture(
   const workspaceId = `${name}-workspace`;
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
+    daemonAuthenticationConfigured: runtimeOptions.daemonAuthenticationConfigured === true,
     resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
@@ -945,6 +1050,14 @@ async function createFixture(
           ...(runtimeOptions.describeProtocolVersion === undefined
             ? []
             : ["--protocol-version", String(runtimeOptions.describeProtocolVersion)]),
+          ...(runtimeOptions.requiresDaemonAuthentication === true
+            ? ["--require-daemon-auth", "true"]
+            : []),
+          ...(runtimeOptions.processIsolation === true ? ["--process-isolation", "true"] : []),
+          ...(runtimeOptions.releaseBacking === true ? ["--release-backing", "true"] : []),
+          ...(typeof runtimeOptions.mergeToBaseTarget === "string"
+            ? ["--merge-to-base-target", runtimeOptions.mergeToBaseTarget]
+            : []),
         ],
         options: {
           stateDirectory,
@@ -966,7 +1079,10 @@ async function createFixture(
     createInput: {
       workspaceId,
       runtimeId: "fixture",
-      project: { id: `${name}-project`, source: { kind: "host-directory" as const, path: source } },
+      project: {
+        id: `${name}-project`,
+        source: { kind: "host-directory" as const, path: source },
+      },
       placement: { kind: "existing" as const },
     },
   };

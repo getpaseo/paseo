@@ -2,11 +2,18 @@
   "describeResponse": {
     "protocolVersion": 1,
     "modes": ["pipes", "pty"],
-    "reconcile": true
+    "capabilities": {
+      "reconcile": true,
+      "releaseBacking": true,
+      "mergeToBase": true,
+      "processIsolation": true
+    },
+    "requirements": { "daemonAuthentication": true }
   },
   "lifecycleRequest": {
     "protocolVersion": 1,
     "runtimeInstanceId": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "runtimeGeneration": "0123456789abcdef0123456789abcdef",
     "input": {
       "workspaceId": "workspace-01",
       "project": {
@@ -33,10 +40,16 @@
     "placement": { "cwd": "/workspace" },
     "materializedFreshContent": true
   },
+  "mergeToBaseResponse": {
+    "type": "merge-to-base",
+    "protocolVersion": 1,
+    "localIntegrationTarget": "/home/user/project"
+  },
   "pipeSpawnControl": {
     "type": "spawn",
     "protocolVersion": 1,
     "runtimeInstanceId": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "runtimeGeneration": "0123456789abcdef0123456789abcdef",
     "argv": ["/bin/sh", "-c", "printf hello"],
     "cwd": "packages/app",
     "env": { "PATH": "/usr/bin:/bin" },
@@ -49,6 +62,7 @@
     "type": "spawn",
     "protocolVersion": 1,
     "runtimeInstanceId": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "runtimeGeneration": "0123456789abcdef0123456789abcdef",
     "argv": ["/bin/sh", "-c", "printf hello"],
     "cwd": "packages/app",
     "env": { "PATH": "/usr/bin:/bin" },
@@ -84,11 +98,12 @@
     "message": "runtime control failed"
   },
   "bytes": {
-    "describeResponse": "{\"protocolVersion\":1,\"modes\":[\"pipes\",\"pty\"],\"reconcile\":true}\n",
-    "lifecycleRequest": "{\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"input\":{\"workspaceId\":\"workspace-01\",\"project\":{\"projectId\":\"project-01\",\"source\":{\"kind\":\"git\",\"url\":\"https://example.test/acme/project.git\",\"revision\":\"main\",\"subdirectory\":\"packages/app\"}},\"placement\":{\"kind\":\"existing\"},\"purpose\":\"discovery\"},\"options\":{}}\n",
+    "describeResponse": "{\"protocolVersion\":1,\"modes\":[\"pipes\",\"pty\"],\"capabilities\":{\"reconcile\":true,\"releaseBacking\":true,\"mergeToBase\":true,\"processIsolation\":true},\"requirements\":{\"daemonAuthentication\":true}}\n",
+    "lifecycleRequest": "{\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"runtimeGeneration\":\"0123456789abcdef0123456789abcdef\",\"input\":{\"workspaceId\":\"workspace-01\",\"project\":{\"projectId\":\"project-01\",\"source\":{\"kind\":\"git\",\"url\":\"https://example.test/acme/project.git\",\"revision\":\"main\",\"subdirectory\":\"packages/app\"}},\"placement\":{\"kind\":\"existing\"},\"purpose\":\"discovery\"},\"options\":{}}\n",
     "lifecycleResponse": "{\"type\":\"state\",\"protocolVersion\":1,\"state\":{\"workspaceId\":\"workspace-01\",\"lifecycle\":\"ready\"},\"placement\":{\"cwd\":\"/workspace\"},\"materializedFreshContent\":true}\n",
-    "pipeSpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\"},\"options\":{},\"execId\":\"exec-pipe-01\",\"stdio\":{\"kind\":\"pipes\"}}\n",
-    "ptySpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\"},\"options\":{},\"execId\":\"exec-pty-01\",\"stdio\":{\"kind\":\"pty\",\"rows\":24,\"cols\":80,\"term\":\"xterm-256color\"}}\n",
+    "mergeToBaseResponse": "{\"type\":\"merge-to-base\",\"protocolVersion\":1,\"localIntegrationTarget\":\"/home/user/project\"}\n",
+    "pipeSpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"runtimeGeneration\":\"0123456789abcdef0123456789abcdef\",\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\"},\"options\":{},\"execId\":\"exec-pipe-01\",\"stdio\":{\"kind\":\"pipes\"}}\n",
+    "ptySpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"runtimeInstanceId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"runtimeGeneration\":\"0123456789abcdef0123456789abcdef\",\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\"},\"options\":{},\"execId\":\"exec-pty-01\",\"stdio\":{\"kind\":\"pty\",\"rows\":24,\"cols\":80,\"term\":\"xterm-256color\"}}\n",
     "resizeControl": "{\"type\":\"resize\",\"protocolVersion\":1,\"id\":1,\"rows\":40,\"cols\":120}\n",
     "signalControl": "{\"type\":\"signal\",\"protocolVersion\":1,\"signal\":\"SIGTERM\"}\n",
     "startedEvent": "{\"type\":\"started\",\"protocolVersion\":1}\n",

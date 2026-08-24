@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -286,6 +286,18 @@ export interface AgentManagerOptions {
     workspaceId: string,
     cwd: string,
   ) => Promise<AgentLaunchContext["workspace"] | null>;
+  resolveWorkspaceRuntimeId?: (workspaceId: string) => Promise<string | null>;
+}
+
+export interface AgentMcpAuthBinding {
+  readonly agentId: string;
+  readonly workspaceId: string | null;
+  readonly runtimeId: string | null;
+  readonly launchGeneration: number;
+}
+
+interface StoredAgentMcpAuthBinding extends AgentMcpAuthBinding {
+  readonly token: string;
 }
 
 export interface WaitForAgentOptions {
@@ -665,6 +677,9 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
+  private readonly agentMcpBindingsByToken = new Map<string, StoredAgentMcpAuthBinding>();
+  private readonly agentMcpTokenByAgent = new Map<string, string>();
+  private readonly agentMcpLaunchGenerations = new Map<string, number>();
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
@@ -674,6 +689,7 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly resolveProviderWorkspace?: AgentManagerOptions["resolveProviderWorkspace"];
+  private readonly resolveWorkspaceRuntimeId?: AgentManagerOptions["resolveWorkspaceRuntimeId"];
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -688,6 +704,7 @@ export class AgentManager {
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.resolveProviderWorkspace = options.resolveProviderWorkspace;
+    this.resolveWorkspaceRuntimeId = options.resolveWorkspaceRuntimeId;
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -774,6 +791,21 @@ export class AgentManager {
    */
   getMcpAuthToken(): string | null {
     return this.mcpAuthToken;
+  }
+
+  authenticateAgentMcpRequest(authorizationHeader: string | undefined): AgentMcpAuthBinding | null {
+    const match = authorizationHeader?.match(/^Bearer ([A-Za-z0-9_-]+)$/);
+    if (!match) return null;
+    const binding = this.agentMcpBindingsByToken.get(match[1]);
+    if (!binding || this.agentMcpTokenByAgent.get(binding.agentId) !== binding.token) return null;
+    const agent = this.getAgent(binding.agentId);
+    if (!agent || (agent.workspaceId ?? null) !== binding.workspaceId) return null;
+    return {
+      agentId: binding.agentId,
+      workspaceId: binding.workspaceId,
+      runtimeId: binding.runtimeId,
+      launchGeneration: binding.launchGeneration,
+    };
   }
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
@@ -1524,6 +1556,7 @@ export class AgentManager {
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
+    this.revokeAgentMcpBinding(agentId);
     this.logger.trace(
       {
         agentId,
@@ -4614,15 +4647,45 @@ export class AgentManager {
       env,
       validateHostCwd: !workspaceId,
     });
+    const mcpAuthToken = this.mcpBaseUrl
+      ? await this.rotateAgentMcpBinding(agentId, workspaceId)
+      : null;
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
-        agentId,
         mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpAuthToken,
+        mcpAuthToken,
       }),
     );
     return { storedConfig, launchConfig };
+  }
+
+  private revokeAgentMcpBinding(agentId: string): void {
+    const token = this.agentMcpTokenByAgent.get(agentId);
+    if (token) this.agentMcpBindingsByToken.delete(token);
+    this.agentMcpTokenByAgent.delete(agentId);
+  }
+
+  private async rotateAgentMcpBinding(
+    agentId: string,
+    workspaceId: string | undefined,
+  ): Promise<string> {
+    this.revokeAgentMcpBinding(agentId);
+    const launchGeneration = (this.agentMcpLaunchGenerations.get(agentId) ?? 0) + 1;
+    this.agentMcpLaunchGenerations.set(agentId, launchGeneration);
+    const token = randomBytes(32).toString("base64url");
+    const binding: StoredAgentMcpAuthBinding = {
+      token,
+      agentId,
+      workspaceId: workspaceId ?? null,
+      runtimeId: workspaceId
+        ? ((await this.resolveWorkspaceRuntimeId?.(workspaceId)) ?? null)
+        : null,
+      launchGeneration,
+    };
+    this.agentMcpBindingsByToken.set(token, binding);
+    this.agentMcpTokenByAgent.set(agentId, token);
+    return token;
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {

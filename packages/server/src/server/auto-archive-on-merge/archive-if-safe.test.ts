@@ -57,14 +57,16 @@ function createSnapshot(overrides?: {
       isDirty: false,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
+      upstreamRef: "origin/feature",
       aheadOfOrigin: 0,
       behindOfOrigin: 0,
       hasRemote: true,
       diffStat: { additions: 0, deletions: 0 },
       ...overrides?.git,
     },
-    github: {
+    forge: {
       featuresEnabled: true,
+      authState: "authenticated",
       pullRequest:
         overrides && "pullRequest" in overrides
           ? (overrides.pullRequest ?? null)
@@ -97,8 +99,10 @@ function createHarness(overrides?: {
   const getSnapshot = vi.fn(
     overrides?.getSnapshot ?? (async () => createSnapshot()),
   ) as unknown as AutoArchiveArchiveOptions["workspaceGitService"]["getSnapshot"];
+  const bindWorkspace = vi.fn(() => ({ getSnapshot }));
   const workspaceGitService = {
     getSnapshot,
+    bindWorkspace,
   } as unknown as AutoArchiveArchiveOptions["workspaceGitService"];
   const options: AutoArchiveArchiveOptions = {
     paseoHome: PASEO_HOME,
@@ -154,6 +158,7 @@ function createHarness(overrides?: {
     deps,
     getConfig,
     getSnapshot,
+    bindWorkspace,
     inFlight,
     log,
     options,
@@ -164,11 +169,13 @@ async function runArchiveIfSafe(
   harness: ReturnType<typeof createHarness>,
   overrides?: {
     cwd?: string;
+    workspaceId?: string;
     pullRequest?: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   },
 ): Promise<void> {
   await archiveIfSafe({
     cwd: overrides?.cwd ?? CWD,
+    workspaceId: overrides?.workspaceId,
     pullRequest:
       overrides && "pullRequest" in overrides
         ? (overrides.pullRequest ?? null)
@@ -513,6 +520,36 @@ describe("archiveIfSafe", () => {
       "Auto-archived worktree after PR merge",
     );
     expect(harness.inFlight.has(CWD)).toBe(false);
+  });
+
+  test("archives a selected runtime workspace by id without probing its virtual cwd", async () => {
+    const harness = createHarness({
+      isPaseoOwnedWorktreeCwd: async () => {
+        throw new Error("virtual cwd must not reach host worktree ownership checks");
+      },
+      resolveWorkspaceIdAtPath: async () => {
+        throw new Error("selected workspace identity must not be inferred from cwd");
+      },
+    });
+
+    await runArchiveIfSafe(harness, {
+      cwd: "/workspace/runtime-workspace",
+      workspaceId: "runtime-workspace",
+    });
+
+    expect(harness.bindWorkspace).toHaveBeenCalledWith({
+      workspaceId: "runtime-workspace",
+      cwd: "/workspace/runtime-workspace",
+    });
+    expect(harness.deps.isPaseoOwnedWorktreeCwd).not.toHaveBeenCalled();
+    expect(harness.deps.resolveWorkspaceIdAtPath).not.toHaveBeenCalled();
+    expect(harness.deps.archiveByScope).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        scope: { kind: "workspace", workspaceId: "runtime-workspace" },
+        releaseBacking: true,
+      }),
+    );
   });
 
   test("does not archive a merge event already consumed by this workspace", async () => {

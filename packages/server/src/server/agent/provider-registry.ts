@@ -208,6 +208,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       command: getCursorACPCommand(runtimeSettings),
       env: runtimeSettings?.env,
+      envFromFiles: runtimeSettings?.envFromFiles,
     }),
   opencode: (logger, runtimeSettings, options) =>
     new OpenCodeAgentClient(logger, runtimeSettings, {
@@ -252,7 +253,12 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
 }
 
 function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) {
+  if (
+    !override?.command &&
+    !override?.env &&
+    !override?.envFromFiles &&
+    !override?.disallowedTools
+  ) {
     return undefined;
   }
 
@@ -264,6 +270,7 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
         }
       : undefined,
     env: override.env,
+    envFromFiles: override.envFromFiles,
     disallowedTools: override.disallowedTools,
   };
 }
@@ -278,18 +285,26 @@ function mergeRuntimeSettings(
 
   return {
     command: override?.command ?? base?.command,
-    env:
-      base?.env || override?.env
-        ? {
-            ...base?.env,
-            ...override?.env,
-          }
-        : undefined,
-    disallowedTools:
-      base?.disallowedTools || override?.disallowedTools
-        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
-        : undefined,
+    env: mergeOptionalRecords(base?.env, override?.env),
+    envFromFiles: mergeOptionalRecords(base?.envFromFiles, override?.envFromFiles),
+    disallowedTools: mergeOptionalArrays(base?.disallowedTools, override?.disallowedTools),
   };
+}
+
+function mergeOptionalRecords<T extends Record<string, string>>(
+  base: T | undefined,
+  override: T | undefined,
+): T | undefined {
+  return base === undefined && override === undefined ? undefined : ({ ...base, ...override } as T);
+}
+
+function mergeOptionalArrays<T>(
+  base: readonly T[] | undefined,
+  override: readonly T[] | undefined,
+): T[] | undefined {
+  return base === undefined && override === undefined
+    ? undefined
+    : [...(base ?? []), ...(override ?? [])];
 }
 
 function applyOverrideToDefinition(
@@ -786,6 +801,7 @@ function addDerivedProviders(
             logger,
             command,
             env: override.env,
+            envFromFiles: override.envFromFiles,
             providerId,
             label: override.label ?? providerId,
             providerParams: override.params,

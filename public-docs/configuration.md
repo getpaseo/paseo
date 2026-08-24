@@ -103,13 +103,46 @@ external command runtime in daemon configuration:
       "type": "command",
       "label": "Isolated",
       "command": ["/absolute/path/to/runtime-executable"],
+      "agentTools": ["workspace", "agents", "terminals", "scripts"],
       "options": {}
     }
   }
 }
 ```
 
-Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Remove an entry to unregister it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
+Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Remove an entry to unregister it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract). Changes to `workspaceRuntimes` require a daemon restart.
+
+`agentTools` grants agents launched in this runtime groups of Paseo MCP tools. Omit it to expose no
+Paseo tools to runtime agents. Accepted groups are `workspace`, `agents`, `terminals`, `scripts`,
+`heartbeats`, `providers`, `permissions`, `browser`, and `voice`. Each tool still enforces its own
+workspace and ownership scope; a group does not grant access to other workspaces. MCP must also be
+enabled and injected into agents.
+
+A runtime can require daemon password authentication in its `describe` response. Paseo refuses to
+register that runtime until `daemon.auth.password` is configured.
+
+## Forge hosts
+
+Map self-hosted forge domains or SSH aliases for selected command-runtime workspaces:
+
+```json
+{
+  "daemon": {
+    "forgeHosts": {
+      "git.example.com": "gitlab",
+      "github-work": "github"
+    }
+  }
+}
+```
+
+Keys are case-insensitive exact hostnames or SSH aliases. Do not include a scheme, path, port,
+wildcard, or suffix pattern. Values are `github`, `gitlab`, `gitea`, `forgejo`, or `codeberg`.
+Public forge hosts are recognized without configuration.
+
+An exact SSH alias entry wins. Otherwise Paseo resolves the alias with `ssh -G` in the selected
+workspace runtime and checks the resulting hostname. Unknown hosts remain unsupported instead of
+being probed with arbitrary credentials. Changes to `daemon.forgeHosts` require a daemon restart.
 
 ## Voice
 

@@ -38,7 +38,14 @@ const ResolvedWorktreeSourceSchema = z.discriminatedUnion("kind", [
       headRepositoryOwner: z.string().optional(),
       baseRefName: z.string(),
       checkoutRefs: z
-        .array(z.object({ remoteName: z.string().optional(), remoteRef: z.string() }).strict())
+        .array(
+          z
+            .object({
+              remoteName: z.string().optional(),
+              remoteRef: z.string(),
+            })
+            .strict(),
+        )
         .optional(),
       localBranchName: z.string().optional(),
       pushRemoteUrl: z.string().optional(),
@@ -48,7 +55,12 @@ const ResolvedWorktreeSourceSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const CommandRuntimePlacementIntentSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("existing"), relativeCwd: z.string().optional() }).strict(),
+  z
+    .object({
+      kind: z.literal("existing"),
+      relativeCwd: z.string().optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("branch"),
@@ -80,7 +92,10 @@ export const CommandRuntimeCreateInputSchema = z
   .object({
     workspaceId: z.string(),
     project: z
-      .object({ projectId: z.string(), source: CommandRuntimeProjectSourceSchema })
+      .object({
+        projectId: z.string(),
+        source: CommandRuntimeProjectSourceSchema,
+      })
       .strict(),
     placement: CommandRuntimePlacementIntentSchema,
     purpose: z.literal("discovery").optional(),
@@ -93,6 +108,7 @@ export const CommandRuntimeLifecycleRequestSchema = z
   .object({
     protocolVersion: ProtocolVersionSchema,
     runtimeInstanceId: z.string().min(1),
+    runtimeGeneration: z.string().min(1),
     input: CommandRuntimeCreateInputSchema.optional(),
     options: OptionsSchema,
     workspaceIds: z.array(z.string()).optional(),
@@ -109,7 +125,8 @@ export const CommandRuntimeStateSchema = z
 
 export const CommandRuntimePlacementSchema = z
   .object({
-    cwd: z.string(),
+    cwd: z.string().min(1),
+    localIntegrationTarget: z.string().min(1).optional(),
   })
   .strict();
 
@@ -156,7 +173,23 @@ export const CommandRuntimeDescribeResponseSchema = z
   .object({
     protocolVersion: ProtocolVersionSchema,
     modes: z.array(z.enum(["pipes", "pty"])),
-    reconcile: z.boolean().optional().default(false),
+    capabilities: z
+      .object({
+        reconcile: z.boolean(),
+        releaseBacking: z.boolean(),
+        mergeToBase: z.boolean(),
+        processIsolation: z.boolean(),
+      })
+      .strict(),
+    requirements: z.object({ daemonAuthentication: z.boolean() }).strict(),
+  })
+  .strict();
+
+export const CommandRuntimeMergeToBaseResponseSchema = z
+  .object({
+    type: z.literal("merge-to-base"),
+    protocolVersion: ProtocolVersionSchema,
+    localIntegrationTarget: z.string().min(1),
   })
   .strict();
 
@@ -188,6 +221,7 @@ export const CommandRuntimeSpawnEnvelopeSchema = z
     type: z.literal("spawn"),
     protocolVersion: ProtocolVersionSchema,
     runtimeInstanceId: z.string().min(1),
+    runtimeGeneration: z.string().min(1),
     argv: CommandSchema,
     cwd: z.string().optional(),
     env: EnvironmentSchema,
@@ -219,7 +253,12 @@ export const CommandRuntimeControlSchema = z.discriminatedUnion("type", [
 ]);
 
 export const CommandRuntimeProcessEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("started"), protocolVersion: ProtocolVersionSchema }).strict(),
+  z
+    .object({
+      type: z.literal("started"),
+      protocolVersion: ProtocolVersionSchema,
+    })
+    .strict(),
   z.object({ type: z.literal("eof"), protocolVersion: ProtocolVersionSchema }).strict(),
   z
     .object({
@@ -344,6 +383,10 @@ export function createCommandRuntimeProcessEventDecoder(mode: "pipes" | "pty"): 
 
 export type CommandRuntimeLifecycleRequest = z.infer<typeof CommandRuntimeLifecycleRequestSchema>;
 export type CommandRuntimeLifecycleResponse = z.infer<typeof CommandRuntimeLifecycleResponseSchema>;
+export type CommandRuntimeDescribeResponse = z.infer<typeof CommandRuntimeDescribeResponseSchema>;
+export type CommandRuntimeMergeToBaseResponse = z.infer<
+  typeof CommandRuntimeMergeToBaseResponseSchema
+>;
 export type CommandRuntimeState = z.infer<typeof CommandRuntimeStateSchema>;
 export type CommandRuntimeInspection = z.infer<typeof CommandRuntimeInspectionSchema>;
 export type CommandRuntimeSpawnEnvelope = z.infer<typeof CommandRuntimeSpawnEnvelopeSchema>;

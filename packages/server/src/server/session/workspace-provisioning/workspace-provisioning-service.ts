@@ -104,7 +104,12 @@ export function createWorkspaceProvisioningService(deps: {
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<
     WorkspaceGitService,
-    "bindLegacy" | "bindWorkspace" | "getCheckout" | "getSnapshot" | "peekSnapshot"
+    | "bindLegacy"
+    | "bindWorkspace"
+    | "releaseWorkspace"
+    | "getCheckout"
+    | "getSnapshot"
+    | "peekSnapshot"
   >;
   logger: Logger;
 }): WorkspaceProvisioningService {

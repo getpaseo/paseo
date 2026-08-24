@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { AgentProvider } from "./agent-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 
+const EnvironmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+
 const ProviderCommandDefaultSchema = z.object({
   mode: z.literal("default"),
 });
@@ -25,6 +27,7 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
+  envFromFiles: z.record(EnvironmentVariableNameSchema, z.string().min(1)).optional(),
   disallowedTools: z.array(z.string()).optional(),
 });
 
@@ -49,6 +52,7 @@ export const ProviderOverrideSchema = z.object({
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  envFromFiles: z.record(EnvironmentVariableNameSchema, z.string().min(1)).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),

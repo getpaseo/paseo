@@ -1,4 +1,19 @@
 import type { z } from "zod";
+import type { WorkspaceRuntimeAgentToolGroup } from "../../workspace-runtime/index.js";
+
+export type PaseoToolRuntimeTarget =
+  | { kind: "caller" }
+  | { kind: "caller-workspace"; selectCwd?: (input: unknown) => string | undefined }
+  | { kind: "workspace"; selectWorkspaceId: (input: unknown) => string | undefined }
+  | { kind: "agent"; selectAgentId: (input: unknown) => string }
+  | { kind: "direct-child-agent"; selectAgentId: (input: unknown) => string }
+  | { kind: "terminal"; selectTerminalId: (input: unknown) => string }
+  | { kind: "create-child-agent" };
+
+export interface PaseoToolRuntimeAccess {
+  group: WorkspaceRuntimeAgentToolGroup;
+  target: PaseoToolRuntimeTarget;
+}
 
 export interface PaseoToolExecutionContext {
   signal?: AbortSignal;
@@ -16,6 +31,7 @@ export interface PaseoToolConfig {
   description?: string;
   inputSchema?: z.ZodRawShape | z.ZodType;
   outputSchema?: z.ZodRawShape;
+  runtimeAccess?: PaseoToolRuntimeAccess;
 }
 
 export interface PaseoToolDefinition extends PaseoToolConfig {

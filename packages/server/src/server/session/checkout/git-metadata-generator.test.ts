@@ -4,7 +4,7 @@ import {
   StructuredAgentResponseError,
 } from "../../agent/agent-response-loop.js";
 import type { CheckoutDiffCompare, CheckoutDiffResult } from "../../../utils/checkout-git.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitService, WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import {
   createGitMetadataGenerator,
   type StructuredTextGeneration,
@@ -24,7 +24,12 @@ function createDiffSource(result: CheckoutDiffResult) {
     // means no override applies, so the default style is used.
     resolveRepoRoot: async () => "/tmp/git-metadata-generator-test-missing-root",
   };
-  return { diffSource, diffCalls };
+  const workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "resolveRepoRoot"> = {
+    cwd: "/repo",
+    getCheckoutDiff: (options) => diffSource.getCheckoutDiff("/repo", options),
+    resolveRepoRoot: () => diffSource.resolveRepoRoot("/repo"),
+  };
+  return { diffSource, diffCalls, workspaceGit };
 }
 
 function createGeneration(handler: (request: StructuredTextGenerationRequest<unknown>) => unknown) {
@@ -55,13 +60,16 @@ const DIFF_WITH_ONE_FILE: CheckoutDiffResult = {
 
 describe("createGitMetadataGenerator", () => {
   it("generateCommitMessage returns the generated message from an uncommitted-diff prompt", async () => {
-    const { diffSource, diffCalls } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, diffCalls, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation, generateCalls } = createGeneration(() => ({
       message: "Fix the flaky retry test",
     }));
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    const message = await generator.generateCommitMessage("/repo");
+    const message = await generator.generateCommitMessage({
+      workspaceGit,
+      workspaceId: "workspace-1",
+    });
 
     expect(message).toBe("Fix the flaky retry test");
     expect(diffCalls).toEqual([
@@ -69,6 +77,7 @@ describe("createGitMetadataGenerator", () => {
     ]);
     expect(generateCalls[0]).toMatchObject({
       cwd: "/repo",
+      workspaceId: "workspace-1",
       schemaName: "CommitMessage",
       agentTitle: "Commit generator",
     });
@@ -78,17 +87,17 @@ describe("createGitMetadataGenerator", () => {
   });
 
   it("generateCommitMessage falls back to a default message when generation exhausts its providers", async () => {
-    const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation } = createGeneration(() => {
       throw new StructuredAgentFallbackError([]);
     });
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    await expect(generator.generateCommitMessage("/repo")).resolves.toBe("Update files");
+    await expect(generator.generateCommitMessage({ workspaceGit })).resolves.toBe("Update files");
   });
 
   it("generateCommitMessage falls back when the generated response cannot be validated", async () => {
-    const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation } = createGeneration(() => {
       throw new StructuredAgentResponseError("invalid", {
         lastResponse: "{}",
@@ -97,28 +106,28 @@ describe("createGitMetadataGenerator", () => {
     });
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    await expect(generator.generateCommitMessage("/repo")).resolves.toBe("Update files");
+    await expect(generator.generateCommitMessage({ workspaceGit })).resolves.toBe("Update files");
   });
 
   it("generateCommitMessage rethrows errors that are not structured-generation failures", async () => {
-    const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation } = createGeneration(() => {
       throw new Error("network down");
     });
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    await expect(generator.generateCommitMessage("/repo")).rejects.toThrow("network down");
+    await expect(generator.generateCommitMessage({ workspaceGit })).rejects.toThrow("network down");
   });
 
   it("generatePullRequestText returns the generated title and body from a base-diff prompt", async () => {
-    const { diffSource, diffCalls } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, diffCalls, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation, generateCalls } = createGeneration(() => ({
       title: "Add retry with backoff",
       body: "Retries transient failures up to twice.",
     }));
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    const result = await generator.generatePullRequestText("/repo", "main");
+    const result = await generator.generatePullRequestText({ workspaceGit, baseRef: "main" });
 
     expect(result).toEqual({
       title: "Add retry with backoff",
@@ -136,13 +145,13 @@ describe("createGitMetadataGenerator", () => {
   });
 
   it("generatePullRequestText falls back to default PR text when generation fails", async () => {
-    const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { diffSource, workspaceGit } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation } = createGeneration(() => {
       throw new StructuredAgentFallbackError([]);
     });
     const generator = createGitMetadataGenerator({ workspaceGitService: diffSource, generation });
 
-    await expect(generator.generatePullRequestText("/repo")).resolves.toEqual({
+    await expect(generator.generatePullRequestText({ workspaceGit })).resolves.toEqual({
       title: "Update changes",
       body: "Automated PR generated by Paseo.",
     });

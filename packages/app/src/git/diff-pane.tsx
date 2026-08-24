@@ -259,7 +259,9 @@ function useDiscardChangesAction({
     async (path: string, oldPath?: string) => {
       const confirmed = await confirmDialog({
         title: t("workspace.fileActions.confirmRevert.title"),
-        message: t("workspace.fileActions.confirmRevert.message", { name: path }),
+        message: t("workspace.fileActions.confirmRevert.message", {
+          name: path,
+        }),
         confirmLabel: t("workspace.fileActions.confirmRevert.confirm"),
         cancelLabel: t("workspace.fileActions.confirmRevert.cancel"),
         destructive: true,
@@ -707,7 +709,10 @@ function InlineReviewThreadContent({
   viewportWidth?: number;
   pinToViewport?: boolean;
 }) {
-  const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
+  const threadState = getInlineReviewThreadState({
+    reviewTarget,
+    reviewActions,
+  });
   const height = reservedHeight ?? threadState?.height ?? 0;
   const placeholderStyle = useMemo<ViewStyle>(
     () => inlineUnistylesStyle({ minHeight: height }),
@@ -745,7 +750,10 @@ function InlineReviewGutterSpacer({
   reservedHeight?: number;
   style?: StyleProp<ViewStyle>;
 }) {
-  const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
+  const threadState = getInlineReviewThreadState({
+    reviewTarget,
+    reviewActions,
+  });
   const height = reservedHeight ?? threadState?.height ?? 0;
   const spacerStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -773,7 +781,10 @@ function InlineReviewRow({
   gutterWidth: number;
   reservedHeight?: number;
 }) {
-  const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
+  const threadState = getInlineReviewThreadState({
+    reviewTarget,
+    reviewActions,
+  });
   const height = reservedHeight ?? threadState?.height ?? 0;
   const gutterSpacerStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.inlineReviewGutterSpacer, inlineUnistylesStyle({ width: gutterWidth })],
@@ -1070,7 +1081,11 @@ const DiffFileHeader = memo(function DiffFileHeader({
   });
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
-  const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
+  const pressInRef = useRef<{
+    ts: number;
+    pageX: number;
+    pageY: number;
+  } | null>(null);
 
   const handleSelect = useCallback(() => {
     if (interactive) {
@@ -1454,7 +1469,9 @@ type PressableStyleFn = (
   state: PressableStateCallbackType & { hovered?: boolean; open?: boolean },
 ) => StyleProp<ViewStyle>;
 
-const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const foregroundMutedIconColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
@@ -2062,7 +2079,9 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     [allFolderPathSet, collapsedFolders],
   );
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
-  const scrollbar = useOverlayFlatListScrollbar(diffListRef, { enabled: !isCompact });
+  const scrollbar = useOverlayFlatListScrollbar(diffListRef, {
+    enabled: !isCompact,
+  });
   const { onLayout: updateScrollbarLayout, onScroll: updateScrollbarOffset } = scrollbar;
   const consumedFocusRequestRef = useRef<string | null>(null);
   const pendingFocusRequestRef = useRef<string | null>(null);
@@ -2111,7 +2130,9 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const getBodyHeightKey = useCallback(
     (file: ParsedDiffFile): string => {
       if (file.status === "too_large" || file.status === "binary") {
-        return `${layout}:${wrapLines ? "wrap" : "scroll"}:${typographyKey}:${file.path}:${file.status}`;
+        return `${layout}:${wrapLines ? "wrap" : "scroll"}:${typographyKey}:${
+          file.path
+        }:${file.status}`;
       }
 
       const metrics = getDiffFileMetrics(file);
@@ -2339,7 +2360,10 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             viewportHeight: diffListViewportHeightRef.current,
           })
         ) {
-          diffListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+          diffListRef.current?.scrollToOffset({
+            offset: targetOffset,
+            animated: false,
+          });
         }
       }
 
@@ -2370,7 +2394,10 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
           viewportHeight: diffListViewportHeightRef.current,
         })
       ) {
-        diffListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+        diffListRef.current?.scrollToOffset({
+          offset: targetOffset,
+          animated: false,
+        });
       }
 
       const pathPrefix = `${dirPath}/`;
@@ -2627,10 +2654,16 @@ function buildForgeSetupMessage(input: {
     return input.t("workspace.git.forgeSetup.generic", { brand: brandLabel });
   }
   if (input.action === "install_cli") {
-    return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
+    return input.t("workspace.git.forgeSetup.installCli", {
+      cli: signInCli,
+      brand: brandLabel,
+    });
   }
   const command = buildForgeSignInCommand(input.forge, input.host);
-  return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
+  return input.t("workspace.git.forgeSetup.signIn", {
+    command,
+    brand: brandLabel,
+  });
 }
 
 function buildDiffModeTriggerStyle(): PressableStyleFn {
@@ -2788,7 +2821,11 @@ function useDiffTabNavigation({
   const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const persistenceKey = useMemo(
-    () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
+    () =>
+      buildWorkspaceTabPersistenceKey({
+        serverId,
+        workspaceId: workspaceId ?? cwd,
+      }),
     [cwd, serverId, workspaceId],
   );
   const changesTabId = useWorkspaceLayoutStore((state) => {
@@ -2864,7 +2901,9 @@ export function GitDiffPane({
   }, [updateChangesPreferences, wrapLines]);
 
   const handleToggleHideWhitespace = useCallback(() => {
-    void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
+    void updateChangesPreferences({
+      hideWhitespace: !changesPreferences.hideWhitespace,
+    });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
 
   const handleToggleLayout = useCallback(() => {
@@ -2890,10 +2929,15 @@ export function GitDiffPane({
 
   const toast = useToast();
   const isLocalDaemon = useIsLocalDaemon(serverId);
+  const hostVisibleWorkspaceRoot = useSessionStore(
+    (state) => state.sessions[serverId]?.workspaces.get(workspaceGit.workspaceId)?.hostVisiblePath,
+  );
   const { targets: desktopOpenTargets } = useDesktopOpenTargets({
     isLocalExecution: isLocalDaemon,
   });
-  const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
+  const fileManagerTarget = hostVisibleWorkspaceRoot
+    ? desktopOpenTargets.find((target) => target.kind === "file-manager")
+    : undefined;
   const {
     changesTabOpen,
     toggleChanges: handleToggleChangesTab,
@@ -3008,7 +3052,11 @@ export function GitDiffPane({
     }),
     [appSettings.monoFontFamily, codeFontSize, effectiveLayout, wrapLines],
   );
-  const downloadFile = useFileDownload({ serverId, workspaceId, workspaceRoot: cwd });
+  const downloadFile = useFileDownload({
+    serverId,
+    workspaceId,
+    workspaceRoot: cwd,
+  });
   const handleCopyPath = useCallback(
     (path: string) => {
       void Clipboard.setStringAsync(
@@ -3022,14 +3070,17 @@ export function GitDiffPane({
   }, []);
   const handleRevealPath = useCallback(
     async (path: string) => {
-      if (!fileManagerTarget) {
+      if (!fileManagerTarget || !hostVisibleWorkspaceRoot) {
         return;
       }
       try {
         await openDesktopTarget({
           editorId: fileManagerTarget.id,
-          workspacePath: cwd,
-          filePath: buildAbsoluteExplorerPath({ workspaceRoot: cwd, entryPath: path }),
+          workspacePath: hostVisibleWorkspaceRoot,
+          filePath: buildAbsoluteExplorerPath({
+            workspaceRoot: hostVisibleWorkspaceRoot,
+            entryPath: path,
+          }),
         });
       } catch (cause) {
         toast.error(
@@ -3037,7 +3088,7 @@ export function GitDiffPane({
         );
       }
     },
-    [cwd, fileManagerTarget, t, toast],
+    [fileManagerTarget, hostVisibleWorkspaceRoot, t, toast],
   );
   const handleDownloadPath = useCallback(
     (path: string) => {
@@ -3051,7 +3102,11 @@ export function GitDiffPane({
         return;
       }
       try {
-        const payload = await client.duplicateFileEntry({ cwd, path });
+        const payload = await client.duplicateFileEntry({
+          cwd,
+          path,
+          ...(workspaceId ? { workspaceId } : {}),
+        });
         if (!payload.success) {
           toast.error(payload.error ?? t("workspace.fileExplorer.errors.duplicateFailed"));
         }
@@ -3059,7 +3114,7 @@ export function GitDiffPane({
         toast.error(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [client, cwd, t, toast],
+    [client, cwd, t, toast, workspaceId],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, diffMode });
   const workingTreeMode = useMemo(
