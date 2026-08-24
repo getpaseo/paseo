@@ -720,6 +720,19 @@ function normalizeNode(node: unknown): SplitNodeInternal | null {
   return null;
 }
 
+function findFirstPane(node: SplitNodeInternal): SplitPaneInternal | null {
+  if (node.kind === "pane") {
+    return node.pane;
+  }
+  for (const child of node.group.children) {
+    const pane = findFirstPane(child);
+    if (pane) {
+      return pane;
+    }
+  }
+  return null;
+}
+
 function reorderTabsForPane(input: ReorderTabsForPaneInput): SplitPaneInternal {
   const nextIds = normalizeTabIds(input.tabIds);
   const byId = new Map(input.pane.tabs.map((tab) => [tab.tabId, tab]));
@@ -1003,15 +1016,32 @@ export function normalizeLayout(layout: unknown): WorkspaceLayout {
   }
 
   const rawLayout = layout as WorkspaceLayout;
-  const root = normalizeNode(rawLayout.root) ?? asInternalNode(createDefaultLayout().root);
+  let root = normalizeNode(rawLayout.root) ?? asInternalNode(createDefaultLayout().root);
   const focusedPaneId =
     rawLayout.focusedPaneId === null ? null : trimNonEmpty(rawLayout.focusedPaneId);
-  const resolvedFocusedPaneId =
-    focusedPaneId === null
-      ? null
-      : ((focusedPaneId && findPaneById(root, focusedPaneId)?.id) ??
-        collectAllPanes(root)[0]?.id ??
-        DEFAULT_PANE_ID);
+
+  // Older persisted layouts can leave every real pane hidden. Repair that boundary
+  // here so tab placement always receives a pane that belongs to the visible tree.
+  if (collectAllPanes(root).length === 0) {
+    const paneToReveal =
+      findPaneById(root, focusedPaneId) ??
+      findPaneById(root, DEFAULT_PANE_ID) ??
+      findFirstPane(root);
+    invariant(paneToReveal, "Normalized workspace layout must contain a pane");
+    root = updatePaneInTree(root, {
+      paneId: paneToReveal.id,
+      updater: (pane) => ({ ...pane, hidden: undefined }),
+    });
+  }
+
+  const firstVisiblePane = collectAllPanes(root)[0];
+  invariant(firstVisiblePane, "Normalized workspace layout must have a visible pane");
+  let resolvedFocusedPaneId: string | null = null;
+  if (focusedPaneId !== null) {
+    const focusedPane = findPaneById(root, focusedPaneId);
+    resolvedFocusedPaneId =
+      focusedPane && focusedPane.hidden !== true ? focusedPane.id : firstVisiblePane.id;
+  }
 
   const normalizedLayout = {
     root,
@@ -1252,11 +1282,9 @@ function resolvePlacementPane(input: {
   // `collectAllPanes` skips hidden panes, so a focused-but-hidden pane — the side
   // panel between a reveal and a hide — falls through to a pane the user can see.
   const focusedCandidate = findPaneById(input.layout.root, input.layout.focusedPaneId);
-  const focusedPane =
-    (focusedCandidate?.hidden === true ? null : focusedCandidate) ??
-    collectAllPanes(input.layout.root)[0] ??
-    findPaneById(createDefaultLayout().root, DEFAULT_PANE_ID);
-  invariant(focusedPane, "Workspace layout must always have a pane");
+  const panes = collectAllPanes(input.layout.root);
+  const focusedPane = (focusedCandidate?.hidden === true ? null : focusedCandidate) ?? panes[0];
+  invariant(focusedPane, "Workspace layout must always have a visible pane");
   if (
     (input.placement.mode !== "ambient" && input.placement.mode !== "prefer") ||
     focusedPane.id !== input.sidePanelPaneId ||
@@ -1268,7 +1296,6 @@ function resolvePlacementPane(input: {
   // `collectAllPanes` skips hidden panes, so the chain falls back to the side panel
   // pane itself only when it is the sole visible pane. The side panel is the only
   // pane anything ever hides, so today that means "the side panel is the only pane".
-  const panes = collectAllPanes(input.layout.root);
   return (panes.find((pane) => pane.id === DEFAULT_PANE_ID && pane.id !== focusedPane.id) ??
     panes.find((pane) => pane.id !== focusedPane.id) ??
     focusedPane) as SplitPaneInternal;

@@ -164,6 +164,53 @@ describe("workspace-layout-store helpers", () => {
     expect(restoredTabs.every((tab) => !persistedIds.has(tab.tabId))).toBe(true);
   });
 
+  it("rehydrates and reconciles an all-hidden persisted workspace in its real pane", async () => {
+    const workspaceKey = "server:workspace";
+    const sidePanelPaneId = "pane-side-panel";
+    await AsyncStorage.setItem(
+      "workspace-layout-state",
+      JSON.stringify({
+        state: {
+          layoutByWorkspace: {
+            [workspaceKey]: {
+              root: createPane({ id: sidePanelPaneId, tabIds: [], hidden: true }),
+              focusedPaneId: "main",
+            },
+          },
+          splitSizesByWorkspace: {},
+          explorerPaneIdByWorkspace: { [workspaceKey]: sidePanelPaneId },
+        },
+        version: 1,
+      }),
+    );
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await restored.persist.rehydrate();
+
+    expect(() =>
+      restored.getState().reconcileTabs(workspaceKey, {
+        agentsHydrated: true,
+        terminalsHydrated: true,
+        activeAgentIds: [],
+        autoOpenAgentIds: [],
+        knownAgentIds: [],
+        knownTerminalIds: [],
+        standaloneTerminalIds: [],
+        hasActivePendingDraftCreate: false,
+      }),
+    ).not.toThrow();
+
+    const state = restored.getState();
+    const layout = state.layoutByWorkspace[workspaceKey];
+    const tabs = collectAllTabs(layout.root);
+    expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual([sidePanelPaneId]);
+    expect(layout.focusedPaneId).toBe(sidePanelPaneId);
+    expect(state.sidePanelPaneIdByWorkspace[workspaceKey]).toBe(sidePanelPaneId);
+    expect(findPaneById(layout.root, "main")).toBeNull();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target.kind).toBe("draft");
+    expect(findPaneById(layout.root, sidePanelPaneId)?.tabIds).toEqual([tabs[0]?.tabId]);
+  });
+
   it("finds panes and tabs across nested groups", () => {
     const root: SplitNode = {
       kind: "group",
@@ -258,6 +305,64 @@ describe("workspace-layout-store helpers", () => {
     expect(collectAllTabs(root).map((tab) => tab.tabId)).toEqual(["tab-a"]);
     expect(collectAllPanes(root)).toEqual([]);
     expect(getFocusedBrowserId({ root, focusedPaneId: "hidden" })).toBeNull();
+  });
+
+  it("repairs a normalized layout that has no visible pane", () => {
+    const layout = normalizeLayout({
+      root: createPane({ id: "explorer", tabIds: [], hidden: true }),
+      focusedPaneId: "main",
+    });
+
+    expect(findPaneById(layout.root, "explorer")).toEqual({
+      id: "explorer",
+      tabIds: [],
+      focusedTabId: null,
+      tabs: [],
+    });
+    expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["explorer"]);
+    expect(layout.focusedPaneId).toBe("explorer");
+  });
+
+  it("reveals the focused pane when every pane is hidden", () => {
+    const layout = normalizeLayout({
+      root: {
+        kind: "group",
+        group: {
+          id: "group-root",
+          direction: "horizontal",
+          sizes: [0.5, 0.5],
+          children: [
+            createPane({ id: "main", tabIds: ["tab-a"], hidden: true }),
+            createPane({ id: "focused", tabIds: ["tab-b"], hidden: true }),
+          ],
+        },
+      },
+      focusedPaneId: "focused",
+    });
+
+    expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["focused"]);
+    expect(layout.focusedPaneId).toBe("focused");
+  });
+
+  it("preserves null focus while revealing main from an all-hidden layout", () => {
+    const layout = normalizeLayout({
+      root: {
+        kind: "group",
+        group: {
+          id: "group-root",
+          direction: "horizontal",
+          sizes: [0.5, 0.5],
+          children: [
+            createPane({ id: "first", tabIds: ["tab-a"], hidden: true }),
+            createPane({ id: "main", tabIds: ["tab-b"], hidden: true }),
+          ],
+        },
+      },
+      focusedPaneId: null,
+    });
+
+    expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["main"]);
+    expect(layout.focusedPaneId).toBeNull();
   });
 });
 
