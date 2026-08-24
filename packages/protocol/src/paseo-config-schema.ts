@@ -40,6 +40,8 @@ export const PaseoScriptEntryRawSchema = z
     type: z.unknown().optional(),
     command: z.unknown().optional(),
     port: z.unknown().optional(),
+    autoStart: z.unknown().optional(),
+    openWhenHealthy: z.unknown().optional(),
   })
   .passthrough();
 

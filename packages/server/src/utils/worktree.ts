@@ -119,6 +119,8 @@ export interface ServiceScriptConfig {
   type: "service";
   command: string;
   port?: number; // explicit port override, otherwise auto-assigned
+  autoStart?: boolean;
+  openWhenHealthy?: boolean;
 }
 
 export type ScriptConfig = PlainScriptConfig | ServiceScriptConfig;
@@ -344,6 +346,8 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
         ? {
             type: "service",
             command,
+            ...(entry.autoStart === true ? { autoStart: true } : {}),
+            ...(entry.openWhenHealthy === true ? { openWhenHealthy: true } : {}),
           }
         : { command };
 

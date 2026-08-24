@@ -2332,6 +2332,19 @@ export class DaemonClient {
     });
   }
 
+  async listWorkspaceServices(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "workspace.service.list.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.service.list.request", workspaceId },
+      responseType: "workspace.service.list.response",
+    });
+  }
+
   async startWorkspaceScriptWithStatus(
     workspaceId: string,
     scriptName: string,
@@ -5558,6 +5571,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.workspaceServiceInventory]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

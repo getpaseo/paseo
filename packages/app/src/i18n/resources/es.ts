@@ -719,6 +719,17 @@ export const es: TranslationResources = {
         stopFailed: "No se pudo detener{{scriptName}}",
       },
     },
+    services: {
+      detected: "Detectados y sugeridos",
+      refresh: "Actualizar servicios",
+      open: "Abrir {{name}}",
+      logs: "Ver registros de {{name}}",
+      start: "Iniciar",
+      startNamed: "Iniciar {{name}}",
+      startFailed: "No se pudo iniciar el servicio",
+      confirmStartTitle: "¿Iniciar {{name}}?",
+      confirmStartMessage: "Paseo ejecutará este comando en el espacio de trabajo:\n\n{{command}}",
+    },
     tree: {
       showFolderTree: "Mostrar árbol de carpetas",
       hideFolderTree: "Ocultar árbol de carpetas",

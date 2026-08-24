@@ -99,6 +99,27 @@ interface BrowserElementAnnotation {
   comment: string;
 }
 
+async function resolveElementScreenshotDataUrl(input: {
+  browserId: string;
+  capturedDataUrl?: string | null;
+  captureElement?: (
+    browserId: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ) => Promise<string | null>;
+  selection: BrowserElementSelection;
+}): Promise<string | undefined> {
+  if (input.capturedDataUrl) return input.capturedDataUrl;
+  if (typeof input.captureElement !== "function") return undefined;
+  const { x, y, width, height } = input.selection.boundingRect;
+  if (width <= 0 || height <= 0) return undefined;
+  try {
+    return (await input.captureElement(input.browserId, { x, y, width, height })) ?? undefined;
+  } catch (error) {
+    console.warn("[browser-pane] capture element for screenshot failed", error);
+    return undefined;
+  }
+}
+
 type DeviceSizeId =
   | "responsive"
   | "iphone-se"
@@ -617,6 +638,10 @@ export function BrowserPane({
   const pendingNavigationUrlRef = useRef<string | null>(null);
   const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
   const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
+  const [selectorFailure, setSelectorFailure] = useState<{
+    mode: "annotate" | "screenshot";
+    reason: "loading" | "timeout" | "unavailable";
+  } | null>(null);
   const selectorControllerRef = useRef<ReturnType<typeof createElementSelectorController> | null>(
     null,
   );
@@ -1078,7 +1103,17 @@ export function BrowserPane({
   );
 
   const captureElementScreenshot = useCallback(
-    async (selection: BrowserElementSelection): Promise<AttachmentMetadata | undefined> => {
+    async (
+      selection: BrowserElementSelection,
+      capturedDataUrl?: string | null,
+    ): Promise<AttachmentMetadata | undefined> => {
+      if (capturedDataUrl) {
+        return persistAttachmentFromDataUrl({
+          dataUrl: capturedDataUrl,
+          mimeType: "image/png",
+          fileName: `element-${selection.tag}.png`,
+        });
+      }
       const captureElement = getDesktopHost()?.browser?.captureElement;
       if (typeof captureElement !== "function") {
         return undefined;
@@ -1106,21 +1141,16 @@ export function BrowserPane({
   );
 
   const screenshotElementToClipboard = useCallback(
-    async (selection: BrowserElementSelection) => {
+    async (selection: BrowserElementSelection, capturedDataUrl?: string | null) => {
       const text = formatElementAttachment(selection);
       const copyElement = getDesktopHost()?.browser?.copyElement;
       const captureElement = getDesktopHost()?.browser?.captureElement;
-      const { x, y, width, height } = selection.boundingRect;
-
-      let imageDataUrl: string | undefined;
-      if (typeof captureElement === "function" && width > 0 && height > 0) {
-        try {
-          const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
-          imageDataUrl = dataUrl ?? undefined;
-        } catch (error) {
-          console.warn("[browser-pane] capture element for screenshot failed", error);
-        }
-      }
+      const imageDataUrl = await resolveElementScreenshotDataUrl({
+        browserId: browserIdRef.current,
+        capturedDataUrl,
+        captureElement,
+        selection,
+      });
 
       const copiedMessage = imageDataUrl
         ? t("workspace.browser.controls.screenshotCopied")
@@ -1157,14 +1187,18 @@ export function BrowserPane({
   );
 
   const handleSelectorResult = useCallback(
-    (selection: BrowserElementSelection, mode: "annotate" | "screenshot") => {
+    (
+      selection: BrowserElementSelection,
+      mode: "annotate" | "screenshot",
+      screenshotDataUrl: string | null,
+    ) => {
       if (mode === "screenshot") {
-        void screenshotElementToClipboard(selection);
+        void screenshotElementToClipboard(selection, screenshotDataUrl);
         return;
       }
       pendingScreenshotRef.current = undefined;
       setPendingSelection(selection);
-      void captureElementScreenshot(selection).then((screenshot) => {
+      void captureElementScreenshot(selection, screenshotDataUrl).then((screenshot) => {
         pendingScreenshotRef.current = screenshot;
         return undefined;
       });
@@ -1191,58 +1225,54 @@ export function BrowserPane({
     setPendingSelection(null);
   }, []);
 
-  const showSelectorFailure = useCallback(
-    (reason: "loading" | "timeout" | "unavailable") => {
-      const message =
-        reason === "loading"
-          ? t("workspace.browser.controls.selectorLoading")
-          : t("workspace.browser.controls.selectorFailed");
-      toastRef.current?.error(message);
-    },
-    [t],
-  );
-
   const handleElementSelectorOutcome = useCallback(
     (outcome: ElementSelectorOutcome) => {
       setSelectorMode(null);
       if (outcome.type === "selected") {
-        handleSelectorResult(outcome.selection, outcome.mode);
+        setSelectorFailure(null);
+        handleSelectorResult(outcome.selection, outcome.mode, outcome.screenshotDataUrl);
       } else if (outcome.type === "failed") {
-        showSelectorFailure(outcome.reason);
+        setSelectorFailure({ mode: outcome.mode, reason: outcome.reason });
       }
     },
-    [handleSelectorResult, showSelectorFailure],
+    [handleSelectorResult],
   );
 
   const startElementSelector = useCallback(
     (mode: "annotate" | "screenshot") => {
       if (mode === "annotate" && !workspaceAttachmentScopeKey) {
-        showSelectorFailure("unavailable");
+        setSelectorFailure({ mode, reason: "unavailable" });
         return;
       }
       const webview = webviewRef.current;
       const controller = selectorControllerRef.current;
       if (!webview || !controller) {
-        showSelectorFailure("unavailable");
+        setSelectorFailure({ mode, reason: "unavailable" });
         return;
       }
 
       const startResult = controller.start({
+        browserId: browserIdRef.current,
         webview,
         mode,
         onFinish: handleElementSelectorOutcome,
       });
       if (startResult !== "started") {
-        showSelectorFailure(startResult);
+        setSelectorFailure({ mode, reason: startResult });
         return;
       }
 
       pendingScreenshotRef.current = undefined;
       setPendingSelection(null);
+      setSelectorFailure(null);
       setSelectorMode(mode);
     },
-    [handleElementSelectorOutcome, showSelectorFailure, workspaceAttachmentScopeKey],
+    [handleElementSelectorOutcome, workspaceAttachmentScopeKey],
   );
+
+  const handleRetrySelector = useCallback(() => {
+    if (selectorFailure) startElementSelector(selectorFailure.mode);
+  }, [selectorFailure, startElementSelector]);
 
   const cancelElementSelector = useCallback(() => {
     selectorControllerRef.current?.cancel();
@@ -1499,6 +1529,7 @@ export function BrowserPane({
                 : t("workspace.browser.controls.annotateElement")
             }
             active={selectorMode === "annotate"}
+            disabled={browser?.isLoading}
             onPress={handleToggleElementSelector}
             style={annotateIconButtonStyle}
           >
@@ -1516,6 +1547,7 @@ export function BrowserPane({
                 : t("workspace.browser.controls.screenshotElement")
             }
             active={selectorMode === "screenshot"}
+            disabled={browser?.isLoading}
             onPress={handleToggleScreenshot}
             style={screenshotIconButtonStyle}
           >
@@ -1533,6 +1565,24 @@ export function BrowserPane({
           <Text numberOfLines={1} style={errorTextStyle}>
             {browser.lastError}
           </Text>
+        </View>
+      ) : null}
+      {selectorFailure ? (
+        <View style={[styles.errorRow, styles.selectorErrorRow]}>
+          <Text numberOfLines={1} style={[errorTextStyle, styles.selectorErrorText]}>
+            {selectorFailure.reason === "loading"
+              ? t("workspace.browser.controls.selectorLoading")
+              : t("workspace.browser.controls.selectorFailed")}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("common.actions.retry")}
+            disabled={browser?.isLoading}
+            onPress={handleRetrySelector}
+            style={styles.selectorRetryButton}
+          >
+            <Text style={styles.selectorRetryText}>{t("common.actions.retry")}</Text>
+          </Pressable>
         </View>
       ) : null}
       <View
@@ -1751,6 +1801,23 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     backgroundColor: theme.colors.surface0,
+  },
+  selectorErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  selectorErrorText: { flex: 1 },
+  selectorRetryButton: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  selectorRetryText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   metaError: {
     fontSize: theme.fontSize.sm,

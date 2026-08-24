@@ -2,6 +2,7 @@ import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
 import type { TerminalWorkspaceContributionChangedEvent } from "./terminal-manager.js";
+import type { TerminalExitEvent, TerminalOutputEvent } from "./terminal-manager.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -655,4 +656,30 @@ it("does not emit workspace contribution event when an idle terminal is removed"
   expect(events).toEqual([]);
 
   unsubscribe();
+});
+
+it("publishes terminal output and exit events for daemon observers", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const outputs: TerminalOutputEvent[] = [];
+  const exits: TerminalExitEvent[] = [];
+  const unsubscribeOutput = manager.subscribeTerminalOutput?.((event) => outputs.push(event));
+  const unsubscribeExit = manager.subscribeTerminalExit?.((event) => exits.push(event));
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-events" });
+
+  session.send({ type: "input", data: "echo paseo-output-event\r" });
+  await waitForCondition(
+    () => outputs.some((event) => event.data.includes("paseo-output-event")),
+    5_000,
+  );
+  manager.killTerminal(session.id);
+
+  expect(outputs.find((event) => event.data.includes("paseo-output-event"))).toMatchObject({
+    terminalId: session.id,
+    cwd,
+    workspaceId: "ws-events",
+  });
+  expect(exits).toEqual([{ terminalId: session.id, cwd, workspaceId: "ws-events" }]);
+  unsubscribeOutput?.();
+  unsubscribeExit?.();
 });

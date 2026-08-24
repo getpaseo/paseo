@@ -22,6 +22,8 @@ import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
   TerminalWorkspaceContributionChangedListener,
+  TerminalOutputListener,
+  TerminalExitListener,
   TerminalsChangedEvent,
   TerminalsChangedListener,
 } from "./terminal-manager.js";
@@ -160,6 +162,8 @@ export function createWorkerTerminalManager(
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const terminalWorkspaceContributionChangedListeners =
     new Set<TerminalWorkspaceContributionChangedListener>();
+  const terminalOutputListeners = new Set<TerminalOutputListener>();
+  const terminalExitListeners = new Set<TerminalExitListener>();
   let workerExited = false;
   let workerShutdownTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -413,6 +417,17 @@ export function createWorkerTerminalManager(
         terminalIdsByCwd.delete(record.info.cwd);
       }
     }
+    for (const listener of terminalExitListeners) {
+      try {
+        listener({
+          terminalId: record.info.id,
+          cwd: record.info.cwd,
+          workspaceId: record.info.workspaceId,
+        });
+      } catch {
+        // One observer must not disrupt terminal cleanup.
+      }
+    }
     return record;
   }
 
@@ -428,6 +443,20 @@ export function createWorkerTerminalManager(
     }
     if (message.message.type === "snapshotReady" && message.message.replayPreamble !== undefined) {
       record.replayPreamble = message.message.replayPreamble;
+    }
+    if (message.message.type === "output") {
+      for (const listener of terminalOutputListeners) {
+        try {
+          listener({
+            terminalId: record.info.id,
+            cwd: record.info.cwd,
+            workspaceId: record.info.workspaceId,
+            data: message.message.data,
+          });
+        } catch {
+          // One observer must not disrupt terminal output delivery.
+        }
+      }
     }
     for (const listener of Array.from(record.messageListeners)) {
       listener(message.message);
@@ -854,6 +883,16 @@ export function createWorkerTerminalManager(
       return () => {
         terminalWorkspaceContributionChangedListeners.delete(listener);
       };
+    },
+
+    subscribeTerminalOutput(listener: TerminalOutputListener): () => void {
+      terminalOutputListeners.add(listener);
+      return () => terminalOutputListeners.delete(listener);
+    },
+
+    subscribeTerminalExit(listener: TerminalExitListener): () => void {
+      terminalExitListeners.add(listener);
+      return () => terminalExitListeners.delete(listener);
     },
   };
 }

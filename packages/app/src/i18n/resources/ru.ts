@@ -719,6 +719,17 @@ export const ru: TranslationResources = {
         stopFailed: "Не удалось остановить скрипт {{scriptName}}",
       },
     },
+    services: {
+      detected: "Detected & suggested",
+      refresh: "Refresh services",
+      open: "Open {{name}}",
+      logs: "View {{name}} logs",
+      start: "Start",
+      startNamed: "Start {{name}}",
+      startFailed: "Failed to start service",
+      confirmStartTitle: "Start {{name}}?",
+      confirmStartMessage: "Paseo will run this command in the workspace:\n\n{{command}}",
+    },
     tree: {
       showFolderTree: "Показать дерево папок",
       hideFolderTree: "Скрыть дерево папок",

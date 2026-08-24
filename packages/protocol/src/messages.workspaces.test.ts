@@ -7,6 +7,7 @@ import {
   WorkspaceCreateRequestSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceScriptPayloadSchema,
+  WorkspaceServicePayloadSchema,
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
@@ -1170,5 +1171,37 @@ describe("workspace message schemas", () => {
     });
     expect(newDirectory.type).toBe("workspace.create.request");
     expect(newDirectory.source.kind).toBe("directory");
+  });
+
+  test("parses workspace service inventory requests and updates", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.service.list.request",
+        workspaceId: "workspace-1",
+        requestId: "request-1",
+      }).type,
+    ).toBe("workspace.service.list.request");
+
+    const service = WorkspaceServicePayloadSchema.parse({
+      id: "wsvc_123",
+      workspaceId: "workspace-1",
+      source: "package",
+      label: "dev",
+      lifecycle: "available",
+      terminalId: null,
+      port: null,
+      localUrl: null,
+      publicUrl: null,
+      command: "npm run dev",
+      openWhenHealthy: false,
+      observedAt: "2026-08-24T12:00:00.000Z",
+    });
+    expect(service.command).toBe("npm run dev");
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.service.update",
+        payload: { workspaceId: "workspace-1", services: [service] },
+      }).type,
+    ).toBe("workspace.service.update");
   });
 });

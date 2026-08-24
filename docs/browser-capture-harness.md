@@ -16,6 +16,9 @@ It validates the compositor behavior that unit tests cannot see:
   renderer coordination;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
   host composer;
+- element annotation runs in the sandboxed all-frame guest preload, reports one token-scoped
+  result through main-process IPC, and captures the selected rectangle through the same serialized
+  pixel queue as browser automation;
 - the automation group loads the compiled production keyboard boundary and guest
   preload, then proves that initial page window handlers get first refusal, unhandled
   shortcuts synchronously suppress editable browser defaults before crossing the host
@@ -101,3 +104,9 @@ once when the webview attaches, then screenshot capture uses the shared serializ
 invalidates before each attempt, and retries known first-frame failures within the
 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
 full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+
+The renderer does not poll page globals for annotation results. Main validates that the requested
+browser belongs to the invoking host window, sends the selector token to every current guest frame,
+and ignores late or mismatched results. Navigation, guest destruction, cancellation, and timeout
+terminate the token. Fresh iframe preloads announce readiness and receive the active token. Source
+locations remain `null` unless verified; React component names are best-effort display context only.

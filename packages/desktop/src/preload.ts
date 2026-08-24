@@ -122,6 +122,16 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       browserId: string,
       rect: { x: number; y: number; width: number; height: number },
     ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
+    beginElementSelection: (input: {
+      browserId: string;
+      token: string;
+      mode: "annotate" | "screenshot";
+    }) => ipcRenderer.invoke("paseo:browser-element:begin", input),
+    cancelElementSelection: (input: {
+      browserId: string;
+      token: string;
+      mode: "annotate" | "screenshot";
+    }) => ipcRenderer.invoke("paseo:browser-element:cancel", input),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },

@@ -90,6 +90,7 @@ import {
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
+import { registerBrowserElementSelectorIpc } from "./features/browser-element-selector/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
@@ -164,6 +165,12 @@ function readActiveBrowserInput(
 }
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
+registerBrowserElementSelectorIpc({
+  ipcMain,
+  getGuest: (browserId, hostWebContentsId) =>
+    getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId),
+  warn: (message, details) => log.warn(`[browser-selector] ${message}`, details),
+});
 browserKeyboard.registerIpc();
 
 function showBrowserWebviewContextMenu(

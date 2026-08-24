@@ -401,6 +401,16 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 | `PASEO_PORT`                | Self alias for `PASEO_SERVICE_<SELF>_PORT`.                                                                               |
 | `HOST`                      | Bind host for the service process.                                                                                        |
 
+Service entries may also set `"autoStart": true` to launch after successful workspace setup,
+and `"openWhenHealthy": true` to ask a connected desktop client to open the service once it is
+reachable. Setup failure or cancellation prevents auto-start. Browser-opening failure never stops
+the service.
+
+The workspace Services menu combines configured services with verified loopback URLs announced by
+Paseo terminals. Conventional package scripts (`dev`, `start`, `serve`, and `preview`) appear as
+suggestions; Paseo shows the exact package-manager command and requires confirmation before creating
+their supervised terminal.
+
 Service proxy hostnames use the double-dash shape: `web--feature-auth--project.localhost` or, on the default branch, `web--project.localhost`. Optional public aliases use the same leftmost label under the configured public base host.
 
 `<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.

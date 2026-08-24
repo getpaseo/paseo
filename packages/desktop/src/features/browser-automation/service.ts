@@ -138,7 +138,7 @@ async function withPixelCaptureTimeout<T>(
   }
 }
 
-async function runSerializedPixelCapture<T>(capture: () => Promise<T>): Promise<T> {
+export async function runSerializedPixelCapture<T>(capture: () => Promise<T>): Promise<T> {
   const previous = pixelCaptureQueue;
   let releaseCurrent = () => {};
   const current = new Promise<void>((resolve) => {

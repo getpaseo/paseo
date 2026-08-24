@@ -713,6 +713,17 @@ export const ko: TranslationResources = {
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
       },
     },
+    services: {
+      detected: "Detected & suggested",
+      refresh: "Refresh services",
+      open: "Open {{name}}",
+      logs: "View {{name}} logs",
+      start: "Start",
+      startNamed: "Start {{name}}",
+      startFailed: "Failed to start service",
+      confirmStartTitle: "Start {{name}}?",
+      confirmStartMessage: "Paseo will run this command in the workspace:\n\n{{command}}",
+    },
     tree: {
       showFolderTree: "폴더 트리 표시",
       hideFolderTree: "폴더 트리 숨기기",

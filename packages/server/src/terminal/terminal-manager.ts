@@ -49,6 +49,22 @@ export type TerminalWorkspaceContributionChangedListener = (
   event: TerminalWorkspaceContributionChangedEvent,
 ) => void;
 
+export interface TerminalOutputEvent {
+  terminalId: string;
+  cwd: string;
+  workspaceId: string;
+  data: string;
+}
+
+export interface TerminalExitEvent {
+  terminalId: string;
+  cwd: string;
+  workspaceId: string;
+}
+
+export type TerminalOutputListener = (event: TerminalOutputEvent) => void;
+export type TerminalExitListener = (event: TerminalExitEvent) => void;
+
 export interface TerminalManager {
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
@@ -91,6 +107,8 @@ export interface TerminalManager {
   subscribeTerminalWorkspaceContributionChanged(
     listener: TerminalWorkspaceContributionChangedListener,
   ): () => void;
+  subscribeTerminalOutput?(listener: TerminalOutputListener): () => void;
+  subscribeTerminalExit?(listener: TerminalExitListener): () => void;
 }
 
 export interface TerminalManagerOptions {
@@ -109,11 +127,14 @@ export function createTerminalManager(
   const terminalExitUnsubscribeById = new Map<string, () => void>();
   const terminalTitleUnsubscribeById = new Map<string, () => void>();
   const terminalActivityUnsubscribeById = new Map<string, () => void>();
+  const terminalOutputUnsubscribeById = new Map<string, () => void>();
   const terminalActivityTokenById = new Map<string, string>();
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const terminalWorkspaceContributionChangedListeners =
     new Set<TerminalWorkspaceContributionChangedListener>();
+  const terminalOutputListeners = new Set<TerminalOutputListener>();
+  const terminalExitListeners = new Set<TerminalExitListener>();
   const defaultEnvByRootCwd = new Map<string, Record<string, string>>();
 
   function removeSessionById(id: string, options: { kill: boolean }): void {
@@ -137,6 +158,11 @@ export function createTerminalManager(
       unsubscribeActivity();
       terminalActivityUnsubscribeById.delete(id);
     }
+    const unsubscribeOutput = terminalOutputUnsubscribeById.get(id);
+    if (unsubscribeOutput) {
+      unsubscribeOutput();
+      terminalOutputUnsubscribeById.delete(id);
+    }
 
     terminalsById.delete(id);
     terminalActivityTokenById.delete(id);
@@ -155,6 +181,12 @@ export function createTerminalManager(
     if (options.kill) {
       session.kill();
     }
+
+    emitTerminalExit({
+      terminalId: session.id,
+      cwd: session.cwd,
+      workspaceId: session.workspaceId,
+    });
 
     const previousActivity = session.getActivity();
     const previousBucket = deriveTerminalActivityStatusBucket(previousActivity);
@@ -207,10 +239,43 @@ export function createTerminalManager(
         });
       }
     });
+    const unsubscribeOutput = session.subscribe(
+      (message) => {
+        if (message.type !== "output") return;
+        emitTerminalOutput({
+          terminalId: session.id,
+          cwd: session.cwd,
+          workspaceId: session.workspaceId,
+          data: message.data,
+        });
+      },
+      { initialSnapshot: "ready" },
+    );
     terminalExitUnsubscribeById.set(session.id, unsubscribeExit);
     terminalTitleUnsubscribeById.set(session.id, unsubscribeTitle);
     terminalActivityUnsubscribeById.set(session.id, unsubscribeActivity);
+    terminalOutputUnsubscribeById.set(session.id, unsubscribeOutput);
     return session;
+  }
+
+  function emitTerminalOutput(event: TerminalOutputEvent): void {
+    for (const listener of terminalOutputListeners) {
+      try {
+        listener(event);
+      } catch {
+        // One observer must not disrupt terminal output delivery.
+      }
+    }
+  }
+
+  function emitTerminalExit(event: TerminalExitEvent): void {
+    for (const listener of terminalExitListeners) {
+      try {
+        listener(event);
+      } catch {
+        // One observer must not disrupt terminal cleanup.
+      }
+    }
   }
 
   function toTerminalListItem(input: { session: TerminalSession }): TerminalListItem {
@@ -490,6 +555,16 @@ export function createTerminalManager(
       return () => {
         terminalWorkspaceContributionChangedListeners.delete(listener);
       };
+    },
+
+    subscribeTerminalOutput(listener: TerminalOutputListener): () => void {
+      terminalOutputListeners.add(listener);
+      return () => terminalOutputListeners.delete(listener);
+    },
+
+    subscribeTerminalExit(listener: TerminalExitListener): () => void {
+      terminalExitListeners.add(listener);
+      return () => terminalExitListeners.delete(listener);
     },
   };
 }

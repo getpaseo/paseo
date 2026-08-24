@@ -38,6 +38,11 @@ paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
 
 The commands return the same script metadata shown by the workspace: lifecycle, service port, proxy URLs, health, exit code, and supervised terminal ID. `stop` terminates the managed terminal rather than only removing the proxy route, so normal script lifecycle cleanup remains authoritative. MCP exposes matching `list_workspace_scripts`, `start_workspace_script`, and `stop_workspace_script` tools; those require an explicit workspace ID.
 
+Capable app clients also receive a workspace-scoped Services inventory. Configured `paseo.json`
+services are authoritative, verified terminal-announced loopback URLs fill gaps, and conventional
+package scripts are presented only as explicit start suggestions. Terminal candidates disappear
+when their owning terminal exits; inferred scripts never run automatically.
+
 ## Configuration
 
 Add a `serviceProxy` block under `daemon` in `~/.paseo/config.json`:

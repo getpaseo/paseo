@@ -59,6 +59,7 @@ import {
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import type { WorkspaceServiceRuntime } from "./workspace-services/workspace-service-runtime.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
@@ -569,6 +570,7 @@ export class VoiceAssistantWebSocketServer {
   private terminalManager!: TerminalManager | null;
   private serviceProxy!: ServiceProxySubsystem | null;
   private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
+  private workspaceServiceRuntime: WorkspaceServiceRuntime | null = null;
   private getDaemonTcpPort!: (() => number | null) | null;
   private getDaemonTcpHost!: (() => string | null) | null;
   private serviceProxyPublicBaseUrl!: string | null;
@@ -652,6 +654,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    workspaceServiceRuntime?: WorkspaceServiceRuntime,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -673,6 +676,7 @@ export class VoiceAssistantWebSocketServer {
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
+    this.workspaceServiceRuntime = workspaceServiceRuntime ?? null;
     const requiredServices = requireWebSocketServices({
       scheduleService,
       checkoutDiffManager,
@@ -1052,6 +1056,8 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeDaemonConfigChange = null;
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
+    this.workspaceServiceRuntime?.dispose();
+    this.workspaceServiceRuntime = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -1453,6 +1459,7 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
+      workspaceServiceRuntime: this.workspaceServiceRuntime ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       workspaceSetupRuntime: this.workspaceSetupRuntime,
       onBranchChanged: this.onBranchChanged ?? undefined,
@@ -1752,6 +1759,8 @@ export class VoiceAssistantWebSocketServer {
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: true,
+        // COMPAT(workspaceServiceInventory): added in v0.5.x.
+        workspaceServiceInventory: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.

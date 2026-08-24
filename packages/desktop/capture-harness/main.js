@@ -28,6 +28,8 @@ const PRODUCTION_BROWSER_WEBVIEW_REGISTRY_PATH = path.join(
   "registry.js",
 );
 const BROWSER_SHORTCUT_INPUT_CHANNEL = "paseo:browser-shortcut-input";
+const BROWSER_ELEMENT_GUEST_BEGIN_CHANNEL = "paseo:browser-element:guest-begin";
+const BROWSER_ELEMENT_GUEST_RESULT_CHANNEL = "paseo:browser-element:guest-result";
 const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
 const FULL_PAGE_HEIGHT = 1600;
@@ -2092,6 +2094,38 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   return checks;
 }
 
+async function verifyBrowserElementSelector({ guest, browserId, snapshot }) {
+  const selectedElement = new Promise((resolve) => {
+    const token = "capture-harness-selector";
+    const onResult = (event, payload) => {
+      if (event.sender.id !== guest.id || payload?.token !== token) return;
+      ipcMain.removeListener(BROWSER_ELEMENT_GUEST_RESULT_CHANNEL, onResult);
+      resolve(payload);
+    };
+    ipcMain.on(BROWSER_ELEMENT_GUEST_RESULT_CHANNEL, onResult);
+    guest.mainFrame.send(BROWSER_ELEMENT_GUEST_BEGIN_CHANNEL, {
+      browserId,
+      token,
+      mode: "annotate",
+    });
+  });
+  await delay(25);
+  const currentSaveRef = snapshot.refs.find((ref) => ref.fingerprint.name === "Save later");
+  if (!currentSaveRef) fail("automation current save ref missing for element selector");
+  await automationClick(guest, currentSaveRef);
+  const selectorResult = await withTimeout(selectedElement, "browser element selector result");
+  if (
+    selectorResult?.status !== "selected" ||
+    selectorResult.selection?.tag !== "button" ||
+    selectorResult.selection?.url !== guest.getURL() ||
+    selectorResult.selection?.reactSource?.fileName
+  ) {
+    fail(`automation element selector returned ${JSON.stringify(selectorResult)}`);
+  }
+  pass("automation guest preload returns token-scoped element context");
+  return { group: "automation", check: "element-selector", pass: true };
+}
+
 async function runAutomationGroup() {
   const results = [];
   const { BrowserKeyboard } = require(PRODUCTION_BROWSER_KEYBOARD_PATH);
@@ -2420,6 +2454,8 @@ async function runAutomationGroup() {
     }
     pass("automation upload ref resolves to backendNodeId");
     results.push({ group: "automation", check: "upload-backend-node", pass: true });
+
+    results.push(await verifyBrowserElementSelector({ guest, browserId, snapshot: second }));
 
     const browserKeyboardChecks = await verifyBrowserKeyboardIsolation({
       guest,

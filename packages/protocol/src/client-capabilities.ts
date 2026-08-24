@@ -24,6 +24,9 @@ export const CLIENT_CAPS = {
   // provider catalogs with shared thinking sets and may revalidate by content hash.
   // Remove the legacy snapshot encoding after 2027-02-04.
   compactProviderSnapshots: "compact_provider_snapshots",
+  // COMPAT(workspaceServiceInventory): added in v0.5.x. Capable clients receive
+  // workspace-scoped service inventory updates in addition to legacy script status.
+  workspaceServiceInventory: "workspace_service_inventory",
   browserHost: "browser_host",
 } as const;
 

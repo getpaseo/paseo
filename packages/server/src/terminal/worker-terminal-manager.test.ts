@@ -912,6 +912,52 @@ it("produces one terminals-changed snapshot and one contribution event per activ
   ]);
 });
 
+it("publishes worker terminal output and exit events for daemon observers", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      workspaceId: "ws-events",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+  const outputs: unknown[] = [];
+  const exits: unknown[] = [];
+  manager.subscribeTerminalOutput?.((event) => outputs.push(event));
+  manager.subscribeTerminalExit?.((event) => exits.push(event));
+
+  worker.emitWorkerMessage({
+    type: "terminalMessage",
+    terminalId: "terminal-a",
+    message: { type: "output", data: "http://localhost:3000" },
+  });
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: { exitCode: 0, signal: null, lastOutputLines: [] },
+  });
+
+  expect(outputs).toEqual([
+    {
+      terminalId: "terminal-a",
+      cwd: "/workspace",
+      workspaceId: "ws-events",
+      data: "http://localhost:3000",
+    },
+  ]);
+  expect(exits).toEqual([
+    { terminalId: "terminal-a", cwd: "/workspace", workspaceId: "ws-events" },
+  ]);
+});
+
 it("removes a killed worker terminal from terminalExit without duplicate snapshots", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({

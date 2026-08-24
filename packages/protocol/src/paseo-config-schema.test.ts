@@ -20,6 +20,8 @@ describe("paseo config schema", () => {
           type: "service",
           command: "npm run dev",
           port: 5173,
+          autoStart: true,
+          openWhenHealthy: true,
         },
       },
     };

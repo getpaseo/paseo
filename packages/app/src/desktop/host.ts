@@ -162,6 +162,25 @@ export interface DesktopBrowserBridge {
     browserId: string,
     rect: { x: number; y: number; width: number; height: number },
   ) => Promise<string | null>;
+  beginElementSelection?: (input: {
+    browserId: string;
+    token: string;
+    mode: "annotate" | "screenshot";
+  }) => Promise<
+    | {
+        status: "selected";
+        mode: "annotate" | "screenshot";
+        selection: Record<string, unknown>;
+        screenshotDataUrl: string | null;
+      }
+    | { status: "cancelled" }
+    | { status: "failed"; reason: "loading" | "timeout" | "unavailable" }
+  >;
+  cancelElementSelection?: (input: {
+    browserId: string;
+    token: string;
+    mode: "annotate" | "screenshot";
+  }) => Promise<boolean>;
   /** Copy element text and/or an image to the system clipboard from main. */
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
 }

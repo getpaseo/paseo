@@ -716,6 +716,17 @@ export const ptBR: TranslationResources = {
         stopFailed: "Falha ao parar {{scriptName}}",
       },
     },
+    services: {
+      detected: "Detected & suggested",
+      refresh: "Refresh services",
+      open: "Open {{name}}",
+      logs: "View {{name}} logs",
+      start: "Start",
+      startNamed: "Start {{name}}",
+      startFailed: "Failed to start service",
+      confirmStartTitle: "Start {{name}}?",
+      confirmStartMessage: "Paseo will run this command in the workspace:\n\n{{command}}",
+    },
     tree: {
       showFolderTree: "Mostrar árvore de pastas",
       hideFolderTree: "Ocultar árvore de pastas",
