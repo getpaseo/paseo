@@ -1,6 +1,6 @@
 import type { ITheme } from "@xterm/xterm";
 
-import type { Theme } from "@/styles/theme";
+import { darkTheme, type Theme } from "@/styles/theme";
 
 type TerminalPalette = Theme["colors"]["terminal"];
 
@@ -30,4 +30,10 @@ export function toXtermTheme(terminal: TerminalPalette): ITheme {
     brightCyan: terminal.brightCyan,
     brightWhite: terminal.brightWhite,
   };
+}
+
+export function toTerminalXtermTheme(theme: Theme): ITheme {
+  const terminal =
+    theme.colorScheme === "light" ? darkTheme.colors.terminal : theme.colors.terminal;
+  return toXtermTheme(terminal);
 }
