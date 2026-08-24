@@ -831,6 +831,12 @@ export const AgentSnapshotPayloadSchema = z.object({
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
+  pendingInputQueue: z
+    .object({
+      steering: z.array(z.string()),
+      followUp: z.array(z.string()),
+    })
+    .optional(),
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),

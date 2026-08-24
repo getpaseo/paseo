@@ -85,6 +85,7 @@ export interface Agent {
   currentModeId: string | null;
   availableModes: AgentMode[];
   pendingPermissions: AgentPermissionRequest[];
+  pendingInputQueue?: { steering: string[]; followUp: string[] };
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;

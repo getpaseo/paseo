@@ -363,6 +363,36 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
   );
 }
 
+interface RenderAuthoritativeInputQueueArgs {
+  queue: { steering: readonly string[]; followUp: readonly string[] };
+}
+
+function renderAuthoritativeInputQueue(
+  args: RenderAuthoritativeInputQueueArgs,
+): ReactElement | null {
+  const items = [
+    ...args.queue.steering.map((text, index) => ({ id: `steering-${index}`, mode: "Steer", text })),
+    ...args.queue.followUp.map((text, index) => ({
+      id: `follow-up-${index}`,
+      mode: "Follow-up",
+      text,
+    })),
+  ];
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.queueTrack} testID="composer-authoritative-input-queue">
+      {items.map((item) => (
+        <View key={item.id} style={styles.queueItem}>
+          <Text style={styles.queueMode}>{item.mode}</Text>
+          <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+            {item.text}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
@@ -978,6 +1008,7 @@ interface ComposerProps {
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
+const EMPTY_PENDING_INPUT_QUEUE = { steering: [] as string[], followUp: [] as string[] };
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -1200,6 +1231,11 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const pendingInputQueue = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.agents?.get(agentId)?.pendingInputQueue ??
+      EMPTY_PENDING_INPUT_QUEUE,
+  );
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -2221,15 +2257,19 @@ function ComposerContentImpl({
   );
 
   const queueList = useMemo(
-    () =>
-      renderQueueTrack({
-        queuedMessages,
-        handleEditQueuedMessage,
-        handleSendQueuedNow,
-        editLabel: t("composer.attachments.editQueuedMessage"),
-        sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
-      }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    () => (
+      <>
+        {renderAuthoritativeInputQueue({ queue: pendingInputQueue })}
+        {renderQueueTrack({
+          queuedMessages,
+          handleEditQueuedMessage,
+          handleSendQueuedNow,
+          editLabel: t("composer.attachments.editQueuedMessage"),
+          sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+        })}
+      </>
+    ),
+    [pendingInputQueue, handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
   const messageInputContainerRef = useRef<View>(null);
@@ -2483,6 +2523,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     gap: theme.spacing[2],
+  },
+  queueMode: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   queueText: {
     flex: 1,

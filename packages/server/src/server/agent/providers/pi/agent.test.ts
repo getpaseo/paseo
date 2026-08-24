@@ -229,6 +229,13 @@ class SessionEvents {
     });
   }
 
+  inputQueueEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "input_queue_updated" }> =>
+        event.type === "input_queue_updated",
+    );
+  }
+
   turnCompletedEvents() {
     return this.events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -335,6 +342,24 @@ describe("PiRpcAgentSession", () => {
       session.steerActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
     ).resolves.toEqual({ status: "unavailable" });
     expect(fakeSession.steerRequests).toHaveLength(1);
+  });
+
+  test("projects Pi queue updates as authoritative input queue state", async () => {
+    const { pi, events } = await createSession();
+    pi.latestSession().emit({
+      type: "queue_update",
+      steering: ["redirect"],
+      followUp: ["afterwards"],
+    });
+
+    expect(events.inputQueueEvents()).toEqual([
+      {
+        type: "input_queue_updated",
+        provider: "pi",
+        steering: ["redirect"],
+        followUp: ["afterwards"],
+      },
+    ]);
   });
 
   test("queues native Pi follow-up without replacing the active turn", async () => {

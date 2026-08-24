@@ -2,6 +2,48 @@ import { describe, expect, test } from "vitest";
 import { SessionInboundMessageSchema, SessionOutboundMessageSchema } from "./messages.js";
 
 describe("provider subagent protocol", () => {
+  test("accepts authoritative pending input queue state on agent snapshots", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: {
+          id: "parent-1",
+          provider: "pi",
+          cwd: "/workspace",
+          model: null,
+          createdAt: "2026-08-24T00:00:00.000Z",
+          updatedAt: "2026-08-24T00:00:00.000Z",
+          lastUserMessageAt: null,
+          status: "running",
+          activeTurn: { turnId: "turn-1", startedAt: null },
+          capabilities: {
+            supportsStreaming: true,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: true,
+            supportsMcpServers: false,
+            supportsReasoningStream: true,
+            supportsToolInvocations: true,
+          },
+          currentModeId: null,
+          availableModes: [],
+          pendingPermissions: [],
+          pendingInputQueue: { steering: ["redirect"], followUp: ["afterwards"] },
+          persistence: null,
+          title: null,
+          labels: {},
+        },
+      },
+    });
+    expect(parsed).toMatchObject({
+      payload: {
+        agent: {
+          pendingInputQueue: { steering: ["redirect"], followUp: ["afterwards"] },
+        },
+      },
+    });
+  });
+
   test("accepts native active-turn follow-up admission", () => {
     expect(
       SessionInboundMessageSchema.parse({
