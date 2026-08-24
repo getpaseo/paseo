@@ -144,6 +144,21 @@ export async function dropFileOnComposer(
   await dataTransfer.dispose();
 }
 
+export async function dropTextOnComposer(page: Page, text: string): Promise<void> {
+  const dataTransfer = await page.evaluateHandle((dropped) => {
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", dropped);
+    return transfer;
+  }, text);
+
+  const composerRoot = page.getByTestId("message-input-root").filter({ visible: true }).first();
+  await expect(composerRoot).toBeVisible({ timeout: 10_000 });
+  await composerRoot.dispatchEvent("dragenter", { dataTransfer });
+  await composerRoot.dispatchEvent("dragover", { dataTransfer });
+  await composerRoot.dispatchEvent("drop", { dataTransfer });
+  await dataTransfer.dispose();
+}
+
 /** Hover to reveal the X button (hidden until hover on desktop web), then click by accessible label. */
 export async function removeAttachmentPill(
   page: Page,

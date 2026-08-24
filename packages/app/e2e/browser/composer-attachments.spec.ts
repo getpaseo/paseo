@@ -18,6 +18,7 @@ import {
   expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
+  dropTextOnComposer,
   sendDraftToQueue,
   expectQueuedMessageButton,
   startRunningMockAgent,
@@ -210,6 +211,19 @@ test.describe("Composer attachments", () => {
     await dropFileOnComposer(page, TEST_JSON);
 
     await expectAttachmentPill(page, "composer-file-attachment-pill");
+  });
+
+  test("dropped text lands in the draft at the cursor", async ({ page, withWorkspace }) => {
+    test.setTimeout(60_000);
+    const workspace = await withWorkspace({ prefix: "attach-drop-text-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await fillComposerDraft(page, "open ");
+    await dropTextOnComposer(page, "obsidian://open?vault=notes");
+
+    await expectComposerDraft(page, "open obsidian://open?vault=notes");
   });
 
   test("dropped JSON file renders as a file attachment in New Workspace", async ({ page }) => {

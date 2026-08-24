@@ -47,6 +47,7 @@ import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-s
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
+import { insertDroppedText } from "./text-drop";
 import {
   MessageInput,
   type AttachmentMenuItem,
@@ -1405,6 +1406,20 @@ function ComposerContentImpl({
     [focusInput, serverId, setSelectedAttachments, workspaceId],
   );
 
+  // Not memoized: the sink is read through a ref, so there is no beneficiary, and the draft
+  // fallback would invalidate a useCallback on every keystroke anyway.
+  function handleTextDropped(droppedText: string) {
+    // The mounted input knows the live selection; the draft state is what's left when it isn't.
+    const snapshot = messageInputRef.current?.getInputSnapshot();
+    const input = snapshot ?? {
+      text: userInput,
+      selection: { start: cursorIndex, end: cursorIndex },
+    };
+    const next = insertDroppedText({ droppedText, input });
+    replaceUserInput(next.text, next.selection);
+    focusInput();
+  }
+
   useEffect(() => {
     onFocusInput?.(focusInput);
   }, [focusInput, onFocusInput]);
@@ -2230,6 +2245,7 @@ function ComposerContentImpl({
       onFiles: addImages,
       onGenericFiles: handleGenericFilesDropped,
       onWorkspaceFile: handleWorkspaceFileDropped,
+      onText: handleTextDropped,
     },
     { disabled: isSubmitLoadingVisible },
   );
