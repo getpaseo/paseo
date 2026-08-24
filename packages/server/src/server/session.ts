@@ -27,6 +27,9 @@ import type {
   TerminalWorkspaceContributionChangedEvent,
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
+import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
+import { BrowserToolsSessionController } from "./session/browser-tools/browser-tools-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
@@ -501,6 +504,7 @@ export interface SessionOptions {
   sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
+  browserToolsBroker?: BrowserToolsBroker | null;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
@@ -721,6 +725,7 @@ export class Session {
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
+  private readonly browserToolsController: BrowserToolsSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
@@ -985,6 +990,12 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
+    });
+    this.browserToolsController = new BrowserToolsSessionController({
+      broker: options.browserToolsBroker,
+      policy: new DaemonConfigBrowserToolsPolicy(daemonConfigStore),
+      emit: (msg) => this.emit(msg),
+      sessionLogger: this.sessionLogger,
     });
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),
@@ -1956,10 +1967,17 @@ export class Session {
       this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
-      this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleMessage(msg) ??
-      this.dispatchMiscMessage(msg);
+      this.dispatchWorkspaceRuntimeMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchWorkspaceRuntimeMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return (
+      this.dispatchTerminalMessage(msg) ??
+      this.dispatchBrowserToolsMessage(msg) ??
+      this.dispatchScheduleMessage(msg) ??
+      this.dispatchMiscMessage(msg)
+    );
   }
 
   private dispatchOrchestrationSkillsMessage(
@@ -2606,6 +2624,10 @@ export class Session {
       default:
         return this.terminalController.dispatch(msg);
     }
+  }
+
+  private dispatchBrowserToolsMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.browserToolsController.dispatch(msg);
   }
 
   private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {

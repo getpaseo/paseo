@@ -1425,6 +1425,7 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
+      browserToolsBroker: this.browserToolsBroker,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
       hubExecutionAgents: options.hubExecutionAgents,
