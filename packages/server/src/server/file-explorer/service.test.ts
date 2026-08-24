@@ -586,4 +586,44 @@ describe("file explorer service", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("reports a media type for video files while leaving them binary", async () => {
+    const root = await createTempDir("paseo-file-video-mime-");
+
+    try {
+      // Real container bytes are not needed: classification is by extension, and
+      // the leading NUL is what makes the sniffer call it binary either way.
+      const bytes = Buffer.concat([Buffer.from([0x00]), Buffer.alloc(64, 0x61)]);
+      await writeFile(path.join(root, "demo.mp4"), bytes);
+      await writeFile(path.join(root, "capture.webm"), bytes);
+      await writeFile(path.join(root, "blob.bin"), bytes);
+
+      const video = await readExplorerFile({ root, relativePath: "demo.mp4" });
+      expect(video.kind).toBe("binary");
+      expect(video.mimeType).toBe("video/mp4");
+
+      const unknown = await readExplorerFile({ root, relativePath: "blob.bin" });
+      expect(unknown.kind).toBe("binary");
+      expect(unknown.mimeType).toBe("application/octet-stream");
+
+      // The app reads through the binary stream, so that path carries the type too.
+      const streamed: Array<{ kind: string; mimeType: string }> = [];
+      for (const relativePath of ["demo.mp4", "capture.webm", "blob.bin"]) {
+        await streamExplorerFile({ root, relativePath }, async (file) => {
+          streamed.push({ kind: file.kind, mimeType: file.mimeType });
+          for await (const _chunk of file.chunks) {
+            // drain
+          }
+        });
+      }
+
+      expect(streamed).toEqual([
+        { kind: "binary", mimeType: "video/mp4" },
+        { kind: "binary", mimeType: "video/webm" },
+        { kind: "binary", mimeType: "application/octet-stream" },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

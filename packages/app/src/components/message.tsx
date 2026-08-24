@@ -96,6 +96,9 @@ import {
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { isAssistantVideoSource, useAssistantVideo } from "@/assistant-image/use-assistant-video";
+import { AssistantVideoSurface } from "@/components/assistant-video-surface";
+import { getFileNameFromPath } from "@/attachments/utils";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -793,6 +796,18 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
+  videoErrorName: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  videoErrorDirectory: {
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
 }));
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
@@ -885,6 +900,129 @@ function AssistantMarkdownImage({
           onError={binding.onError}
         />
         {image.status === "loading" ? (
+          <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
+            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+// The name goes on its own line so the extension survives: react-native-web only
+// implements `ellipsizeMode="tail"`, so a long path truncated as one line would cut
+// off the very part that says what the file is.
+function splitAssistantVideoPath(path: string | null): { directory: string; name: string } | null {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const name = getFileNameFromPath(trimmed);
+  if (!name) {
+    return null;
+  }
+  const directory = trimmed.slice(0, trimmed.length - name.length).replace(/[\\/]+$/, "");
+  return { directory, name };
+}
+
+function AssistantMarkdownVideo({
+  source,
+  occurrenceKey,
+  alt,
+  hasLeadingContent,
+  client,
+  workspaceRoot,
+  serverId,
+}: {
+  source: string;
+  occurrenceKey: string;
+  alt?: string;
+  hasLeadingContent: boolean;
+  client?: DaemonClient | null;
+  workspaceRoot?: string;
+  serverId?: string;
+}) {
+  const containerStyle = useMemo<StyleProp<ViewStyle>>(
+    () => ({
+      marginTop: hasLeadingContent ? 16 : 0,
+      marginBottom: 0,
+    }),
+    [hasLeadingContent],
+  );
+  const video = useAssistantVideo({
+    source,
+    occurrenceKey,
+    client,
+    workspaceRoot,
+    serverId,
+  });
+  const binding = video.status === "failed" ? null : video.binding;
+  const aspectRatio = video.status === "failed" ? null : video.aspectRatio;
+  const frameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageFrame, containerStyle],
+    [containerStyle],
+  );
+  const videoSizeStyle = useMemo<ViewStyle>(() => {
+    if (aspectRatio) {
+      return { aspectRatio };
+    }
+    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
+  }, [aspectRatio]);
+  const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageSurface, videoSizeStyle],
+    [videoSizeStyle],
+  );
+  const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      assistantMessageStylesheet.imageFrame,
+      containerStyle,
+      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      assistantMessageStylesheet.imageState,
+    ],
+    [containerStyle],
+  );
+
+  if (video.status === "failed") {
+    const location = splitAssistantVideoPath(video.path);
+    return (
+      <View style={stateFrameStyle}>
+        <Text style={assistantMessageStylesheet.imageErrorText}>{video.message}</Text>
+        {location ? (
+          <Text style={assistantMessageStylesheet.videoErrorName} numberOfLines={1}>
+            {location.name}
+          </Text>
+        ) : null}
+        {location?.directory ? (
+          <Text
+            style={assistantMessageStylesheet.videoErrorDirectory}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {location.directory}
+          </Text>
+        ) : null}
+      </View>
+    );
+  }
+
+  if (!binding) {
+    return (
+      <View style={stateFrameStyle}>
+        <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={frameStyle}>
+      <View style={surfaceStyle}>
+        <AssistantVideoSurface
+          binding={binding}
+          style={assistantMessageStylesheet.image}
+          accessibilityLabel={alt}
+          testID="assistant-video"
+        />
+        {video.status === "loading" ? (
           <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
             <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
           </View>
@@ -1880,11 +2018,29 @@ export const AssistantMessage = memo(function AssistantMessage({
           : [];
         const imageIndex = paragraphChildren.findIndex((child: ASTNode) => child?.key === node.key);
         const hasLeadingContent = imageIndex > 0;
+        const src = String(node.attributes?.src ?? "");
+
+        // Markdown has no video node, so agents reach for the image syntax and the
+        // extension is what tells the two apart.
+        if (isAssistantVideoSource(src)) {
+          return (
+            <AssistantMarkdownVideo
+              key={node.key}
+              source={src}
+              occurrenceKey={`${occurrenceKey}:${node.key}`}
+              alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
+              hasLeadingContent={hasLeadingContent}
+              client={client}
+              workspaceRoot={workspaceRoot}
+              serverId={serverId}
+            />
+          );
+        }
 
         return (
           <AssistantMarkdownImage
             key={node.key}
-            source={String(node.attributes?.src ?? "")}
+            source={src}
             occurrenceKey={`${occurrenceKey}:${node.key}`}
             alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             hasLeadingContent={hasLeadingContent}
