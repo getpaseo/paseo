@@ -25,6 +25,10 @@ import {
 } from "../terminal/runtime/terminal-emulator-runtime";
 import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
 import type {
+  TerminalImagePasteInput,
+  TerminalImagePasteOutcome,
+} from "../terminal/runtime/terminal-paste";
+import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "../terminal/local-links/terminal-local-link-provider";
@@ -45,6 +49,7 @@ export interface TerminalEmulatorHandle {
   restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   paste: (text: string) => void;
+  inputRaw: (data: string) => void;
   copySelection: (clipboard: TerminalClipboardWriter) => Promise<string>;
   clear: () => void;
   claimSize: () => void;
@@ -140,6 +145,7 @@ interface TerminalEmulatorProps {
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
   resizeRequestToken?: number;
+  onImagePaste?: (input: TerminalImagePasteInput) => Promise<TerminalImagePasteOutcome>;
 }
 
 declare global {
@@ -184,6 +190,7 @@ export default function TerminalEmulator({
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
   resizeRequestToken = 0,
+  onImagePaste,
 }: TerminalEmulatorProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -208,6 +215,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onImagePaste,
   });
   mountCallbacksRef.current = {
     onInput,
@@ -217,6 +225,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onImagePaste,
   };
   const initialSnapshotRef = useRef(initialSnapshot);
   initialSnapshotRef.current = initialSnapshot;
@@ -263,6 +272,12 @@ export default function TerminalEmulator({
           pasteText(text);
         }
       },
+      inputRaw: (...args) => {
+        const data = args[0];
+        if (typeof data === "string") {
+          runtimeRef.current?.inputRaw(data);
+        }
+      },
       copySelection: async () => "",
       clear: () => {
         runtimeRef.current?.clear();
@@ -294,6 +309,9 @@ export default function TerminalEmulator({
       },
       paste: (text: string) => {
         pasteText(text);
+      },
+      inputRaw: (data: string) => {
+        runtimeRef.current?.inputRaw(data);
       },
       copySelection: async () => "",
       clear: () => {
@@ -485,6 +503,7 @@ export default function TerminalEmulator({
         onInputModeChange,
         onResolveLocalFileLink,
         onOpenLocalFileLink,
+        onImagePaste,
         onOpenExternalUrl: openExternalUrl,
       },
     });
@@ -496,6 +515,7 @@ export default function TerminalEmulator({
     onResolveLocalFileLink,
     onResize,
     onTerminalKey,
+    onImagePaste,
   ]);
 
   useEffect(() => {

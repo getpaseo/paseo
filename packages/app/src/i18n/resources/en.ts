@@ -550,6 +550,7 @@ export const en = {
       hostDisconnected: "Host is not connected",
       updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
+      pasteImageFailed: "Failed to paste image",
     },
     tabs: {
       loading: "Loading...",
