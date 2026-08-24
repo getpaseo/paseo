@@ -22,6 +22,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    themes: [],
   };
 }
 

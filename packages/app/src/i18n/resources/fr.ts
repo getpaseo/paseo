@@ -65,6 +65,9 @@ export const fr: TranslationResources = {
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
+      open: "Ouvrir {{name}}",
+      openInSidePanel: "Ouvrir {{name}} dans le panneau latéral",
+      openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
       groupByProject: "Grouper par projet",
@@ -557,7 +560,6 @@ export const fr: TranslationResources = {
       loading: "Chargement...",
       modified: "Modifications non enregistrées",
       loadingAgentTitle: "Titre d'agent de chargement",
-      emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
         newAgent: "Nouvel agent",
         setup: "Installation",
@@ -600,6 +602,7 @@ export const fr: TranslationResources = {
         newBrowser: "Nouveau navigateur",
         maximizePane: "Agrandir le volet",
         restorePane: "Restaurer le volet",
+        closePane: "Fermer le volet",
         exitFocusMode: "Quitter le mode concentration",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
@@ -607,12 +610,12 @@ export const fr: TranslationResources = {
         files: "Fichiers",
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
-      explorer: {
-        open: "Ouvrir l'explorateur",
-        close: "Fermer l'explorateur",
-        toggle: "Basculer l'explorateur",
+      sidePanel: {
+        open: "Ouvrir le panneau latéral",
+        close: "Fermer le panneau latéral",
+        toggle: "Basculer le panneau latéral",
         changes: "Changements",
         files: "Fichiers",
       },
@@ -715,6 +718,10 @@ export const fr: TranslationResources = {
         startFailed: "Échec du démarrage de{{scriptName}}",
         stopFailed: "Échec de l'arrêt de{{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Afficher l'arborescence des dossiers",
+      hideFolderTree: "Masquer l'arborescence des dossiers",
     },
     git: {
       actions: {
@@ -885,8 +892,6 @@ export const fr: TranslationResources = {
         split: "Différent côte à côte",
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
-        showTreeView: "Afficher l'arborescence des dossiers",
-        hideTreeView: "Masquer l'arborescence des dossiers",
         options: "Options du diff",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
@@ -902,6 +907,8 @@ export const fr: TranslationResources = {
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
+        seeUncommittedChanges: "Voir les modifications non validées",
+        seeCommittedChanges: "Voir les modifications validées",
         emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
@@ -1016,9 +1023,6 @@ export const fr: TranslationResources = {
     },
     filter: {
       clear: "Effacer le filtre",
-      noMatchesTitle: "Aucun espace de travail ne correspond",
-      noMatchesDescription:
-        "Modifiez ou effacez le filtre d’étiquettes pour afficher les espaces de travail.",
     },
     manage: {
       open: "Gérer les étiquettes…",
@@ -1074,6 +1078,16 @@ export const fr: TranslationResources = {
         label: "Hôte",
         all: "Tous les hôtes",
       },
+      projectFilter: {
+        label: "Projet",
+        all: "Tous les projets",
+      },
+    },
+    filterEmpty: {
+      title: "Aucun espace de travail ne correspond",
+      description:
+        "Modifiez ou effacez les filtres de la barre latérale pour afficher les espaces de travail.",
+      clear: "Effacer les filtres",
     },
     pinned: {
       title: "Épinglés",
@@ -1666,6 +1680,8 @@ export const fr: TranslationResources = {
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre de jumelage indisponible.",
       hint: "Scannez ce codeQRavecPaseosur votre téléphone ou copiez le lien ci-dessous.",
+      securityWarning:
+        "Traitez ce lien d’association comme un mot de passe. Toute personne qui le possède peut accéder à ce daemon.",
       qrUnavailable: "CodeQRindisponible.",
       qrAccessibility: "Code QR de couplage",
       retry: "Réessayer",
@@ -1739,6 +1755,7 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
+      tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       editor: {
@@ -1767,6 +1784,7 @@ export const fr: TranslationResources = {
       label: "Fichiers",
       subtitle: "Fichiers de l’espace de travail",
       tooltip: "Parcourir les fichiers de l’espace de travail",
+      chooseFile: "Choisissez un fichier",
     },
     pullRequest: {
       label: "Demande de fusion",
@@ -1970,6 +1988,11 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
       },
+      sidePanelRouting: {
+        label: "Ouvrir les onglets d'appoint dans le panneau latéral",
+        description:
+          "Les liens de fichiers, les pull requests et la progression de la configuration s'ouvrent à côté de votre travail plutôt que dans le volet actif",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
@@ -2086,13 +2109,18 @@ export const fr: TranslationResources = {
         interfaceFontHint:
           "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
-        baseSize: "Taille de base",
-        baseSizeAccessibility: "Taille de base de la police",
+        interfaceSize: "Taille de l'interface",
+        interfaceSizeHint: "Utilisée pour la navigation, les contrôles et les libellés",
+        interfaceSizeAccessibility: "Taille de police de l'interface",
+        contentSize: "Taille du contenu",
+        contentSizeHint: "Utilisée pour le texte du chat et le Markdown rendu",
+        contentSizeAccessibility: "Taille de police du contenu",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
+        codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
       },
       syntax: {
@@ -2100,7 +2128,9 @@ export const fr: TranslationResources = {
         highlightTheme: "Thème de surbrillance",
         highlightThemeHint: "Couleurs du code, indépendamment du thème de l'application",
         highlightThemeAccessibility: "Thème phare:{{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
+        previewContent: "Aperçu du contenu et du code",
       },
     },
     shortcuts: {
@@ -2155,11 +2185,11 @@ export const fr: TranslationResources = {
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",
-        toggleRightSidebar: "Basculer la barre latérale droite",
+        toggleRightSidebar: "Basculer le panneau latéral",
         toggleBothSidebars: "Basculer les deux barres latérales",
         toggleSettings: "Basculer les paramètres",
         toggleFocusMode: "Basculer le mode de mise au point",
-        toggleExplorerPaneMaximization: "Basculer l’agrandissement du volet Explorateur",
+        toggleExplorerPaneMaximization: "Basculer l’agrandissement du panneau latéral",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
         cycleAgentMode: "Parcourir les modes de l'agent",
@@ -2380,11 +2410,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Notes pour les agents",
+        notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint:
-          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
         save: "Enregistrer",
         saving: "Enregistrement...",
         remove: "Supprimer",

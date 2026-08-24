@@ -21,7 +21,7 @@ test("plugin handlers create workspaces and agents through their Paseo API", asy
   );
   await writeFile(
     path.join(pluginDirectory, "index.tsx"),
-    `import { defineRpc, type PluginContext } from "@paseo/plugin";
+    `import { defineRpc, type PluginContext } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const create = defineRpc({

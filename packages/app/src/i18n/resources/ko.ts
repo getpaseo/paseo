@@ -64,6 +64,9 @@ export const ko: TranslationResources = {
       workspaces: "워크스페이스",
       agents: "에이전트",
       newAgent: "새 에이전트",
+      open: "{{name}} 열기",
+      openInSidePanel: "사이드 패널에서 {{name}} 열기",
+      openInFocusedPane: "포커스된 창에서 {{name}} 열기",
       addProject: "프로젝트 추가",
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
@@ -554,7 +557,6 @@ export const ko: TranslationResources = {
       loading: "불러오는 중...",
       modified: "저장되지 않은 변경사항",
       loadingAgentTitle: "에이전트 제목 불러오는 중",
-      emptyPane: "이 창에 탭이 없습니다.",
       fallback: {
         newAgent: "새 에이전트",
         setup: "설정",
@@ -597,6 +599,7 @@ export const ko: TranslationResources = {
         newBrowser: "새 브라우저",
         maximizePane: "창 최대화",
         restorePane: "창 복원",
+        closePane: "창 닫기",
         exitFocusMode: "집중 모드 종료",
         splitRight: "창을 오른쪽으로 분할",
         splitDown: "창을 아래로 분할",
@@ -604,12 +607,12 @@ export const ko: TranslationResources = {
         files: "파일",
         pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
-        editTerminalProfiles: "프로필 편집…",
+        editTerminalProfiles: "프로필 편집",
       },
-      explorer: {
-        open: "탐색기 열기",
-        close: "탐색기 닫기",
-        toggle: "탐색기 토글",
+      sidePanel: {
+        open: "사이드 패널 열기",
+        close: "사이드 패널 닫기",
+        toggle: "사이드 패널 토글",
         changes: "변경 사항",
         files: "파일",
       },
@@ -709,6 +712,10 @@ export const ko: TranslationResources = {
         startFailed: "{{scriptName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
       },
+    },
+    tree: {
+      showFolderTree: "폴더 트리 표시",
+      hideFolderTree: "폴더 트리 숨기기",
     },
     git: {
       actions: {
@@ -862,8 +869,6 @@ export const ko: TranslationResources = {
         split: "나란히 보기 diff",
         switchToUnified: "통합 diff로 전환",
         switchToSplit: "나란히 보기 diff로 전환",
-        showTreeView: "폴더 트리 표시",
-        hideTreeView: "폴더 트리 숨기기",
         options: "Diff 옵션",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
@@ -879,6 +884,8 @@ export const ko: TranslationResources = {
         failedRefresh: "Git 상태를 새로고침하지 못했습니다.",
         emptyHiddenWhitespace: "공백을 숨긴 후 표시할 변경 사항이 없습니다",
         emptyUncommitted: "커밋되지 않은 변경 사항이 없습니다",
+        seeUncommittedChanges: "커밋되지 않은 변경 사항 보기",
+        seeCommittedChanges: "커밋된 변경 사항 보기",
         emptyAgainstBase: "{{baseRef}} 대비 변경 사항이 없습니다",
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
@@ -990,8 +997,6 @@ export const ko: TranslationResources = {
     },
     filter: {
       clear: "필터 지우기",
-      noMatchesTitle: "일치하는 워크스페이스가 없습니다",
-      noMatchesDescription: "워크스페이스를 보려면 레이블 필터를 변경하거나 지우세요.",
     },
     manage: {
       open: "레이블 관리…",
@@ -1047,6 +1052,15 @@ export const ko: TranslationResources = {
         label: "호스트",
         all: "모든 호스트",
       },
+      projectFilter: {
+        label: "프로젝트",
+        all: "모든 프로젝트",
+      },
+    },
+    filterEmpty: {
+      title: "일치하는 워크스페이스가 없습니다",
+      description: "워크스페이스를 보려면 사이드바 필터를 변경하거나 지우세요.",
+      clear: "필터 지우기",
     },
     pinned: {
       title: "고정됨",
@@ -1626,6 +1640,8 @@ export const ko: TranslationResources = {
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
+      securityWarning:
+        "이 페어링 링크는 비밀번호처럼 취급하세요. 링크를 가진 사람은 누구나 이 데몬에 접근할 수 있습니다.",
       qrUnavailable: "QR 코드를 사용할 수 없습니다.",
       qrAccessibility: "페어링 QR 코드",
       retry: "다시 시도",
@@ -1699,6 +1715,7 @@ export const ko: TranslationResources = {
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
+      tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
@@ -1727,6 +1744,7 @@ export const ko: TranslationResources = {
       label: "파일",
       subtitle: "워크스페이스 파일",
       tooltip: "워크스페이스 파일 탐색",
+      chooseFile: "파일 선택",
     },
     pullRequest: {
       label: "풀 리퀘스트",
@@ -1928,6 +1946,11 @@ export const ko: TranslationResources = {
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
+      sidePanelRouting: {
+        label: "보조 탭을 사이드 패널에서 열기",
+        description:
+          "파일 링크, 풀 리퀘스트, 설정 진행 상황이 포커스된 창이 아니라 작업 옆에서 열립니다",
+      },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
@@ -2042,13 +2065,18 @@ export const ko: TranslationResources = {
         interfaceFont: "인터페이스 글꼴",
         interfaceFontHint: "앱 전체에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         interfaceFontAccessibility: "인터페이스 글꼴 패밀리",
-        baseSize: "기본 크기",
-        baseSizeAccessibility: "기본 글꼴 크기",
+        interfaceSize: "인터페이스 크기",
+        interfaceSizeHint: "탐색, 컨트롤 및 레이블에 사용됩니다",
+        interfaceSizeAccessibility: "인터페이스 글꼴 크기",
+        contentSize: "콘텐츠 크기",
+        contentSizeHint: "채팅 텍스트와 렌더링된 Markdown에 사용됩니다",
+        contentSizeAccessibility: "콘텐츠 글꼴 크기",
         codeFont: "코드 글꼴",
         codeFontHint:
           "코드, diff, 터미널 출력에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         codeFontAccessibility: "코드 글꼴 패밀리",
         codeSize: "코드 크기",
+        codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
       },
       syntax: {
@@ -2056,7 +2084,8 @@ export const ko: TranslationResources = {
         highlightTheme: "강조 테마",
         highlightThemeHint: "앱 테마와 독립적인 코드 색상",
         highlightThemeAccessibility: "강조 테마: {{value}}",
-        previewAccessibility: "구문 테마와 코드 글꼴의 실시간 미리보기",
+        previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
+        previewContent: "콘텐츠 및 코드 미리보기",
       },
     },
     shortcuts: {
@@ -2111,11 +2140,11 @@ export const ko: TranslationResources = {
         toggleCommandCenter: "명령 센터 토글",
         showKeyboardShortcuts: "키보드 단축키 표시",
         toggleLeftSidebar: "왼쪽 사이드바 토글",
-        toggleRightSidebar: "오른쪽 사이드바 토글",
+        toggleRightSidebar: "사이드 패널 토글",
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
-        toggleExplorerPaneMaximization: "탐색기 창 최대화 전환",
+        toggleExplorerPaneMaximization: "사이드 패널 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",
@@ -2332,10 +2361,9 @@ export const ko: TranslationResources = {
         featuresLabel: "기능",
         featureCount: "기능 {{count}}개",
         featureCountOne: "기능 {{count}}개",
-        notesLabel: "에이전트를 위한 메모",
+        notesLabel: "사용 시점",
         notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
-        notesHint:
-          "list_profiles MCP 도구가 반환합니다. 다른 에이전트에게 전달할 지침으로 작성하세요.",
+        notesHint: "에이전트가 다른 에이전트를 시작할 때 이 프로필을 선택하는 데 사용됩니다.",
         save: "저장",
         saving: "저장하는 중...",
         remove: "제거",

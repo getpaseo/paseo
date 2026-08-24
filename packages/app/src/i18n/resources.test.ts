@@ -412,7 +412,6 @@ describe("translation resources", () => {
   });
 
   it("includes workspace tab toast keys for the Batch 4J migration", () => {
-    expect(en.workspace.tabs.emptyPane).toBe("No tabs in this pane.");
     expect(en.workspace.tabs.toasts.copyFailed).toBe("Copy failed");
     expect(en.workspace.tabs.toasts.agentIdCopiedLabel).toBe("Agent ID");
     expect(en.workspace.tabs.toasts.resumeCommandCopiedLabel).toBe("resume command");
@@ -494,12 +493,12 @@ describe("translation resources", () => {
     expect(en.agentList.dateSections.recent).toBe("Recent");
     expect(en.message.attachments.imagePreviewUnavailable).toBe("Image preview unavailable.");
     expect(en.message.attachments.imagePreviewLoadFailed).toBe("Unable to load image preview.");
-    expect(en.workspace.tabs.explorer.changes).toBe("Changes");
-    expect(en.workspace.tabs.explorer.files).toBe("Files");
+    expect(en.workspace.tabs.sidePanel.changes).toBe("Changes");
+    expect(en.workspace.tabs.sidePanel.files).toBe("Files");
     expect(en.workspace.tabs.actions.maximizePane).toBe("Maximize pane");
     expect(en.workspace.tabs.actions.restorePane).toBe("Restore pane");
     expect(en.settings.shortcuts.help.toggleExplorerPaneMaximization).toBe(
-      "Toggle Explorer pane maximization",
+      "Toggle Side panel maximization",
     );
     expect(en.branchSwitcher.triggerTooltip).toBe("Switch workspace branch");
     expect(en.branchSwitcher.uncommittedTitle).toBe("Uncommitted changes");

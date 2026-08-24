@@ -56,6 +56,7 @@ function PullRequestPanel() {
 
 export const pullRequestPanelRegistration: PanelRegistration<"pull_request"> = {
   kind: "pull_request",
+  resourceKey: () => "pull_request",
   component: PullRequestPanel,
   useDescriptor: usePullRequestPanelDescriptor,
 };

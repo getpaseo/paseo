@@ -61,6 +61,9 @@ export const en = {
       workspaces: "Workspaces",
       agents: "Agents",
       newAgent: "New agent",
+      open: "Open {{name}}",
+      openInSidePanel: "Open {{name}} in Side panel",
+      openInFocusedPane: "Open {{name}} in focused pane",
       addProject: "Add project",
       home: "Home",
       groupByProject: "Group by project",
@@ -551,7 +554,6 @@ export const en = {
       loading: "Loading...",
       modified: "Unsaved changes",
       loadingAgentTitle: "Loading agent title",
-      emptyPane: "No tabs in this pane.",
       fallback: {
         newAgent: "New agent",
         setup: "Setup",
@@ -593,6 +595,7 @@ export const en = {
         newBrowser: "New browser",
         maximizePane: "Maximize pane",
         restorePane: "Restore pane",
+        closePane: "Close pane",
         exitFocusMode: "Exit focus mode",
         splitRight: "Split pane right",
         splitDown: "Split pane down",
@@ -600,12 +603,12 @@ export const en = {
         files: "Files",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
-      explorer: {
-        open: "Open explorer",
-        close: "Close explorer",
-        toggle: "Toggle explorer",
+      sidePanel: {
+        open: "Open side panel",
+        close: "Close side panel",
+        toggle: "Toggle side panel",
         changes: "Changes",
         files: "Files",
       },
@@ -705,6 +708,10 @@ export const en = {
         startFailed: "Failed to start {{scriptName}}",
         stopFailed: "Failed to stop {{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Show folder tree",
+      hideFolderTree: "Hide folder tree",
     },
     git: {
       actions: {
@@ -864,8 +871,6 @@ export const en = {
         split: "Side-by-side diff",
         switchToUnified: "Switch to unified diff",
         switchToSplit: "Switch to side-by-side diff",
-        showTreeView: "Show folder tree",
-        hideTreeView: "Hide folder tree",
         options: "Diff options",
         hideWhitespace: "Hide whitespace",
         showWhitespace: "Show whitespace",
@@ -881,6 +886,8 @@ export const en = {
         failedRefresh: "Failed to refresh git state.",
         emptyHiddenWhitespace: "No visible changes after hiding whitespace",
         emptyUncommitted: "No uncommitted changes",
+        seeUncommittedChanges: "See uncommitted changes",
+        seeCommittedChanges: "See committed changes",
         emptyAgainstBase: "No changes vs {{baseRef}}",
         checkingRepository: "Checking repository...",
         notRepository: "Not a git repository",
@@ -992,8 +999,6 @@ export const en = {
     },
     filter: {
       clear: "Clear filter",
-      noMatchesTitle: "No workspaces match",
-      noMatchesDescription: "Change or clear the label filter to see workspaces.",
     },
     manage: {
       open: "Manage labels…",
@@ -1049,6 +1054,15 @@ export const en = {
         label: "Host",
         all: "All hosts",
       },
+      projectFilter: {
+        label: "Project",
+        all: "All projects",
+      },
+    },
+    filterEmpty: {
+      title: "No workspaces match",
+      description: "Change or clear the sidebar filters to see workspaces.",
+      clear: "Clear filters",
     },
     pinned: {
       title: "Pinned",
@@ -1626,6 +1640,8 @@ export const en = {
       updateRequired: "Update the host to enable relay from Paseo Desktop.",
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
+      securityWarning:
+        "Treat this pairing link like a password. Anyone with it can access this daemon.",
       qrUnavailable: "QR code unavailable.",
       qrAccessibility: "Pairing QR code",
       retry: "Retry",
@@ -1699,6 +1715,7 @@ export const en = {
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
+      tooLargeToDisplay: "This file is too large to display",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
       editor: {
@@ -1727,6 +1744,7 @@ export const en = {
       label: "Files",
       subtitle: "Workspace files",
       tooltip: "Browse workspace files",
+      chooseFile: "Choose a file",
     },
     pullRequest: {
       label: "Pull request",
@@ -1981,6 +1999,11 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      sidePanelRouting: {
+        label: "Open supporting tabs in the Side panel",
+        description:
+          "File links, pull requests, and setup progress open beside your work instead of in the focused pane",
+      },
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
@@ -2095,13 +2118,18 @@ export const en = {
         interfaceFont: "Interface font",
         interfaceFontHint: "Used across the app. Leave empty for the system default",
         interfaceFontAccessibility: "Interface font family",
-        baseSize: "Base size",
-        baseSizeAccessibility: "Base font size",
+        interfaceSize: "Interface size",
+        interfaceSizeHint: "Used for navigation, controls, and labels",
+        interfaceSizeAccessibility: "Interface font size",
+        contentSize: "Content size",
+        contentSizeHint: "Used for chat text and rendered Markdown",
+        contentSizeAccessibility: "Content font size",
         codeFont: "Code font",
         codeFontHint:
           "Used in code, diffs, and the terminal output. Leave empty for the system default",
         codeFontAccessibility: "Code font family",
         codeSize: "Code size",
+        codeSizeHint: "Used for code, diffs, and terminal output",
         codeSizeAccessibility: "Code font size",
       },
       syntax: {
@@ -2109,7 +2137,8 @@ export const en = {
         highlightTheme: "Highlight theme",
         highlightThemeHint: "Colors for code, independent of the app theme",
         highlightThemeAccessibility: "Highlight theme: {{value}}",
-        previewAccessibility: "Live preview of the syntax theme and code font",
+        previewAccessibility: "Live preview of content typography, syntax theme, and code font",
+        previewContent: "Readable content and code preview",
       },
     },
     shortcuts: {
@@ -2164,11 +2193,11 @@ export const en = {
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",
-        toggleRightSidebar: "Toggle right sidebar",
+        toggleRightSidebar: "Toggle side panel",
         toggleBothSidebars: "Toggle both sidebars",
         toggleSettings: "Toggle settings",
         toggleFocusMode: "Toggle focus mode",
-        toggleExplorerPaneMaximization: "Toggle Explorer pane maximization",
+        toggleExplorerPaneMaximization: "Toggle Side panel maximization",
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
         cycleAgentMode: "Cycle agent mode",
@@ -2387,10 +2416,9 @@ export const en = {
         featuresLabel: "Features",
         featureCount: "{{count}} features",
         featureCountOne: "{{count}} feature",
-        notesLabel: "Notes for agents",
+        notesLabel: "When to use",
         notesPlaceholder: "Use for UI work — components, layout and design tokens.",
-        notesHint:
-          "Returned by the list_profiles MCP tool. Write it as an instruction to another agent.",
+        notesHint: "Helps agents choose this profile when starting another agent.",
         save: "Save",
         saving: "Saving...",
         remove: "Remove",

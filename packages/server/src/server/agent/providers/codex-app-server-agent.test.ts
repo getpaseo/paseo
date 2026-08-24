@@ -175,6 +175,119 @@ function deferred<T>() {
 }
 
 describe("Codex active-turn steering admission", () => {
+  test("a steer without the clearing contract leaves permissions open", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+
+    await expect(
+      session.steerActiveTurn!("background notification", { expectedTurnId: paseoTurnId }),
+    ).resolves.toEqual({ status: "accepted" });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    const requestId = session.getPendingPermissions()[0]!.id;
+    await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
+  test("a clearing steer denies every pending permission through its provider handler", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const commandPermission = waitForNextPermission(session);
+    appServer.requestCommandApproval({
+      itemId: "command-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      command: "git status",
+      cwd: "/workspace/project",
+      reason: "Needs approval",
+    });
+    await commandPermission;
+
+    const filePermission = waitForNextPermission(session);
+    appServer.requestFileChangeApproval({
+      itemId: "file-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      reason: "Apply the patch",
+    });
+    await filePermission;
+
+    const questionPermission = waitForNextPermission(session);
+    appServer.requestUserInput({
+      itemId: "question-1",
+      threadId: "thread-1",
+      turnId: "native-A",
+      questions: [
+        {
+          id: "choice",
+          header: "Choice",
+          question: "Which option?",
+          options: [{ label: "One" }, { label: "Two" }],
+        },
+      ],
+    });
+    await questionPermission;
+
+    const mcpPermission = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "native-A",
+      serverName: "browser",
+      message: "Open this page?",
+      requestedSchema: { type: "object", properties: {} },
+    });
+    await mcpPermission;
+
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+    expect(session.getPendingPermissions()).toHaveLength(5);
+
+    await expect(
+      session.steerActiveTurn!("review this instead", {
+        expectedTurnId: paseoTurnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(session.getPendingPermissions()).toEqual([]);
+    await expect(appServer.waitForApprovalDecision("command-1")).resolves.toEqual({
+      decision: "decline",
+    });
+    await expect(appServer.waitForApprovalDecision("file-1")).resolves.toEqual({
+      decision: "decline",
+    });
+    await expect(appServer.waitForApprovalDecision("question-1")).resolves.toEqual({ answers: {} });
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "decline",
+      content: null,
+      _meta: null,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          name: "plan_approval",
+          detail: { type: "plan", text: "Ship the thing" },
+          metadata: expect.objectContaining({ approved: false }),
+        }),
+      }),
+    );
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("does not steer B when A completes while command resolution is pending", async () => {
     const commandResolution = deferred<{ commandName: string } | null>();
     const resolverEntered = deferred<void>();
@@ -1281,16 +1394,55 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
+    const threadRequests: string[] = [];
+    let resumeAttempts = 0;
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => {
+        threadRequests.push("thread/loaded/list");
+        return { data: [] };
+      },
+      "thread/resume": () => {
+        threadRequests.push("thread/resume");
+        resumeAttempts += 1;
+        if (resumeAttempts === 1) {
+          return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+        }
+        return { thread: { id: "archived-thread-id" } };
+      },
+      "thread/unarchive": () => {
+        threadRequests.push("thread/unarchive");
+        return { thread: { id: "archived-thread-id" } };
+      },
+      "thread/read": () => {
+        threadRequests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const session = await provider.resumeSession(archivedThreadHandle());
+
+    expect(threadRequests).toEqual([
+      "thread/loaded/list",
+      "thread/resume",
+      "thread/unarchive",
+      "thread/resume",
+      "thread/read",
+    ]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("closes Codex app-server when an interactive resume fails", async () => {
     const appServer = createFakeCodexAppServer({
-      "thread/resume": () =>
-        Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
+      "thread/resume": () => Promise.reject(new Error("thread resume failed")),
     });
     const killSpy = vi.spyOn(appServer.child, "kill");
     const provider = createProviderWithFakeAppServer(appServer);
 
     await expect(provider.resumeSession(archivedThreadHandle())).rejects.toThrow(
-      archivedThreadErrorMessage("archived-thread-id"),
+      "thread resume failed",
     );
 
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
@@ -3202,6 +3354,34 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("treats Codex already having no active turn as an acknowledged interrupt", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => ({
+        __jsonRpcError: { code: -32600, message: "no active turn to interrupt" },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Wait for the child.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-already-idle" });
+
+      await expect(session.interrupt()).resolves.toBeUndefined();
+
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("waits for Codex to identify an accepted turn before interrupting it", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({
@@ -3234,7 +3414,7 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("does not interrupt after the accepted turn terminates before identification", async () => {
+  test("acknowledges interruption when the accepted turn terminates before identification", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({
       "turn/interrupt": async (params) => {
@@ -3255,9 +3435,7 @@ describe("Codex app-server provider", () => {
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
 
-      await expect(interruptPromise).rejects.toThrow(
-        "Cannot interrupt Codex before turn/started identifies the active turn",
-      );
+      await expect(interruptPromise).resolves.toBeUndefined();
       await resultPromise;
       expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
@@ -3266,7 +3444,7 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("rejects an interrupt before Codex initializes the thread", async () => {
+  test("acknowledges interruption before Codex initializes a thread", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
       createConfig({ cwd: "/workspace/project" }),
@@ -3275,11 +3453,51 @@ describe("Codex app-server provider", () => {
       async () => appServer.child,
     );
 
-    await expect(session.interrupt()).rejects.toThrow(
-      "Cannot interrupt Codex before the active thread is initialized",
-    );
+    await expect(session.interrupt()).resolves.toBeUndefined();
 
     await session.close();
+  });
+
+  test("cancels a cold start before it can issue a native turn", async () => {
+    const threadStart = deferred<{ thread: { id: string } }>();
+    const appServer = createFakeCodexAppServer({
+      "thread/start": () => threadStart.promise,
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const resultPromise = session.run("Start after the delayed thread.");
+
+    try {
+      await appServer.waitForRequest("thread/start");
+      let interruptSettled = false;
+      const interruptPromise = session.interrupt().then(() => {
+        interruptSettled = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(interruptSettled).toBe(false);
+
+      threadStart.resolve({ thread: { id: "thread-1" } });
+      await expect(interruptPromise).resolves.toBeUndefined();
+      await expect(resultPromise).rejects.toThrow("interrupted before reaching Codex");
+      expect(appServer.requests()).not.toContainEqual(
+        expect.objectContaining({ method: "turn/start" }),
+      );
+      appServer.assertNoErrors();
+    } finally {
+      threadStart.resolve({ thread: { id: "thread-1" } });
+      const nativeStart = await appServer.waitForTurnStart().catch(() => null);
+      if (nativeStart) {
+        appServer.startsTurn({ threadId: "thread-1", turnId: "cleanup-turn" });
+        appServer.completeTurn();
+      }
+      await resultPromise.catch(() => undefined);
+      await session.close();
+    }
   });
 
   test("interrupts an autonomous Codex turn identified by live notifications", async () => {
@@ -5547,5 +5765,66 @@ describe("Codex importable sessions", () => {
       },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
     ]);
+  });
+});
+
+describe("Codex denied plan approvals", () => {
+  function planApprovalRows(events: AgentStreamEvent[]) {
+    return events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "plan_approval",
+    );
+  }
+
+  function createPlanSession(): { session: CodexTestSession; events: AgentStreamEvent[] } {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    castInternals<{ emitSyntheticPlanApprovalRequest: (planText: string) => void }>(
+      session,
+    ).emitSyntheticPlanApprovalRequest("Ship the thing");
+    return { session, events };
+  }
+
+  function pendingPlanRequestId(session: CodexTestSession): string {
+    const [request] = session.getPendingPermissions?.() ?? [];
+    if (!request) throw new Error("expected a pending plan permission");
+    return request.id;
+  }
+
+  test("answering the card with a denial records the plan decision", async () => {
+    const { session, events } = createPlanSession();
+    const requestId = pendingPlanRequestId(session);
+
+    await session.respondToPermission?.(requestId, {
+      behavior: "deny",
+      message: "The user answered with a message instead of approving.",
+    });
+
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
+      detail: { type: "plan", text: "Ship the thing" },
+      metadata: { approved: false },
+    });
+  });
+
+  test("a plan superseded by a new prompt records the same decision", () => {
+    const { session, events } = createPlanSession();
+
+    castInternals<{ dismissPendingPlanApprovals: (message: string) => void }>(
+      session,
+    ).dismissPendingPlanApprovals("Dismissed by a new prompt");
+
+    // dismissPendingPlanApprovals goes straight to resolvePlanPermission, so a
+    // row emitted from the response handler would miss this route entirely.
+    const [row] = planApprovalRows(events);
+    expect(row).toBeDefined();
+    expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
+      detail: { type: "plan", text: "Ship the thing" },
+      metadata: { approved: false },
+    });
   });
 });

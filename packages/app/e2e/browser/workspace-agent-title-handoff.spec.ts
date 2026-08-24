@@ -133,7 +133,7 @@ test.describe("Workspace agent title handoff", () => {
         .toBe(promptTitle);
       await expect(agentTab).toContainText(promptTitle, { timeout: 15_000 });
       await agentTab.click({ button: "right" });
-      await expect(page.getByTestId(`workspace-tab-context-agent_${agentId}-rename`)).toBeVisible({
+      await expect(page.getByRole("menuitem", { name: "Rename", exact: true })).toBeVisible({
         timeout: 10_000,
       });
       await page.keyboard.press("Escape");

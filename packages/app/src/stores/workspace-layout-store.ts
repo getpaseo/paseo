@@ -3,20 +3,27 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   defaultWorkspaceLayoutIds,
   type WorkspaceLayoutIdSource,
 } from "@/stores/workspace-layout-ids";
 import {
+  canDismissPaneInLayout,
   clampNormalizedSizes,
+  closePaneInLayout,
   closeTabInLayout,
   collectAllPanes,
   collectAllTabs,
   convertDraftToAgentInLayout,
+  createTabInLayout,
   createDefaultLayout,
-  createWorkspaceLayoutWithExplorer,
-  DEFAULT_EXPLORER_PANE_ID,
+  DEFAULT_PANE_ID,
+  AMBIENT_PLACEMENT,
+  createWorkspaceLayoutWithSidePanel,
+  FOCUSED_PANE_PLACEMENT,
+  SIDE_PANEL_PANE_ID,
   findPaneById,
   findPaneContainingTab,
   focusPaneInLayout,
@@ -27,20 +34,23 @@ import {
   moveTabToPaneInLayout,
   normalizeLayout,
   openTabInLayoutBackground,
-  openTabInLayoutFocused,
+  replaceTabTargetInLayout,
+  revealTargetInLayout,
+  restoreEmptyPanesInLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
-  retargetTabInLayout,
   setPaneHiddenInLayout,
+  setTabStateInLayout,
   splitPaneEmptyInLayout,
   splitPaneInLayout,
   stripEphemeralTabsFromLayout,
   type SplitGroup,
   type SplitNode,
   type SplitPane,
+  type WorkspaceTabPlacement,
   type WorkspaceTabReconcileState,
   type WorkspaceTabSnapshot,
   type WorkspaceLayout,
@@ -49,10 +59,14 @@ import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export {
+  AMBIENT_PLACEMENT,
+  canDismissPaneInLayout,
   collectAllPanes,
   collectAllTabs,
   createDefaultLayout,
-  createWorkspaceLayoutWithExplorer,
+  DEFAULT_PANE_ID,
+  createWorkspaceLayoutWithSidePanel,
+  FOCUSED_PANE_PLACEMENT,
   findPaneById,
   findPaneContainingTab,
   getFocusedBrowserId,
@@ -68,9 +82,20 @@ export type {
   SplitNode,
   SplitPane,
   WorkspaceLayout,
+  WorkspaceTabPlacement,
   WorkspaceTabReconcileState,
   WorkspaceTabSnapshot,
 };
+
+export type WorkspaceTabOpenIntent = "new" | "reveal" | "background";
+export interface OpenWorkspaceTabInput {
+  workspaceKey: string;
+  target: WorkspaceTabTarget;
+  intent: WorkspaceTabOpenIntent;
+  placement?: WorkspaceTabPlacement;
+  parentTabId?: string;
+  state?: JsonValue;
+}
 
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
@@ -79,28 +104,20 @@ interface WorkspaceLayoutStore {
   pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
-  explorerPaneIdByWorkspace: Record<string, string | null>;
-  acknowledgedPullRequestByWorkspace: Record<string, string>;
-  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
-  openChildTabFocused: (
-    workspaceKey: string,
-    target: WorkspaceTabTarget,
-    parentTabId: string,
-  ) => string | null;
-  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
-  openTabInExplorerPaneBackground: (
-    workspaceKey: string,
-    target: WorkspaceTabTarget,
-  ) => string | null;
-  ensureExplorerPane: (workspaceKey: string) => EnsureExplorerPaneResult | null;
-  openTabInExplorerPaneFocused: (
-    workspaceKey: string,
-    input: { target: WorkspaceTabTarget; parentTabId?: string | null },
-  ) => string | null;
-  observePullRequest: (workspaceKey: string, identity: string | null) => void;
+  sidePanelPaneIdByWorkspace: Record<string, string | null>;
+  openTab: (input: OpenWorkspaceTabInput) => string | null;
+  /** Reveals the side panel without putting anything in it. Returns its pane id. */
+  showSidePanel: (workspaceKey: string) => string | null;
+  hideSidePanel: (workspaceKey: string) => void;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
-  retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  replaceTab: (
+    workspaceKey: string,
+    tabId: string,
+    target: WorkspaceTabTarget,
+    state?: JsonValue,
+  ) => string | null;
+  setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
@@ -122,10 +139,13 @@ interface WorkspaceLayoutStore {
     },
   ) => string | null;
   moveTabToPane: (workspaceKey: string, tabId: string, toPaneId: string) => void;
+  /**
+   * Dismisses the pane along with whatever it still holds. The side panel hides so
+   * the user can bring it back; every other pane is removed. Callers own tab teardown
+   * (archiving agents, killing terminals) first. No-ops on the last visible pane.
+   */
+  closePane: (workspaceKey: string, paneId: string) => void;
   focusPane: (workspaceKey: string, paneId: string) => void;
-  hidePane: (workspaceKey: string, paneId: string) => void;
-  showPane: (workspaceKey: string, paneId: string) => void;
-  setExplorerPaneId: (workspaceKey: string, paneId: string | null) => void;
   unfocusPane: (workspaceKey: string) => string | null;
   restorePaneFocus: (workspaceKey: string, token: string) => void;
   resizeSplit: (workspaceKey: string, groupId: string, sizes: number[]) => void;
@@ -137,17 +157,12 @@ interface WorkspaceLayoutStore {
   purgeWorkspace: (workspaceKey: string) => void;
 }
 
-interface EnsureExplorerPaneResult {
-  paneId: string;
-  created: boolean;
-}
-
 interface WorkspaceFocusRestorationState {
   restorePaneId: string | null;
   tokens: string[];
 }
 
-// The root companion split is always present for the hidden explorer pane.
+// The root companion split is always present for the hidden side panel pane.
 // Preserve four user-created split levels beneath it.
 const MAX_TREE_DEPTH = 5;
 
@@ -160,6 +175,7 @@ const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
   featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
 });
 const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("new_tab") }),
   z.strictObject({
     kind: z.literal("draft"),
     draftId: z.string(),
@@ -212,6 +228,7 @@ const WorkspaceTabStorageSchema = z.strictObject({
   tabId: z.string(),
   target: WorkspaceTabTargetStorageSchema,
   createdAt: z.number(),
+  state: z.json().optional(),
 });
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
   z.discriminatedUnion("kind", [
@@ -244,7 +261,11 @@ const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject(
 const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
   splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),
+  // The persisted keys keep their pre-rename spelling: the schema is strict, so a
+  // rename here would fail every existing blob and wipe the layout it describes.
   explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
+  // COMPAT(pullRequestAutoAdd): PR detection stopped opening a tab in v0.5; accepted
+  // and ignored so upgrading does not discard the layout. Remove after 2027-08-20.
   acknowledgedPullRequestByWorkspace: z.record(z.string(), z.string()).optional(),
 });
 
@@ -254,6 +275,14 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function createWorkspaceTabInstanceId(): string {
+  const value =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `tab_${value}`;
 }
 
 function addAgentIdToWorkspaceSet(
@@ -302,10 +331,33 @@ function getWorkspaceLayout(
   state: Record<string, WorkspaceLayout>,
   workspaceKey: string,
 ): WorkspaceLayout {
-  return normalizeLayout(state[workspaceKey] ?? createWorkspaceLayoutWithExplorer());
+  return normalizeLayout(state[workspaceKey] ?? createWorkspaceLayoutWithSidePanel());
 }
 
-export function resolveExplorerPaneId(
+type SidePanelState = Pick<
+  WorkspaceLayoutStore,
+  "layoutByWorkspace" | "sidePanelPaneIdByWorkspace"
+>;
+
+/**
+ * The side panel's pane, on screen or not. A workspace the user has not laid out
+ * yet still has one — the default layout is born with it — so this answers before
+ * the first tab exists.
+ */
+export function selectSidePanelPaneId(state: SidePanelState, workspaceKey: string): string | null {
+  const layout = getWorkspaceLayout(state.layoutByWorkspace, workspaceKey);
+  return resolveSidePanelPaneId(layout, state.sidePanelPaneIdByWorkspace[workspaceKey]);
+}
+
+/** Whether the side panel pane is currently on screen. */
+export function selectIsSidePanelVisible(state: SidePanelState, workspaceKey: string): boolean {
+  const layout = state.layoutByWorkspace[workspaceKey];
+  const paneId = layout ? selectSidePanelPaneId(state, workspaceKey) : null;
+  const pane = paneId && layout ? findPaneById(layout.root, paneId) : null;
+  return Boolean(pane && pane.hidden !== true);
+}
+
+export function resolveSidePanelPaneId(
   layout: WorkspaceLayout,
   registeredPaneId: string | null | undefined,
 ): string | null {
@@ -313,16 +365,16 @@ export function resolveExplorerPaneId(
   if (registeredPane) {
     return registeredPane.id;
   }
-  const defaultPane = findPaneById(layout.root, DEFAULT_EXPLORER_PANE_ID);
+  const defaultPane = findPaneById(layout.root, SIDE_PANEL_PANE_ID);
   return defaultPane?.id ?? null;
 }
 
-function ensurePersistedExplorerPane(input: {
+function ensurePersistedSidePanelPane(input: {
   layout: WorkspaceLayout;
   registeredPaneId: string | null | undefined;
   ids: WorkspaceLayoutIdSource;
 }): { layout: WorkspaceLayout; paneId: string } | null {
-  const existingPaneId = resolveExplorerPaneId(input.layout, input.registeredPaneId);
+  const existingPaneId = resolveSidePanelPaneId(input.layout, input.registeredPaneId);
   if (existingPaneId) {
     return { layout: input.layout, paneId: existingPaneId };
   }
@@ -348,6 +400,23 @@ function ensurePersistedExplorerPane(input: {
     hidden: true,
   });
   return { layout: hiddenLayout ?? split.layout, paneId: split.paneId };
+}
+
+function getOpenTabPlacement(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  placement: WorkspaceTabPlacement | undefined,
+): {
+  layout: WorkspaceLayout;
+  placement: WorkspaceTabPlacement;
+  sidePanelPaneId: string | null;
+} {
+  const layout = getWorkspaceLayout(state.layoutByWorkspace, workspaceKey);
+  return {
+    layout,
+    placement: placement ?? AMBIENT_PLACEMENT,
+    sidePanelPaneId: resolveSidePanelPaneId(layout, state.sidePanelPaneIdByWorkspace[workspaceKey]),
+  };
 }
 
 function withoutFocusRestoration(
@@ -387,6 +456,20 @@ function attachParentTab(input: {
   });
 }
 
+/**
+ * Splits a side panel out of the pane the user is in. Only reached by layouts saved
+ * before the side panel became part of the default tree; new ones are born with it.
+ */
+function createSidePanelPane(
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+  splitPaneEmpty: WorkspaceLayoutStore["splitPaneEmpty"],
+): string | null {
+  const targetPaneId =
+    findPaneById(layout.root, layout.focusedPaneId)?.id ?? collectAllPanes(layout.root)[0]?.id;
+  return targetPaneId ? splitPaneEmpty(workspaceKey, { targetPaneId, position: "right" }) : null;
+}
+
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
 ) {
@@ -399,21 +482,37 @@ export function createWorkspaceLayoutStore(
         pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
-        explorerPaneIdByWorkspace: {},
-        acknowledgedPullRequestByWorkspace: {},
-        openTabFocused: (workspaceKey, target) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+        sidePanelPaneIdByWorkspace: {},
+        openTab: (input) => {
+          const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
           }
-
-          const result = openTabInLayoutFocused({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
+          const placement = getOpenTabPlacement(get(), normalizedWorkspaceKey, input.placement);
+          let result;
+          if (input.intent === "new") {
+            result = createTabInLayout({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+              createTabId: createWorkspaceTabInstanceId,
+              state: input.state,
+            });
+          } else if (input.intent === "background") {
+            result = openTabInLayoutBackground({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+            });
+          } else {
+            result = revealTargetInLayout({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+              createTabId: createWorkspaceTabInstanceId,
+            });
+          }
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace:
@@ -426,255 +525,70 @@ export function createWorkspaceLayoutStore(
                   ),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
-            },
-          }));
-
-          return result.tabId;
-        },
-        openChildTabFocused: (workspaceKey, target, parentTabId) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedParentTabId = trimNonEmpty(parentTabId);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedParentTabId || !normalizedTarget) {
-            return null;
-          }
-
-          const result = openTabInLayoutFocused({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
-          set((state) => {
-            const layout = attachParentTab({
-              layout: result.layout,
-              childTabId: result.tabId,
-              parentTabId: normalizedParentTabId,
-            });
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              hiddenAgentIdsByWorkspace:
-                normalizedTarget.kind !== "agent"
-                  ? state.hiddenAgentIdsByWorkspace
-                  : removeAgentIdFromWorkspaceSet(
-                      state.hiddenAgentIdsByWorkspace,
-                      normalizedWorkspaceKey,
-                      normalizedTarget.agentId,
-                    ),
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: layout,
-              },
-            };
-          });
-
-          return result.tabId;
-        },
-        openTabInBackground: (workspaceKey, target) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedTarget) {
-            return null;
-          }
-
-          const result = openTabInLayoutBackground({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
-            target: normalizedTarget,
-            now: Date.now(),
-          });
-
-          set((state) => ({
-            hiddenAgentIdsByWorkspace:
-              normalizedTarget.kind !== "agent"
-                ? state.hiddenAgentIdsByWorkspace
-                : removeAgentIdFromWorkspaceSet(
-                    state.hiddenAgentIdsByWorkspace,
-                    normalizedWorkspaceKey,
-                    normalizedTarget.agentId,
-                  ),
-            layoutByWorkspace: {
-              ...state.layoutByWorkspace,
-              [normalizedWorkspaceKey]: result.layout,
-            },
-          }));
-
-          return result.tabId;
-        },
-        openTabInExplorerPaneBackground: (workspaceKey, target) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedTarget) {
-            return null;
-          }
-
-          let tabId: string | null = null;
-          set((state) => {
-            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
-            const explorerPaneId = resolveExplorerPaneId(
-              layout,
-              state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
-            );
-            const explorerPane = findPaneById(layout.root, explorerPaneId);
-            if (!explorerPane) {
-              return state;
-            }
-
-            const originalFocusedPaneId = layout.focusedPaneId;
-            const revealedLayout = focusPaneInLayout({ layout, paneId: explorerPane.id }) ?? layout;
-            const result = openTabInLayoutBackground({
-              layout: revealedLayout,
-              target: normalizedTarget,
-              now: Date.now(),
-            });
-            const currentPane = findPaneContainingTab(result.layout.root, result.tabId);
-            const placedLayout =
-              currentPane?.id === explorerPane.id
-                ? result.layout
-                : (moveTabToPaneInLayout({
+              [normalizedWorkspaceKey]: input.parentTabId
+                ? attachParentTab({
                     layout: result.layout,
-                    tabId: result.tabId,
-                    toPaneId: explorerPane.id,
-                  }) ?? result.layout);
-            const restoredVisibility = explorerPane.hidden
-              ? (setPaneHiddenInLayout({
-                  layout: placedLayout,
-                  paneId: explorerPane.id,
-                  hidden: true,
-                }) ?? placedLayout)
-              : placedLayout;
-            const restoredLayout =
-              originalFocusedPaneId && originalFocusedPaneId !== explorerPane.id
-                ? (focusPaneInLayout({
-                    layout: restoredVisibility,
-                    paneId: originalFocusedPaneId,
-                  }) ?? restoredVisibility)
-                : restoredVisibility;
-
-            tabId = result.tabId;
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              explorerPaneIdByWorkspace: {
-                ...state.explorerPaneIdByWorkspace,
-                [normalizedWorkspaceKey]: explorerPane.id,
-              },
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: restoredLayout,
-              },
-            };
-          });
-          return tabId;
+                    childTabId: result.tabId,
+                    parentTabId: input.parentTabId,
+                  })
+                : result.layout,
+            },
+          }));
+          return result.tabId;
         },
-        ensureExplorerPane: (workspaceKey) => {
+        showSidePanel: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
             return null;
           }
 
-          const store = get();
-          const layout = getWorkspaceLayout(store.layoutByWorkspace, normalizedWorkspaceKey);
-          const explorerPaneId = resolveExplorerPaneId(
-            layout,
-            store.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
-          );
-          const explorerPane = findPaneById(layout.root, explorerPaneId);
-          if (explorerPane) {
-            if (store.explorerPaneIdByWorkspace[normalizedWorkspaceKey] !== explorerPane.id) {
-              store.setExplorerPaneId(normalizedWorkspaceKey, explorerPane.id);
-            }
-            store.focusPane(normalizedWorkspaceKey, explorerPane.id);
-            return { paneId: explorerPane.id, created: false };
-          }
-
-          const targetPaneId =
-            findPaneById(layout.root, layout.focusedPaneId)?.id ??
-            collectAllPanes(layout.root)[0]?.id;
-          if (!targetPaneId) {
-            return null;
-          }
-          const paneId = store.splitPaneEmpty(normalizedWorkspaceKey, {
-            targetPaneId,
-            position: "right",
-          });
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
+          const paneId =
+            resolveSidePanelPaneId(
+              layout,
+              get().sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
+            ) ?? createSidePanelPane(normalizedWorkspaceKey, layout, get().splitPaneEmpty);
           if (!paneId) {
             return null;
           }
-          get().setExplorerPaneId(normalizedWorkspaceKey, paneId);
-          return { paneId, created: true };
-        },
-        openTabInExplorerPaneFocused: (workspaceKey, input) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
-          if (!normalizedWorkspaceKey || !normalizedTarget) {
-            return null;
-          }
 
-          const store = get();
-          const explorerPane = store.ensureExplorerPane(normalizedWorkspaceKey);
-          if (!explorerPane) {
-            return null;
-          }
-          const parentTabId = trimNonEmpty(input.parentTabId);
-          const tabId = parentTabId
-            ? get().openChildTabFocused(normalizedWorkspaceKey, normalizedTarget, parentTabId)
-            : get().openTabFocused(normalizedWorkspaceKey, normalizedTarget);
-          if (!tabId) {
-            return null;
-          }
-
-          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
-          const currentPane = findPaneContainingTab(layout.root, tabId);
-          if (currentPane?.id !== explorerPane.paneId) {
-            get().moveTabToPane(normalizedWorkspaceKey, tabId, explorerPane.paneId);
-          }
-          return tabId;
+          set((state) =>
+            state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey] === paneId
+              ? state
+              : {
+                  sidePanelPaneIdByWorkspace: {
+                    ...state.sidePanelPaneIdByWorkspace,
+                    [normalizedWorkspaceKey]: paneId,
+                  },
+                },
+          );
+          // Focusing a hidden pane reveals it, so this is both halves of "show".
+          get().focusPane(normalizedWorkspaceKey, paneId);
+          return paneId;
         },
-        observePullRequest: (workspaceKey, identity) => {
+        hideSidePanel: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedIdentity = trimNonEmpty(identity);
-          if (!normalizedWorkspaceKey || !normalizedIdentity) {
+          if (!normalizedWorkspaceKey) {
             return;
           }
 
           set((state) => {
-            if (
-              state.acknowledgedPullRequestByWorkspace[normalizedWorkspaceKey] ===
-              normalizedIdentity
-            ) {
-              return state;
-            }
-
             const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
-            const explorerPaneId = resolveExplorerPaneId(
+            const paneId = resolveSidePanelPaneId(
               layout,
-              state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+              state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
             );
-            const explorerPane = findPaneById(layout.root, explorerPaneId);
-            if (!explorerPane) {
+            const nextLayout = paneId
+              ? setPaneHiddenInLayout({ layout, paneId, hidden: true })
+              : null;
+            if (!nextLayout) {
               return state;
             }
-            const placementLayout =
-              focusPaneInLayout({ layout, paneId: explorerPane.id }) ?? layout;
-            const result = openTabInLayoutFocused({
-              layout: placementLayout,
-              target: { kind: "pull_request" },
-              now: Date.now(),
-            });
 
             return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              acknowledgedPullRequestByWorkspace: {
-                ...state.acknowledgedPullRequestByWorkspace,
-                [normalizedWorkspaceKey]: normalizedIdentity,
-              },
-              explorerPaneIdByWorkspace: {
-                ...state.explorerPaneIdByWorkspace,
-                [normalizedWorkspaceKey]: explorerPane.id,
-              },
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: result.layout,
+                [normalizedWorkspaceKey]: nextLayout,
               },
             };
           });
@@ -688,20 +602,51 @@ export function createWorkspaceLayoutStore(
 
           set((state) => {
             const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
-            const explorerPaneId = resolveExplorerPaneId(
+            const sidePanelPaneId = resolveSidePanelPaneId(
               layout,
-              state.explorerPaneIdByWorkspace[normalizedWorkspaceKey],
+              state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
             );
             const closingPane = findPaneContainingTab(layout.root, normalizedTabId);
+            const closingTab = collectAllTabs(layout.root).find(
+              (tab) => tab.tabId === normalizedTabId,
+            );
+            if (closingPane?.tabIds.length === 1 && closingTab?.target.kind === "new_tab") {
+              const nextLayout =
+                closingPane.id === sidePanelPaneId
+                  ? setPaneHiddenInLayout({
+                      layout,
+                      paneId: closingPane.id,
+                      hidden: true,
+                    })
+                  : closePaneInLayout({ layout, paneId: closingPane.id });
+              if (!nextLayout) {
+                return state;
+              }
+              return {
+                ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+                layoutByWorkspace: {
+                  ...state.layoutByWorkspace,
+                  [normalizedWorkspaceKey]: nextLayout,
+                },
+              };
+            }
             const preserveEmptyPaneId =
-              closingPane?.id === "main" || closingPane?.id === explorerPaneId
+              closingPane?.id === "main" || closingPane?.id === sidePanelPaneId
                 ? closingPane.id
                 : null;
-            const nextLayout = closeTabInLayout({
+            const closedLayout = closeTabInLayout({
               layout,
               tabId: normalizedTabId,
               preserveEmptyPaneId,
             });
+            const nextLayout =
+              closedLayout && closingPane?.id === sidePanelPaneId && closingPane.tabIds.length === 1
+                ? (setPaneHiddenInLayout({
+                    layout: closedLayout,
+                    paneId: sidePanelPaneId,
+                    hidden: true,
+                  }) ?? closedLayout)
+                : closedLayout;
             if (!nextLayout) {
               return state;
             }
@@ -740,27 +685,21 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
-        retargetTab: (workspaceKey, tabId, target) => {
+        replaceTab: (workspaceKey, tabId, target, tabState) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTabId = trimNonEmpty(tabId);
           const normalizedTarget = normalizeWorkspaceTabTarget(target);
-          if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedTarget) {
-            return null;
-          }
-
-          const result = retargetTabInLayout({
+          if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedTarget) return null;
+          const result = replaceTabTargetInLayout({
             layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
             tabId: normalizedTabId,
             target: normalizedTarget,
+            createTabId: createWorkspaceTabInstanceId,
+            state: tabState,
           });
-          if (!result) {
-            return null;
-          }
-
+          if (!result) return null;
           set((state) => ({
-            ...(result.layout.focusedPaneId !== null
-              ? (withoutFocusRestoration(state, normalizedWorkspaceKey) ?? {})
-              : {}),
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -774,8 +713,26 @@ export function createWorkspaceLayoutStore(
               [normalizedWorkspaceKey]: result.layout,
             },
           }));
-
           return result.tabId;
+        },
+        setTabState: (workspaceKey, tabId, tabState) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return;
+          set((state) => {
+            const layout = setTabStateInLayout({
+              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              tabId: normalizedTabId,
+              state: tabState,
+            });
+            if (!layout) return state;
+            return {
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: layout,
+              },
+            };
+          });
         },
         convertDraftToAgent: (workspaceKey, tabId, agentId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -828,6 +785,10 @@ export function createWorkspaceLayoutStore(
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+                sidePanelPaneId: resolveSidePanelPaneId(
+                  currentLayout,
+                  state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
+                ),
               },
               snapshot,
             );
@@ -979,6 +940,38 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
+        closePane: (workspaceKey, paneId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedPaneId = trimNonEmpty(paneId);
+          if (!normalizedWorkspaceKey || !normalizedPaneId) {
+            return;
+          }
+
+          set((state) => {
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            // The side panel is a surface the user summons, so closing it puts it
+            // away rather than dismantling the split it lives in.
+            const isSidePanel =
+              resolveSidePanelPaneId(
+                layout,
+                state.sidePanelPaneIdByWorkspace[normalizedWorkspaceKey],
+              ) === normalizedPaneId;
+            const nextLayout = isSidePanel
+              ? setPaneHiddenInLayout({ layout, paneId: normalizedPaneId, hidden: true })
+              : closePaneInLayout({ layout, paneId: normalizedPaneId });
+            if (!nextLayout) {
+              return state;
+            }
+
+            return {
+              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: nextLayout,
+              },
+            };
+          });
+        },
         focusPane: (workspaceKey, paneId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedPaneId = trimNonEmpty(paneId);
@@ -1003,67 +996,6 @@ export function createWorkspaceLayoutStore(
               },
             };
           });
-        },
-        hidePane: (workspaceKey, paneId) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedPaneId = trimNonEmpty(paneId);
-          if (!normalizedWorkspaceKey || !normalizedPaneId) {
-            return;
-          }
-
-          set((state) => {
-            const nextLayout = setPaneHiddenInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
-              paneId: normalizedPaneId,
-              hidden: true,
-            });
-            if (!nextLayout) {
-              return state;
-            }
-            return {
-              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: nextLayout,
-              },
-            };
-          });
-        },
-        showPane: (workspaceKey, paneId) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          const normalizedPaneId = trimNonEmpty(paneId);
-          if (!normalizedWorkspaceKey || !normalizedPaneId) {
-            return;
-          }
-
-          set((state) => {
-            const nextLayout = setPaneHiddenInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
-              paneId: normalizedPaneId,
-              hidden: false,
-            });
-            if (!nextLayout) {
-              return state;
-            }
-            return {
-              layoutByWorkspace: {
-                ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: nextLayout,
-              },
-            };
-          });
-        },
-        setExplorerPaneId: (workspaceKey, paneId) => {
-          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
-          if (!normalizedWorkspaceKey) {
-            return;
-          }
-          set((state) => ({
-            explorerPaneIdByWorkspace: {
-              ...state.explorerPaneIdByWorkspace,
-              [normalizedWorkspaceKey]: trimNonEmpty(paneId),
-            },
-          }));
         },
         unfocusPane: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -1336,8 +1268,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
-              normalizedWorkspaceKey in state.explorerPaneIdByWorkspace ||
-              normalizedWorkspaceKey in state.acknowledgedPullRequestByWorkspace;
+              normalizedWorkspaceKey in state.sidePanelPaneIdByWorkspace;
             if (!hasAny) {
               return state;
             }
@@ -1353,12 +1284,8 @@ export function createWorkspaceLayoutStore(
               state.hiddenAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
               state.focusRestorationByWorkspace;
-            const { [normalizedWorkspaceKey]: _explorerPane, ...explorerPaneIdByWorkspace } =
-              state.explorerPaneIdByWorkspace;
-            const {
-              [normalizedWorkspaceKey]: _acknowledgedPullRequest,
-              ...acknowledgedPullRequestByWorkspace
-            } = state.acknowledgedPullRequestByWorkspace;
+            const { [normalizedWorkspaceKey]: _sidePanelPane, ...sidePanelPaneIdByWorkspace } =
+              state.sidePanelPaneIdByWorkspace;
             return {
               layoutByWorkspace,
               splitSizesByWorkspace,
@@ -1366,8 +1293,7 @@ export function createWorkspaceLayoutStore(
               pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
               focusRestorationByWorkspace,
-              explorerPaneIdByWorkspace,
-              acknowledgedPullRequestByWorkspace,
+              sidePanelPaneIdByWorkspace,
             };
           });
         },
@@ -1388,8 +1314,7 @@ export function createWorkspaceLayoutStore(
           return {
             layoutByWorkspace,
             splitSizesByWorkspace: state.splitSizesByWorkspace,
-            explorerPaneIdByWorkspace: state.explorerPaneIdByWorkspace,
-            acknowledgedPullRequestByWorkspace: state.acknowledgedPullRequestByWorkspace,
+            explorerPaneIdByWorkspace: state.sidePanelPaneIdByWorkspace,
           };
         },
         merge: (persistedState, currentState) => {
@@ -1398,31 +1323,32 @@ export function createWorkspaceLayoutStore(
             return currentState;
           }
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
-          const explorerPaneIdByWorkspace: Record<string, string | null> = {
+          const sidePanelPaneIdByWorkspace: Record<string, string | null> = {
             ...result.data.explorerPaneIdByWorkspace,
           };
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
-            const explorer = ensurePersistedExplorerPane({
-              layout: normalizeLayout(persistedLayout),
-              registeredPaneId: explorerPaneIdByWorkspace[workspaceKey],
+            const restoredLayout = restoreEmptyPanesInLayout(
+              stripEphemeralTabsFromLayout(persistedLayout),
+            );
+            const sidePanel = ensurePersistedSidePanelPane({
+              layout: restoredLayout,
+              registeredPaneId: sidePanelPaneIdByWorkspace[workspaceKey],
               ids,
             });
-            if (!explorer) {
-              layoutByWorkspace[workspaceKey] = normalizeLayout(persistedLayout);
+            if (!sidePanel) {
+              layoutByWorkspace[workspaceKey] = restoredLayout;
               continue;
             }
-            layoutByWorkspace[workspaceKey] = explorer.layout;
-            explorerPaneIdByWorkspace[workspaceKey] = explorer.paneId;
+            layoutByWorkspace[workspaceKey] = sidePanel.layout;
+            sidePanelPaneIdByWorkspace[workspaceKey] = sidePanel.paneId;
           }
           return {
             ...currentState,
             layoutByWorkspace,
             splitSizesByWorkspace: result.data.splitSizesByWorkspace ?? {},
-            explorerPaneIdByWorkspace,
-            acknowledgedPullRequestByWorkspace:
-              result.data.acknowledgedPullRequestByWorkspace ?? {},
+            sidePanelPaneIdByWorkspace,
           };
         },
       },

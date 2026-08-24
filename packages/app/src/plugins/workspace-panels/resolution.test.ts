@@ -23,6 +23,7 @@ function installed(): InstalledPlugin {
     ],
     commandCenterItems: [],
     attachmentSources: [],
+    themes: [],
   };
 }
 

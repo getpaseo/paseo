@@ -15,6 +15,9 @@ export function normalizeWorkspaceTabTarget(
     const setup = normalizeWorkspaceDraftTabSetup(value.setup);
     return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
   }
+  if (value.kind === "new_tab") {
+    return { kind: "new_tab" };
+  }
   if (value.kind === "agent") {
     const agentId = trimNonEmpty(value.agentId);
     return agentId ? { kind: "agent", agentId } : null;
@@ -185,6 +188,9 @@ function recordsShallowEqual(
 }
 
 export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): string {
+  if (target.kind === "new_tab") {
+    throw new Error("New tabs do not have deterministic target identities");
+  }
   if (target.kind === "draft") {
     return target.draftId;
   }

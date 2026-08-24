@@ -36,7 +36,12 @@ import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachment
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { isNative } from "@/constants/platform";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  PaneContentToolbar,
+  paneContentToolbarIconSize,
+  paneContentToolbarIconButtonStyle,
+} from "@/components/ui/pane-content-toolbar";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { getForgePresentation } from "@/git/forge";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
@@ -145,11 +150,11 @@ function kebabTriggerStyle({
   return [styles.kebabButton, hovered && styles.kebabButtonHovered];
 }
 
-function refreshButtonStyle({
-  hovered = false,
-  pressed = false,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.refreshButton, (hovered || pressed) && styles.refreshButtonHovered];
+function refreshButtonStyle(
+  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
+  isCompact: boolean,
+) {
+  return paneContentToolbarIconButtonStyle({ hovered, pressed }, false, isCompact);
 }
 
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
@@ -193,6 +198,11 @@ export function PullRequestPane({
   workspaceAttachmentScopeKey?: string;
 }) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const toolbarRefreshButtonStyle = useCallback(
+    (state: PressableStateCallbackType) => refreshButtonStyle(state, isCompact),
+    [isCompact],
+  );
   const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
   // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
@@ -467,7 +477,7 @@ export function PullRequestPane({
   return (
     <View style={styles.root} testID="pr-pane">
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.toolbar} testID="pr-pane-toolbar">
+        <PaneContentToolbar style={styles.toolbar} testID="pr-pane-toolbar">
           <View style={styles.toolbarActions}>
             <Button
               variant="ghost"
@@ -489,7 +499,7 @@ export function PullRequestPane({
                   : t("workspace.git.diff.refreshState", { brand: forgePresentation.brandLabel })
               }
               testID="pr-pane-refresh"
-              style={refreshButtonStyle}
+              style={toolbarRefreshButtonStyle}
               hitSlop={8}
               onPress={handleRefresh}
               disabled={isRefreshing}
@@ -497,16 +507,19 @@ export function PullRequestPane({
               <View style={styles.refreshIcon}>
                 {isRefreshing ? (
                   <ThemedLoadingSpinner
-                    size={ICON_SIZE.sm}
+                    size={paneContentToolbarIconSize(isCompact)}
                     uniProps={foregroundMutedColorMapping}
                   />
                 ) : (
-                  <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+                  <ThemedRotateCw
+                    size={paneContentToolbarIconSize(isCompact)}
+                    uniProps={foregroundMutedColorMapping}
+                  />
                 )}
               </View>
             </Pressable>
           ) : null}
-        </View>
+        </PaneContentToolbar>
 
         <Pressable onPress={handleOpenPrUrl} style={styles.header}>
           {({ hovered }) => (
@@ -1239,15 +1252,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.border,
   },
   toolbar: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    paddingTop: theme.spacing[2],
     paddingRight: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
     paddingLeft: theme.spacing[3],
   },
   toolbarActions: {
@@ -1262,17 +1270,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 0,
     paddingHorizontal: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
-  },
-  refreshButton: {
-    marginLeft: "auto",
-    width: 22,
-    height: 22,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  refreshButtonHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {
     width: ICON_SIZE.md,

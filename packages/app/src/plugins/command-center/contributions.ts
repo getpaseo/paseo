@@ -1,6 +1,6 @@
-import { callPluginRpc } from "@paseo/plugin/host";
-import type { PluginCommandCapabilities } from "@paseo/plugin";
-import type { PluginClientStateSource } from "@paseo/plugin/host";
+import { callPluginRpc } from "@getpaseo/plugin/host";
+import type { PluginCommandCapabilities } from "@getpaseo/plugin";
+import type { PluginClientStateSource } from "@getpaseo/plugin/host";
 import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
 import { resolvePluginIcon } from "../icons";

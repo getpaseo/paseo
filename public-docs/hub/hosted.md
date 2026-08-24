@@ -8,6 +8,8 @@ category: Hub
 
 # Hosted Hub
 
-[Paseo Hub](https://hub.paseo.sh) is the managed service. Existing accounts can sign in; new account registration is currently closed.
+[Paseo Hub](https://hub.paseo.sh) is the managed service. It is not generally available yet: existing accounts can sign in, but new account registration is closed.
 
-Paseo owns the hosted GitHub App, Slack app, and Discord application. Projects, configuration, triggers, daemons, and activity work the same way when you [self-host](/docs/hub/self-hosting).
+To start now, [run Hub yourself](/docs/hub/self-hosting). Projects, configuration, triggers, daemons, and activity use the same model in both forms. The managed service owns its GitHub App, Slack app, and Discord application; a self-hosted Hub uses apps you create and control.
+
+For the hosted release, [join the Paseo Discord](https://discord.gg/jz8T2uahpH) and watch the `#paseo-hub` channel. The release will be announced there; you do not need to message anyone directly.

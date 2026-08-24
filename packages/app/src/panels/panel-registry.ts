@@ -31,6 +31,7 @@ export interface PanelRegistration<
     target: Extract<WorkspaceTabTarget, { kind: K }>,
     context: PanelDescriptorContext,
   ): PanelDescriptor;
+  resourceKey(target: Extract<WorkspaceTabTarget, { kind: K }>): string;
 }
 
 const panelRegistry = new Map<WorkspaceTabTarget["kind"], PanelRegistration>();

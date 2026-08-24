@@ -5,7 +5,8 @@ import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb } from "@/constants/platform";
 import { DiffDocument } from "@/git/diff-document";
 import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
@@ -17,6 +18,8 @@ import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { defaultChangesState, changesStateSchema } from "@/panels/changes/state";
+import { usePanelState } from "@/panels/use-panel-state";
 
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
@@ -74,7 +77,8 @@ function PanelState({
 
 function WorkingDiffPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openFileInWorkspace } = usePaneContext();
+  const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isActive = useRetainedPanelActive();
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
@@ -97,10 +101,13 @@ function WorkingDiffPanel() {
         cwd={cwd}
         enabled={isActive}
         host="panel"
+        modeScope={tabId}
         focusPath={target.focusPath}
         focusRequestId={target.focusRequestId}
         onOpenFile={handleOpenFile}
         onAddToChat={canAddToChat ? addFile : undefined}
+        state={changesState}
+        onStateChange={setChangesState}
       />
     </View>
   );
@@ -151,7 +158,7 @@ function CommitDiffPanel() {
   return (
     <View style={styles.container} testID="commit-diff-panel">
       {panelPreferences.canUseSplitLayout ? (
-        <View style={styles.toolbar}>
+        <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
           <View style={styles.toolbarActions} testID="commit-diff-toolbar">
             <DiffLayoutToggle
               layout={panelPreferences.preferences.layout}
@@ -160,7 +167,7 @@ function CommitDiffPanel() {
               onToggle={panelPreferences.toggleLayout}
             />
           </View>
-        </View>
+        </PaneContentToolbar>
       ) : null}
       <View style={styles.body}>{body}</View>
     </View>
@@ -197,12 +204,14 @@ export const workingDiffPanelRegistration: PanelRegistration<"working_diff"> = {
   kind: "working_diff",
   component: WorkingDiffPanel,
   useDescriptor: useWorkingDiffPanelDescriptor,
+  resourceKey: () => "working_diff",
 };
 
 export const commitDiffPanelRegistration: PanelRegistration<"commit_diff"> = {
   kind: "commit_diff",
   component: CommitDiffPanel,
   useDescriptor: useCommitDiffPanelDescriptor,
+  resourceKey: (target) => target.sha,
 };
 
 const styles = StyleSheet.create((theme) => ({
@@ -211,15 +220,11 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   toolbar: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
     paddingRight: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-    flexShrink: 0,
   },
   toolbarActions: {
     flexDirection: "row",

@@ -1,4 +1,4 @@
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { ExamplePanel } from "./main.client";
 import { increment } from "./increment.server";
 import { incrementRpc } from "./increment.shared";

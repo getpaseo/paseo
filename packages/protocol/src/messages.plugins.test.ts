@@ -115,6 +115,28 @@ describe("plugin protocol compatibility", () => {
     expect(current.payload.features?.pluginLogs).toBe(true);
   });
 
+  it("keeps the plugin themes capability optional for older server info", () => {
+    const older = StatusMessageSchema.parse({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "older-host",
+        features: { plugins: true },
+      },
+    });
+    const current = StatusMessageSchema.parse({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "current-host",
+        features: { plugins: true, pluginThemes: true },
+      },
+    });
+
+    expect(older.payload.features?.pluginThemes).toBeUndefined();
+    expect(current.payload.features?.pluginThemes).toBe(true);
+  });
+
   it("keeps the catalog change notification safe for older clients", () => {
     expect(
       StatusMessageSchema.parse({

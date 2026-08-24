@@ -120,7 +120,7 @@ republish the packages:
 
 ```bash
 PASEO_VERSION=$(node -p "require('./package.json').version")
-for package in highlight relay protocol client server cli; do
+for package in highlight relay protocol client plugin server cli; do
   npm dist-tag add "@getpaseo/$package@$PASEO_VERSION" beta
 done
 ```

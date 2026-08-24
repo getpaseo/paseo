@@ -64,6 +64,9 @@ export const ptBR: TranslationResources = {
       workspaces: "Espaços de trabalho",
       agents: "Agentes",
       newAgent: "Novo agente",
+      open: "Abrir {{name}}",
+      openInSidePanel: "Abrir {{name}} no painel lateral",
+      openInFocusedPane: "Abrir {{name}} no painel em foco",
       addProject: "Adicionar projeto",
       home: "Início",
       groupByProject: "Agrupar por projeto",
@@ -557,7 +560,6 @@ export const ptBR: TranslationResources = {
       loading: "Carregando...",
       modified: "Alterações não salvas",
       loadingAgentTitle: "Carregando título do agente",
-      emptyPane: "Nenhuma aba neste painel.",
       fallback: {
         newAgent: "Novo agente",
         setup: "Configuração",
@@ -599,6 +601,7 @@ export const ptBR: TranslationResources = {
         newBrowser: "Novo navegador",
         maximizePane: "Maximizar painel",
         restorePane: "Restaurar painel",
+        closePane: "Fechar painel",
         exitFocusMode: "Sair do modo de foco",
         splitRight: "Dividir painel à direita",
         splitDown: "Dividir painel abaixo",
@@ -606,12 +609,12 @@ export const ptBR: TranslationResources = {
         files: "Arquivos",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
-        editTerminalProfiles: "Editar perfis…",
+        editTerminalProfiles: "Editar perfis",
       },
-      explorer: {
-        open: "Abrir explorador",
-        close: "Fechar explorador",
-        toggle: "Alternar explorador",
+      sidePanel: {
+        open: "Abrir painel lateral",
+        close: "Fechar painel lateral",
+        toggle: "Alternar painel lateral",
         changes: "Alterações",
         files: "Arquivos",
       },
@@ -712,6 +715,10 @@ export const ptBR: TranslationResources = {
         startFailed: "Falha ao iniciar {{scriptName}}",
         stopFailed: "Falha ao parar {{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Mostrar árvore de pastas",
+      hideFolderTree: "Ocultar árvore de pastas",
     },
     git: {
       actions: {
@@ -877,8 +884,6 @@ export const ptBR: TranslationResources = {
         split: "Diff lado a lado",
         switchToUnified: "Alternar para diff unificado",
         switchToSplit: "Alternar para diff lado a lado",
-        showTreeView: "Mostrar árvore de pastas",
-        hideTreeView: "Ocultar árvore de pastas",
         options: "Opções do diff",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
@@ -894,6 +899,8 @@ export const ptBR: TranslationResources = {
         failedRefresh: "Falha ao atualizar estado do git.",
         emptyHiddenWhitespace: "Nenhuma alteração visível após ocultar espaços em branco",
         emptyUncommitted: "Nenhuma alteração sem commit",
+        seeUncommittedChanges: "Ver alterações sem commit",
+        seeCommittedChanges: "Ver alterações com commit",
         emptyAgainstBase: "Nenhuma alteração vs {{baseRef}}",
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",
@@ -1008,8 +1015,6 @@ export const ptBR: TranslationResources = {
     },
     filter: {
       clear: "Limpar filtro",
-      noMatchesTitle: "Nenhum espaço de trabalho corresponde",
-      noMatchesDescription: "Altere ou limpe o filtro de etiquetas para ver espaços de trabalho.",
     },
     manage: {
       open: "Gerenciar etiquetas…",
@@ -1065,6 +1070,15 @@ export const ptBR: TranslationResources = {
         label: "Host",
         all: "Todos os hosts",
       },
+      projectFilter: {
+        label: "Projeto",
+        all: "Todos os projetos",
+      },
+    },
+    filterEmpty: {
+      title: "Nenhum espaço de trabalho corresponde",
+      description: "Altere ou limpe os filtros da barra lateral para ver espaços de trabalho.",
+      clear: "Limpar filtros",
     },
     pinned: {
       title: "Fixados",
@@ -1648,6 +1662,8 @@ export const ptBR: TranslationResources = {
       updateRequired: "Atualize o host para ativar o relay pelo Paseo Desktop.",
       unavailable: "Oferta de pareamento indisponível.",
       hint: "Escaneie este QR code com o Paseo no seu celular ou copie o link abaixo.",
+      securityWarning:
+        "Trate este link de pareamento como uma senha. Qualquer pessoa com o link pode acessar este daemon.",
       qrUnavailable: "QR code indisponível.",
       qrAccessibility: "Código QR de pareamento",
       retry: "Tentar novamente",
@@ -1721,6 +1737,7 @@ export const ptBR: TranslationResources = {
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
+      tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       editor: {
@@ -1749,6 +1766,7 @@ export const ptBR: TranslationResources = {
       label: "Arquivos",
       subtitle: "Arquivos do espaço de trabalho",
       tooltip: "Explorar arquivos do espaço de trabalho",
+      chooseFile: "Escolha um arquivo",
     },
     pullRequest: {
       label: "Pull request",
@@ -1950,6 +1968,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      sidePanelRouting: {
+        label: "Abrir abas de apoio no painel lateral",
+        description:
+          "Links de arquivo, pull requests e progresso da configuração abrem ao lado do seu trabalho em vez do painel em foco",
+      },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
         description:
@@ -2065,13 +2088,18 @@ export const ptBR: TranslationResources = {
         interfaceFont: "Fonte da interface",
         interfaceFontHint: "Usada em todo o app. Deixe vazio para usar o padrão do sistema",
         interfaceFontAccessibility: "Família da fonte da interface",
-        baseSize: "Tamanho base",
-        baseSizeAccessibility: "Tamanho base da fonte",
+        interfaceSize: "Tamanho da interface",
+        interfaceSizeHint: "Usado na navegação, nos controles e nos rótulos",
+        interfaceSizeAccessibility: "Tamanho da fonte da interface",
+        contentSize: "Tamanho do conteúdo",
+        contentSizeHint: "Usado no texto do chat e no Markdown renderizado",
+        contentSizeAccessibility: "Tamanho da fonte do conteúdo",
         codeFont: "Fonte de código",
         codeFontHint:
           "Usada em código, diffs e saída do terminal. Deixe vazio para usar o padrão do sistema",
         codeFontAccessibility: "Família da fonte de código",
         codeSize: "Tamanho do código",
+        codeSizeHint: "Usado em código, diffs e saída do terminal",
         codeSizeAccessibility: "Tamanho da fonte de código",
       },
       syntax: {
@@ -2079,7 +2107,9 @@ export const ptBR: TranslationResources = {
         highlightTheme: "Tema de destaque",
         highlightThemeHint: "Cores para código, independentes do tema do app",
         highlightThemeAccessibility: "Tema de destaque: {{value}}",
-        previewAccessibility: "Prévia ao vivo do tema de sintaxe e da fonte de código",
+        previewAccessibility:
+          "Prévia ao vivo da tipografia de conteúdo, do tema de sintaxe e da fonte de código",
+        previewContent: "Prévia de conteúdo e código",
       },
     },
     shortcuts: {
@@ -2134,11 +2164,11 @@ export const ptBR: TranslationResources = {
         toggleCommandCenter: "Alternar central de comandos",
         showKeyboardShortcuts: "Mostrar atalhos de teclado",
         toggleLeftSidebar: "Alternar barra lateral esquerda",
-        toggleRightSidebar: "Alternar barra lateral direita",
+        toggleRightSidebar: "Alternar painel lateral",
         toggleBothSidebars: "Alternar ambas as barras laterais",
         toggleSettings: "Alternar Configurações",
         toggleFocusMode: "Alternar modo de foco",
-        toggleExplorerPaneMaximization: "Alternar maximização do painel Explorador",
+        toggleExplorerPaneMaximization: "Alternar maximização do painel lateral",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
         cycleAgentMode: "Alternar modo do agente",
@@ -2358,10 +2388,9 @@ export const ptBR: TranslationResources = {
         featuresLabel: "Recursos",
         featureCount: "{{count}} recursos",
         featureCountOne: "{{count}} recurso",
-        notesLabel: "Notas para os agentes",
+        notesLabel: "Quando usar",
         notesPlaceholder: "Use para trabalho de UI — componentes, layout e tokens de design.",
-        notesHint:
-          'Retornado pela ferramenta MCP "list_profiles". Escreva como uma instrução para outro agente.',
+        notesHint: "Ajuda os agentes a escolher este perfil ao iniciar outro agente.",
         save: "Salvar",
         saving: "Salvando...",
         remove: "Remover",

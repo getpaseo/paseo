@@ -3,8 +3,19 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
+export interface PluginTheme {
+  readonly colors: {
+    readonly surface0: string;
+    readonly foreground: string;
+    readonly foregroundMuted: string;
+    readonly accent: string;
+    readonly accentForeground: string;
+    readonly statusDanger: string;
+  };
+}
+
 export interface PluginHostProps {
-  theme: Record<string, unknown>;
+  theme: PluginTheme;
   host: {
     id: string;
     label: string;
@@ -91,6 +102,24 @@ export interface PluginSidebarContribution {
   surface: string;
 }
 
+export interface PluginThemeColors {
+  background: string;
+  foreground: string;
+  raised: string;
+  control: string;
+  border: string;
+  accent?: string;
+  mutedForeground: string;
+  ring: string;
+}
+
+export interface PluginThemeContribution {
+  id: string;
+  name: string;
+  appearance: "light" | "dark";
+  colors: PluginThemeColors;
+}
+
 export interface PluginAttachmentSourceContribution {
   id: string;
   title: string;
@@ -164,6 +193,7 @@ export interface PluginContext {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addTheme(contribution: PluginThemeContribution): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;

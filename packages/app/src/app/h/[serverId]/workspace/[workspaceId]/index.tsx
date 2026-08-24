@@ -19,6 +19,7 @@ import {
   getWorkspaceSelectionKey,
   orderWorkspaceSelectionsForStableRender,
   reconcileRetainedWorkspaceSelections,
+  resolveWorkspaceDeckRetentionLimit,
   type RetainedWorkspaceSelection,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
@@ -33,7 +34,7 @@ import {
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
 function getParamValue(value: string | string[] | undefined): string {
@@ -217,6 +218,7 @@ function WorkspaceDeck({
         currentEntries: retainedSelections,
         activeSelection,
         now: reconciliationNow,
+        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
       }),
     [activeSelection, reconciliationNow, retainedSelections],
   );
@@ -253,6 +255,7 @@ function WorkspaceDeck({
           currentEntries: current,
           activeSelection,
           now: Date.now(),
+          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
         }),
       );
     }, expirationDelay + 1);

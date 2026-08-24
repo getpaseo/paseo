@@ -77,6 +77,7 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { EditorSection } from "@/screens/settings/editor-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { supportsDesktopPaneSplits } from "@/constants/layout";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -273,6 +274,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleSidePanelRoutingChange: (enabled: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -280,6 +282,24 @@ interface ServiceUrlBehaviorMenuItemProps {
   label: string;
   selected: boolean;
   onChange: (value: ServiceUrlBehavior) => void;
+}
+
+interface SendBehaviorMenuItemProps {
+  value: SendBehavior;
+  label: string;
+  selected: boolean;
+  onChange: (value: SendBehavior) => void;
+}
+
+function SendBehaviorMenuItem({ value, label, selected, onChange }: SendBehaviorMenuItemProps) {
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {label}
+    </DropdownMenuItem>
+  );
 }
 
 function ServiceUrlBehaviorMenuItem({
@@ -329,10 +349,14 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleSidePanelRoutingChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
+  const selectedSendBehaviorLabel =
+    sendBehaviorOptions.find((option) => option.value === settings.sendBehavior)?.label ??
+    settings.sendBehavior;
   const sendBehaviorDescriptionKey = `settings.general.defaultSend.descriptions.${settings.sendBehavior}`;
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
@@ -377,12 +401,26 @@ function GeneralSection({
             <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
             <Text style={settingsStyles.rowHint}>{t(sendBehaviorDescriptionKey)}</Text>
           </View>
-          <SegmentedControl
-            size="sm"
-            value={settings.sendBehavior}
-            onValueChange={handleSendBehaviorChange}
-            options={sendBehaviorOptions}
-          />
+          <DropdownMenu>
+            <DropdownTrigger
+              accessibilityRole="button"
+              accessibilityLabel={`${t("settings.general.defaultSend.label")}: ${selectedSendBehaviorLabel}`}
+              style={themeTriggerStyle}
+            >
+              <Text style={styles.themeTriggerText}>{selectedSendBehaviorLabel}</Text>
+            </DropdownTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={200}>
+              {sendBehaviorOptions.map((option) => (
+                <SendBehaviorMenuItem
+                  key={option.value}
+                  value={option.value}
+                  label={option.label}
+                  selected={settings.sendBehavior === option.value}
+                  onChange={handleSendBehaviorChange}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </View>
         <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
           <View style={settingsStyles.rowContent}>
@@ -459,6 +497,23 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
+        {supportsDesktopPaneSplits() ? (
+          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.sidePanelRouting.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.sidePanelRouting.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.openSupportingTabsInSidePanel}
+              onValueChange={handleSidePanelRoutingChange}
+              accessibilityLabel={t("settings.general.sidePanelRouting.label")}
+            />
+          </View>
+        ) : null}
       </View>
     </SettingsSection>
   );
@@ -1211,6 +1266,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleSidePanelRoutingChange = useCallback(
+    (openSupportingTabsInSidePanel: boolean) => {
+      void updateSettings({ openSupportingTabsInSidePanel });
+    },
+    [updateSettings],
+  );
+
   const handleUseLegacyTerminalRendererChange = useCallback(
     (useLegacyTerminalRenderer: boolean) => {
       void updateSettings({ useLegacyTerminalRenderer });
@@ -1420,6 +1482,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                handleSidePanelRoutingChange={handleSidePanelRoutingChange}
               />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>

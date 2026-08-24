@@ -10,6 +10,8 @@ import { createMaterialFileIcon } from "@/components/material-file-icon";
 import { FileExplorerPane } from "@/components/file-explorer-pane";
 import { TreeRail } from "@/components/tree-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { defaultFileState, fileStateSchema } from "@/panels/file/state";
+import { usePanelState } from "@/panels/use-panel-state";
 
 const CENTERED_PADDED_STYLE = {
   flex: 1,
@@ -35,11 +37,17 @@ function FilePanel() {
   const { t } = useTranslation();
   const { serverId, workspaceId, target, fileNavigationRevision, retargetCurrentTab } =
     usePaneContext();
+  const [fileState, setFileState] = usePanelState(fileStateSchema, defaultFileState);
   const isCompact = useIsCompactFormFactor();
+  const treeVisible = fileState.treeVisible;
   const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
   const handleOpenFile = useCallback(
     (path: string) => retargetCurrentTab({ kind: "file", path }),
     [retargetCurrentTab],
+  );
+  const handleTreeWidthChange = useCallback(
+    (treeWidth: number) => setFileState({ ...fileState, treeWidth }),
+    [fileState, setFileState],
   );
   invariant(target.kind === "file", "FilePanel requires file target");
   if (!workspaceDirectory) {
@@ -49,7 +57,9 @@ function FilePanel() {
       </View>
     );
   }
-  if (isCompact) {
+  // Branch around the whole rail rather than making the tree slot conditional —
+  // see the `TreeRail` children contract.
+  if (isCompact || !treeVisible) {
     return (
       <FilePane
         serverId={serverId}
@@ -60,7 +70,12 @@ function FilePanel() {
     );
   }
   return (
-    <TreeRail testID="file-tree-rail">
+    <TreeRail
+      testID="file-tree-rail"
+      width={fileState.treeWidth ?? 220}
+      onWidthChange={handleTreeWidthChange}
+      minimumWidth={160}
+    >
       <FilePane
         serverId={serverId}
         workspaceRoot={workspaceDirectory}
@@ -81,4 +96,5 @@ export const filePanelRegistration: PanelRegistration<"file"> = {
   kind: "file",
   component: FilePanel,
   useDescriptor: useFilePanelDescriptor,
+  resourceKey: (target) => target.path,
 };
