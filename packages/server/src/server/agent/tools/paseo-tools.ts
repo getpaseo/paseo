@@ -85,13 +85,8 @@ import {
 } from "../../worktree/commands.js";
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
-import type {
-  PaseoToolCatalog,
-  PaseoToolConfig,
-  PaseoToolDefinition,
-  PaseoToolExecutionContext,
-  PaseoToolResult,
-} from "./types.js";
+import { createPaseoToolRegistry } from "./catalog.js";
+import type { PaseoToolCatalog } from "./types.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -555,53 +550,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
 
-  const parseToolInput = async (tool: PaseoToolDefinition, input: unknown): Promise<unknown> => {
-    const inputSchema = tool.inputSchema;
-    if (!inputSchema) {
-      return input;
-    }
-    const schema =
-      typeof inputSchema === "object" &&
-      inputSchema !== null &&
-      typeof (inputSchema as { safeParseAsync?: unknown }).safeParseAsync === "function"
-        ? (inputSchema as z.ZodType)
-        : z.object(inputSchema as z.ZodRawShape).passthrough();
-    return schema.parseAsync(input);
-  };
-
-  const tools = new Map<string, PaseoToolDefinition>();
-  const registerTool = (
-    name: string,
-    config: PaseoToolConfig,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
-    handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
-  ) => {
-    tools.set(name, {
-      name,
-      title: config.title,
-      description: config.description ?? name,
-      inputSchema: config.inputSchema,
-      outputSchema: config.outputSchema,
-      handler: handler as PaseoToolDefinition["handler"],
-    });
-  };
-  const toCatalog = (): PaseoToolCatalog => ({
-    tools,
-    getTool(name: string): PaseoToolDefinition | undefined {
-      return tools.get(name);
-    },
-    async executeTool(
-      name: string,
-      input: unknown,
-      context: PaseoToolExecutionContext = {},
-    ): Promise<PaseoToolResult> {
-      const tool = tools.get(name);
-      if (!tool) {
-        throw new Error(`Paseo tool not found: ${name}`);
-      }
-      return tool.handler(await parseToolInput(tool, input), context);
-    },
-  });
+  const { registerTool, toCatalog } = createPaseoToolRegistry();
 
   const buildCronScheduleCadence = (input: {
     cron: string | undefined;
