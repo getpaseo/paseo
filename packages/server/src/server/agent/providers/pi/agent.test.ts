@@ -337,6 +337,33 @@ describe("PiRpcAgentSession", () => {
     expect(fakeSession.steerRequests).toHaveLength(1);
   });
 
+  test("queues native Pi follow-up without replacing the active turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(
+      session.followUpActiveTurn?.("afterwards", {
+        expectedTurnId: turnId,
+        clientMessageId: "follow-up-1",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    expect(fakeSession.followUpRequests).toEqual([{ message: "afterwards", imageCount: 0 }]);
+    expect(fakeSession.abortRequested).toBe(false);
+    fakeSession.finishSubmittedUserMessage({
+      id: "follow-up-entry",
+      parentId: null,
+      text: "afterwards",
+    });
+    expect(events.timelineItems()).not.toContainEqual(
+      expect.objectContaining({ type: "user_message", text: "afterwards" }),
+    );
+
+    await expect(
+      session.followUpActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
   test("does not submit extension slash commands through native Pi steer", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();

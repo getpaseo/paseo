@@ -7186,7 +7186,9 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
+      let dispatchResult: {
+        disposition: "out_of_band" | "steered" | "followed_up" | "turn_started";
+      };
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,

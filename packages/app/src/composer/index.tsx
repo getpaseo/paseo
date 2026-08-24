@@ -108,7 +108,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
-import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type { ActiveTurnBehavior, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -1235,6 +1235,10 @@ function ComposerContentImpl({
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
+  // COMPAT(piNativeFollowUp): added in v0.5.1-pie.1, remove after 2027-02-24.
+  const supportsPiNativeFollowUp = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.piNativeFollowUp === true,
+  );
   const githubAutoAttach = useComposerGithubAutoAttach({
     text: userInput,
     remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
@@ -1356,7 +1360,7 @@ function ComposerContentImpl({
         agentId: string,
         text: string,
         attachments: ComposerAttachment[],
-        activeTurnBehavior: "interrupt" | "steer",
+        activeTurnBehavior: ActiveTurnBehavior,
       ) => Promise<void>)
     | null
   >(null);
@@ -1438,7 +1442,7 @@ function ComposerContentImpl({
       targetAgentId: string,
       text: string,
       sendAttachments: ComposerAttachment[],
-      activeTurnBehavior: "interrupt" | "steer",
+      activeTurnBehavior: ActiveTurnBehavior,
     ) => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -1502,14 +1506,23 @@ function ComposerContentImpl({
   );
 
   const queueMessage = useCallback(
-    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
-      const result = queueComposerMessage({
-        agentId,
-        text: queuedMessage,
-        attachments: queuedAttachments,
-        queue: queueWriter,
-      });
-      if (!result.queued) return;
+    async (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      if (
+        isAgentRunning &&
+        agentState.provider === "pi" &&
+        supportsPiNativeFollowUp &&
+        sendAgentMessageRef.current
+      ) {
+        await sendAgentMessageRef.current(agentId, queuedMessage, queuedAttachments, "follow_up");
+      } else {
+        const result = queueComposerMessage({
+          agentId,
+          text: queuedMessage,
+          attachments: queuedAttachments,
+          queue: queueWriter,
+        });
+        if (!result.queued) return;
+      }
 
       replaceUserInput("");
       setSelectedAttachments([]);
@@ -1518,11 +1531,14 @@ function ComposerContentImpl({
     },
     [
       agentId,
+      agentState.provider,
       clearSentAttachments,
+      isAgentRunning,
       queueWriter,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
+      supportsPiNativeFollowUp,
     ],
   );
 
@@ -1543,9 +1559,8 @@ function ComposerContentImpl({
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
-        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
-        },
+        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) =>
+          queueMessage(queuedText, queuedAttachments),
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
@@ -1860,9 +1875,11 @@ function ComposerContentImpl({
       if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
-      queueMessage(payload.text, outgoingAttachments);
+      void queueMessage(payload.text, outgoingAttachments).catch((error) => {
+        setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+      });
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand, t],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;

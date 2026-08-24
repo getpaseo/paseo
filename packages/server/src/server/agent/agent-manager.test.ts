@@ -537,6 +537,7 @@ class SteeringTestSession extends TestAgentSession {
   interruptCount = 0;
   startCount = 0;
   steerCount = 0;
+  followUpCount = 0;
   steerResult: "accepted" | "unavailable" | Error = "accepted";
   startPrompts: AgentPromptInput[] = [];
 
@@ -554,6 +555,16 @@ class SteeringTestSession extends TestAgentSession {
       provider: this.provider,
       turnId: `active-turn-${this.startCount}`,
     });
+  }
+
+  async followUpActiveTurn(
+    _prompt: AgentPromptInput,
+    options: import("./agent-sdk-types.js").FollowUpActiveTurnOptions,
+  ): Promise<import("./agent-sdk-types.js").SteerResult> {
+    this.followUpCount += 1;
+    return options.expectedTurnId === `active-turn-${this.startCount}`
+      ? { status: "accepted" }
+      : { status: "unavailable" };
   }
 
   async steerActiveTurn(
@@ -1042,6 +1053,50 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
         type: "user_message",
         text: "autonomous follow-up",
         clientMessageId: "autonomous-follow-up-client",
+      }),
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("queues an active-turn follow-up without interrupting or replacing", async () => {
+  const session = new SteeringTestSession({ provider: "pi", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-follow-up-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { pi: client }, logger });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const result = await startAgentRun(manager, agent.id, "afterwards", logger, {
+      activeTurnBehavior: "follow_up",
+      runOptions: { clientMessageId: "follow-up-client" },
+    });
+
+    expect(result).toEqual({ disposition: "followed_up" });
+    expect(session.followUpCount).toBe(1);
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+    expect(manager.getTimeline(agent.id)).toContainEqual(
+      expect.objectContaining({
+        type: "user_message",
+        text: "afterwards",
+        clientMessageId: "follow-up-client",
       }),
     );
   } finally {

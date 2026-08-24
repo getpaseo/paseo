@@ -2,6 +2,19 @@ import { describe, expect, test } from "vitest";
 import { SessionInboundMessageSchema, SessionOutboundMessageSchema } from "./messages.js";
 
 describe("provider subagent protocol", () => {
+  test("accepts native active-turn follow-up admission", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "send_agent_message_request",
+        requestId: "follow-up-1",
+        agentId: "parent-1",
+        text: "afterwards",
+        activeTurnBehavior: "follow_up",
+        attachments: [],
+      }),
+    ).toMatchObject({ activeTurnBehavior: "follow_up" });
+  });
+
   test("accepts a scoped timeline request and structured live update", () => {
     expect(
       SessionInboundMessageSchema.parse({
