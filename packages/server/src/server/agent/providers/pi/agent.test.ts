@@ -302,6 +302,52 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("steers the active Pi turn without replacing it", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((fakeSession) => {
+      fakeSession.state = {
+        ...fakeSession.state,
+        model: {
+          provider: "test",
+          id: "vision-model",
+          input: ["text", "image"],
+        },
+      };
+    });
+    const { session } = await createSession(pi);
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(
+      session.steerActiveTurn?.(
+        [
+          { type: "text", text: "redirect" },
+          { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+        ],
+        { expectedTurnId: turnId, clientMessageId: "steer-1" },
+      ),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(fakeSession.steerRequests).toEqual([{ message: "redirect", imageCount: 1 }]);
+    expect(fakeSession.abortRequested).toBe(false);
+
+    await expect(
+      session.steerActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
+    ).resolves.toEqual({ status: "unavailable" });
+    expect(fakeSession.steerRequests).toHaveLength(1);
+  });
+
+  test("does not submit extension slash commands through native Pi steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(
+      session.steerActiveTurn?.("/compact", { expectedTurnId: turnId }),
+    ).resolves.toEqual({ status: "unavailable" });
+    expect(fakeSession.steerRequests).toEqual([]);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

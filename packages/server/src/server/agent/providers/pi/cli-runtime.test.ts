@@ -242,6 +242,38 @@ describe("PiCliRuntime", () => {
     expect(events).toEqual([{ type: "turn_start" }]);
   });
 
+  test("sends native Pi steering and follow-up commands with images", async () => {
+    const child = createPiChild();
+    const pendingSteer = capturePendingCommand(child, "steer");
+    const pendingFollowUp = capturePendingCommand(child, "follow_up");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const images = [{ type: "image" as const, data: "base64", mimeType: "image/png" }];
+
+    const steerPromise = session.steer("redirect now", images);
+    const steer = await pendingSteer;
+    expect(steer).toMatchObject({
+      type: "steer",
+      message: "redirect now",
+      images,
+      id: expect.any(String),
+    });
+    writePiResponse(child, steer);
+    await expect(steerPromise).resolves.toBeUndefined();
+
+    const followUpPromise = session.followUp("afterwards", images);
+    const followUp = await pendingFollowUp;
+    expect(followUp).toMatchObject({
+      type: "follow_up",
+      message: "afterwards",
+      images,
+      id: expect.any(String),
+    });
+    writePiResponse(child, followUp);
+    await expect(followUpPromise).resolves.toBeUndefined();
+
+    await session.close();
+  });
+
   test("lists commands through the default Pi get_commands RPC", async () => {
     const child = createPiChild();
     const commandTypes: string[] = [];

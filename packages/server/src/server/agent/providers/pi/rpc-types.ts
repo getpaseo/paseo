@@ -86,6 +86,8 @@ export interface PiModel {
 export interface PiSessionState {
   model?: PiModel | null;
   thinkingLevel: PiThinkingLevel;
+  steeringMode?: "all" | "one-at-a-time";
+  followUpMode?: "all" | "one-at-a-time";
   isStreaming: boolean;
   isCompacting: boolean;
   autoCompactionEnabled?: boolean;
@@ -127,7 +129,15 @@ export interface PiRpcSlashCommand {
 }
 
 export type PiRpcCommand =
-  | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | {
+      id?: string;
+      type: "prompt";
+      message: string;
+      images?: PiImageContent[];
+      streamingBehavior?: "steer" | "followUp";
+    }
+  | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "follow_up"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "set_auto_compaction"; enabled: boolean }
   | { id?: string; type: "abort" }
@@ -155,6 +165,7 @@ export type PiAssistantMessageEvent =
 
 export type PiAgentSessionEvent =
   | { type: "agent_start" }
+  | { type: "queue_update"; steering: string[]; followUp: string[] }
   | { type: "turn_start" }
   | { type: "message_start"; message: PiAgentMessage }
   | { type: "message_end"; message: PiAgentMessage }

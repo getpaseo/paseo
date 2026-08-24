@@ -29,6 +29,8 @@ import {
   type AgentSlashCommand,
   type AgentSlashCommandKind,
   type AgentStreamEvent,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
@@ -1288,6 +1290,27 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    if (this.parseSlashCommandInput(payload.text) !== null) {
+      return { status: "unavailable" };
+    }
+    if (this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    await this.runtimeSession.steer(payload.text, payload.images);
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("A Pi turn is already active");
@@ -1498,6 +1521,19 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (this.interruptedTerminalError?.turnId === turnId) {
       this.interruptedTerminalError = null;
+    }
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = [...this.pendingExtensionUiRequests.keys()];
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) {
+        continue;
+      }
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a steering message instead of approving.",
+      });
     }
   }
 
