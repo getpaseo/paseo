@@ -12,6 +12,7 @@ import {
   DEFAULT_SIDEBAR_ROW_ITEMS,
   isChecksHiddenByLegacyRowItem,
   parseSidebarRowItems,
+  SIDEBAR_ROW_ITEMS,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
@@ -21,8 +22,6 @@ import {
   THEME_OPTIONS,
   type ThemePreference,
 } from "@/styles/theme";
-import { z } from "zod";
-import { readValidatedJson } from "@/storage/validated-storage";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
 import { migrateAppSettings } from "./migrations";
 
@@ -37,11 +36,10 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
 
-const ThemePreferenceSchema = z.enum([
+const VALID_THEMES = new Set<ThemePreference>([
   ...THEME_OPTIONS.map((option) => option.name),
   PLUGIN_THEME_PREFERENCE,
-]);
-const VALID_THEMES = new Set<string>(ThemePreferenceSchema.options);
+] as ThemePreference[]);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
 export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
 const VALID_SERVICE_URL_BEHAVIORS = new Set<ServiceUrlBehavior>(["ask", "in-app", "external"]);
@@ -73,6 +71,13 @@ export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
+
+function isEnumValue<Value extends string>(
+  values: ReadonlySet<Value>,
+  value: unknown,
+): value is Value {
+  return typeof value === "string" && values.has(value as Value);
+}
 
 export interface AppSettings {
   theme: ThemePreference;
@@ -106,57 +111,7 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
-// Strict, so every item in SIDEBAR_ROW_ITEMS needs a key here the day it is added: the whole
-// settings write is one validation, and one unknown key silently loses every other toggle in it.
-// `checks` and `scripts` are gone from the item list and stay here for the COMPAT reads in
-// row-items.ts.
-const SidebarRowItemsSchema = z.strictObject({
-  branch: z.boolean().optional(),
-  project: z.boolean().optional(),
-  host: z.boolean().optional(),
-  changeRequest: z.boolean().optional(),
-  services: z.boolean().optional(),
-  labels: z.boolean().optional(),
-  checks: z.boolean().optional(),
-  scripts: z.boolean().optional(),
-});
-
-const StoredAppSettingsSchema = z.strictObject({
-  theme: ThemePreferenceSchema.optional(),
-  pluginThemeId: z.string().nullish(),
-  language: z
-    .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
-    .optional(),
-  sendBehavior: z.enum(["interrupt", "steer", "queue"]).optional(),
-  serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).optional(),
-  terminalScrollbackLines: z.union([z.number(), z.string()]).optional(),
-  useLegacyTerminalRenderer: z.boolean().optional(),
-  uiFontFamily: z.string().optional(),
-  monoFontFamily: z.string().optional(),
-  uiBaseFontSize: z.union([z.number(), z.string()]).optional(),
-  contentFontSize: z.union([z.number(), z.string()]).optional(),
-  // COMPAT(uiFontSizeScale): replaced by the literal base size in v0.4, remove after 2027-08-17.
-  uiFontSize: z.union([z.number(), z.string()]).optional(),
-  codeFontSize: z.union([z.number(), z.string()]).optional(),
-  syntaxTheme: z.string().refine(isSyntaxThemeId).optional(),
-  workspaceTitleSource: z.enum(["title", "branch"]).optional(),
-  sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).optional(),
-  sidebarRowItems: SidebarRowItemsSchema.optional(),
-  sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional(),
-  autoExpandReasoning: z.boolean().optional(),
-  toolCallDetailLevel: z.enum(["overview", "detailed"]).optional(),
-  compactToolCalls: z.boolean().optional(),
-  chatOutlineEnabled: z.boolean().optional(),
-  vimKeybindings: z.boolean().optional(),
-  openSupportingTabsInSidePanel: z.boolean().optional(),
-  // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
-  manageBuiltInDaemon: z.boolean().optional(),
-  releaseChannel: z.enum(["stable", "beta"]).optional(),
-});
-
-const LegacyRendererSettingsSchema = StoredAppSettingsSchema;
-
-type StoredAppSettings = z.infer<typeof StoredAppSettingsSchema>;
+type StoredAppSettings = Record<string, unknown>;
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
@@ -220,16 +175,20 @@ export async function saveAppSettings(input: {
   const current = normalizeAppSettings(storedCurrent);
   const next = { ...current, ...input.updates };
   input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-  await input.deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+  await writeAppSettings(
+    input.deps.storage,
+    (await readSettingsObject(input.deps.storage, APP_SETTINGS_KEY)) ?? {},
+    next,
+  );
 }
 
 export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<AppSettings> {
   try {
     const read = await readAppSettings(deps);
     if (read.needsWrite) {
-      await deps.storage.setItem(APP_SETTINGS_KEY, JSON.stringify(read.settings));
+      await writeAppSettings(deps.storage, read.stored, read.settings);
     }
-    return await migrateAppSettings(read.settings, deps.storage);
+    return await migrateAppSettings(read.settings, deps.storage, read.stored);
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);
     throw error;
@@ -242,8 +201,8 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
  */
 async function readAppSettings(
   deps: SettingsDeps,
-): Promise<{ settings: AppSettings; needsWrite: boolean }> {
-  const stored = await readValidatedJson(deps.storage, APP_SETTINGS_KEY, StoredAppSettingsSchema);
+): Promise<{ settings: AppSettings; needsWrite: boolean; stored: StoredAppSettings }> {
+  const stored = await readSettingsObject(deps.storage, APP_SETTINGS_KEY);
   if (stored) {
     return {
       settings: normalizeAppSettings(stored),
@@ -251,14 +210,11 @@ async function readAppSettings(
       needsWrite:
         (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
         stored.contentFontSize === undefined,
+      stored,
     };
   }
 
-  const legacyStored = await readValidatedJson(
-    deps.storage,
-    LEGACY_SETTINGS_KEY,
-    LegacyRendererSettingsSchema,
-  );
+  const legacyStored = await readSettingsObject(deps.storage, LEGACY_SETTINGS_KEY);
   if (legacyStored) {
     return {
       settings: {
@@ -266,10 +222,11 @@ async function readAppSettings(
         ...pickAppSettingsFromLegacy(legacyStored),
       } satisfies AppSettings,
       needsWrite: true,
+      stored: legacyStored,
     };
   }
 
-  return { settings: DEFAULT_CLIENT_SETTINGS, needsWrite: true };
+  return { settings: DEFAULT_CLIENT_SETTINGS, needsWrite: true, stored: {} };
 }
 
 export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Settings> {
@@ -299,24 +256,122 @@ export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Setti
 }
 
 export function normalizeAppSettings(value: unknown): AppSettings {
-  const result = StoredAppSettingsSchema.safeParse(value);
+  const stored = isPlainJsonObject(value) ? value : {};
+  const picked = pickAppSettings(stored);
+  warnDiscardedAppSettings(stored);
   return {
     ...DEFAULT_CLIENT_SETTINGS,
-    ...pickAppSettings(result.success ? result.data : {}),
+    ...picked,
   };
+}
+
+function warnDiscardedAppSettings(stored: StoredAppSettings): void {
+  const discarded = (key: string, valid: boolean): void => {
+    if (stored[key] !== undefined && !valid) {
+      console.warn(`[AppSettings] Ignoring invalid ${key}.`);
+    }
+  };
+
+  discarded("theme", isEnumValue(VALID_THEMES, stored.theme));
+  discarded(
+    "sendBehavior",
+    stored.sendBehavior === "interrupt" ||
+      stored.sendBehavior === "steer" ||
+      stored.sendBehavior === "queue",
+  );
+  discarded(
+    "serviceUrlBehavior",
+    isEnumValue(VALID_SERVICE_URL_BEHAVIORS, stored.serviceUrlBehavior),
+  );
+  discarded("language", parseAppLanguage(stored.language) !== null);
+  discarded(
+    "syntaxTheme",
+    typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme),
+  );
+  discarded(
+    "workspaceTitleSource",
+    isEnumValue(VALID_WORKSPACE_TITLE_SOURCES, stored.workspaceTitleSource),
+  );
+  discarded(
+    "sidebarWorkspaceTrailing",
+    isEnumValue(VALID_SIDEBAR_WORKSPACE_TRAILINGS, stored.sidebarWorkspaceTrailing),
+  );
+  discarded(
+    "sidebarChecksDisplay",
+    parseSidebarChecksDisplay(stored.sidebarChecksDisplay) !== null,
+  );
+  discarded(
+    "terminalScrollbackLines",
+    parseTerminalScrollbackLines(stored.terminalScrollbackLines) !== null,
+  );
+  discarded("uiFontFamily", sanitizeFontFamily(stored.uiFontFamily) !== null);
+  discarded("monoFontFamily", sanitizeFontFamily(stored.monoFontFamily) !== null);
+  discarded(
+    "uiBaseFontSize",
+    parseClampedFontSize(stored.uiBaseFontSize, {
+      min: MIN_UI_BASE_FONT_SIZE,
+      max: MAX_UI_BASE_FONT_SIZE,
+    }) !== null,
+  );
+  discarded(
+    "contentFontSize",
+    parseClampedFontSize(stored.contentFontSize, {
+      min: MIN_CONTENT_FONT_SIZE,
+      max: MAX_CONTENT_FONT_SIZE,
+    }) !== null,
+  );
+  discarded(
+    "codeFontSize",
+    parseClampedFontSize(stored.codeFontSize, {
+      min: MIN_CODE_FONT_SIZE,
+      max: MAX_CODE_FONT_SIZE,
+    }) !== null,
+  );
+  discarded("uiFontSize", parseClampedFontSize(stored.uiFontSize, { min: 11, max: 24 }) !== null);
+  for (const key of [
+    "useLegacyTerminalRenderer",
+    "vimKeybindings",
+    "chatOutlineEnabled",
+    "openSupportingTabsInSidePanel",
+    "autoExpandReasoning",
+  ]) {
+    discarded(key, typeof stored[key] === "boolean");
+  }
+  discarded(
+    "toolCallDetailLevel",
+    isEnumValue(VALID_TOOL_CALL_DETAIL_LEVELS, stored.toolCallDetailLevel) ||
+      stored.toolCallDetailLevel === "concise",
+  );
+  discarded("compactToolCalls", typeof stored.compactToolCalls === "boolean");
+  if (
+    stored.pluginThemeId !== undefined &&
+    stored.pluginThemeId !== null &&
+    typeof stored.pluginThemeId !== "string"
+  ) {
+    console.warn("[AppSettings] Ignoring invalid pluginThemeId.");
+  }
+  if (stored.sidebarRowItems !== undefined && !isPlainJsonObject(stored.sidebarRowItems)) {
+    console.warn("[AppSettings] Ignoring invalid sidebarRowItems.");
+  } else if (isPlainJsonObject(stored.sidebarRowItems)) {
+    for (const key of SIDEBAR_ROW_ITEMS) {
+      if (
+        stored.sidebarRowItems[key] !== undefined &&
+        typeof stored.sidebarRowItems[key] !== "boolean"
+      ) {
+        console.warn(`[AppSettings] Ignoring invalid sidebarRowItems.${key}.`);
+      }
+    }
+  }
 }
 
 function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLevel | null {
   if (stored.toolCallDetailLevel !== undefined) {
-    if (
-      typeof stored.toolCallDetailLevel === "string" &&
-      VALID_TOOL_CALL_DETAIL_LEVELS.has(stored.toolCallDetailLevel)
-    ) {
+    if (isEnumValue(VALID_TOOL_CALL_DETAIL_LEVELS, stored.toolCallDetailLevel)) {
       return stored.toolCallDetailLevel;
     }
     // COMPAT(toolCallDetailLevelConcise): removed in v0.1.107; legacy "concise" values
-    // deliberately follow the unknown-value fallback. Remove after 2027-01-14.
-    return "overview";
+    // keep their former meaning. Remove after 2027-01-14.
+    return stored.toolCallDetailLevel === "concise" ? "overview" : null;
   }
   if (typeof stored.compactToolCalls === "boolean") {
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
@@ -358,7 +413,7 @@ function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings>
  */
 function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
-  if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
+  if (isEnumValue(VALID_THEMES, stored.theme)) {
     result.theme = stored.theme;
   }
   if (
@@ -368,25 +423,16 @@ function pickEnumAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   ) {
     result.sendBehavior = stored.sendBehavior;
   }
-  if (
-    typeof stored.serviceUrlBehavior === "string" &&
-    VALID_SERVICE_URL_BEHAVIORS.has(stored.serviceUrlBehavior)
-  ) {
+  if (isEnumValue(VALID_SERVICE_URL_BEHAVIORS, stored.serviceUrlBehavior)) {
     result.serviceUrlBehavior = stored.serviceUrlBehavior;
   }
   if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
     result.syntaxTheme = stored.syntaxTheme;
   }
-  if (
-    typeof stored.workspaceTitleSource === "string" &&
-    VALID_WORKSPACE_TITLE_SOURCES.has(stored.workspaceTitleSource)
-  ) {
+  if (isEnumValue(VALID_WORKSPACE_TITLE_SOURCES, stored.workspaceTitleSource)) {
     result.workspaceTitleSource = stored.workspaceTitleSource;
   }
-  if (
-    typeof stored.sidebarWorkspaceTrailing === "string" &&
-    VALID_SIDEBAR_WORKSPACE_TRAILINGS.has(stored.sidebarWorkspaceTrailing)
-  ) {
+  if (isEnumValue(VALID_SIDEBAR_WORKSPACE_TRAILINGS, stored.sidebarWorkspaceTrailing)) {
     result.sidebarWorkspaceTrailing = stored.sidebarWorkspaceTrailing;
   }
   return result;
@@ -465,9 +511,7 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   return result;
 }
 
-function pickAppSettingsFromLegacy(
-  legacy: z.infer<typeof LegacyRendererSettingsSchema>,
-): Partial<AppSettings> {
+function pickAppSettingsFromLegacy(legacy: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
     result.theme = legacy.theme;
@@ -560,11 +604,56 @@ async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): P
 
 async function loadRendererSettingsPayload(
   storage: KeyValueStorage,
-): Promise<z.infer<typeof LegacyRendererSettingsSchema> | null> {
-  const current = await readValidatedJson(storage, APP_SETTINGS_KEY, LegacyRendererSettingsSchema);
+): Promise<StoredAppSettings | null> {
+  const current = await readSettingsObject(storage, APP_SETTINGS_KEY);
   if (current) {
     return current;
   }
 
-  return readValidatedJson(storage, LEGACY_SETTINGS_KEY, LegacyRendererSettingsSchema);
+  return readSettingsObject(storage, LEGACY_SETTINGS_KEY);
+}
+
+function isPlainJsonObject(value: unknown): value is StoredAppSettings {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readSettingsObject(
+  storage: KeyValueStorage,
+  key: string,
+): Promise<StoredAppSettings | null> {
+  const raw = await storage.getItem(key);
+  if (raw === null) {
+    return null;
+  }
+
+  try {
+    const decoded: unknown = JSON.parse(raw);
+    if (isPlainJsonObject(decoded)) {
+      return decoded;
+    }
+    console.warn(`[AppSettings] Ignoring ${key}: expected a JSON object.`);
+    return null;
+  } catch {
+    console.warn(`[AppSettings] Removing corrupt ${key}: invalid JSON.`);
+    await storage.removeItem(key);
+    return null;
+  }
+}
+
+async function writeAppSettings(
+  storage: KeyValueStorage,
+  stored: StoredAppSettings,
+  settings: AppSettings,
+): Promise<void> {
+  const storedSidebarRowItems = isPlainJsonObject(stored.sidebarRowItems)
+    ? stored.sidebarRowItems
+    : {};
+  await storage.setItem(
+    APP_SETTINGS_KEY,
+    JSON.stringify({
+      ...stored,
+      ...settings,
+      sidebarRowItems: { ...storedSidebarRowItems, ...settings.sidebarRowItems },
+    }),
+  );
 }

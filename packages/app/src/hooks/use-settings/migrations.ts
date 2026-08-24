@@ -22,9 +22,14 @@ const STEER_DEFAULT_MIGRATION = "steer-default";
 export async function migrateAppSettings(
   settings: AppSettings,
   storage: KeyValueStorage,
+  stored: Record<string, unknown> = {},
 ): Promise<AppSettings> {
-  const stored = await readValidatedJson(storage, SETTINGS_MIGRATIONS_KEY, AppliedMigrationsSchema);
-  const applied = new Set(stored?.applied ?? []);
+  const migrationMarker = await readValidatedJson(
+    storage,
+    SETTINGS_MIGRATIONS_KEY,
+    AppliedMigrationsSchema,
+  );
+  const applied = new Set(migrationMarker?.applied ?? []);
   if (applied.has(STEER_DEFAULT_MIGRATION)) {
     return settings;
   }
@@ -32,10 +37,24 @@ export async function migrateAppSettings(
   const migrated: AppSettings =
     settings.sendBehavior === "interrupt" ? { ...settings, sendBehavior: "steer" } : settings;
   if (migrated !== settings) {
-    await storage.setItem(APP_SETTINGS_KEY, JSON.stringify(migrated));
+    const storedSidebarRowItems = isPlainJsonObject(stored.sidebarRowItems)
+      ? stored.sidebarRowItems
+      : {};
+    await storage.setItem(
+      APP_SETTINGS_KEY,
+      JSON.stringify({
+        ...stored,
+        ...migrated,
+        sidebarRowItems: { ...storedSidebarRowItems, ...migrated.sidebarRowItems },
+      }),
+    );
   }
 
   applied.add(STEER_DEFAULT_MIGRATION);
   await storage.setItem(SETTINGS_MIGRATIONS_KEY, JSON.stringify({ applied: [...applied] }));
   return migrated;
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
