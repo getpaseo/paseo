@@ -545,8 +545,16 @@ const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
   warn: (event, details) => log.warn(`[browser-capture] ${event}`, details),
 });
 
-ipcMain.handle("paseo:browser:capture-element", (event, browserId: unknown, rect: unknown) =>
-  browserCapture.capture({ browserId, hostWebContentsId: event.sender.id, rect }),
+ipcMain.handle(
+  "paseo:browser:capture-element",
+  (event, browserId: unknown, rect: unknown, selector: unknown, captureId: unknown) =>
+    browserCapture.capture({
+      browserId,
+      hostWebContentsId: event.sender.id,
+      rect,
+      selector,
+      captureId,
+    }),
 );
 
 ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown) =>
