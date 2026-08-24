@@ -187,14 +187,14 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       }
 
       const response = responseNewestFirst.toReversed();
-      const messages =
+      const textItems =
         scope === "terminal-message"
           ? (findTerminalAssistantGroup(response)?.items ?? [])
           : response.filter(
-              (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
-                item.kind === "assistant_message",
+              (item): item is Extract<StreamItem, { kind: "assistant_message" | "thought" }> =>
+                item.kind === "assistant_message" || item.kind === "thought",
             );
-      return messages.map((item) => item.text).join("\n\n");
+      return textItems.map((item) => item.text).join("\n\n");
     },
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),

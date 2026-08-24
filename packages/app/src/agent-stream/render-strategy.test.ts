@@ -44,6 +44,16 @@ function assistantMessage(
   };
 }
 
+function thought(id: string, text: string, seed: number): StreamItem {
+  return {
+    kind: "thought",
+    id,
+    text,
+    timestamp: createTimestamp(seed),
+    status: "ready",
+  };
+}
+
 function toolCall(id: string, seed: number): StreamItem {
   return {
     kind: "tool_call",
@@ -220,6 +230,34 @@ describe("neighbor and traversal semantics", () => {
     ).toBe("assistant-1\n\nassistant-2");
   });
 
+  it("includes thinking when completed response folding is disabled", () => {
+    const chronological: StreamItem[] = [
+      userMessage("u1", "user", 1),
+      thought("thought-1", "first thought", 2),
+      assistantMessage("progress", "intermediate commentary", 3),
+      thought("thought-2", "second thought", 4),
+      assistantMessage("final", "final answer", 5),
+    ];
+
+    for (const platform of ["web", "ios"] as const) {
+      const strategy = resolveStreamRenderStrategy({
+        platform,
+        isMobileBreakpoint: false,
+      });
+      const items = orderTailForStreamRenderStrategy({ strategy, streamItems: chronological });
+      const startIndex = items.findIndex((item) => item.id === "final");
+
+      expect(
+        collectAssistantResponseContentForStreamRenderStrategy({
+          strategy,
+          items,
+          startIndex,
+          scope: "response",
+        }),
+      ).toBe("first thought\n\nintermediate commentary\n\nsecond thought\n\nfinal answer");
+    }
+  });
+
   it("collects copy content across adjacent turns without a visible prompt", () => {
     const chronological: StreamItem[] = [
       { ...assistantMessage("a1", "first turn", 1), turnId: "turn-1" },
@@ -242,8 +280,9 @@ describe("neighbor and traversal semantics", () => {
       userMessage("u1", "user", 1),
       assistantMessage("progress", "intermediate commentary", 2, "progress"),
       toolCall("tool", 3),
-      assistantMessage("final-1", "final part one", 4, "final"),
-      assistantMessage("final-2", "final part two", 5, "final"),
+      thought("thought", "internal thinking", 4),
+      assistantMessage("final-1", "final part one", 5, "final"),
+      assistantMessage("final-2", "final part two", 6, "final"),
     ];
 
     for (const platform of ["web", "ios"] as const) {
