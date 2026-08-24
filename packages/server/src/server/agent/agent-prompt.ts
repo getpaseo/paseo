@@ -1,21 +1,81 @@
 import type { Logger } from "pino";
 
-import type { AgentPromptInput, AgentRunOptions } from "./agent-sdk-types.js";
+import type {
+  AgentPermissionRequest,
+  AgentPromptInput,
+  AgentRunOptions,
+} from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "steerOrReplaceActiveTurn"
+  | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
+  activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
+  /** Ask the provider to deny permissions blocking this steer. */
+  clearPendingPermissions?: boolean;
+}
+
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+
+async function steerOrReplaceActiveRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  options: StartAgentRunOptions | undefined,
+): Promise<
+  | { disposition: "steered" }
+  | {
+      disposition: "turn_started";
+      iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
+    }
+  | null
+> {
+  if (options?.activeTurnBehavior !== "steer") {
+    return null;
+  }
+  const steerOptions = options.clearPendingPermissions
+    ? { ...options.runOptions, clearPendingPermissions: true }
+    : options.runOptions;
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
+  if (result.status === "steered") {
+    return { disposition: "steered" };
+  }
+  if (result.status === "replaced") {
+    return { disposition: "turn_started", iterator: result.iterator };
+  }
+  return null;
+}
+
+async function startOrReplaceRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  options: StartAgentRunOptions | undefined,
+): Promise<{
+  iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
+  replaced: boolean;
+}> {
+  const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  const iterator = replaced
+    ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
+    : agentManager.streamAgent(agentId, prompt, options?.runOptions);
+  return { iterator, replaced };
 }
 
 export async function startAgentRun(
@@ -24,7 +84,7 @@ export async function startAgentRun(
   prompt: AgentPromptInput,
   logger: Logger,
   options?: StartAgentRunOptions,
-): Promise<{ outOfBand: boolean }> {
+): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
   logger.trace(
     {
@@ -42,19 +102,21 @@ export async function startAgentRun(
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
-    return { outOfBand: true };
+    return { disposition: "out_of_band" };
   }
-  const shouldReplace = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const runOptions = options?.runOptions;
-  const iterator = shouldReplace
-    ? await agentManager.replaceAgentRun(agentId, prompt, runOptions)
-    : agentManager.streamAgent(agentId, prompt, runOptions);
+  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  if (steered?.disposition === "steered") {
+    return steered;
+  }
+  const { iterator, replaced } = steered
+    ? { iterator: steered.iterator, replaced: true }
+    : await startOrReplaceRun(agentManager, agentId, prompt, options);
   logger.trace(
     {
       agentId,
       provider: snapshot?.provider,
       providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
-      shouldReplace,
+      shouldReplace: replaced,
     },
     "agent.session.start_stream.iterator_returned",
   );
@@ -84,7 +146,7 @@ export async function startAgentRun(
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();
-  return { outOfBand: false };
+  return { disposition: "turn_started" };
 }
 
 /**
@@ -126,6 +188,7 @@ export interface SendPromptToAgentParams {
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
   messageId?: string;
+  activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
@@ -135,6 +198,8 @@ export interface SendPromptToAgentParams {
    * schedule fires, notify-on-finish).
    */
   unarchive?: boolean;
+  /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
+  clearPendingPermissions?: boolean;
   logger: Logger;
 }
 
@@ -147,14 +212,35 @@ export interface StartCreatedAgentInitialPromptParams {
   logger: Logger;
 }
 
-const AGENT_RUN_START_TIMEOUT_MS = 15_000;
+/**
+ * Outer bound on a run reaching "started" after dispatch.
+ *
+ * This wraps provider startup, so it MUST stay larger than the slowest provider's own
+ * startup budget — otherwise it aborts a start the provider was still allowed to be
+ * working on, and the provider's budget can never apply. OpenCode is the slowest today:
+ * up to 30s for the server to boot (OPENCODE_SERVER_STARTUP_TIMEOUT_MS) and then a
+ * session.create on the same budget, so this is deliberately set well above 30s.
+ *
+ * Not derived from the provider constant on purpose: this module is provider-agnostic
+ * and must not depend on a specific provider's internals.
+ */
+const AGENT_RUN_START_TIMEOUT_MS = 60_000;
 
 export async function waitForAgentRunStartWithTimeout(
   agentManager: AgentManager,
   agentId: string,
 ): Promise<void> {
+  const provider = agentManager.getAgent(agentId)?.provider ?? "provider";
   const startAbort = new AbortController();
-  const startTimeout = setTimeout(() => startAbort.abort("timeout"), AGENT_RUN_START_TIMEOUT_MS);
+  const startTimeout = setTimeout(
+    () =>
+      startAbort.abort(
+        new Error(
+          `${provider} run did not start within ${AGENT_RUN_START_TIMEOUT_MS / 1000} seconds (phase: run start)`,
+        ),
+      ),
+    AGENT_RUN_START_TIMEOUT_MS,
+  );
 
   try {
     await agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
@@ -172,17 +258,17 @@ export async function waitForAgentRunStartWithTimeout(
  * drift between them.
  *
  * When `unarchive` is false and the agent is archived, the call is a silent
- * no-op (returns `{ outOfBand: false }`) — the agent is not run.
+ * no-op (returns the normal turn-start disposition) — the agent is not run.
  */
 export async function sendPromptToAgent(
   params: SendPromptToAgentParams,
-): Promise<{ outOfBand: boolean }> {
+): Promise<{ disposition: PromptDispatchDisposition }> {
   const unarchive = params.unarchive ?? true;
 
   const record = await params.agentStorage.get(params.agentId);
   if (record?.archivedAt) {
     if (!unarchive) {
-      return { outOfBand: false };
+      return { disposition: "turn_started" };
     }
     await unarchiveAgentState(params.agentStorage, params.agentManager, params.agentId);
   }
@@ -203,6 +289,8 @@ export async function sendPromptToAgent(
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
+    activeTurnBehavior: params.activeTurnBehavior,
+    clearPendingPermissions: params.clearPendingPermissions,
     runOptions,
   });
 }
@@ -229,7 +317,7 @@ export async function startCreatedAgentInitialPrompt(
     },
   );
 
-  if (!dispatchResult.outOfBand) {
+  if (dispatchResult.disposition === "turn_started") {
     await waitForAgentRunStartWithTimeout(params.agentManager, params.agentId);
   }
 
@@ -249,20 +337,49 @@ export interface SetupFinishNotificationParams {
   logger: Logger;
 }
 
+type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+
+const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
+
 interface FinishNotificationBodyInput {
   childAgentId: string;
   title: string;
-  reason: "finished" | "errored" | "needs permission";
+  reason: FinishNotificationReason;
   lastAssistantMessage: string | null;
+  permissionRequest?: AgentPermissionRequest;
 }
 
 function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
-  const lastAssistantMessage = params.lastAssistantMessage?.trim();
-  if (!lastAssistantMessage) {
-    return statusLine;
+  const sections = [statusLine];
+  if (params.reason === "needs permission" && params.permissionRequest) {
+    sections.push(
+      "Respond with `respond_to_permission` using the `agentId` and `requestId` below.",
+      `<permission-request>\n${JSON.stringify(
+        {
+          agentId: params.childAgentId,
+          requestId: params.permissionRequest.id,
+          request: params.permissionRequest,
+        },
+        null,
+        2,
+      )}\n</permission-request>`,
+    );
   }
-  return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
+  let lastAssistantMessage = params.lastAssistantMessage?.trim();
+  if (lastAssistantMessage) {
+    if (lastAssistantMessage.length > FINISH_NOTIFICATION_MESSAGE_LIMIT) {
+      const omitted = lastAssistantMessage.length - FINISH_NOTIFICATION_MESSAGE_LIMIT;
+      lastAssistantMessage = `${lastAssistantMessage.slice(0, FINISH_NOTIFICATION_MESSAGE_LIMIT)}\n[truncated ${omitted} chars; use get_agent_activity for the full response]`;
+    }
+    sections.push(`<agent-response>\n${lastAssistantMessage}\n</agent-response>`);
+  }
+  return sections.join("\n\n");
+}
+
+interface NotifySafelyOptions {
+  terminal?: boolean;
+  permissionRequest?: AgentPermissionRequest;
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
@@ -275,16 +392,21 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     logger,
   } = params;
   let hasSeenRunning = false;
-  let fired = false;
+  let stopped = false;
+  const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
+  let notificationQueue = Promise.resolve();
 
-  async function notify(reason: "finished" | "errored" | "needs permission"): Promise<void> {
-    if (fired) {
-      return;
-    }
-    fired = true;
+  function stop(): void {
+    if (stopped) return;
+    stopped = true;
     unsubscribe?.();
+  }
 
+  async function notify(
+    reason: FinishNotificationReason,
+    permissionRequest?: AgentPermissionRequest,
+  ): Promise<void> {
     const callerRecord = await agentStorage.get(callerAgentId);
     if (callerRecord?.archivedAt) {
       return;
@@ -301,6 +423,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       title,
       reason,
       lastAssistantMessage,
+      permissionRequest,
     });
 
     await sendPromptToAgent({
@@ -308,29 +431,41 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       agentStorage,
       agentId: callerAgentId,
       prompt: formatSystemNotificationPrompt(body),
+      activeTurnBehavior: "steer",
       unarchive: false,
       logger,
     });
   }
 
-  function notifySafely(reason: "finished" | "errored" | "needs permission"): void {
-    void notify(reason).catch((error) => {
-      logger.error(
-        { err: error, childAgentId, callerAgentId, reason },
-        "Failed to notify caller agent",
-      );
-    });
+  function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
+    if (stopped) return;
+    if (options.terminal ?? true) stop();
+    notificationQueue = notificationQueue
+      .then(() => notify(reason, options.permissionRequest))
+      .catch((error) => {
+        logger.error(
+          { err: error, childAgentId, callerAgentId, reason },
+          "Failed to notify caller agent",
+        );
+      });
   }
 
   unsubscribe = agentManager.subscribe(
     (event) => {
-      if (fired) {
+      if (stopped) {
         return;
       }
 
       if (event.type === "agent_state") {
+        for (const requestId of notifiedPermissionRequestIds) {
+          if (!event.agent.pendingPermissions.has(requestId)) {
+            notifiedPermissionRequestIds.delete(requestId);
+          }
+        }
         if (event.agent.lifecycle === "running") {
-          hasSeenRunning = true;
+          if (event.agent.pendingPermissions.size === 0) {
+            hasSeenRunning = true;
+          }
           return;
         }
         if (event.agent.lifecycle === "error") {
@@ -342,15 +477,33 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
           return;
         }
         if (event.agent.lifecycle === "closed") {
-          fired = true;
-          unsubscribe?.();
+          notifySafely("was closed");
           return;
         }
         return;
       }
 
       if (event.event.type === "permission_requested") {
-        notifySafely("needs permission");
+        // A permission pause is an intermediate checkpoint. Forget the run
+        // observed before it so an idle state during follow-up startup cannot
+        // masquerade as the final completion.
+        hasSeenRunning = false;
+        if (!notifiedPermissionRequestIds.has(event.event.request.id)) {
+          notifiedPermissionRequestIds.add(event.event.request.id);
+          notifySafely("needs permission", {
+            terminal: false,
+            permissionRequest: event.event.request,
+          });
+        }
+        return;
+      }
+
+      if (event.event.type === "permission_resolved") {
+        notifiedPermissionRequestIds.delete(event.event.requestId);
+        const childAgent = agentManager.getAgent(childAgentId);
+        if (childAgent?.pendingPermissions.size === 0) {
+          hasSeenRunning = childAgent.lifecycle === "running";
+        }
       }
     },
     { agentId: childAgentId, replayState: false },
@@ -363,7 +516,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   // transitioning to "running").
   const childSnapshot = agentManager.getAgent(childAgentId);
   if (!childSnapshot || childSnapshot.lifecycle === "closed") {
-    unsubscribe();
+    stop();
     return;
   }
   if (childSnapshot.lifecycle === "running") {

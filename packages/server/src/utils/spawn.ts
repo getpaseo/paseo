@@ -27,6 +27,7 @@ interface ExecCommandOptions extends ExternalEnvOptions {
   timeout?: number;
   maxBuffer?: number;
   shell?: boolean | string;
+  signal?: AbortSignal;
 }
 
 interface ExecCommandResult {
@@ -77,6 +78,7 @@ export function spawnProcess(
     ...spawnOptions,
     env: childEnv,
     shell,
+    signal: options?.signal,
     windowsHide: true,
   });
 }

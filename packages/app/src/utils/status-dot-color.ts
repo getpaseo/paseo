@@ -32,9 +32,3 @@ export function getStatusDotColor(input: {
   }
   return null;
 }
-
-export function isEmphasizedStatusDotBucket(
-  bucket: SidebarStateBucket | null | undefined,
-): boolean {
-  return bucket === "needs_input" || bucket === "attention";
-}

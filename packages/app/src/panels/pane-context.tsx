@@ -1,17 +1,22 @@
 import React, { createContext, useContext, type ReactNode } from "react";
 import invariant from "tiny-invariant";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface PaneContextValue {
   serverId: string;
   workspaceId: string;
+  /** Whether this pane is the workspace's dedicated Side panel. */
+  isSidePanel: boolean;
   tabId: string;
   target: WorkspaceTabTarget;
+  state?: JsonValue;
   fileNavigationRevision?: number;
   openTab: (target: WorkspaceTabTarget) => void;
   closeCurrentTab: () => void;
   retargetCurrentTab: (target: WorkspaceTabTarget) => void;
+  setCurrentTabState: (state: JsonValue) => void;
   openFileInWorkspace: (request: WorkspaceFileOpenRequest) => void;
   openImportSheet: () => void;
 }

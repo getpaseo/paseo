@@ -24,6 +24,15 @@ Open **Settings → your host → Providers**, tap the provider, then tap **Diag
 - **Daemon PATH** — the `PATH` Paseo is searching. Compare it to `echo $PATH` in a fresh terminal.
 - **Version** — whether the binary actually runs.
 
+From a terminal or agent, request the same diagnostic from the affected daemon:
+
+```bash
+paseo provider diagnostic <provider>
+paseo provider diagnostic <provider> --host <host:port> --json
+```
+
+Use `--host` when the affected daemon is not the CLI's default local daemon.
+
 `not found` together with a **Daemon PATH** that's missing your binary's directory is the common case: that directory is on your terminal's `PATH` but not on Paseo's.
 
 ### Fix it
@@ -44,7 +53,7 @@ If you'd rather pin it directly, set the binary path in `~/.paseo/config.json`:
 }
 ```
 
-`command` is `[binary, ...args]` and fully replaces the default launch command for that provider. Find the real path with `which -a claude`. `type -a claude` also tells you if `claude` is only a shell alias or function, those won't work, Paseo runs the binary directly, so use the path it points to. Restart the daemon after editing (see [below](#i-changed-configjson-but-nothing-happened)).
+`command` is `[binary, ...args]` and fully replaces the default launch command for that provider. Find the real path with `which -a claude`. `type -a claude` also tells you if `claude` is only a shell alias or function, those won't work, Paseo runs the binary directly, so use the path it points to. Reload the configuration after editing (see [below](#i-changed-configjson-but-nothing-happened)).
 
 For alternative endpoints, multiple profiles, custom binaries, and ACP agents, see [Custom providers](/docs/custom-providers). For per-agent install links, see [Supported providers](/docs/supported-providers).
 
@@ -75,13 +84,15 @@ Desktop app log location:
 
 ## I changed config.json but nothing happened
 
-`config.json` is read when the daemon starts. Restart it after editing:
+Reload the file after editing:
 
 ```bash
-paseo daemon restart
+paseo reload
 ```
 
-Or in the app, open **Settings → your host → Overview** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
+Paseo applies runtime-safe settings and names any paths that require a restart. Invalid JSON or a schema error applies nothing; fix the reported error and run the command again. If a launch environment variable or flag owns a changed setting, reload reports it separately.
+
+Run `paseo daemon restart` only when reload requests it. In the app, open **Settings → your host → Overview** and use **Restart daemon**. Running agents keep going, and clients reconnect automatically.
 
 ## Still stuck?
 

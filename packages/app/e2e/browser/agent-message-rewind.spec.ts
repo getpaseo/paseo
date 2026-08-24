@@ -28,7 +28,7 @@ async function completeSubmittedTurn(
 async function rewindConversation(page: Page, userMessage: Locator, prompt: string): Promise<void> {
   await userMessage.getByText(prompt, { exact: true }).hover();
   await userMessage.getByRole("button", { name: "Rewind to this message", exact: true }).click();
-  await page.getByRole("button", { name: "Rewind conversation", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Rewind conversation", exact: true }).click();
 }
 
 async function expectTurnCompletesNormally(

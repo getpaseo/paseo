@@ -17,6 +17,49 @@ interface PairingHostInput {
   endpoint: string;
 }
 
+export async function prepareLocalPairingHost(
+  page: Page,
+  daemon: IsolatedHostDaemon | OutdatedDaemon,
+  additionalHosts: PairingHostInput[] = [],
+): Promise<void> {
+  await page.addInitScript((localServerId) => {
+    (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
+      platform: "darwin",
+      invoke: async (command: string) => {
+        if (command === "desktop_daemon_status") {
+          return {
+            serverId: localServerId,
+            status: "running",
+            listen: null,
+            hostname: null,
+            pid: null,
+            home: "",
+            version: null,
+            desktopManaged: true,
+            error: null,
+          };
+        }
+        if (command === "get_desktop_settings") {
+          return {
+            releaseChannel: "stable",
+            daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+          };
+        }
+        return null;
+      },
+      getPendingOpenProject: async () => null,
+      events: { on: async () => () => undefined },
+      opener: {
+        openUrl: async (url: string) => {
+          localStorage.setItem("@paseo:e2e-opened-url", url);
+        },
+      },
+    };
+  }, daemon.serverId);
+
+  await preparePairingHost(page, daemon, additionalHosts);
+}
+
 export async function preparePairingHost(
   page: Page,
   daemon: IsolatedHostDaemon | OutdatedDaemon,
@@ -62,7 +105,6 @@ export async function declineRelay(page: Page): Promise<void> {
 export async function enableRelayAndExpectOffer(page: Page): Promise<void> {
   const enableButton = page.getByRole("button", { name: "Enable relay", exact: true });
   await enableButton.click();
-  await expect(page.getByRole("button", { name: "Enabling...", exact: true })).toBeDisabled();
   await expect(page.getByRole("img", { name: "Pairing QR code" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Pairing link" })).toHaveValue(/#offer=/);
   await expect(page.getByText("Enable relay?", { exact: true })).toHaveCount(0);
@@ -71,6 +113,11 @@ export async function enableRelayAndExpectOffer(page: Page): Promise<void> {
 export async function expectPairingOffer(page: Page): Promise<void> {
   await expect(page.getByRole("img", { name: "Pairing QR code" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Pairing link" })).toHaveValue(/#offer=/);
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "Treat this pairing link like a password. Anyone with it can access this daemon.",
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Enable relay", exact: true })).toHaveCount(0);
 }

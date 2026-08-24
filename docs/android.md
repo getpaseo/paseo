@@ -82,11 +82,11 @@ Or from `packages/app`:
 
 ```bash
 # Debug
-npx cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=development expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=development expo run:android --variant=debug
 
 # Release
-npx cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=production expo run:android --variant=release
 
 # Clear generated Android project

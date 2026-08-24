@@ -9,6 +9,7 @@ import {
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
+  MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
@@ -162,9 +163,12 @@ function flattenClipboardListMarkup(html: string): string {
     items.forEach((item, index) => {
       const line = document.createElement("div");
       line.append(start === null ? "- " : `${start + index}. `);
+      const nestedLines: HTMLDivElement[] = [];
       let hasParagraph = false;
       for (const child of Array.from(item.childNodes)) {
-        if (child instanceof HTMLParagraphElement) {
+        if (child instanceof HTMLDivElement) {
+          nestedLines.push(child);
+        } else if (child instanceof HTMLParagraphElement) {
           if (hasParagraph) {
             line.append(document.createElement("br"), document.createElement("br"));
           }
@@ -174,7 +178,7 @@ function flattenClipboardListMarkup(html: string): string {
           line.append(child);
         }
       }
-      replacement.append(line);
+      replacement.append(line, ...nestedLines);
     });
     list.replaceWith(replacement);
   }
@@ -275,11 +279,32 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (tag === "p" || isTableStructure(tag)) {
     return true;
   }
+  const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
+  if (
+    (isSelectableSemantic || element.tagName === "A") &&
+    selectionStaysInsideElement(range, element)
+  ) {
+    return false;
+  }
   if (tag === "ol" || tag === "ul") {
     const selectedItems = selectedListItems(element, range);
-    return selectedItems.some((item) => hasSelectedAllContents(range, item, true));
+    return selectedItems.some(
+      (item) => hasSelectedListMarker(range, item) || hasSelectedAllContents(range, item, true),
+    );
+  }
+  if (tag === "li" && hasSelectedListMarker(range, element)) {
+    return true;
   }
   return hasSelectedAllContents(range, element, tag === "li");
+}
+
+function selectionStaysInsideElement(range: Range, element: Element): boolean {
+  return (
+    range.startContainer !== element &&
+    range.endContainer !== element &&
+    element.contains(range.startContainer) &&
+    element.contains(range.endContainer)
+  );
 }
 
 function selectedListItems(list: Element, range: Range): Element[] {
@@ -290,6 +315,31 @@ function selectedListItems(list: Element, range: Range): Element[] {
         child.contains(range.endContainer) ||
         hasSelectedAllContents(range, child, true)),
   );
+}
+
+function hasSelectedListMarker(range: Range, item: Element): boolean {
+  const marker = item.querySelector(`:scope > [${MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE}]`);
+  if (!marker) {
+    return false;
+  }
+
+  const markerContents = document.createRange();
+  markerContents.selectNodeContents(marker);
+  const selectionEndsBeforeMarker =
+    range.compareBoundaryPoints(Range.END_TO_START, markerContents) >= 0;
+  const selectionStartsAfterMarker =
+    range.compareBoundaryPoints(Range.START_TO_END, markerContents) <= 0;
+  if (selectionEndsBeforeMarker || selectionStartsAfterMarker) {
+    return false;
+  }
+
+  if (range.compareBoundaryPoints(Range.START_TO_START, markerContents) > 0) {
+    markerContents.setStart(range.startContainer, range.startOffset);
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, markerContents) < 0) {
+    markerContents.setEnd(range.endContainer, range.endOffset);
+  }
+  return hasMarkdownContent(markerContents.cloneContents(), true);
 }
 
 function normalizeOrderedListStart(copy: Element, original: Element, range: Range): void {

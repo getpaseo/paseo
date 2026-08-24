@@ -219,4 +219,123 @@ describe("JsonlRpcProcess", () => {
 
     await rejection;
   });
+
+  test("reassembles protocol v2 chunked responses into the logical frame", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    try {
+      let buffer = "";
+      const sentRequest = new Promise<Record<string, unknown>>((resolve) => {
+        child.stdin.on("data", (chunk) => {
+          buffer += chunk.toString();
+          const newlineIndex = buffer.indexOf("\n");
+          if (newlineIndex === -1) return;
+          resolve(JSON.parse(buffer.slice(0, newlineIndex)) as Record<string, unknown>);
+        });
+      });
+
+      const request = transport.request({ type: "chunked" });
+      const command = await sentRequest;
+
+      // Emit a logical response split into protocol v2 chunk frames.
+      const value = "x".repeat(1024 * 1024);
+      const logical = JSON.stringify({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: true,
+        data: { value },
+      });
+      const bytes = Buffer.from(logical, "utf8");
+      expect(bytes.byteLength).toBeGreaterThan(1024 * 1024);
+      const chunkPayload = 256 * 1024;
+      const count = Math.ceil(bytes.length / chunkPayload);
+      expect(count).toBeGreaterThan(1);
+      for (let index = 0; index < count; index++) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "rpc_chunk",
+            chunkId: "seq1",
+            index,
+            count,
+            byteLength: bytes.length,
+            data: bytes
+              .subarray(index * chunkPayload, (index + 1) * chunkPayload)
+              .toString("base64"),
+          })}\n`,
+        );
+      }
+
+      await expect(request).resolves.toEqual({ value });
+    } finally {
+      await transport.close();
+    }
+  });
+
+  test("rejects protocol v2 chunks larger than the transport payload limit", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    try {
+      let buffer = "";
+      const sentRequest = new Promise<Record<string, unknown>>((resolve) => {
+        child.stdin.on("data", (chunk) => {
+          buffer += chunk.toString();
+          const newlineIndex = buffer.indexOf("\n");
+          if (newlineIndex === -1) return;
+          resolve(JSON.parse(buffer.slice(0, newlineIndex)) as Record<string, unknown>);
+        });
+      });
+
+      const request = transport.request({ type: "oversized-chunks" });
+      const command = await sentRequest;
+      const logicalResponse = (value: string): Buffer =>
+        Buffer.from(
+          JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: { value },
+          }),
+          "utf8",
+        );
+      const oversized = logicalResponse(`invalid-${"x".repeat(1024 * 1024)}`);
+      const split = Math.ceil(oversized.byteLength / 2);
+      expect(split).toBeGreaterThan(256 * 1024);
+      for (let index = 0; index < 2; index += 1) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "rpc_chunk",
+            chunkId: "oversized",
+            index,
+            count: 2,
+            byteLength: oversized.byteLength,
+            data: oversized.subarray(index * split, (index + 1) * split).toString("base64"),
+          })}\n`,
+        );
+      }
+
+      const valid = logicalResponse(`valid-${"x".repeat(1024 * 1024)}`);
+      const count = Math.ceil(valid.byteLength / (256 * 1024));
+      for (let index = 0; index < count; index += 1) {
+        child.stdout.write(
+          `${JSON.stringify({
+            type: "rpc_chunk",
+            chunkId: "valid",
+            index,
+            count,
+            byteLength: valid.byteLength,
+            data: valid.subarray(index * 256 * 1024, (index + 1) * 256 * 1024).toString("base64"),
+          })}\n`,
+        );
+      }
+
+      const response = (await request) as { value: string };
+      expect(response.value.startsWith("valid-")).toBe(true);
+    } finally {
+      await transport.close();
+    }
+  });
 });

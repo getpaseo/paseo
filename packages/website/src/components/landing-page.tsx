@@ -1159,19 +1159,6 @@ paseo attach abc123                # stream live output
 paseo send abc123 "also add tests" # follow-up task`,
   },
   {
-    title: "Loops",
-    description:
-      "Have one agent do the work, another verify the result, and loop until it passes. Built-in, no shell scripting needed.",
-    code: `# Worker-verifier loop: fix tests until they pass
-paseo loop run "make all tests pass" \\
-  --verify "verify tests pass and the code is production-ready" \\
-  --verify-check "npm test" \\
-  --max-iterations 5
-
-paseo loop ls                        # list running loops
-paseo loop logs abc123               # stream loop output`,
-  },
-  {
     title: "Schedules",
     description:
       "Run agents on a cron schedule. Automate recurring tasks like dependency updates, security audits, or report generation.",

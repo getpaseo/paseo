@@ -12,18 +12,14 @@ export async function createOpenAndArchiveWorkspace(url: string, cwd: string): P
   try {
     await client.connect();
 
-    const created = await client.workspaces.create(cwd);
-    if (!created.workspace) {
-      throw new Error(created.error ?? "Workspace creation failed");
-    }
-
+    const created = await client.workspaces.create({
+      source: { kind: "directory", path: cwd },
+      title: "Fresh SDK workspace",
+    });
     const opened = await client.workspaces.open(cwd);
-    if (!opened.workspace) {
-      throw new Error(opened.error ?? "Workspace open failed");
-    }
 
-    await opened.workspace.refetch();
-    await opened.workspace.archive();
+    await opened.refresh();
+    await created.archive();
   } finally {
     await client.close();
   }

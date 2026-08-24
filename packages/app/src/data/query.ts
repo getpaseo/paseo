@@ -4,6 +4,7 @@ import {
   useQueries,
   useQuery,
   type QueryKey,
+  type QueryClient,
   type UseQueryOptions,
   type UseQueryResult,
 } from "@tanstack/react-query";
@@ -47,8 +48,11 @@ export function useFetchQuery<
   TError = Error,
   TData = TQueryFnData,
   TQueryKey extends QueryKey = QueryKey,
->(input: FetchQueryInput<TQueryFnData, TError, TData, TQueryKey>): UseQueryResult<TData, TError> {
-  return useQuery(fetchQueryOptions(input));
+>(
+  input: FetchQueryInput<TQueryFnData, TError, TData, TQueryKey>,
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> {
+  return useQuery(fetchQueryOptions(input), queryClient);
 }
 
 export function useFetchQueries<TData>(

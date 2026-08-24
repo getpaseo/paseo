@@ -1,80 +1,67 @@
 ---
 title: GitHub for Hub
-description: Create the GitHub App your Hub uses, install it, and connect it to an organization.
+description: Create the GitHub App your Hub uses for repository access and event triggers.
 nav: GitHub App
-order: 74
+order: 75
 category: Hub
 ---
 
 # GitHub for Hub
 
-Hub talks to GitHub through a GitHub App you own. One App serves your whole Hub; each account or organization that installs it becomes a connection.
+Hub talks to GitHub through a GitHub App you create and own. One App serves the Hub; each account or organization that installs it becomes a connection.
 
-## Create the App
+Open **Apps → GitHub**. Hub gives you the current callback URLs, required repository permissions, subscribed events, and the fields to copy back from GitHub. It verifies the App before saving it.
 
-Go to **Settings → Developer settings → GitHub Apps → New GitHub App** on the account that should own it.
+## Public URL requirements
 
-Replace `hub.example.com` with your `PASEO_HUB_APP_URL`.
+Repository access and installation work without a GitHub webhook. GitHub event triggers and configuration sync do not: GitHub must be able to deliver events to a public HTTPS URL.
 
-| Setting            | Value                                                      |
-| ------------------ | ---------------------------------------------------------- |
-| Homepage URL       | `https://hub.example.com`                                  |
-| Callback URL       | `https://hub.example.com/api/integrations/github/callback` |
-| Setup URL          | `https://hub.example.com/api/integrations/github/setup`    |
-| Redirect on update | on                                                         |
-| Webhook URL        | `https://hub.example.com/webhook`                          |
-| Webhook secret     | a value you generate                                       |
+On a local HTTP Hub, the Apps guide lets you configure repository access and explains that event setup is unavailable. Reopen Hub at its public address after setting `PASEO_HUB_APP_URL` to add the webhook secret and events.
 
-Repository permissions:
+GitHub uses these Hub URLs:
 
-| Permission    | Access       | Why                                       |
-| ------------- | ------------ | ----------------------------------------- |
-| Contents      | Read & write | Read `.paseo/hub.yml`, let agents push    |
-| Issues        | Read & write | Read comments, add reactions              |
-| Pull requests | Read & write | Read review comments, let agents open PRs |
-| Metadata      | Read         | Required by GitHub                        |
+| Setting      | Hub URL                                                |
+| ------------ | ------------------------------------------------------ |
+| Homepage URL | `<PASEO_HUB_APP_URL>`                                  |
+| Callback URL | `<PASEO_HUB_APP_URL>/api/integrations/github/callback` |
+| Setup URL    | `<PASEO_HUB_APP_URL>/api/integrations/github/setup`    |
+| Webhook URL  | `<PASEO_HUB_APP_URL>/webhook`                          |
 
-Subscribe to events:
+Keep GitHub's SSL verification enabled.
 
-- Issue comment
-- Issues
-- Pull request review
-- Pull request review comment
-- Push
+## Subscribe to GitHub events
 
-Push is what makes configuration sync work. Without it, Hub never learns that `.paseo/hub.yml` changed.
+Under **Subscribe to events**, select **Issue comment**, **Issues**, **Pull requests**, **Pull request review**, **Pull request review comment**, and **Push**. **Pull requests** is required for `github.pull_request_created` and `github.pull_request_label_added`.
 
-## Configure Hub
+## Connect repositories
 
-From the App's settings page, collect:
+After Hub verifies the App, choose **Install on GitHub**. Select the account or organization and repositories the App may access.
 
-| Value                     | Environment variable       |
-| ------------------------- | -------------------------- |
-| App ID                    | `GITHUB_APP_ID`            |
-| The slug in the App's URL | `GITHUB_APP_SLUG`          |
-| Client ID                 | `GITHUB_APP_CLIENT_ID`     |
-| A generated client secret | `GITHUB_APP_CLIENT_SECRET` |
-| A generated private key   | `GITHUB_APP_PRIVATE_KEY`   |
-| The webhook secret        | `GITHUB_WEBHOOK_SECRET`    |
+Start from Hub rather than GitHub's own install button. The round trip binds the installation to the active Hub organization.
 
-The private key downloads as a PEM file. Pass its contents in `GITHUB_APP_PRIVATE_KEY`, or its path in `GITHUB_APP_PRIVATE_KEY_PATH`.
+The connection appears with a slug derived from the account. An installation on `getpaseo`, for example, becomes `getpaseo-github`. Connect as many installations as the Hub organization needs.
 
-Restart Hub. GitHub should now show as **Ready** in Connections.
+## What the connection provides
 
-## Connect
+- **Events:** issues, comments, reviews, and pushes from repositories the installation can see. See [GitHub triggers](/docs/hub/triggers/github).
+- **Configuration sync:** a repository can hold the canonical `.paseo` bundle. See [Configuration](/docs/hub/configuration).
+- **Execution credentials:** Hub mints scoped GitHub App tokens for workflow steps that explicitly request GitHub authority.
 
-Open **Connections → GitHub → Connect**. Hub sends you to GitHub to install the App, then binds the installation to your organization.
+An authenticated `gh` CLI on the daemon does not configure Hub's GitHub integration. It can still serve agents outside Hub's scoped GitHub authority, subject to the daemon and provider's own environment and permission policy.
 
-Start from Hub, not from GitHub's own install button. GitHub only calls the setup URL when an installation is created or changed, so installing directly can leave you on a settings page with nothing bound.
+## Configure from environment
 
-The connection appears with a slug derived from the account: an installation on `getpaseo` becomes `getpaseo-github`. That slug is how configuration names this connection.
+Deployments that keep app secrets outside Hub can set:
 
-Connect as many installations as you need. A personal account and several organizations can coexist in one Hub organization.
+```dotenv
+GITHUB_APP_ID=
+GITHUB_APP_SLUG=
+GITHUB_APP_CLIENT_ID=
+GITHUB_APP_CLIENT_SECRET=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_WEBHOOK_SECRET=
+```
 
-## What the connection gives you
+The private key is the contents of GitHub's downloaded PEM file. Use `GITHUB_APP_PRIVATE_KEY_PATH` instead when the deployment mounts that file.
 
-- **Events.** Comments, issues, and reviews from every repository the installation can see. See [GitHub triggers](/docs/hub/triggers/github).
-- **Configuration sync.** Any repository in the installation can hold `.paseo/hub.yml`. See [Configuration](/docs/hub/configuration).
-- **Tokens.** Scoped, per-execution GitHub credentials.
-
-Which repositories the installation covers is a GitHub setting. Change it on GitHub, not in Paseo.
+Environment configuration takes precedence over a saved GitHub App and appears as **Managed by environment** under **Apps**. A complete environment configuration includes the webhook secret and therefore expects a public webhook origin.

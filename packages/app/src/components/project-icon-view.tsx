@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Image, type StyleProp, Text, type TextStyle, View } from "react-native";
+import { type StyleProp, Text, type TextStyle, View } from "react-native";
+import { ProjectIconImage } from "@/components/project-icon-image";
 import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
 
 const WHITE_TEXT = { color: "#ffffff" } as const;
@@ -28,6 +29,7 @@ export function projectIconRadius(size: number): number {
  * width/height/radius/centering block, which is how the radius drifted apart in the first
  * place — pass a `size` and the shape follows.
  */
+
 export function ProjectIconView({
   iconDataUri,
   initial,
@@ -41,7 +43,6 @@ export function ProjectIconView({
   size: number;
   textStyle: StyleProp<TextStyle>;
 }) {
-  const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
   // The uploaded image is sized but never clipped — see projectIconRadius.
   const box = useMemo(() => ({ width: size, height: size }), [size]);
   const fallbackStyles = useMemo(
@@ -55,12 +56,18 @@ export function ProjectIconView({
   );
   const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
 
-  if (iconDataUri) {
-    return <Image source={imageSource} style={box} />;
-  }
-  return (
-    <View style={fallbackStyles}>
-      <Text style={textStyles}>{initial}</Text>
-    </View>
+  const fallback = useMemo(
+    () => (
+      <View style={fallbackStyles}>
+        <Text style={textStyles}>{initial}</Text>
+      </View>
+    ),
+    [fallbackStyles, initial, textStyles],
+  );
+
+  return iconDataUri ? (
+    <ProjectIconImage dataUri={iconDataUri} fallback={fallback} style={box} />
+  ) : (
+    fallback
   );
 }

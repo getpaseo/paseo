@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "../support/fixtures";
+import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import {
@@ -6,7 +7,6 @@ import {
   selectNewWorkspaceProject,
 } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { getServerId } from "../support/helpers/server-id";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 
@@ -62,13 +62,12 @@ async function recordSetAgentModeRequests(page: Page): Promise<{
   };
 }
 
-async function seedCodexDefaultPreferences(page: Page, serverId: string): Promise<void> {
+async function seedCodexDefaultPreferences(page: Page): Promise<void> {
   await page.addInitScript(
-    ({ preferencesKey, serverId: seededServerId }) => {
+    ({ preferencesKey }) => {
       localStorage.setItem(
         preferencesKey,
         JSON.stringify({
-          serverId: seededServerId,
           provider: "codex",
           providerPreferences: {
             codex: {
@@ -78,10 +77,10 @@ async function seedCodexDefaultPreferences(page: Page, serverId: string): Promis
             },
             mock: { model: "ten-second-stream" },
           },
-        }),
+        } satisfies FormPreferences),
       );
     },
-    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY, serverId },
+    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY },
   );
 }
 
@@ -104,9 +103,8 @@ test.describe("New Workspace mode cycle safety", () => {
   // control and silently change that (possibly running) agent's mode — e.g. into a
   // permissive/bypass mode. See use-keyboard-action-handler.ts.
   test("Shift+Tab in New Workspace never changes a backgrounded agent's mode", async ({ page }) => {
-    const serverId = getServerId();
     const seeded = await seedWorkspace({ repoPrefix: "mode-cycle-safety-" });
-    await seedCodexDefaultPreferences(page, serverId);
+    await seedCodexDefaultPreferences(page);
     const modeRequests = await recordSetAgentModeRequests(page);
 
     try {

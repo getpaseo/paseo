@@ -232,7 +232,12 @@ describe("buildSidebarProjectRowModel", () => {
       project({
         viewKey: '["placement","host-b","project-b"]',
         hosts: [
-          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" as const },
+          {
+            serverId: "host-b",
+            iconWorkingDir: "/repo/b",
+            worktreeSupport: "supported" as const,
+            iconRevision: "effective-revision",
+          },
         ],
       }),
     ]);
@@ -242,6 +247,7 @@ describe("buildSidebarProjectRowModel", () => {
       serverId: "host-b",
       projectId: "project-host-b",
       iconWorkingDir: "/repo/b",
+      iconRevision: "effective-revision",
     });
   });
 

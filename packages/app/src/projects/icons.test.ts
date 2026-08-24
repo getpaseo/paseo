@@ -20,4 +20,8 @@ describe("project icon lookup", () => {
       cwd: "/projects/paseo",
     });
   });
+
+  it("waits while custom-icon capability is unknown", () => {
+    expect(resolveProjectIconLookup(target, null)).toBeNull();
+  });
 });

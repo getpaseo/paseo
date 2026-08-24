@@ -1,6 +1,15 @@
-import { useCallback, type PropsWithChildren, type ReactElement, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  type PropsWithChildren,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   Pressable,
+  type View,
   type PressableProps,
   type PressableStateCallbackType,
   type StyleProp,
@@ -12,6 +21,7 @@ import {
   useMenuState,
   type MenuCompactMode,
 } from "./menu-context";
+import { isWeb } from "@/constants/platform";
 
 /**
  * Owns one menu's state. Wrap a trigger and a `MenuSurface` in it.
@@ -49,13 +59,28 @@ export interface MenuTriggerProps extends Omit<PressableProps, "style" | "childr
   children: ReactNode | ((state: MenuTriggerState) => ReactNode);
 }
 
-export function MenuTrigger({
-  children,
-  disabled,
-  style,
-  ...props
-}: MenuTriggerProps): ReactElement {
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  Object.assign(ref, { current: value });
+}
+
+export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigger(
+  { children, disabled, style, accessibilityState, ...props },
+  forwardedRef,
+): ReactElement {
   const ctx = useMenuContext("MenuTrigger");
+
+  const handleTriggerRef = useCallback(
+    (node: View | null) => {
+      assignRef(ctx.triggerRef, node);
+      assignRef(forwardedRef, node);
+    },
+    [ctx.triggerRef, forwardedRef],
+  );
 
   const handlePress = useCallback(() => {
     if (disabled) return;
@@ -79,17 +104,27 @@ export function MenuTrigger({
     },
     [children, ctx.open],
   );
+  const resolvedAccessibilityState = useMemo(
+    () => ({ ...accessibilityState, disabled: Boolean(disabled), expanded: ctx.open }),
+    [accessibilityState, ctx.open, disabled],
+  );
+  const webExpandedState = useMemo(
+    () => (isWeb ? ({ "aria-expanded": ctx.open } as const) : null),
+    [ctx.open],
+  );
 
   return (
     <Pressable
       {...props}
-      ref={ctx.triggerRef}
+      {...webExpandedState}
+      ref={handleTriggerRef}
       collapsable={false}
       disabled={disabled}
+      accessibilityState={resolvedAccessibilityState}
       onPress={handlePress}
       style={pressableStyle}
     >
       {renderChildren}
     </Pressable>
   );
-}
+});

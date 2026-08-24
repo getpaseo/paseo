@@ -11,4 +11,15 @@
  * `StyleSheet.create` — see docs/unistyles.md. Each knockout maps the name to a style of its own.
  * Add a token here when a knockout lands on a surface that isn't listed.
  */
-export type SurfaceBackdrop = "surfaceSidebar" | "surfaceSidebarHover" | "surface2";
+export type SurfaceBackdrop =
+  | "surface0"
+  | "surface1"
+  | "surface2"
+  | "surfaceSidebar"
+  | "surfaceSidebarHover"
+  | "surfaceSidebarSelected";
+
+export type SidebarSurfaceBackdrop = Extract<
+  SurfaceBackdrop,
+  "surfaceSidebar" | "surfaceSidebarHover" | "surfaceSidebarSelected" | "surface2"
+>;

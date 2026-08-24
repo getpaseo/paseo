@@ -33,6 +33,17 @@ export {
 
 let cachedStagingUserIdPromise: Promise<string> | null = null;
 
+const UPDATE_CHANNEL_NOT_PUBLISHED_CODE = "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
+
+function isUpdateChannelNotPublished(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === UPDATE_CHANNEL_NOT_PUBLISHED_CODE
+  );
+}
+
 export function shouldAdmitToRollout(args: {
   channel: AppReleaseChannel;
   rolloutHours: number | undefined;
@@ -109,6 +120,18 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     if (this.configured) return;
     this.configured = true;
 
+    // electron-updater logs every emitted error before consumers can classify it.
+    // Paseo reports genuine check, runtime, and install failures through the
+    // callbacks below, so leave internal error logging disabled to avoid both
+    // duplicate logs and expected missing-channel noise.
+    const updaterLogger = autoUpdater.logger;
+    autoUpdater.logger = {
+      debug: updaterLogger?.debug ? (message) => updaterLogger.debug?.(message) : undefined,
+      error: () => undefined,
+      info: (message) => updaterLogger?.info(message),
+      warn: (message) => updaterLogger?.warn(message),
+    };
+
     autoUpdater.on("update-available", (info) => {
       input.onUpdateAvailable(info as RuntimeUpdateInfo);
     });
@@ -119,17 +142,23 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       input.onUpdateNotAvailable();
     });
     autoUpdater.on("error", (error) => {
+      if (isUpdateChannelNotPublished(error)) return;
       input.onError(error);
     });
   }
 
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
-    const result = await autoUpdater.checkForUpdates();
-    if (!result) return null;
-    return {
-      isUpdateAvailable: result.isUpdateAvailable,
-      updateInfo: result.updateInfo as RuntimeUpdateInfo,
-    };
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      if (!result) return null;
+      return {
+        isUpdateAvailable: result.isUpdateAvailable,
+        updateInfo: result.updateInfo as RuntimeUpdateInfo,
+      };
+    } catch (error) {
+      if (isUpdateChannelNotPublished(error)) return null;
+      throw error;
+    }
   }
 
   downloadUpdate(): Promise<unknown> {

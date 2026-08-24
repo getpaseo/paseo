@@ -26,7 +26,7 @@ function buildSeededStoragePayload() {
       endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
       nowIso,
     }),
-    preferences: buildCreateAgentPreferences(getServerId()),
+    preferences: buildCreateAgentPreferences(),
   };
 }
 

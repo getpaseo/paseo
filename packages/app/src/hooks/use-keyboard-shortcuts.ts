@@ -5,7 +5,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,
   type KeyboardShortcutInput,
@@ -37,6 +37,7 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -55,6 +56,7 @@ export function useKeyboardShortcuts({
   exitFocusMode: () => void;
   cycleTheme?: () => void;
 }) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const pathname = usePathname();
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
@@ -71,6 +73,7 @@ export function useKeyboardShortcuts({
   const openProjectPickerAction = useOpenAddProject();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
+  const badgeModifierKeyRef = useRef<string | null | undefined>(undefined);
 
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
@@ -110,7 +113,13 @@ export function useKeyboardShortcuts({
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
     // desktop Mac, Ctrl on desktop non-Mac). The store ORs altDown/cmdOrCtrlDown
     // to drive badge visibility, so we set the flag matching this runtime.
-    const badgeModifierKey = getWorkspaceIndexJumpModifierKey({ isMac, isDesktop: isDesktopApp });
+    // Derived from the effective bindings: `null` when the user unassigned or
+    // rebound the jump shortcut, and no `event.key` ever equals null, so the
+    // badges simply never appear.
+    const badgeModifierKey = getWorkspaceIndexJumpModifierKey(
+      { isMac, isDesktop: isDesktopApp },
+      bindings,
+    );
     const setBadgeModifierDown = (down: boolean) => {
       const state = useKeyboardShortcutsStore.getState();
       if (isDesktopApp) {
@@ -119,6 +128,16 @@ export function useKeyboardShortcuts({
         state.setAltDown(down);
       }
     };
+
+    // The keyup listener matches the released key against the modifier derived
+    // when the effect last ran, so a modifier held while the jump binding
+    // changes can never be released -- the badges would stay up until a blur.
+    // Clear on change only: this effect also re-runs on every navigation, and
+    // clearing unconditionally would drop the badges mid Cmd+1, Cmd+2.
+    if (badgeModifierKeyRef.current !== badgeModifierKey) {
+      badgeModifierKeyRef.current = badgeModifierKey;
+      resetModifiers();
+    }
 
     const shouldHandle = () => {
       if (typeof document === "undefined") return false;
@@ -184,7 +203,9 @@ export function useKeyboardShortcuts({
               setCommandCenterFocusRestoreElement(browserFocusRestoreElement);
             }
           }
-          useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen);
+          useKeyboardShortcutsStore
+            .getState()
+            .setCommandCenterOpen(action.nextOpen, action.scope ?? null);
           return true;
         }
         case "shortcuts-dialog-toggle":
@@ -250,7 +271,6 @@ export function useKeyboardShortcuts({
         },
         bindings,
       });
-
       chordStateRef.current = result.nextChordState;
       if (
         shouldPublishBrowserShortcutPolicy({
@@ -291,6 +311,10 @@ export function useKeyboardShortcuts({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandle()) {
+        return;
+      }
+
+      if (dispatchTopWebOverlayKeyDown(event)) {
         return;
       }
 
@@ -386,6 +410,7 @@ export function useKeyboardShortcuts({
     isMac,
     isMobile,
     isWorkspaceFocusModeEnabled,
+    keyboardActionDispatcher,
     openProjectPickerAction,
     pathname,
     publishBrowserShortcutPolicy,

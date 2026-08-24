@@ -195,7 +195,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
     onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),
     logger: createStub<pino.Logger>(logger),
     downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
-    pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
+    pushNotifications: createStub<SessionOptions["pushNotifications"]>({}),
     paseoHome: "/tmp/paseo-test",
     agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: () => () => {},

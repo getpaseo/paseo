@@ -600,7 +600,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
@@ -616,7 +616,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   cardInfoTextHovered: {
@@ -638,7 +638,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 28,
   },
   checksSummaryLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
@@ -658,17 +658,17 @@ const styles = StyleSheet.create((theme) => ({
     gap: 3,
   },
   checksStatusTextFailed: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusDanger,
   },
   checksStatusTextPending: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusWarning,
   },
   checksStatusTextPassed: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusSuccess,
   },

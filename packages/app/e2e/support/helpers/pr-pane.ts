@@ -1,10 +1,9 @@
 import { expect, type Page } from "@playwright/test";
 import { getStateLabel } from "@/git/pull-request-panel/data";
+import { openPullRequestPanel } from "./workspace-tabs";
 
 export async function openPrPane(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open explorer" }).click();
-  await page.getByTestId("explorer-tab-pr").click();
-  await expect(page.getByTestId("pr-pane")).toBeVisible({ timeout: 15_000 });
+  await openPullRequestPanel(page);
 }
 
 export async function expectPrPaneTitle(page: Page, title: string): Promise<void> {

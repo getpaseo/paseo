@@ -2,7 +2,7 @@
 
 Paseo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
 
-All provider configuration lives under `agents.providers` in config.json:
+Provider definitions live under `agents.providers` in config.json:
 
 ```json
 {
@@ -16,6 +16,20 @@ All provider configuration lives under `agents.providers` in config.json:
 ```
 
 Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`).
+
+Each provider catalog refresh waits up to 2 minutes. If a provider loads many plugins or a large
+agent catalog during startup, raise the limit in milliseconds:
+
+```json
+{
+  "agents": {
+    "catalogRefreshTimeoutMs": 180000
+  }
+}
+```
+
+The limit applies independently to every provider refresh and covers availability plus the entire
+catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field is absent.
 
 ---
 
@@ -244,6 +258,8 @@ requires_openai_auth = false
 ## Multiple profiles for the same provider
 
 You can create multiple entries that extend the same built-in provider. Each gets its own entry in the provider list with independent credentials, models, and environment.
+
+"Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
 Example: two different Anthropic accounts as separate profiles:
 

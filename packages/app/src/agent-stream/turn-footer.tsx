@@ -2,11 +2,11 @@ import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
-  collectAssistantTurnContentForStreamRenderStrategy,
+  collectAssistantResponseContentForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
@@ -23,6 +23,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
@@ -173,7 +174,7 @@ function CompletedTurnFooter({
 }) {
   const getContent = useCallback(
     () =>
-      collectAssistantTurnContentForStreamRenderStrategy({
+      collectAssistantResponseContentForStreamRenderStrategy({
         strategy,
         items,
         startIndex,
@@ -219,14 +220,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   turnFooterRow: {
-    marginTop: theme.spacing[4],
+    marginTop: theme.spacing[2] + 5,
   },
   turnFooterSlot: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
     minHeight: 24,
-    paddingBottom: theme.spacing[6],
+    paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
   turnFooterContent: {
     height: 24,

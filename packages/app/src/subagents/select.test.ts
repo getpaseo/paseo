@@ -116,7 +116,7 @@ describe("selectSubagentsForParent", () => {
         toolCallId: "call-1",
       },
     });
-    store.hideFinishedForParent(SERVER_ID, "parent-a");
+    store.hideFromTrack(SERVER_ID, "parent-a", ["provider-child"]);
 
     expect(
       selectProviderSubagentsForParent(

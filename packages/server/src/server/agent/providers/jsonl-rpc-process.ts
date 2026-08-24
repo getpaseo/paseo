@@ -15,6 +15,11 @@ export const JSONL_RPC_NO_TIMEOUT = null;
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const RPC_V2_MAX_FRAME_BYTES = 1024 * 1024;
+const RPC_V2_MAX_REASSEMBLED_BYTES = 64 * 1024 * 1024;
+const RPC_V2_CHUNK_PAYLOAD_BYTES = 256 * 1024;
+const RPC_V2_MAX_ENCODED_CHUNK_LENGTH = Math.ceil(RPC_V2_CHUNK_PAYLOAD_BYTES / 3) * 4;
+const RPC_V2_MAX_CHUNK_COUNT = Math.ceil(RPC_V2_MAX_REASSEMBLED_BYTES / RPC_V2_CHUNK_PAYLOAD_BYTES);
 
 export interface JsonlRpcLaunch {
   command: string;
@@ -38,6 +43,30 @@ interface PendingRequest {
   timer: NodeJS.Timeout | null;
 }
 
+/**
+ * Reassembly state for a protocol v2 chunked frame sequence. Some agents that
+ * speak this JSONL RPC protocol (OMP) cap single-line frames at 1 MiB and emit
+ * larger frames as ordered `rpc_chunk` frames; the transport reassembles them
+ * into the original logical frame before routing it.
+ */
+interface PendingChunkSequence {
+  chunkId: string;
+  count: number;
+  byteLength: number;
+  nextIndex: number;
+  chunks: Buffer[];
+  receivedBytes: number;
+}
+
+/** Validated metadata fields of a protocol v2 `rpc_chunk` frame. */
+interface RpcChunkMetadata {
+  chunkId: string;
+  index: number;
+  count: number;
+  byteLength: number;
+  data: string;
+}
+
 export interface JsonlRpcExit {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -49,6 +78,16 @@ export interface JsonlRpcProcessOptions {
   logger: Logger;
   diagnosticName?: string;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
+}
+
+export function supportsJsonlRpcProtocolV2(message: Record<string, unknown>): boolean {
+  return (
+    message.type === "ready" &&
+    Array.isArray(message.supportedProtocolVersions) &&
+    message.supportedProtocolVersions.includes(2) &&
+    message.maxFrameBytes === RPC_V2_MAX_FRAME_BYTES &&
+    message.maxReassembledFrameBytes === RPC_V2_MAX_REASSEMBLED_BYTES
+  );
 }
 
 function assertChildWithPipes(
@@ -79,6 +118,7 @@ export class JsonlRpcProcess {
   private nextRequestId = 1;
   private disposed = false;
   private stdoutBuffer = "";
+  private pendingChunks: PendingChunkSequence | null = null;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
     this.diagnosticName = options.diagnosticName ?? "JSONL RPC";
@@ -218,6 +258,20 @@ export class JsonlRpcProcess {
       return;
     }
     const message = parsed as Record<string, unknown>;
+    if (message.type === "rpc_chunk") {
+      const reassembled = this.consumeRpcChunk(message);
+      if (reassembled !== undefined) {
+        // The reassembled frame is a complete logical frame; route it through
+        // the same path as any other parsed line.
+        this.handleLine(JSON.stringify(reassembled));
+      }
+      return;
+    }
+    this.dispatchFrame(message);
+  }
+
+  /** Route a complete logical frame to its consumer (response or subscriber). */
+  private dispatchFrame(message: Record<string, unknown>): void {
     if (message.type === "response") {
       this.handleResponse(message as unknown as JsonlRpcResponse);
       return;
@@ -225,6 +279,173 @@ export class JsonlRpcProcess {
     for (const subscriber of this.messageSubscribers) {
       subscriber(message);
     }
+  }
+
+  /**
+   * Reassemble a protocol v2 `rpc_chunk` frame. Returns the reconstructed
+   * logical frame once the final chunk of a sequence arrives, `undefined` while
+   * a sequence is still in progress, and drops (returning `undefined`) any
+   * malformed or out-of-order chunk after logging it.
+   */
+  private consumeRpcChunk(chunk: Record<string, unknown>): Record<string, unknown> | undefined {
+    const metadata = this.parseChunkMetadata(chunk);
+    if (metadata === undefined) {
+      return undefined;
+    }
+    const bytes = this.decodeChunkPayload(metadata.data);
+    if (bytes === undefined) {
+      return undefined;
+    }
+    return this.appendChunk(metadata, bytes);
+  }
+
+  /** Validate a `rpc_chunk` frame's metadata, or reset the sequence and return undefined. */
+  private parseChunkMetadata(chunk: Record<string, unknown>): RpcChunkMetadata | undefined {
+    const chunkId = chunk.chunkId;
+    const data = chunk.data;
+    const index = chunk.index;
+    const count = chunk.count;
+    const byteLength = chunk.byteLength;
+    if (
+      typeof chunkId !== "string" ||
+      chunkId.length === 0 ||
+      chunkId.length > 128 ||
+      typeof data !== "string" ||
+      data.length === 0 ||
+      typeof index !== "number" ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      typeof count !== "number" ||
+      !Number.isSafeInteger(count) ||
+      count < 2 ||
+      count > RPC_V2_MAX_CHUNK_COUNT ||
+      index >= count ||
+      typeof byteLength !== "number" ||
+      !Number.isSafeInteger(byteLength) ||
+      byteLength < RPC_V2_MAX_FRAME_BYTES ||
+      byteLength > RPC_V2_MAX_REASSEMBLED_BYTES
+    ) {
+      this.options.logger.warn(
+        { chunk },
+        `Ignoring malformed ${this.diagnosticName} rpc_chunk frame`,
+      );
+      this.pendingChunks = null;
+      return undefined;
+    }
+    return { chunkId, index, count, byteLength, data };
+  }
+
+  /** Decode a chunk payload, or reset the sequence and return undefined on bad base64. */
+  private decodeChunkPayload(data: string): Buffer | undefined {
+    try {
+      if (data.length > RPC_V2_MAX_ENCODED_CHUNK_LENGTH) {
+        throw new Error("encoded payload exceeds the transport limit");
+      }
+      const bytes = Buffer.from(data, "base64");
+      if (bytes.byteLength > RPC_V2_CHUNK_PAYLOAD_BYTES || bytes.toString("base64") !== data) {
+        throw new Error("invalid base64 payload");
+      }
+      return bytes;
+    } catch {
+      this.options.logger.warn({}, `Ignoring ${this.diagnosticName} rpc_chunk with invalid base64`);
+      this.pendingChunks = null;
+      return undefined;
+    }
+  }
+
+  /** Append a chunk to the in-progress sequence, finalizing it once complete. */
+  private appendChunk(
+    metadata: RpcChunkMetadata,
+    bytes: Buffer,
+  ): Record<string, unknown> | undefined {
+    let pending = this.pendingChunks;
+    if (pending === null) {
+      if (metadata.index !== 0) {
+        this.options.logger.warn(
+          {},
+          `Ignoring ${this.diagnosticName} rpc_chunk sequence that did not start at index 0`,
+        );
+        return undefined;
+      }
+      pending = {
+        chunkId: metadata.chunkId,
+        count: metadata.count,
+        byteLength: metadata.byteLength,
+        nextIndex: 0,
+        chunks: [],
+        receivedBytes: 0,
+      };
+      this.pendingChunks = pending;
+    }
+
+    if (
+      pending.chunkId !== metadata.chunkId ||
+      pending.count !== metadata.count ||
+      pending.byteLength !== metadata.byteLength ||
+      pending.nextIndex !== metadata.index
+    ) {
+      this.options.logger.warn(
+        {},
+        `Ignoring out-of-order ${this.diagnosticName} rpc_chunk; dropping sequence`,
+      );
+      this.pendingChunks = null;
+      return undefined;
+    }
+
+    pending.chunks.push(bytes);
+    pending.receivedBytes += bytes.byteLength;
+    pending.nextIndex += 1;
+
+    if (pending.receivedBytes > pending.byteLength) {
+      this.options.logger.warn(
+        {},
+        `Ignoring ${this.diagnosticName} rpc_chunk sequence exceeding its declared length`,
+      );
+      this.pendingChunks = null;
+      return undefined;
+    }
+    if (pending.nextIndex < pending.count) {
+      return undefined;
+    }
+    if (pending.receivedBytes !== pending.byteLength) {
+      this.options.logger.warn(
+        {},
+        `Ignoring ${this.diagnosticName} rpc_chunk sequence with a length mismatch`,
+      );
+      this.pendingChunks = null;
+      return undefined;
+    }
+
+    this.pendingChunks = null;
+    return this.finalizeChunks(pending.chunks);
+  }
+
+  /** Reassemble and parse a complete chunk sequence into its logical frame. */
+  private finalizeChunks(chunks: Buffer[]): Record<string, unknown> | undefined {
+    let json: string;
+    try {
+      json = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    } catch {
+      this.options.logger.warn(
+        {},
+        `Ignoring ${this.diagnosticName} rpc_chunk sequence with invalid UTF-8`,
+      );
+      return undefined;
+    }
+    let frame: unknown;
+    try {
+      frame = JSON.parse(json);
+    } catch {
+      this.options.logger.warn(
+        {},
+        `Ignoring ${this.diagnosticName} rpc_chunk sequence with invalid JSON`,
+      );
+      return undefined;
+    }
+    if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+      return undefined;
+    }
+    return frame as Record<string, unknown>;
   }
 
   private handleResponse(response: JsonlRpcResponse): void {

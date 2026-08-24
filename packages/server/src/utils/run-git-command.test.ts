@@ -342,6 +342,73 @@ describe("runGitCommand", () => {
     });
   });
 
+  it("records submitted Git commands before they start and refuses an incomplete measurement", async () => {
+    const {
+      getGitCommandMetrics,
+      runGitCommand,
+      startGitCommandMetrics,
+      stopGitCommandMetrics,
+      waitForGitCommandMetricsIdle,
+    } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors({ delayMs: 100 }, { delayMs: 0 });
+    startGitCommandMetrics();
+
+    const first = runGitCommand(["status", "--short"], { cwd: process.cwd() });
+    const second = runGitCommand(["rev-parse", "--show-toplevel"], { cwd: process.cwd() });
+
+    await vi.waitFor(() => {
+      expect(fakeSpawnController.processes).toHaveLength(1);
+    });
+    expect(getGitCommandMetrics()).toMatchObject({
+      submitted: 2,
+      started: 1,
+      completed: 0,
+      active: 1,
+      pending: 1,
+      submissions: [
+        { args: ["status", "--short"], cwd: process.cwd() },
+        { args: ["rev-parse", "--show-toplevel"], cwd: process.cwd() },
+      ],
+    });
+    expect(() => stopGitCommandMetrics()).toThrow(
+      "Cannot stop Git command metrics while 2 submitted commands are unfinished",
+    );
+
+    await Promise.all([first, second]);
+    await waitForGitCommandMetricsIdle({ quietMs: 0, timeoutMs: 1_000 });
+    expect(stopGitCommandMetrics()).toMatchObject({
+      submitted: 2,
+      started: 2,
+      completed: 2,
+      active: 0,
+      pending: 0,
+      total: 2,
+    });
+  });
+
+  it("carries high-priority admission across an async user operation", async () => {
+    const { runGitCommand, runWithGitCommandPriority } = await loadRunGitCommand(1);
+    enqueueSpawnBehaviors(
+      { delayMs: 100, stdoutData: "active" },
+      { stdoutData: "high" },
+      { stdoutData: "normal" },
+    );
+
+    const active = runGitCommand(["status"], { cwd: process.cwd() });
+    await vi.waitFor(() => expect(fakeSpawnController.processes).toHaveLength(1));
+    const normal = runGitCommand(["rev-parse", "normal"], { cwd: process.cwd() });
+    const high = runWithGitCommandPriority("high", () =>
+      runGitCommand(["rev-parse", "high"], { cwd: process.cwd() }),
+    );
+
+    await expect(Promise.all([active, high, normal])).resolves.toEqual([
+      expect.objectContaining({ stdout: "active" }),
+      expect.objectContaining({ stdout: "high" }),
+      expect.objectContaining({ stdout: "normal" }),
+    ]);
+  });
+
   it("resolves truncated stdout, caps output, and kills the child process", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 

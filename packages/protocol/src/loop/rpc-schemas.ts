@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { AgentProviderSchema } from "../provider-manifest.js";
 
+// COMPAT(agentLoops): retained after the v0.3.0 feature removal; remove after 2027-02-09 when mixed-version peers no longer send legacy messages.
+
 export const LoopLogEntrySchema = z.object({
   seq: z.number().int().positive(),
   timestamp: z.string(),

@@ -1,4 +1,5 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
@@ -177,6 +178,19 @@ export async function expectSaveButtonDisabled(page: Page): Promise<void> {
   await expect(page.getByTestId("save-button")).toBeDisabled();
 }
 
+export async function expectUncommittedSetupWarning(page: Page): Promise<void> {
+  const warning = page.getByRole("alert").filter({ hasText: "Commit paseo.json changes" });
+  await expect(warning).toContainText("Commit paseo.json changes");
+  await expect(warning).toContainText(
+    "New worktrees use the setup script from the base branch you select.",
+  );
+}
+
+export async function expectNoUncommittedSetupWarning(page: Page): Promise<void> {
+  const warning = page.getByRole("alert").filter({ hasText: "Commit paseo.json changes" });
+  await expect(warning).toHaveCount(0);
+}
+
 // --- Form-state assertions ---
 
 export async function expectProjectSettingsFormVisible(page: Page): Promise<void> {
@@ -225,7 +239,7 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
   const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
   await page.getByTestId(`script-row-menu-${id}`).click();
   page.once("dialog", (dialog) => void dialog.accept());
-  await page.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
 }
 
 // --- File manipulation ---
@@ -247,6 +261,11 @@ export async function restorePaseoConfig(
   config: Record<string, unknown>,
 ): Promise<void> {
   await writeFile(path.join(repoPath, "paseo.json"), JSON.stringify(config, null, 2) + "\n");
+}
+
+export function commitPaseoConfig(repoPath: string): void {
+  execFileSync("git", ["add", "paseo.json"], { cwd: repoPath });
+  execFileSync("git", ["commit", "-m", "Update project config"], { cwd: repoPath });
 }
 
 // The daemon writes atomically via a temp file + rename, so blocking writes requires

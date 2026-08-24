@@ -300,18 +300,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   error: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
-    lineHeight: Math.round(theme.fontSize.sm * 1.4),
+    fontSize: theme.fontSize.base,
+    lineHeight: Math.round(theme.fontSize.base * 1.4),
     textAlign: "center",
   },
   errorTooltip: {
     color: theme.colors.popoverForeground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     maxWidth: 420,
   },
   actions: {

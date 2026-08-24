@@ -1,4 +1,4 @@
-import type { DesktopDaemonTransportTarget } from "./desktop-daemon";
+import type { LocalTransportTarget } from "./desktop-daemon";
 import type {
   LocalDaemonTransportEvent,
   LocalDaemonTransportRpc,
@@ -11,7 +11,7 @@ export interface RecordedSend {
 }
 
 export interface FakeLocalDaemonTransportRpc extends LocalDaemonTransportRpc {
-  readonly openCalls: DesktopDaemonTransportTarget[];
+  readonly openCalls: LocalTransportTarget[];
   readonly recordedSends: RecordedSend[];
   readonly closedSessions: string[];
   resolveOpen(sessionId: string): void;
@@ -22,7 +22,7 @@ export interface FakeLocalDaemonTransportRpc extends LocalDaemonTransportRpc {
 }
 
 export function createFakeLocalDaemonTransportRpc(): FakeLocalDaemonTransportRpc {
-  const openCalls: DesktopDaemonTransportTarget[] = [];
+  const openCalls: LocalTransportTarget[] = [];
   const recordedSends: RecordedSend[] = [];
   const closedSessions: string[] = [];
   let eventHandler: ((event: LocalDaemonTransportEvent) => void) | null = null;

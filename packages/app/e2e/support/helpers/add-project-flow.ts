@@ -43,13 +43,21 @@ export async function expectAddProjectPage(page: Page, kind: AddProjectFlowPage)
   return currentPage;
 }
 
-export async function openAddProjectFlow(
+async function openAddProjectFlowSurface(
   page: Page,
-  expectedPage: "host" | "method" = "method",
+  expectedPage: "host" | "method",
 ): Promise<void> {
   await page.getByTestId("sidebar-add-project").click();
   await expect(addProjectFlow(page)).toBeVisible({ timeout: 30_000 });
   await expectAddProjectPage(page, expectedPage);
+}
+
+export async function openAddProjectFlow(page: Page): Promise<void> {
+  await openAddProjectFlowSurface(page, "method");
+}
+
+export async function openAddProjectHostSelection(page: Page): Promise<void> {
+  await openAddProjectFlowSurface(page, "host");
   await expect(addProjectFlowInput(page)).toBeFocused();
 }
 

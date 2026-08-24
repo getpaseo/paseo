@@ -26,31 +26,34 @@ What that gives you today:
 
 Your daemons keep running agents where they always did. Hub decides when to ask them to.
 
-## How it fits together
+## What lives in your repository
 
-An organization holds your connections to GitHub, Slack, and Discord, and your registered daemons. Projects sit inside it, and each project has its own configuration.
+Guided setup creates a project resource file for environments and agents, plus one safe starter workflow:
 
 ```text
-organization
-├── connections
-├── daemons
-└── projects
+.paseo/
+├── hub.yml
+└── workflows/
+    └── slack-help.yml
 ```
 
-A project is one set of environments and triggers. Split your work into projects the way you already split it in your head: one per product, per team, or per repository. Connections and daemons are shared across all of them, so a new project does not mean connecting GitHub again.
-
-[How Hub works](/docs/hub/concepts) covers this properly.
+Guided setup deploys the bundle, and mentioning the bot starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter bundle](/docs/hub/configuration#generated-starter-bundle) shows what it wrote, and [Workflows](/docs/hub/workflows) covers routing, prompt partials, and provider-specific replies.
 
 ## Reading order
 
-1. [How it works](/docs/hub/concepts)
-2. [Daemons](/docs/hub/daemons)
-3. [Triggers](/docs/hub/triggers)
-4. [Workflows](/docs/hub/workflows)
-5. [Configuration](/docs/hub/configuration)
+1. [Quickstart](/docs/hub/quickstart)
+2. [How it works](/docs/hub/concepts)
+3. [Daemons](/docs/hub/daemons)
+4. [Triggers](/docs/hub/triggers)
+5. [Workflows](/docs/hub/workflows)
+6. [GitHub access](/docs/hub/github)
+7. [Configuration](/docs/hub/configuration)
+8. [Security](/docs/hub/security)
 
-[Quickstart](/docs/hub/quickstart) goes end to end if you would rather start by doing.
+If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
-## Running it
+## Run Hub yourself
 
-Two ways: [hosted](/docs/hub/hosted) or [self-hosted](/docs/hub/self-hosting). Everything above is the same either way.
+Start on your machine with the embedded database, then add PostgreSQL or a public deployment only when you need them. [Self-hosting](/docs/hub/self-hosting) covers each step.
+
+[Hosted Hub](/docs/hub/hosted) uses the same projects, workflows, daemons, and activity model. New account registration is currently closed.

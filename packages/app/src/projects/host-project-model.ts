@@ -71,7 +71,7 @@ export function hostProjectFromWorkspace(input: {
       serverId: input.serverId,
       projectId,
     }),
-    projectKey: null,
+    projectKey: input.workspace.project?.projectKey ?? null,
     projectName: input.workspace.projectDisplayName || projectId,
     projectKind: input.workspace.projectKind,
     iconWorkingDir,
@@ -194,7 +194,7 @@ export function resolveEquivalentHostProjectCandidate(input: {
     (project) => project.projectKey === input.candidate.projectKey,
   );
   if (equivalents.length === 0) return null;
-  return equivalents.toSorted((left, right) =>
+  return equivalents.sort((left, right) =>
     compareHostProjectsForServer(left, right, input.serverId),
   )[0]!;
 }

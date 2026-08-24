@@ -11,6 +11,7 @@ import {
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
+import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
 import { InMemoryAgentTimelineStore } from "./agent/agent-timeline-store.js";
@@ -180,6 +181,7 @@ class InMemoryWorktreeWorkflow {
 
 function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
+  directorySync?: DirectorySyncService;
   messages?: SessionOutboundMessage[];
   rows?: AgentTimelineRow[];
 }): Session {
@@ -209,7 +211,7 @@ function createSessionForWireCompatTest(options?: {
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
-    pushTokenStore: {} as SessionOptions["pushTokenStore"],
+    pushNotifications: {} as SessionOptions["pushNotifications"],
     paseoHome: "/tmp/paseo-home",
     agentManager: new InMemoryAgentManager(
       options?.rows ?? rows,
@@ -218,9 +220,8 @@ function createSessionForWireCompatTest(options?: {
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
       new EmptyWorkspaceRegistry() as unknown as SessionOptions["workspaceRegistry"],
-    chatService: {} as SessionOptions["chatService"],
+    directorySync: options?.directorySync,
     scheduleService: {} as SessionOptions["scheduleService"],
-    loopService: {} as SessionOptions["loopService"],
     checkoutDiffManager: {
       scheduleRefreshForCwd() {},
       onWorkspaceStateMayHaveChanged() {},
@@ -306,7 +307,7 @@ async function emitTimelineResponse(options?: {
 }
 
 describe("wire compatibility", () => {
-  test("sends project updates only to clients that declare support", () => {
+  test("sends project updates only to clients that declare support", async () => {
     const project = createPersistedProjectRecord({
       projectId: "project-1",
       rootPath: "/tmp/project",
@@ -324,10 +325,12 @@ describe("wire compatibility", () => {
       messages: capableMessages,
     });
 
-    legacy.emitProjectUpdate({ kind: "upsert", project });
-    legacy.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
-    capable.emitProjectUpdate({ kind: "upsert", project });
-    capable.emitProjectUpdate({ kind: "remove", projectId: project.projectId });
+    await Promise.all([
+      legacy.emitProjectUpdate({ kind: "upsert", project }),
+      legacy.emitProjectUpdate({ kind: "remove", projectId: project.projectId }),
+      capable.emitProjectUpdate({ kind: "upsert", project }),
+      capable.emitProjectUpdate({ kind: "remove", projectId: project.projectId }),
+    ]);
 
     expect(legacyMessages).toEqual([]);
     expect(capableMessages.map((message) => SessionOutboundMessageSchema.parse(message))).toEqual([
@@ -340,6 +343,7 @@ describe("wire compatibility", () => {
             projectDisplayName: "Favorite project",
             projectCustomName: "Favorite project",
             projectCustomIconRevision: null,
+            projectIconRevision: "automatic:none:v1",
             projectRootPath: "/tmp/project",
             projectKind: "git",
           },
@@ -350,6 +354,50 @@ describe("wire compatibility", () => {
         payload: { kind: "remove", projectId: "project-1" },
       },
     ]);
+  });
+
+  test("publishes rapid project mutations in order before incremental reconciliation", async () => {
+    const directorySync = new DirectorySyncService("generation");
+    const initial = directorySync.synchronizeProjects([], {});
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWireCompatTest({
+      clientCapabilities: { [CLIENT_CAPS.projectUpdates]: true },
+      directorySync,
+      messages,
+    });
+    const project = createPersistedProjectRecord({
+      projectId: "project-ordered",
+      rootPath: "/tmp/project-ordered",
+      kind: "git",
+      displayName: "Ordered project",
+      createdAt: "2026-07-15T00:00:00.000Z",
+      updatedAt: "2026-07-15T00:00:00.000Z",
+    });
+
+    await Promise.all([
+      session.emitProjectUpdate({ kind: "upsert", project }),
+      session.emitProjectUpdate({ kind: "remove", projectId: project.projectId }),
+    ]);
+
+    expect(
+      messages.flatMap((message) =>
+        message.type === "project.update" ? [message.payload.kind] : [],
+      ),
+    ).toEqual(["upsert", "remove"]);
+    expect(
+      directorySync.synchronizeProjects([], {
+        generation: initial.sync.generation,
+        afterSeq: initial.sync.headSeq,
+      }),
+    ).toEqual({
+      projects: [],
+      sync: {
+        generation: "generation",
+        mode: "changes",
+        headSeq: 2,
+        removals: [{ id: "project-ordered", seq: 2 }],
+      },
+    });
   });
 
   test("downgrades reasoning_merge for clients that do not declare the capability", async () => {
@@ -369,6 +417,32 @@ describe("wire compatibility", () => {
 
     const currentParsed = FetchAgentTimelineResponseMessageSchema.parse(response);
     expect(currentParsed.payload.entries[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("carries canonical turn IDs to new clients while legacy schemas ignore them", async () => {
+    const response = await emitTimelineResponse({
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          turnId: "turn-1",
+          item: { type: "user_message", text: "prompt", clientMessageId: "message-1" },
+        },
+        {
+          seq: 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          turnId: "turn-1",
+          item: { type: "assistant_message", text: "done" },
+        },
+      ],
+    });
+
+    expect(FetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ turnId: "turn-1" })]),
+    );
+    expect(LegacyFetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual(
+      expect.arrayContaining([expect.not.objectContaining({ turnId: expect.anything() })]),
+    );
   });
 
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {

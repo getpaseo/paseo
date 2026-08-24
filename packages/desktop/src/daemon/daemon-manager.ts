@@ -23,13 +23,10 @@ import {
   getCliInstallStatus,
   installCli,
 } from "../integrations/cli-install/index.js";
-import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
-  openWebSocketTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
-  type WebSocketTransportTarget,
 } from "./local-transport.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
@@ -41,6 +38,10 @@ import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
+import {
+  deleteLegacySkillSelection,
+  readLegacySkillSelection,
+} from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -539,9 +540,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       const target = args as { transportType: "socket" | "pipe"; transportPath: string };
       return await openLocalTransportSession(target);
     },
-    open_websocket_daemon_transport: async (args) => {
-      return await openWebSocketTransportSession(args as unknown as WebSocketTransportTarget);
-    },
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(
         args as { sessionId: string; text?: string; binaryBase64?: string },
@@ -574,7 +572,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    ...createSkillsCommandHandlers({ controller: getSkillsController() }),
+    read_legacy_skill_selection: () => readLegacySkillSelection(),
+    delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
   };
 }
 

@@ -251,6 +251,20 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       ],
     });
   });
+
+  test("accepts a custom provider catalog refresh timeout", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: { catalogRefreshTimeoutMs: 180_000 },
+    });
+
+    expect(parsed.agents?.catalogRefreshTimeoutMs).toBe(180_000);
+  });
+
+  test("rejects provider catalog refresh timeouts that overflow Node timers", () => {
+    expect(() =>
+      PersistedConfigSchema.parse({ agents: { catalogRefreshTimeoutMs: 2_147_483_648 } }),
+    ).toThrow();
+  });
 });
 
 describe("provider overrides (new format)", () => {

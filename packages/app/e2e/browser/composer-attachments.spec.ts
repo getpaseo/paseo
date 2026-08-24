@@ -37,6 +37,7 @@ import {
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
+import { openFileExplorer } from "../support/helpers/file-explorer";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -289,6 +290,28 @@ test.describe("Composer attachments", () => {
 
       await expectAgentIdle(page, 15_000);
       await expectComposerDraft(page, "preserve me");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("Escape cancels file creation without interrupting the running agent", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await startRunningMockAgent(page, {
+      prefix: "file-create-escape-",
+      model: "one-minute-stream",
+      prompt: "Stay running while a file draft is cancelled.",
+    });
+    try {
+      await openFileExplorer(page);
+      await page.getByTestId("files-new-file").click();
+      const nameInput = page.getByTestId("file-explorer-name-input");
+      await expect(nameInput).toBeVisible();
+
+      await nameInput.press("Escape");
+
+      await expect(nameInput).toBeHidden();
+      await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible();
     } finally {
       await agent.cleanup();
     }

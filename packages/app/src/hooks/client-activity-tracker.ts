@@ -23,6 +23,7 @@ export interface ClientActivityTrackerInput {
   initialFocusedTerminalId: string | null;
   initialAppVisible: boolean;
   now: () => number;
+  onUserActivity: () => void;
   onAppResumed?: (awayMs: number) => void;
 }
 
@@ -39,7 +40,7 @@ export interface ClientActivityTracker {
 export function createClientActivityTracker(
   input: ClientActivityTrackerInput,
 ): ClientActivityTracker {
-  const { client, deviceType, now, onAppResumed } = input;
+  const { client, deviceType, now, onUserActivity, onAppResumed } = input;
   let lastActivityAtMs = now();
   let appVisible = input.initialAppVisible;
   let appVisibilityChangedAtMs = now();
@@ -62,6 +63,7 @@ export function createClientActivityTracker(
 
   function recordUserActivity(): void {
     lastActivityAtMs = now();
+    onUserActivity();
   }
 
   function maybeSendImmediateHeartbeat(): void {

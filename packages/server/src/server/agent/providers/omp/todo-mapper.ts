@@ -41,9 +41,16 @@ function mapOmpTodoItems(items: readonly OmpTodoItem[]): AgentTimelineItem | nul
     type: "todo",
     items: items.map((item) => ({
       text: item.content,
+      status: normalizeOmpTodoStatus(item.status),
       completed: item.status === "completed",
     })),
   };
+}
+
+function normalizeOmpTodoStatus(status: OmpTodoItem["status"]) {
+  if (status === "completed") return "completed" as const;
+  if (status === "in_progress") return "in_progress" as const;
+  return "pending" as const;
 }
 
 function resultDetails(result: OmpToolResult): Record<string, unknown> | null {

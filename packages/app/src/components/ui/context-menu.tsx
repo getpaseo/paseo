@@ -105,6 +105,7 @@ export function ContextMenuTrigger({
   enabledOnMobile = true,
   enabledOnWeb = true,
   longPressDelayMs,
+  onContextMenu,
   triggerRef,
   ...props
 }: PropsWithChildren<
@@ -115,6 +116,7 @@ export function ContextMenuTrigger({
     enabledOnMobile?: boolean;
     enabledOnWeb?: boolean;
     longPressDelayMs?: number;
+    onContextMenu?: (event: unknown) => void;
     triggerRef?: Ref<View | null>;
   }
 >): ReactElement {
@@ -170,12 +172,13 @@ export function ContextMenuTrigger({
         if (isCallable(preventDefault)) preventDefault.call(event);
         if (isCallable(stopPropagation)) stopPropagation.call(event);
       }
+      onContextMenu?.(event);
       openAtEvent(event);
     },
-    [openAtEvent],
+    [onContextMenu, openAtEvent],
   );
 
-  const pressableStyle = useCallback(
+  const resolveDynamicStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
         return style({ pressed, hovered, open: ctx.open });
@@ -195,7 +198,7 @@ export function ContextMenuTrigger({
       onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={handleContextMenu}
-      style={pressableStyle}
+      style={typeof style === "function" ? resolveDynamicStyle : style}
       highlightStyle={highlightStyle}
     >
       {children}

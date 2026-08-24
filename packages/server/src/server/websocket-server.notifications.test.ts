@@ -5,13 +5,11 @@ import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
-import type { FileBackedChatService } from "./chat/chat-service.js";
-import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
+import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 const WORKSPACE_ID = "workspace-1";
@@ -102,6 +100,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     ...agentManagerOverrides,
   };
   const daemonConfigStore = {
+    onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };
 
@@ -125,8 +124,6 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     undefined,
-    createStub<FileBackedChatService>({}),
-    createStub<LoopService>({}),
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),

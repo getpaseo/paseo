@@ -2,6 +2,7 @@ import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
   buildOpenProjectRoute,
+  buildSettingsHostSectionRoute,
   buildSettingsRoute,
   buildSettingsSectionRoute,
 } from "@/utils/host-routes";
@@ -114,16 +115,6 @@ test.describe("Settings sidebar navigation", () => {
     await expectDirectHostUriHidden(page);
   });
 
-  test("browser web hides direct connection custom headers", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openAddHostFlow(page);
-    await selectHostConnectionType(page, "direct");
-    await toggleHostAdvanced(page);
-
-    await expect(page.getByTestId("direct-header-add")).toHaveCount(0);
-  });
-
   test("sidebar shows a Back to workspace row that leaves /settings", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
@@ -189,6 +180,28 @@ test.describe("Settings — compact master-detail", () => {
     await goBackInSettings(page);
     await expectAppRoute(page, buildSettingsRoute());
     await expectSettingsSidebarVisible(page);
+  });
+
+  test("host picker settings opens Overview and backs through the settings list", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "host-picker-settings-back-" });
+    const workspaceRoute = buildHostWorkspaceRoute(getServerId(), workspace.workspaceId);
+
+    await openWorkspace(page, workspace);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await page.getByTestId("sidebar-hosts-trigger").click();
+    await page.getByRole("button", { name: /Open .* settings/ }).click();
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+    await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+
+    await goBackInSettings(page);
+    await expectCompactSettingsList(page);
+
+    await goBackInSettings(page);
+    await expectAppRoute(page, workspaceRoute);
   });
 
   test("switching the host picker on the settings list scopes host rows without navigating", async ({

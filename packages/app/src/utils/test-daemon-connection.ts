@@ -11,7 +11,6 @@ import {
 import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
-  createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 
 export interface DaemonProbeClient {
@@ -30,7 +29,6 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createLocalTransportFactory(): DaemonClientConfig["transportFactory"] | null;
-  createWebSocketTransportFactory?(): DaemonClientConfig["transportFactory"] | null;
   buildLocalTransportUrl(input: LocalTransportUrlInput): string;
   createClient(config: DaemonClientConfig): TClient;
 }
@@ -39,16 +37,9 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createLocalTransportFactory: createDesktopLocalDaemonTransportFactory,
-  createWebSocketTransportFactory: createDesktopWebSocketTransportFactory,
   buildLocalTransportUrl: buildLocalDaemonTransportUrl,
   createClient: (config) => new DaemonClient(config),
 };
-
-function resolveWebSocketTransportFactory(
-  deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
-): DaemonClientConfig["transportFactory"] {
-  return deps.createWebSocketTransportFactory?.() ?? undefined;
-}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -112,11 +103,7 @@ export async function buildClientConfig(
   },
   deps: Pick<
     DaemonConnectionDependencies<DaemonProbeClient>,
-    | "getClientId"
-    | "resolveAppVersion"
-    | "createLocalTransportFactory"
-    | "createWebSocketTransportFactory"
-    | "buildLocalTransportUrl"
+    "getClientId" | "resolveAppVersion" | "createLocalTransportFactory" | "buildLocalTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
   const clientId = await deps.getClientId();
@@ -148,10 +135,8 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
-      transportFactory: resolveWebSocketTransportFactory(deps),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
-      ...(connection.headers ? { headers: connection.headers } : {}),
     };
   }
 

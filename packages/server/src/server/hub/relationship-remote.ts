@@ -7,6 +7,7 @@ export interface HubEnrollment {
   idempotencyKey: string;
   hubOrigin: string;
   token: string;
+  hostname: string;
   serverId: string;
   daemonPublicKey: string;
   credentialVerifier: string;
@@ -96,6 +97,7 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
         body: JSON.stringify({
           daemonId: input.daemonId,
           idempotencyKey: input.idempotencyKey,
+          hostname: input.hostname,
           serverId: input.serverId,
           daemonPublicKey: input.daemonPublicKey,
           credentialVerifier: input.credentialVerifier,

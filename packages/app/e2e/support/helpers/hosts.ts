@@ -177,7 +177,7 @@ export async function renameHostFromSettings(page: Page, name: string): Promise<
 
 export async function chooseHostColor(page: Page, colorName: string): Promise<void> {
   await page.getByRole("button", { name: /^Color, / }).click();
-  await page.getByRole("button", { name: colorName, exact: true }).click();
+  await page.getByRole("menuitem", { name: colorName, exact: true }).click();
   await expect(page.getByRole("button", { name: `Color, ${colorName}` })).toBeVisible();
 }
 
@@ -186,7 +186,7 @@ export async function chooseHostBadgeDisplay(
   option: "Name" | "Icon only" | "Hidden",
 ): Promise<void> {
   await page.getByTestId("host-appearance-badge-display").click();
-  await page.getByRole("button", { name: option, exact: true }).click();
+  await page.getByRole("menuitem", { name: option, exact: true }).click();
   await expect(page.getByRole("button", { name: `Sidebar badge, ${option}` })).toBeVisible();
 }
 

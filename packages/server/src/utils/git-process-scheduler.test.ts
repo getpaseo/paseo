@@ -46,6 +46,27 @@ describe("GitProcessScheduler", () => {
     expect(scheduler.pendingCount).toBe(0);
   });
 
+  test("admits a high-priority user operation before queued observation work", async () => {
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 100,
+      maxProcessConcurrency: 1,
+    });
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+
+    const activeObservation = scheduler.run(createConcurrencyTask(0, started, releases));
+    const queuedObservation = scheduler.run(createConcurrencyTask(2, started, releases));
+    const userOperation = scheduler.run(createConcurrencyTask(3, started, releases), {
+      priority: "high",
+    });
+
+    await vi.waitFor(() => expect(started).toEqual([0]));
+    releases.shift()?.();
+    await Promise.all([activeObservation, queuedObservation, userOperation]);
+
+    expect(started).toEqual([0, 3, 2]);
+  });
+
   test("limits process starts in each strict one-second interval", async () => {
     vi.useFakeTimers();
     const scheduler = new GitProcessScheduler({

@@ -74,6 +74,13 @@ function createTestRegistries() {
     existsOnDisk: async () => true,
     list: async () => Array.from(workspaces.values()),
     get: async (id: string) => workspaces.get(id) ?? null,
+    update: async (id, updater) => {
+      const existing = workspaces.get(id);
+      if (!existing) return null;
+      const updated = updater(existing);
+      workspaces.set(id, updated);
+      return updated;
+    },
     upsert: async (record: PersistedWorkspaceRecord) => {
       workspaces.set(record.workspaceId, record);
     },
@@ -178,6 +185,14 @@ function createCheckout(
   };
 }
 
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
 class TestCheckouts {
   readonly reads: string[] = [];
   private readonly checkouts = new Map<string, ProjectCheckoutLitePayload>();
@@ -224,6 +239,66 @@ describe("WorkspaceReconciliationService", () => {
       rmSync(dir, { recursive: true, force: true });
     }
     tempDirs.length = 0;
+  });
+
+  test("preserves workspace archival that lands during boot reconciliation", async () => {
+    const workspaceRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-archive-race-")));
+    tempDirs.push(workspaceRoot);
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: workspaceRoot,
+        kind: "git",
+        displayName: "archive-race",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: workspaceRoot,
+        kind: "local_checkout",
+        displayName: "archive-race",
+        branch: "old-branch",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const readStarted = deferred();
+    const allowRead = deferred();
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: {
+        getCheckout: async (cwd) => {
+          readStarted.resolve();
+          await allowRead.promise;
+          return createCheckout(cwd, {
+            isGit: true,
+            currentBranch: "new-branch",
+            worktreeRoot: cwd,
+          });
+        },
+      },
+    });
+
+    const reconciliation = service.reconcileGitMetadata();
+    await readStarted.promise;
+    const archivedAt = "2025-01-02T00:00:00.000Z";
+    await workspaceRegistry.archive("w1", archivedAt);
+    allowRead.resolve();
+    await reconciliation;
+
+    expect(workspaces.get("w1")).toMatchObject({
+      archivedAt,
+      branch: "new-branch",
+    });
   });
 
   test("metadata reconciliation leaves missing workspaces active while a full pass archives them", async () => {

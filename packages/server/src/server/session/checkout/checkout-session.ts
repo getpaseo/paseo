@@ -42,6 +42,7 @@ import type {
 import {
   commitChanges,
   createPullRequest,
+  discardChanges,
   forgeAuthStateFromError,
   isForgeAuthError,
   mergeFromBase,
@@ -152,6 +153,7 @@ export class CheckoutSession {
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
   private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -479,20 +481,24 @@ export class CheckoutSession {
   emitStatusUpdate(cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
     try {
       const requestId = `subscription:${cwd}`;
+      const payload = {
+        ...buildCheckoutStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+        prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+      };
+      const fingerprint = JSON.stringify(payload);
+      if (this.statusUpdateFingerprints.get(cwd) === fingerprint) return;
+      this.statusUpdateFingerprints.set(cwd, fingerprint);
       this.host.emit({
         type: "checkout_status_update",
-        payload: {
-          ...buildCheckoutStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-          prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-        },
+        payload,
       });
     } catch (error) {
       this.logger.warn({ err: error, cwd }, "Failed to emit workspace checkout status update");
@@ -601,6 +607,26 @@ export class CheckoutSession {
           error: toCheckoutError(error),
           requestId,
         },
+      });
+    }
+  }
+
+  async handleCheckoutDiscardChangesRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.discard_changes.request" }>,
+  ): Promise<void> {
+    const { cwd, paths, requestId } = msg;
+    try {
+      await discardChanges(cwd, paths);
+      await this.gitMutation.notifyGitMutation(cwd, "discard-changes");
+      this.scheduleDiffRefresh(cwd);
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
       });
     }
   }
@@ -1390,6 +1416,7 @@ export class CheckoutSession {
       unsubscribe();
     }
     this.diffSubscriptions.clear();
+    this.statusUpdateFingerprints.clear();
   }
 }
 

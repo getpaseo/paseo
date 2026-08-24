@@ -1,4 +1,5 @@
 import { test } from "../support/fixtures";
+import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
 import {
   applyCommandCenterAgentControls,
@@ -12,17 +13,15 @@ import {
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { getServerId } from "../support/helpers/server-id";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 
 async function seedMockDraftPreferences(page: import("@playwright/test").Page): Promise<void> {
   await page.addInitScript(
-    ({ preferencesKey, serverId }) => {
+    ({ preferencesKey }) => {
       localStorage.setItem(
         preferencesKey,
         JSON.stringify({
-          serverId,
           provider: "mock",
           providerPreferences: {
             mock: {
@@ -30,10 +29,10 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
               mode: "load-test",
             },
           },
-        }),
+        } satisfies FormPreferences),
       );
     },
-    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY, serverId: getServerId() },
+    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY },
   );
 }
 

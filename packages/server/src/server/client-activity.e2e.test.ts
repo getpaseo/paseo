@@ -3,7 +3,7 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentSnapshotPayload } from "./messages.js";
-import type { PushNotificationSender, PushPayload } from "./push/notifications.js";
+import type { PushNotificationSender, PushPayload } from "./push/index.js";
 import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
 
 class RecordingPushNotificationSender implements PushNotificationSender {

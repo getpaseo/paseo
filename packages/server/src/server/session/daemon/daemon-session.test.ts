@@ -12,6 +12,7 @@ import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./diagnostics.js"
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import type { DaemonConfigReloadResult } from "../../daemon-config-store.js";
 
 const tempDirs: string[] = [];
 
@@ -42,6 +43,7 @@ function makeSubsystem(overrides: {
   listProviderAvailability?: () => Promise<ProviderAvailability[]>;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   hubRelationships?: HubRelationshipManagement;
+  reloadConfig?: () => DaemonConfigReloadResult;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const restartIntents: Parameters<DaemonSessionHost["emitLifecycleIntent"]>[0][] = [];
@@ -63,12 +65,70 @@ function makeSubsystem(overrides: {
     listProviderAvailability: overrides.listProviderAvailability ?? (async () => []),
     getWebSocketRuntimeMetrics: overrides.getWebSocketRuntimeMetrics,
     hubRelationships: overrides.hubRelationships,
+    reloadConfig:
+      overrides.reloadConfig ??
+      (() => ({
+        appliedPaths: [],
+        restartRequiredPaths: [],
+        overrideControlledPaths: [],
+      })),
     logger: pino({ level: "silent" }),
   });
   return { subsystem, emitted, paseoHome, restartIntents };
 }
 
 describe("DaemonSession", () => {
+  test("config reload returns the daemon-owned classification", () => {
+    const { subsystem, emitted } = makeSubsystem({
+      reloadConfig: () => ({
+        appliedPaths: ["daemon.browserTools.enabled"],
+        restartRequiredPaths: ["daemon.listen"],
+        overrideControlledPaths: ["app.baseUrl"],
+      }),
+    });
+
+    subsystem.handleConfigReloadRequest({
+      type: "daemon.config.reload.request",
+      requestId: "reload-1",
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "daemon.config.reload.response",
+        payload: {
+          requestId: "reload-1",
+          appliedPaths: ["daemon.browserTools.enabled"],
+          restartRequiredPaths: ["daemon.listen"],
+          overrideControlledPaths: ["app.baseUrl"],
+        },
+      },
+    ]);
+  });
+
+  test("config reload failures return a correlated RPC error", () => {
+    const { subsystem, emitted } = makeSubsystem({
+      reloadConfig: () => {
+        throw new Error("Invalid config");
+      },
+    });
+
+    subsystem.handleConfigReloadRequest({
+      type: "daemon.config.reload.request",
+      requestId: "reload-2",
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "reload-2",
+          requestType: "daemon.config.reload.request",
+          error: "Invalid config",
+          code: "handler_error",
+        },
+      },
+    ]);
+  });
   test("Hub relationship command failures return correlated RPC errors", async () => {
     const { subsystem, emitted } = makeSubsystem({
       hubRelationships: {

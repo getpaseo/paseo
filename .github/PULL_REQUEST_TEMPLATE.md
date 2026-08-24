@@ -18,7 +18,7 @@ Closes #
 
 ### Reasoning
 
-<!-- A short description of the reasoning of this change in your own words. What was wrong, and how do you hope this PR fixes it. If you can't explain this briefly, the PR is probably too big. This description must be grounded in real user flows and framed as value provider to Paseo users. -->
+<!-- A short description of the reasoning of this change in your own words. What was wrong, and how do you hope this PR fixes it. If you can't explain this briefly, the PR is probably too big. This description must be grounded in real user flows and framed as value provided to Paseo users. -->
 
 ### Goals
 

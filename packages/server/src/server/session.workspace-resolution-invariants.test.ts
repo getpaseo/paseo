@@ -93,7 +93,7 @@ function createHarness(input: {
     onMessage: (m) => emitted.push(m),
     logger: createStub<SessionOptions["logger"]>(logger),
     downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),
-    pushTokenStore: createStub<SessionOptions["pushTokenStore"]>({}),
+    pushNotifications: createStub<SessionOptions["pushNotifications"]>({}),
     paseoHome: mkdtempSync(path.join(tmpdir(), "paseo-invariant-test-")),
     agentManager: createStub<SessionOptions["agentManager"]>({
       subscribe: () => () => {},
@@ -159,9 +159,7 @@ function createHarness(input: {
       },
     }),
     filesystem: { isDirectory: async () => true },
-    chatService: createStub<SessionOptions["chatService"]>({}),
     scheduleService: createStub<SessionOptions["scheduleService"]>({}),
-    loopService: createStub<SessionOptions["loopService"]>({}),
     checkoutDiffManager: createStub<SessionOptions["checkoutDiffManager"]>({
       subscribe: async () => ({
         initial: { cwd: "/tmp", files: [], error: null },

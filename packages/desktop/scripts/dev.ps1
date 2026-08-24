@@ -32,6 +32,7 @@ try {
 
 # Set EXPO_DEV_URL in the environment so Electron inherits it
 $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
+$env:EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL = (git -C $RootDir branch --show-current).Trim()
 
 $env:PASEO_DEV_ROOT = $RootDir
 $env:PASEO_DEV_RUNTIME_FALLBACK_ROOT = $RootDir

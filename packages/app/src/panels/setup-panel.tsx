@@ -392,6 +392,7 @@ function SetupCommandRow({
 
 export const setupPanelRegistration: PanelRegistration<"setup"> = {
   kind: "setup",
+  resourceKey: (target) => target.workspaceId,
   component: SetupPanel,
   useDescriptor: useSetupPanelDescriptor,
 };
@@ -485,7 +486,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   waitingText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   emptyContainer: {
@@ -494,7 +495,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   emptyText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   commandList: {
@@ -530,11 +531,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   commandText: {
     flex: 1,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   commandDuration: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
   },
@@ -560,7 +561,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   emptyLogText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     fontStyle: "italic",
   },
@@ -569,7 +570,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.red[100],
   },
   errorText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.palette.red[800],
   },
 }));

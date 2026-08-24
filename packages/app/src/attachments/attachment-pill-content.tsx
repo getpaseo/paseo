@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { TFunction } from "i18next";
+import React from "react";
 import {
   CircleDot,
   FileText,
@@ -86,6 +87,13 @@ export function getAgentAttachmentPillContent(
         subtitle: `Issue #${attachment.number}`,
       };
     case "text":
+      if (attachment.externalResource) {
+        return {
+          icon: attachmentGithubIssueIcon,
+          title: attachment.externalResource.title,
+          subtitle: `${attachment.externalResource.providerLabel} ${attachment.externalResource.identifier}`,
+        };
+      }
       return {
         icon: attachmentFileIcon,
         title: attachment.title ?? t("message.attachments.textAttachment"),

@@ -19,7 +19,7 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   id: number;
   result?: unknown;
-  error?: { message?: string };
+  error?: { message?: string; code?: string | number; data?: unknown };
 }
 
 interface JsonRpcNotification {
@@ -31,6 +31,17 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+export class CodexAppServerRpcError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | number | undefined,
+    readonly data: unknown,
+  ) {
+    super(message);
+    this.name = "CodexAppServerRpcError";
+  }
 }
 
 type RequestHandler = (params: unknown, requestId: number) => unknown;
@@ -329,7 +340,13 @@ export class CodexAppServerClient {
         clearTimeout(pending.timer);
         this.pending.delete(id);
         if (raw.error) {
-          pending.reject(new Error(raw.error.message ?? "Unknown error"));
+          pending.reject(
+            new CodexAppServerRpcError(
+              raw.error.message ?? "Unknown error",
+              raw.error.code,
+              raw.error.data,
+            ),
+          );
         } else {
           pending.resolve(raw.result);
         }

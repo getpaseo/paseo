@@ -6,6 +6,9 @@ import type { AppReleaseChannel } from "../features/auto-updater.js";
 
 export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
+  notifications: {
+    playSound: boolean;
+  };
   daemon: {
     manageBuiltInDaemon: boolean;
     keepRunningAfterQuit: boolean;
@@ -14,6 +17,7 @@ export interface DesktopSettings {
 
 interface DesktopSettingsPatch {
   releaseChannel?: AppReleaseChannel;
+  notifications?: Partial<DesktopSettings["notifications"]>;
   daemon?: Partial<DesktopSettings["daemon"]>;
 }
 
@@ -38,6 +42,9 @@ export interface DesktopSettingsStore {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
+  notifications: {
+    playSound: true,
+  },
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
@@ -73,6 +80,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
     version: 1,
     settings: {
       releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
+      notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
       daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
     },
     migrations: {
@@ -85,6 +93,7 @@ function buildDefaultDocument(): PersistedDesktopSettingsDocument {
 function coerceDesktopSettings(input: unknown): DesktopSettings {
   const result: DesktopSettings = {
     releaseChannel: DEFAULT_DESKTOP_SETTINGS.releaseChannel,
+    notifications: { ...DEFAULT_DESKTOP_SETTINGS.notifications },
     daemon: { ...DEFAULT_DESKTOP_SETTINGS.daemon },
   };
 
@@ -95,6 +104,13 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
   const releaseChannel = coerceReleaseChannel(input.releaseChannel);
   if (releaseChannel) {
     result.releaseChannel = releaseChannel;
+  }
+
+  if (isRecord(input.notifications)) {
+    const playSound = coerceBoolean(input.notifications.playSound);
+    if (playSound !== null) {
+      result.notifications.playSound = playSound;
+    }
   }
 
   if (isRecord(input.daemon)) {
@@ -122,6 +138,13 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
   const releaseChannel = coerceReleaseChannel(input.releaseChannel);
   if (releaseChannel) {
     patch.releaseChannel = releaseChannel;
+  }
+
+  if (isRecord(input.notifications)) {
+    const playSound = coerceBoolean(input.notifications.playSound);
+    if (playSound !== null) {
+      patch.notifications = { playSound };
+    }
   }
 
   if (isRecord(input.daemon)) {
@@ -169,6 +192,7 @@ function mergeDesktopSettings(
 ): DesktopSettings {
   return {
     releaseChannel: patch.releaseChannel ?? current.releaseChannel,
+    notifications: { ...current.notifications, ...patch.notifications },
     daemon: { ...current.daemon, ...patch.daemon },
   };
 }

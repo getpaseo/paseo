@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { readReplicaCache } from "./replica-cache-storage";
 import {
   delayAgentBootstrapTailResponse,
   delayAgentOlderTimelineResponse,
@@ -37,6 +38,12 @@ const HISTORY_START_THRESHOLD_PX = 96;
 interface TimelineViewportSnapshot {
   scrollHeight: number;
   scrollTop: number;
+}
+
+interface PersistedCanonicalTimelineRange {
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
 }
 
 export interface TimelinePresentationSnapshot {
@@ -284,26 +291,43 @@ export async function reloadAgentTimelineFromPersistedReplica(
   agent: LongTimelineAgent,
 ): Promise<void> {
   await expect
-    .poll(() =>
-      page.evaluate((agentId) => {
-        const raw = localStorage.getItem("@paseo:replica-cache");
-        if (!raw) return false;
-        const cache = JSON.parse(raw) as {
-          hosts?: Array<{
-            timeline?: {
-              agentId?: string;
-              items?: unknown[];
-            } | null;
-          }>;
-        };
-        const timeline = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline;
-        return timeline?.items?.length === 50;
-      }, agent.agentId),
-    )
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      const timeline = cache?.hosts?.find(
+        (host) => host.timeline?.agentId === agent.agentId,
+      )?.timeline;
+      return timeline?.items?.length === 50;
+    })
     .toBe(true);
 
   await page.reload();
   await expectTimelinePromptVisible(page, agent.newestPrompt);
+}
+
+export async function waitForPersistedCanonicalTimelineRange(
+  page: Page,
+  agentId: string,
+): Promise<PersistedCanonicalTimelineRange> {
+  const readRange = async () => {
+    const cache = await readReplicaCache(page);
+    if (cache?.version !== 6) return null;
+    const range = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline?.range;
+    if (
+      typeof range?.epoch !== "string" ||
+      typeof range.startSeq !== "number" ||
+      typeof range.endSeq !== "number"
+    ) {
+      return null;
+    }
+    return { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq };
+  };
+
+  await expect.poll(readRange).not.toBeNull();
+  const range = await readRange();
+  if (!range) {
+    throw new Error(`Persisted canonical timeline range is missing for ${agentId}`);
+  }
+  return range;
 }
 
 export async function holdNextOlderTimelinePage(
@@ -508,30 +532,42 @@ export async function scrollTimelineToOldestLoadedEdge(page: Page): Promise<void
 export async function userScrollsTimelineToHistoryStart(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.hover();
-  for (let step = 0; step < 60; step += 1) {
-    if ((await readTimelineViewport(page)).scrollTop <= HISTORY_START_THRESHOLD_PX) {
-      break;
-    }
-    await page.mouse.wheel(0, -1_000);
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
-        }),
-    );
-  }
-  await expect
-    .poll(async () => (await readTimelineViewport(page)).scrollTop)
-    .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
+  await returnTimelineToSettledHistoryStart(page, () => page.mouse.wheel(0, -1_000));
 }
 
 export async function userNavigatesTimelineToHistoryStartWithKeyboard(page: Page): Promise<void> {
   const scroll = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   await scroll.focus();
-  await page.keyboard.press("Home");
-  await expect
-    .poll(async () => (await readTimelineViewport(page)).scrollTop)
-    .toBeLessThanOrEqual(HISTORY_START_THRESHOLD_PX);
+  await returnTimelineToSettledHistoryStart(page, () => page.keyboard.press("Home"));
+}
+
+async function returnTimelineToSettledHistoryStart(
+  page: Page,
+  moveUp: () => Promise<unknown>,
+): Promise<void> {
+  const loadingSpinner = page.getByTestId("load-older-history-spinner");
+  // A caller may only start a new history traversal after its prior page has settled.
+  await expect(loadingSpinner).toBeHidden();
+  let previous = await readTimelineViewport(page);
+  while (true) {
+    await moveUp();
+    await waitForTimelineGeometryToSettle(page);
+    let viewport = await readTimelineViewport(page);
+    // Tests that hold the response need to observe the requested page before releasing it.
+    if (await loadingSpinner.isVisible()) {
+      return;
+    }
+    if (viewport.scrollTop <= HISTORY_START_THRESHOLD_PX) {
+      return;
+    }
+    await expect(loadingSpinner).toBeHidden();
+    await waitForTimelineGeometryToSettle(page);
+    viewport = await readTimelineViewport(page);
+    expect(
+      viewport.scrollTop < previous.scrollTop || viewport.scrollHeight > previous.scrollHeight,
+    ).toBe(true);
+    previous = viewport;
+  }
 }
 
 export async function scrollTimelineToNewestLoadedEdge(page: Page): Promise<void> {

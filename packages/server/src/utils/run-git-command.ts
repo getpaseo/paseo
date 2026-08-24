@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
@@ -14,6 +15,7 @@ import {
 import { spawnProcess } from "./spawn.js";
 import {
   GitProcessScheduler,
+  type GitProcessPriority,
   resolveGitProcessPolicy,
   type GitProcessPolicy,
 } from "./git-process-scheduler.js";
@@ -24,6 +26,11 @@ const DEFAULT_STDERR_LIMIT = 2048;
 
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
 let gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(gitProcessScheduler.policy);
+const gitCommandPriority = new AsyncLocalStorage<GitProcessPriority>();
+
+export function runWithGitCommandPriority<T>(priority: GitProcessPriority, operation: () => T): T {
+  return gitCommandPriority.run(priority, operation);
+}
 
 function createGitCommandRuntimeMetricsWindow(policy: GitProcessPolicy) {
   return new GitCommandRuntimeMetricsWindow({
@@ -67,15 +74,31 @@ export interface GitCommandMetric {
 
 export interface GitCommandMetricsSnapshot {
   commands: GitCommandMetric[];
+  submissions: GitCommandSubmissionMetric[];
+  submitted: number;
+  started: number;
+  completed: number;
+  active: number;
+  pending: number;
   total: number;
   failed: number;
   maxConcurrent: number;
 }
 
+export interface GitCommandSubmissionMetric {
+  args: string[];
+  cwd: string;
+}
+
 interface GitCommandMetricsState {
   commands: GitCommandMetric[];
+  submissions: GitCommandSubmissionMetric[];
+  submitted: number;
+  started: number;
+  completed: number;
   active: number;
   maxConcurrent: number;
+  lastSubmittedAtMs: number;
 }
 
 let gitCommandMetricsState: GitCommandMetricsState | null = null;
@@ -83,24 +106,87 @@ let gitCommandMetricsState: GitCommandMetricsState | null = null;
 export function startGitCommandMetrics(): void {
   gitCommandMetricsState = {
     commands: [],
+    submissions: [],
+    submitted: 0,
+    started: 0,
+    completed: 0,
     active: 0,
     maxConcurrent: 0,
+    lastSubmittedAtMs: Date.now(),
   };
 }
 
 export function stopGitCommandMetrics(): GitCommandMetricsSnapshot {
   const state = gitCommandMetricsState;
-  gitCommandMetricsState = null;
   if (!state) {
     return {
       commands: [],
+      submissions: [],
+      submitted: 0,
+      started: 0,
+      completed: 0,
+      active: 0,
+      pending: 0,
       total: 0,
       failed: 0,
       maxConcurrent: 0,
     };
   }
+  const unfinished = state.submitted - state.completed;
+  if (unfinished > 0) {
+    throw new Error(
+      `Cannot stop Git command metrics while ${unfinished} submitted commands are unfinished`,
+    );
+  }
+  gitCommandMetricsState = null;
+  return snapshotGitCommandMetricsState(state);
+}
+
+export function getGitCommandMetrics(): GitCommandMetricsSnapshot {
+  const state = gitCommandMetricsState;
+  if (!state) {
+    return stopGitCommandMetrics();
+  }
+  return snapshotGitCommandMetricsState(state);
+}
+
+export async function waitForGitCommandMetricsIdle(options: {
+  quietMs: number;
+  timeoutMs: number;
+}): Promise<void> {
+  const startedAtMs = Date.now();
+  while (true) {
+    const state = gitCommandMetricsState;
+    if (!state) {
+      throw new Error("Git command metrics are not running");
+    }
+    const isComplete = state.completed === state.submitted;
+    const hasBeenQuiet = Date.now() - state.lastSubmittedAtMs >= options.quietMs;
+    if (isComplete && hasBeenQuiet) {
+      return;
+    }
+    if (Date.now() - startedAtMs >= options.timeoutMs) {
+      const unfinished = state.submitted - state.completed;
+      throw new Error(
+        `Timed out waiting for Git command metrics to become idle (${unfinished} unfinished)`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function snapshotGitCommandMetricsState(state: GitCommandMetricsState): GitCommandMetricsSnapshot {
   return {
     commands: [...state.commands],
+    submissions: state.submissions.map((submission) => ({
+      args: [...submission.args],
+      cwd: submission.cwd,
+    })),
+    submitted: state.submitted,
+    started: state.started,
+    completed: state.completed,
+    active: state.active,
+    pending: state.submitted - state.started,
     total: state.commands.length,
     failed: state.commands.filter((command) => !command.success).length,
     maxConcurrent: state.maxConcurrent,
@@ -114,14 +200,24 @@ export function snapshotGitCommandRuntimeMetrics(): GitCommandRuntimeMetricsSnap
   });
 }
 
-function beginGitCommandMetric(): GitCommandMetricsState | null {
+function submitGitCommandMetric(args: string[], cwd: string): GitCommandMetricsState | null {
   const state = gitCommandMetricsState;
   if (!state) {
     return null;
   }
+  state.submissions.push({ args: [...args], cwd });
+  state.submitted += 1;
+  state.lastSubmittedAtMs = Date.now();
+  return state;
+}
+
+function beginGitCommandMetric(state: GitCommandMetricsState | null): void {
+  if (!state) {
+    return;
+  }
+  state.started += 1;
   state.active += 1;
   state.maxConcurrent = Math.max(state.maxConcurrent, state.active);
-  return state;
 }
 
 function finishGitCommandMetric(
@@ -132,6 +228,7 @@ function finishGitCommandMetric(
     return;
   }
   state.active = Math.max(0, state.active - 1);
+  state.completed += 1;
   state.commands.push(metric);
 }
 
@@ -156,12 +253,13 @@ export function runGitCommand(
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
+  const metricsState = submitGitCommandMetric(args, options.cwd);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
-  const promise = gitProcessScheduler.run(() => {
+  const startCommand = () => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -178,7 +276,7 @@ export function runGitCommand(
       const command = formatGitCommand(args);
       const envOverlay = mergeEnvOverlays(options.env, options.envOverlay);
       const startedAt = Date.now();
-      const metricsState = beginGitCommandMetric();
+      beginGitCommandMetric(metricsState);
       const logger = typeof options.logger?.trace === "function" ? options.logger : undefined;
       const traceContext = logger
         ? {
@@ -417,6 +515,9 @@ export function runGitCommand(
       });
     });
     return { result: resultPromise, exited };
+  };
+  const promise = gitProcessScheduler.run(startCommand, {
+    priority: gitCommandPriority.getStore() ?? "normal",
   });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,

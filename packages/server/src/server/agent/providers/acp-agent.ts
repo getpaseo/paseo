@@ -85,6 +85,7 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type FetchCatalogOptions,
+  type ProviderRefreshContext,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -96,6 +97,10 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import {
+  raceProviderRefreshAbort,
+  runProviderRefreshActivity,
+} from "../provider-refresh-deadline.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -267,7 +272,6 @@ export function buildACPClientCapabilities(
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
-const ACP_CATALOG_TIMEOUT_MS = 60_000;
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
@@ -375,12 +379,40 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+/**
+ * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
+ * the already-derived models plus the live probe session so a resolver can refine them
+ * (e.g. switch through each model to read back per-model options) without re-implementing
+ * the catalog plumbing.
+ */
+export interface ACPCatalogModelResolverContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  models: AgentModelDefinition[];
+  configOptions: SessionConfigOption[] | null | undefined;
+  runRequest: <T>(request: () => Promise<T>) => Promise<T>;
+  transformConfigOptions: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  logger: Logger;
+  provider: string;
+}
+
+/**
+ * Optional hook that refines the catalog's model list using the live probe session.
+ * The base client ships no resolver — catalog discovery derives models from the initial
+ * session response and never mutates the probe. Providers that need per-model data (Kimi)
+ * inject a resolver so the extra round trips stay off every other ACP.
+ */
+export type ACPCatalogModelResolver = (
+  context: ACPCatalogModelResolverContext,
+) => Promise<AgentModelDefinition[]>;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
+  catalogModelResolver?: ACPCatalogModelResolver;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -500,7 +532,7 @@ interface TerminalEntry {
   rejectExit: (error: Error) => void;
 }
 
-interface ConfigOptionSelector {
+export interface ConfigOptionSelector {
   id: string;
   label: string;
   description?: string;
@@ -519,7 +551,7 @@ export interface ACPConfigFeatureOption {
   emptyOptionLabel?: string;
 }
 
-type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
+export type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
 interface SelectConfigChoice {
   value: string;
   name: string;
@@ -763,6 +795,7 @@ export class ACPAgentClient implements AgentClient {
   protected readonly runtimeSettings?: ProviderRuntimeSettings;
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
+  private readonly catalogModelResolver?: ACPCatalogModelResolver;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -802,6 +835,7 @@ export class ACPAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
+    this.catalogModelResolver = options.catalogModelResolver;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -904,51 +938,83 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
-  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
     const cwd = options.scope === "global" ? homedir() : options.cwd;
-    const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
     let probe: UninitializedACPProcess | null = null;
-    try {
-      const catalogProbe = (async () => {
-        const initializedProbe = await this.spawnProcess(PROBE_ENV, {
-          initializeTimeoutMs: timeoutMs,
-          onSpawned: (spawned) => {
-            probe = spawned;
-          },
-        });
-        probe = initializedProbe;
-        const response = await this.runACPRequest(() =>
-          initializedProbe.connection.newSession({
-            cwd,
-            mcpServers: [],
-          }),
-        );
-        const transformed = this.transformSessionResponse(response);
-        const models = deriveModelDefinitionsFromACP(
-          this.provider,
-          transformed.models,
-          transformed.configOptions,
-        );
-        const modeInfo = deriveModesFromACP(
-          this.defaultModes,
-          transformed.modes,
-          transformed.configOptions,
-        );
-        return {
-          models: this.modelTransformer ? this.modelTransformer(models) : models,
-          modes: modeInfo.modes,
-        };
-      })();
+    let closePromise: Promise<void> | null = null;
+    const closeProbe = (): Promise<void> => {
+      if (!probe) return Promise.resolve();
+      closePromise ??= this.closeProbe(probe);
+      return closePromise;
+    };
+    const handleAbort = () => void closeProbe().catch(() => undefined);
+    context?.signal.addEventListener("abort", handleAbort, { once: true });
 
-      return await withTimeout(
-        catalogProbe,
-        timeoutMs,
-        `ACP catalog probe timed out after ${timeoutMs}ms`,
+    try {
+      const initializedProbe = await runProviderRefreshActivity(context, "initialize", () =>
+        raceProviderRefreshAbort(
+          context?.signal,
+          this.spawnProcess(PROBE_ENV, {
+            onSpawned: (spawned) => {
+              probe = spawned;
+              if (context?.signal.aborted) void closeProbe().catch(() => undefined);
+            },
+          }),
+        ),
       );
+      probe = initializedProbe;
+      const response = await runProviderRefreshActivity(context, "session/new", () =>
+        raceProviderRefreshAbort(
+          context?.signal,
+          this.runACPRequest(() =>
+            initializedProbe.connection.newSession({
+              cwd,
+              mcpServers: [],
+            }),
+          ),
+        ),
+      );
+      const transformed = this.transformSessionResponse(response);
+      const derivedModels = deriveModelDefinitionsFromACP(
+        this.provider,
+        transformed.models,
+        transformed.configOptions,
+      );
+      const models = this.catalogModelResolver
+        ? await runProviderRefreshActivity(context, "catalog.resolve", () =>
+            raceProviderRefreshAbort(
+              context?.signal,
+              this.catalogModelResolver?.({
+                connection: initializedProbe.connection,
+                sessionId: response.sessionId,
+                models: derivedModels,
+                configOptions: transformed.configOptions,
+                runRequest: (request) => this.runACPRequest(request),
+                transformConfigOptions: (configOptions) =>
+                  this.configOptionsTransformer
+                    ? this.configOptionsTransformer(configOptions)
+                    : configOptions,
+                logger: this.logger,
+                provider: this.provider,
+              }) ?? Promise.resolve(derivedModels),
+            ),
+          )
+        : derivedModels;
+      const modeInfo = deriveModesFromACP(
+        this.defaultModes,
+        transformed.modes,
+        transformed.configOptions,
+      );
+      return {
+        models: this.modelTransformer ? this.modelTransformer(models) : models,
+        modes: modeInfo.modes,
+      };
     } finally {
-      if (probe) {
-        await this.closeProbe(probe);
-      }
+      context?.signal.removeEventListener("abort", handleAbort);
+      await closeProbe();
     }
   }
 
@@ -2930,7 +2996,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 }
 
-function findSelectConfigOption({
+export function findSelectConfigOption({
   configOptions,
   category,
   id,
@@ -3036,7 +3102,7 @@ function normalizeConfigFeatureValue(value: unknown): string {
   throw new Error(`ACP feature value must be a string`);
 }
 
-function deriveSelectorOptions(
+export function deriveSelectorOptions(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): ConfigOptionSelector[] {

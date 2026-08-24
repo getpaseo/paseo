@@ -30,8 +30,14 @@ test("Browse opens the folder selected by the desktop dialog", async ({
   const browse = page.getByRole("button", { name: /^Browse/ });
   await expect(browse).toBeVisible({ timeout: 30_000 });
   await browse.click();
+  const dialogOptions = await waitForDirectoryDialog(page);
+  expect(dialogOptions).toEqual({
+    createDirectory: true,
+    directory: true,
+    multiple: false,
+  });
 
-  const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+  const projectId = await expectOpenedProject(page);
   projectPickerFixture.rememberProjectId(projectId);
   await expectNewWorkspaceForAddedProject(page, {
     serverId: getServerId(),

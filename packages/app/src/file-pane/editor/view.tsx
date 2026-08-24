@@ -32,5 +32,5 @@ export function FileEditorView(_props: {
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, alignItems: "center", justifyContent: "center" },
-  text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
 }));

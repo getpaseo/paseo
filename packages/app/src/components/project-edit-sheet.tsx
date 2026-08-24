@@ -40,7 +40,6 @@ export interface ProjectEditSheetProps {
 export function ProjectEditSheet({
   visible,
   onClose,
-  serverId,
   projectId,
   projectViewKey,
   client,
@@ -60,7 +59,6 @@ export function ProjectEditSheet({
       submitProjectEdit({ client, projectId, submission }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["projectIcon", serverId] });
       toast.show(t("settings.project.edit.savedToast"), { variant: "success" });
       onClose();
     },

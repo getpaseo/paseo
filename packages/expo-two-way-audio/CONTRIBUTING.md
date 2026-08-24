@@ -26,7 +26,7 @@ npm i
 
 ## How to Submit Changes
 
-We try not to be too prescreptive about how people work, but we also believe in helping make things easier by following a couple of basic steps. If you follow these recommendations, it should make the review process simpler and quicker:
+We try not to be too prescriptive about how people work, but we also believe in helping make things easier by following a couple of basic steps. If you follow these recommendations, it should make the review process simpler and quicker:
 
 1. If your change is large, consider reaching out to us beforehand and discussing the issue. This could save you a lot of time if there are good reasons why we haven't done something.
 2. Fork the repo and work on a branch on your fork. Try to give your branches short, descriptive names in the format {type}/{description} e.g. bugfix/missing-try-catch.

@@ -248,6 +248,7 @@ describe("host settings section slugs", () => {
     expect(normalizeHostSectionSlug("connections")).toBe("connections");
     expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
+    expect(normalizeHostSectionSlug("metadata")).toBe("metadata");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
     expect(normalizeHostSectionSlug("projects")).toBe("projects");
     expect(normalizeHostSectionSlug("providers")).toBe("providers");
@@ -262,6 +263,10 @@ describe("host settings section slugs", () => {
 });
 
 describe("settings section slugs", () => {
+  it("includes desktop notification settings", () => {
+    expect(isSettingsSectionSlug("notifications")).toBe(true);
+  });
+
   it("no longer treats daemon as a valid app-level settings section", () => {
     expect(isSettingsSectionSlug("daemon")).toBe(false);
   });

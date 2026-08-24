@@ -3,7 +3,6 @@ import { createNameId } from "mnemonic-id";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   createWorktree,
-  resolveExistingWorktreeForSlug,
   slugify,
   validateBranchSlug,
   type WorktreeConfig,
@@ -16,6 +15,7 @@ import {
 } from "./resolve-worktree-creation-intent.js";
 import type { ChangeRequestCheckoutSource, FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export interface CreateWorktreeCoreInput {
   cwd: string;
@@ -51,13 +51,18 @@ export async function createWorktreeCore(
   input: CreateWorktreeCoreInput,
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
+  return runWithGitCommandPriority("high", () => createWorktreeCoreWithPriority(input, deps));
+}
+
+async function createWorktreeCoreWithPriority(
+  input: CreateWorktreeCoreInput,
+  deps: CreateWorktreeCoreDeps,
+): Promise<CreateWorktreeCoreResult> {
   const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
   const requestedWorktreeSlug = input.worktreeSlug
     ? normalizeWorktreeSlug(input.worktreeSlug)
     : undefined;
-  const requestedBranchName = input.branchName
-    ? validateWorktreeSlug(input.branchName.trim())
-    : undefined;
+  const requestedBranchName = input.branchName?.trim();
 
   let intentInput: ResolveWorktreeCreationIntentInput;
   if (input.action === "checkout") {
@@ -108,16 +113,6 @@ export async function createWorktreeCore(
         requestedWorktreeSlug ?? normalizeWorktreeSlug(intent.localBranchName ?? intent.headRef);
       break;
     }
-  }
-
-  const existingWorktree = await resolveExistingWorktreeForSlug({
-    slug: normalizedSlug,
-    repoRoot,
-    paseoHome: input.paseoHome,
-    worktreesRoot: input.worktreesRoot,
-  });
-  if (existingWorktree) {
-    return { worktree: existingWorktree, intent, repoRoot, created: false };
   }
 
   return {

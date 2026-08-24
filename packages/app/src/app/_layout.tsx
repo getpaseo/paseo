@@ -20,12 +20,15 @@ import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { AppearanceProvider } from "@/appearance/provider";
 import { CommandCenter } from "@/command-center/command-center";
 import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
+import { PluginCommandCenterActions } from "@/plugins/command-center/registration";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
+import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
@@ -44,7 +47,6 @@ import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import {
   getIsElectronRuntime,
-  getIsElectronRuntimeMac,
   HEADER_INNER_HEIGHT,
   useIsCompactFormFactor,
 } from "@/constants/layout";
@@ -71,6 +73,8 @@ import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-rout
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
+import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
+import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
@@ -90,7 +94,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { I18nProvider } from "@/i18n/provider";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  KeyboardActionDispatcherProvider,
+  useKeyboardActionDispatcher,
+} from "@/keyboard/keyboard-action-dispatcher-context";
 import { polyfillCrypto } from "@/polyfills/crypto";
 import { polyfillNavigator } from "@/polyfills/navigator";
 import { queryClient } from "@/data/query-client";
@@ -100,16 +107,16 @@ import {
   useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
+  useHostRuntimeIsConnected,
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
-import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import { getNextThemePreference } from "@/styles/theme";
+import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
-import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   useHasWindowChromeObstruction,
   WindowChromeProvider,
@@ -123,6 +130,7 @@ import {
 } from "@/utils/host-routes";
 import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { PluginCatalogSync } from "@/plugins";
 import {
   ensureOsNotificationPermission,
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -265,9 +273,32 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
 
   return (
     <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
-      {null}
+      <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
+      <PluginCatalogSync serverId={daemon.serverId} client={client} />
     </SessionProvider>
   );
+}
+
+function LegacyFavoriteProfileMigrationBootstrap({
+  serverId,
+  client,
+}: {
+  serverId: string;
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+}) {
+  const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+
+  useEffect(() => {
+    if (!serverInfo || !isConnected) {
+      return;
+    }
+    void legacyFavoriteProfileMigration.migrateHost(serverId, client).catch((error) => {
+      console.warn("[AgentProfiles] Failed to migrate legacy favourites", error);
+    });
+  }, [client, isConnected, serverId, serverInfo]);
+
+  return null;
 }
 
 function HostSessionManager() {
@@ -423,29 +454,22 @@ interface AppContainerProps {
   chromeEnabled?: boolean;
 }
 
-const THEME_CYCLE_ORDER: ThemeName[] = ["dark", "zinc", "midnight", "claude", "ghostty", "light"];
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
   const toggleDesktopAgentList = usePanelStore((state) => state.toggleDesktopAgentList);
-  const openDesktopAgentList = usePanelStore((state) => state.openDesktopAgentList);
-  const closeDesktopAgentList = usePanelStore((state) => state.closeDesktopAgentList);
-  const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
   const exitFocusMode = usePanelStore((state) => state.exitFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
-  const isDesktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
-  const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const { width: viewportWidth } = useWindowDimensions();
 
   const cycleTheme = useCallback(() => {
-    const currentIndex = THEME_CYCLE_ORDER.indexOf(settings.theme as ThemeName);
-    const nextIndex = (currentIndex + 1) % THEME_CYCLE_ORDER.length;
-    void updateSettings({ theme: THEME_CYCLE_ORDER[nextIndex] });
+    void updateSettings({ theme: getNextThemePreference(settings.theme) });
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
@@ -457,20 +481,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const hasMountedDesktopSidebar = useLatchedBoolean(chromeEnabled);
   const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
   const toggleDesktopSidebars = useCallback(() => {
-    const { desktop } = usePanelStore.getState();
-    toggleDesktopSidebarsWithCheckoutIntent({
-      isAgentListOpen: desktop.agentListOpen,
-      isFileExplorerOpen: desktop.fileExplorerOpen,
-      openAgentList: openDesktopAgentList,
-      closeAgentList: closeDesktopAgentList,
-      closeFileExplorer: closeDesktopFileExplorer,
-      toggleFocusedFileExplorer: () =>
-        keyboardActionDispatcher.dispatch({
-          id: "sidebar.toggle.right",
-          scope: "sidebar",
-        }),
-    });
-  }, [closeDesktopAgentList, closeDesktopFileExplorer, openDesktopAgentList]);
+    // The focused workspace owns its layout key, its checkout, and therefore the
+    // only correct answer to "is the explorer open". Let it decide when there is
+    // one: the pathname alone cannot identify the active workspace, because
+    // desktop cold-starts at "/" and restores the workspace from route params.
+    if (keyboardActionDispatcher.dispatch({ id: "sidebar.toggle.both", scope: "sidebar" })) {
+      return;
+    }
+    // Off a workspace route there is no explorer — only the agent list.
+    toggleAgentList();
+  }, [keyboardActionDispatcher, toggleAgentList]);
   // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
   // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
   // global concerns like keyboard shortcuts. Split those out so settings (and
@@ -492,9 +512,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
   const appContentMinimumWidth = resolveDesktopAppContentMinimum({
     isSettingsRoute: pathname.includes("/settings"),
-    isWorkspaceExplorerOpen: isWorkspaceRoute && isDesktopFileExplorerOpen,
-    requestedExplorerWidth: explorerWidth,
-    viewportWidth,
   });
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({
@@ -562,9 +579,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <DownloadToast />
       <RosettaCalloutSource />
       <UpdateCalloutSource />
+      <LegacyAgentSkillsMigration />
       <WorktreeSetupCalloutSource />
       <CommandCenterRootActions />
       <CommandCenterWorkspaceActions />
+      <PluginCommandCenterActions />
       <WorkspacePinShortcutHandler />
       <CommandCenter />
       <AddProjectFlowHost />
@@ -627,73 +646,37 @@ function MobileGestureWrapper({
 }
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
-  const { settings, isLoading: settingsLoading } = useAppSettings();
   const { upsertConnectionFromOfferUrl } = useHostMutations();
 
-  // Apply theme setting on mount and when it changes
-  useEffect(() => {
-    if (settingsLoading) return;
-    if (settings.theme === "auto") {
-      UnistylesRuntime.setAdaptiveThemes(true);
-    } else {
-      UnistylesRuntime.setAdaptiveThemes(false);
-      UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
-    }
-  }, [settingsLoading, settings.theme]);
-
-  // Apply font / size / syntax appearance settings on mount and when they change.
-  // Sibling to the theme effect above; order is irrelevant because both patch all
-  // six registered theme keys, so the active key is always current.
-  useEffect(() => {
-    if (settingsLoading) return;
-    applyAppearance({
-      uiFontFamily: settings.uiFontFamily,
-      monoFontFamily: settings.monoFontFamily,
-      uiFontSize: settings.uiFontSize,
-      codeFontSize: settings.codeFontSize,
-      syntaxTheme: settings.syntaxTheme,
-    });
-  }, [
-    settingsLoading,
-    settings.uiFontFamily,
-    settings.monoFontFamily,
-    settings.uiFontSize,
-    settings.codeFontSize,
-    settings.syntaxTheme,
-  ]);
-
   return (
-    <VoiceProvider>
-      <DesktopWindowControlsSync enabled={!settingsLoading} />
-      <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
-      <HostSessionManager />
-      <FaviconStatusSync />
-      {children}
-    </VoiceProvider>
+    <AppearanceProvider>
+      <VoiceProvider>
+        <DesktopWindowControlsSync />
+        <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
+        <HostSessionManager />
+        <FaviconStatusSync />
+        <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+      </VoiceProvider>
+    </AppearanceProvider>
   );
 }
 
-function DesktopWindowControlsSync({ enabled }: { enabled: boolean }) {
+function DesktopWindowControlsSync() {
+  const { isLoading } = useAppSettings();
   const { theme } = useUnistyles();
   const surface0 = theme.colors.surface0;
   const foreground = theme.colors.foreground;
-  const pathname = usePathname();
-  const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
-  const liftTrafficLights =
-    getIsElectronRuntimeMac() &&
-    isFocusModeEnabled &&
-    parseHostWorkspaceRouteFromPathname(pathname) !== null;
 
   useEffect(() => {
-    if (!enabled || isNative) return;
+    if (isLoading || isNative) return;
     void updateDesktopWindowControls({
       backgroundColor: surface0,
       foregroundColor: foreground,
-      trafficLightOffsetY: liftTrafficLights ? -5 : 0.5,
+      trafficLightOffsetY: -5,
     }).catch((error) => {
       console.warn("[DesktopWindow] Failed to update window controls overlay", error);
     });
-  }, [enabled, surface0, foreground, liftTrafficLights]);
+  }, [isLoading, surface0, foreground]);
 
   return null;
 }
@@ -954,7 +937,7 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 // context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <SafeAreaProvider>
+    <KeyboardActionDispatcherProvider>
       <WindowChromeProvider>
         <KeyboardProvider>
           <KeyboardShiftProvider>
@@ -966,13 +949,22 @@ function RootProviders({ children }: { children: ReactNode }) {
           </KeyboardShiftProvider>
         </KeyboardProvider>
       </WindowChromeProvider>
-    </SafeAreaProvider>
+    </KeyboardActionDispatcherProvider>
   );
+}
+
+function recordUserActivity(): void {
+  getHostRuntimeStore().recordUserActivity();
 }
 
 function RootAppTree() {
   return (
-    <GestureHandlerRootView style={flexStyle}>
+    <GestureHandlerRootView
+      style={flexStyle}
+      onTouchStart={recordUserActivity}
+      onTouchEnd={recordUserActivity}
+      onTouchCancel={recordUserActivity}
+    >
       <View style={layoutStyles.surfaceFill}>
         <RootProviders>
           <RuntimeProviders>
@@ -998,9 +990,11 @@ export default function RootLayout() {
   return (
     <QueryProvider>
       <I18nProvider>
-        <RootErrorBoundary>
-          <RootAppTree />
-        </RootErrorBoundary>
+        <SafeAreaProvider>
+          <RootErrorBoundary>
+            <RootAppTree />
+          </RootErrorBoundary>
+        </SafeAreaProvider>
       </I18nProvider>
     </QueryProvider>
   );

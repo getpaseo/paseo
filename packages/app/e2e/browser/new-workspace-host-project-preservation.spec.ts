@@ -13,6 +13,7 @@ import {
 } from "../support/helpers/new-workspace";
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { addConnectedHostsAndReload } from "../support/helpers/hosts";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
@@ -29,6 +30,7 @@ interface CreatedProject {
 
 interface CrossHostProjectScenario {
   contextWorkspaceId: string;
+  primarySharedWorkspaceId: string;
   selectedProjectViewKey: string;
   sharedProjectKey: string;
   secondaryHost: {
@@ -149,6 +151,7 @@ const test = base.extend<{ crossHostProject: CrossHostProjectScenario }>({
 
       await provide({
         contextWorkspaceId: contextProject.workspaceId,
+        primarySharedWorkspaceId: primarySharedProject.workspaceId,
         selectedProjectViewKey: projectPlacementViewKey(
           getServerId(),
           primarySharedProject.projectId,
@@ -192,6 +195,35 @@ test.describe("New workspace host project preservation", () => {
       projectViewKey: crossHostProject.selectedProjectViewKey,
       projectDisplayName: SHARED_PROJECT_NAME,
     });
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+  });
+
+  test("keeps the active workspace project selected when switching hosts", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openProjectDirectoryWithHosts(page, {
+      hosts: [crossHostProject.secondaryHost],
+      primaryLabel: PRIMARY_HOST_LABEL,
+    });
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: crossHostProject.primarySharedWorkspaceId,
+    });
+    await openGlobalNewWorkspaceComposer(page);
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
+
+    await addConnectedHostsAndReload(page, [crossHostProject.secondaryHost], {
+      primaryLabel: PRIMARY_HOST_LABEL,
+    });
+    await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);
     await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
 
     await expectNewWorkspaceProjectSelected(page, SHARED_PROJECT_NAME);

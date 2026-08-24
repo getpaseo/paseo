@@ -57,12 +57,63 @@ export async function readProjectIcon(input: {
   paseoHome: string;
   project: PersistedProjectRecord;
 }): Promise<ProjectIcon | null> {
-  if (!input.project.customIconRevision) return getProjectIcon(input.project.rootPath);
-  try {
-    return validateIcon(await readFile(cachePath(input.paseoHome, input.project.projectId)));
-  } catch {
-    return null;
+  return (await readProjectIconSnapshot(input)).icon;
+}
+
+export interface ProjectIconSnapshot {
+  icon: ProjectIcon | null;
+  revision: string;
+}
+
+/** Keeps the icon bytes served by a session aligned with its advertised revision. */
+export class ProjectIconReader {
+  private readonly snapshots = new Map<string, ProjectIconSnapshot>();
+
+  constructor(private readonly paseoHome: string) {}
+
+  async snapshot(project: PersistedProjectRecord): Promise<ProjectIconSnapshot> {
+    const snapshot = await readProjectIconSnapshot({ paseoHome: this.paseoHome, project });
+    this.snapshots.set(project.projectId, snapshot);
+    return snapshot;
   }
+
+  async read(project: PersistedProjectRecord): Promise<ProjectIcon | null> {
+    return (this.snapshots.get(project.projectId) ?? (await this.snapshot(project))).icon;
+  }
+}
+
+/** Reads the effective icon and gives that exact result a stable identity. */
+export async function readProjectIconSnapshot(input: {
+  paseoHome: string;
+  project: PersistedProjectRecord;
+}): Promise<ProjectIconSnapshot> {
+  if (input.project.customIconRevision) {
+    let icon: ProjectIcon | null = null;
+    try {
+      icon = validateIcon(await readFile(cachePath(input.paseoHome, input.project.projectId)));
+    } catch {
+      // A missing/corrupt custom icon is itself a cacheable result until the
+      // registry revision changes.
+    }
+    return {
+      icon,
+      revision: icon
+        ? iconRevision("custom", icon)
+        : `custom:none:${input.project.customIconRevision}`,
+    };
+  }
+  const icon = await getProjectIcon(input.project.rootPath);
+  if (!icon) return { icon: null, revision: "automatic:none:v1" };
+  return { icon, revision: iconRevision("automatic", icon) };
+}
+
+function iconRevision(source: "automatic" | "custom", icon: ProjectIcon): string {
+  const fingerprint = createHash("sha256")
+    .update(icon.mimeType)
+    .update("\0")
+    .update(icon.data)
+    .digest("hex");
+  return `${source}:${fingerprint}`;
 }
 
 export async function removeProjectCustomIcon(input: {
