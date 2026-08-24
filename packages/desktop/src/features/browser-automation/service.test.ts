@@ -1287,6 +1287,44 @@ describe("executeAutomationCommand", () => {
     expect(mouseEvents.at(-1)?.params).toMatchObject({ button: "right", clickCount: 2 });
   });
 
+  test("input_at hover moves the pointer with nothing held", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "input_at",
+      args: {
+        browserId: BROWSER_A,
+        event: {
+          kind: "pointer",
+          phase: "hover",
+          x: 30,
+          y: 40,
+          button: "left",
+          clickCount: 1,
+          modifiers: [],
+        },
+      },
+    });
+
+    // A held button would make the guest read the motion as a drag and start
+    // selecting text from wherever the pointer passed over.
+    expect(browser.tab.inputEvents).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mouseMoved",
+          x: 30,
+          y: 40,
+          button: "none",
+          buttons: 0,
+          clickCount: 0,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
   test("input_at pointer phases press, drag, and release without a synthetic click", async () => {
     const browser = new BrowserAutomationHarness();
 

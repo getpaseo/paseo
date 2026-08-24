@@ -90,7 +90,10 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
-import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type {
+  BrowserAutomationExecuteResponse,
+  BrowserAutomationTabInfo,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
   type BrowserAutomationHostCapability,
@@ -486,7 +489,7 @@ interface SocketSessionOptions {
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
-  onScreencastFrame?: (frame: Uint8Array) => Promise<void>;
+  onScreencastFrame?: (source: object, frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
@@ -1271,26 +1274,6 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  /**
-   * Screencast frames are awaited so the registry learns when a socket has
-   * drained and can drop what piled up meanwhile. A socket that fails one frame
-   * keeps the stream running for the others attached to the same client.
-   */
-  private async sendScreencastFrameToConnection(
-    connection: TrustedSessionConnection,
-    frame: Uint8Array,
-  ): Promise<void> {
-    await Promise.all(
-      [...connection.sockets].map(async (ws) => {
-        try {
-          await this.sendBinaryToClientAndWait(ws, frame);
-        } catch {
-          // sendBinaryToClientAndWait already logged why the send failed.
-        }
-      }),
-    );
-  }
-
   private async attachSocket(
     ws: WebSocketLike,
     request?: unknown,
@@ -1392,11 +1375,13 @@ export class VoiceAssistantWebSocketServer {
         }
         await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
       },
-      onScreencastFrame: async (frame) => {
-        if (!connection) {
+      // Awaited so the registry learns when the subscribing socket has drained
+      // and can drop the frames that piled up meanwhile.
+      onScreencastFrame: async (source, frame) => {
+        if (!connection || !connection.sockets.has(source as WebSocketLike)) {
           return;
         }
-        await this.sendScreencastFrameToConnection(connection, frame);
+        await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
       },
       getTransportBufferedAmount: () => {
         if (!connection) {
@@ -1926,6 +1911,9 @@ export class VoiceAssistantWebSocketServer {
     }
     connection.sockets.delete(ws);
     connection.session.clearAgentTimelineSubscription(ws);
+    // Not awaited: dropping the last viewer of a stream waits out the grace and
+    // the host's stop, and the socket is already gone.
+    void connection.session.removeScreencastViewer(ws);
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {
@@ -2027,6 +2015,12 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     const sequence = ++this.browserTabsChangedSequence;
+    // The fan-out has nobody to ask once the last mirror host is gone, and its
+    // failure would leave viewers listing tabs no host serves any more.
+    if (!this.hasBrowserMirrorHost()) {
+      this.publishBrowserTabList([]);
+      return;
+    }
     void this.publishBrowserTabs(broker, sequence).catch((error: unknown) => {
       this.logger.warn({ err: error }, "Failed to broadcast browser.tabs.changed");
     });
@@ -2043,12 +2037,13 @@ export class VoiceAssistantWebSocketServer {
     if (!payload.ok || payload.result.command !== "list_tabs") {
       return;
     }
+    this.publishBrowserTabList(payload.result.tabs);
+  }
+
+  private publishBrowserTabList(tabs: BrowserAutomationTabInfo[]): void {
     this.broadcastToCapableSockets(
       CLIENT_CAPS.browserMirror,
-      wrapSessionMessage({
-        type: "browser.tabs.changed",
-        payload: { tabs: payload.result.tabs },
-      }),
+      wrapSessionMessage({ type: "browser.tabs.changed", payload: { tabs } }),
     );
   }
 
@@ -2128,6 +2123,9 @@ export class VoiceAssistantWebSocketServer {
     if (hadBrowserMirror !== this.hasBrowserMirrorHost()) {
       this.broadcastCapabilitiesUpdate();
     }
+    // The tabs this host was serving left with it. Until they are republished
+    // viewers keep listing and rendering them, and every action on them fails.
+    this.broadcastBrowserTabsChanged();
   }
 
   private handleInvalidInboundMessage(args: {

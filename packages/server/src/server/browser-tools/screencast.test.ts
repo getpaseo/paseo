@@ -8,6 +8,7 @@ import { BrowserScreencastRegistry, type BrowserScreencastViewer } from "./scree
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
+const THIRD_BROWSER_ID = "33333333-3333-4333-8333-333333333333";
 const HOST_CLIENT_ID = "browser-host-1";
 
 class FakeBroker {
@@ -311,6 +312,31 @@ describe("BrowserScreencastRegistry", () => {
     expect(reused).toEqual({ ok: true, slot: 0, replay: null });
   });
 
+  test("holds a slot until the host has answered the stop for it", async () => {
+    const broker = new FakeBroker({ latencyMs: 40 });
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
+    const leaving = createViewer();
+    const arriving = createViewer();
+    await registry.subscribe({ viewer: leaving, browserId: BROWSER_ID });
+
+    const teardown = registry.unsubscribe({ viewer: leaving, browserId: BROWSER_ID });
+    // Past the grace, so the stop is committed, and inside the host round trip,
+    // so the old capture is still running on the slot.
+    await delay(10);
+    const next = await registry.subscribe({ viewer: arriving, browserId: SECOND_BROWSER_ID });
+
+    expect(next).toMatchObject({ ok: true, slot: 1 });
+    // Both tabs are hosted by the same client, so a frame from the capture that
+    // has not stopped yet passes the owner check and would paint the new pane.
+    registry.handleFrame({ frame: jpegFrame(0, "stale"), sourceClientId: HOST_CLIENT_ID });
+    expect(arriving.frames).toEqual([]);
+
+    await teardown;
+    // Reserved until the stop settles, not withheld for good.
+    const third = await registry.subscribe({ viewer: arriving, browserId: THIRD_BROWSER_ID });
+    expect(third).toMatchObject({ ok: true, slot: 0 });
+  });
+
   test("fans frames out to every viewer on the slot", async () => {
     const broker = new FakeBroker();
     const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
@@ -429,9 +455,9 @@ describe("BrowserScreencastRegistry", () => {
     registry.handleFrame({ frame: jpegFrame(0, "jpeg-bytes"), sourceClientId: HOST_CLIENT_ID });
 
     // A second pane on the same browser is the same viewer: the daemon keys
-    // viewers by session. The pane has decoded nothing, and a settled page emits
-    // nothing further, so without a replay it stays blank until something
-    // repaints the guest.
+    // viewers by socket, and both panes are in one window. The pane has decoded
+    // nothing, and a settled page emits nothing further, so without a replay it
+    // stays blank until something repaints the guest.
     const secondPane = await registry.subscribe({ viewer, browserId: BROWSER_ID });
 
     expect(secondPane).toEqual({ ok: true, slot: 0, replay: viewer.frames[0] });

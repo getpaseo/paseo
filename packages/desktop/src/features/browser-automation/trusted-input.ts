@@ -47,12 +47,13 @@ const ELECTRON_KEY_CODE_ALIASES: Record<string, string> = {
   ArrowUp: "Up",
 };
 
-export type MousePhase = "down" | "move" | "up";
+export type MousePhase = "down" | "move" | "up" | "hover";
 
 const CDP_MOUSE_PHASE_TYPES: Record<MousePhase, string> = {
   down: "mousePressed",
   move: "mouseMoved",
   up: "mouseReleased",
+  hover: "mouseMoved",
 };
 
 export async function dispatchTrustedClick(
@@ -121,14 +122,16 @@ export async function dispatchTrustedMousePhase(
   point: ActionablePoint,
   options: MousePhaseInputOptions,
 ): Promise<void> {
-  const heldButtons = options.phase === "up" ? 0 : mouseButtonMask(options.button);
+  // Hover and release both hold nothing; a hover also names no button, or the
+  // guest starts a selection from wherever the pointer passed over.
+  const isPressed = options.phase !== "up" && options.phase !== "hover";
   await send("Input.dispatchMouseEvent", {
     type: CDP_MOUSE_PHASE_TYPES[options.phase],
     x: point.x,
     y: point.y,
-    button: options.button,
-    buttons: heldButtons,
-    clickCount: options.clickCount,
+    button: options.phase === "hover" ? "none" : options.button,
+    buttons: isPressed ? mouseButtonMask(options.button) : 0,
+    clickCount: options.phase === "hover" ? 0 : options.clickCount,
     modifiers: modifierMask(options.modifiers),
   });
 }

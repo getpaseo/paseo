@@ -74,7 +74,7 @@ export function attachMouseInput(element: HTMLElement, state: MouseInputStateRef
     const event = pendingMove;
     pendingMove = null;
     if (event) {
-      sendPointer(event, "move");
+      sendPointer(event, isDragging ? "move" : "hover");
     }
   }
 
@@ -90,8 +90,22 @@ export function attachMouseInput(element: HTMLElement, state: MouseInputStateRef
     state.current.onFocusKeyboard();
   }
 
+  function isOverPane(event: MouseEvent): boolean {
+    const rect = element.getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    );
+  }
+
+  // Unpressed motion is forwarded too, or the guest never sees hover: no CSS
+  // :hover, no tooltips, and no menus that only open on hover. A drag listens on
+  // the window so it survives leaving the pane; a hover must not, or the guest
+  // gets clamped hovers from the pointer crossing the rest of the app.
   function handleMove(event: MouseEvent): void {
-    if (!isDragging) {
+    if (!isDragging && (!state.current.isInteractive || !isOverPane(event))) {
       return;
     }
     pendingMove = event;

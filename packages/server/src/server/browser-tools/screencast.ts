@@ -63,6 +63,18 @@ interface BrowserScreencastDelivery {
   pending: Uint8Array | null;
 }
 
+/** A `screencast_stop` the host has not answered yet. */
+interface BrowserScreencastStop {
+  settled: Promise<unknown>;
+  /**
+   * The slot the capture being stopped still runs on. Held until the host
+   * answers: frames already on their way carry it, and every browser on a host
+   * shares that host's identity, so a second browser handed this slot would
+   * pass the owner check and paint the first one's tab.
+   */
+  slot: number;
+}
+
 /**
  * One slot per mirrored browser, shared by the host and every viewer, so JPEG
  * frames are forwarded without re-encoding. The host streams while at least one
@@ -73,7 +85,7 @@ export class BrowserScreencastRegistry {
   private readonly streams = new Map<string, BrowserScreencastStream>();
   private readonly streamsBySlot = new Map<number, BrowserScreencastStream>();
   /** In-flight `screencast_stop` per browser: the next start queues behind it. */
-  private readonly stopping = new Map<string, Promise<unknown>>();
+  private readonly stopping = new Map<string, BrowserScreencastStop>();
   /**
    * Per viewer, the send it has not finished plus the one frame waiting behind
    * it. Queueing every frame onto a viewer that cannot keep up would push its
@@ -123,12 +135,15 @@ export class BrowserScreencastRegistry {
       return { ok: true, slot: existing.slot, replay: existing.lastFrame };
     }
 
-    const slot = this.allocateSlot();
+    // A stop still in flight holds its slot, and this browser is the one caller
+    // that may take it back: a stale frame from its own capture is its own tab.
+    const pendingStop = this.stopping.get(params.browserId);
+    const slot = pendingStop?.slot ?? this.allocateSlot();
     if (slot === null) {
       return { ok: false, error: "All browser screencast slots are in use." };
     }
 
-    const started = afterSettled(this.stopping.get(params.browserId), () =>
+    const started = afterSettled(pendingStop?.settled, () =>
       this.start({
         browserId: params.browserId,
         slot,
@@ -182,15 +197,18 @@ export class BrowserScreencastRegistry {
     }
     // Registered before the slot is released, so a subscribe arriving while the
     // stop is in flight queues its start behind it instead of overtaking it.
-    const stop = afterSettled(stream.started, () =>
-      this.broker.execute({
-        command: { command: "screencast_stop", args: { browserId: params.browserId } },
-      }),
-    );
+    const stop: BrowserScreencastStop = {
+      settled: afterSettled(stream.started, () =>
+        this.broker.execute({
+          command: { command: "screencast_stop", args: { browserId: params.browserId } },
+        }),
+      ),
+      slot: stream.slot,
+    };
     this.stopping.set(params.browserId, stop);
     this.release(stream);
     try {
-      await stop;
+      await stop.settled;
     } finally {
       if (this.stopping.get(params.browserId) === stop) {
         this.stopping.delete(params.browserId);
@@ -300,8 +318,12 @@ export class BrowserScreencastRegistry {
   }
 
   private allocateSlot(): number | null {
+    const stopping = new Set<number>();
+    for (const stop of this.stopping.values()) {
+      stopping.add(stop.slot);
+    }
     for (let slot = 0; slot < SCREENCAST_SLOT_COUNT; slot += 1) {
-      if (!this.streamsBySlot.has(slot)) {
+      if (!this.streamsBySlot.has(slot) && !stopping.has(slot)) {
         return slot;
       }
     }

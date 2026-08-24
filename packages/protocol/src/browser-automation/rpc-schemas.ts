@@ -64,7 +64,9 @@ const BrowserAutomationTabTargetSchema = z
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
 const BrowserAutomationMouseButtonSchema = z.enum(["left", "right", "middle"]);
 const BrowserAutomationInputModifierSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
-const BrowserAutomationMousePhaseSchema = z.enum(["down", "move", "up"]);
+// "hover" is a move with nothing held: without it the guest reads unpressed
+// motion as a drag, so pages with hover menus cannot be used through a mirror.
+const BrowserAutomationMousePhaseSchema = z.enum(["down", "move", "up", "hover"]);
 const BrowserAutomationHttpUrlSchema = z
   .string()
   .url()

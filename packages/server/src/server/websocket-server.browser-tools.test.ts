@@ -10,7 +10,10 @@ import type {
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserTabsChanged } from "@getpaseo/protocol/browser-automation/client-command";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { BrowserScreencastEvent } from "@getpaseo/client/internal/daemon-client";
+import type {
+  BrowserScreencastEvent,
+  DaemonClientTrace,
+} from "@getpaseo/client/internal/daemon-client";
 import type pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -44,6 +47,9 @@ interface ConnectBrowserHostClientOptions {
 interface ConnectViewerClientOptions {
   /** An app old enough to have no `browser.tabs.changed` branch. */
   understandsBrowserMirror?: boolean;
+  /** Two app windows share one client id, so their sockets share one session. */
+  clientId?: string;
+  trace?: DaemonClientTrace;
 }
 
 interface BrowserHostClientHandle {
@@ -423,6 +429,85 @@ describe("WebSocketServer browser tools wiring", () => {
     expect(frames.map((frame) => new TextDecoder().decode(frame.data))).toEqual(["genuine"]);
   });
 
+  it("republishes the tab list when a host disconnects", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const firstHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const secondHost = await harness.connectBrowserHostClient({ clientId: "browser-host-2" });
+    const viewer = await harness.connectViewerClient();
+
+    const pushes: BrowserTabsChanged[] = [];
+    viewer.on("browser.tabs.changed", (message) => {
+      pushes.push(message);
+    });
+
+    await secondHost.disconnect();
+    await respondWithTab(firstHost, { browserId: BROWSER_ID, url: "https://one.example" });
+    await waitFor(() => pushes.length === 1);
+
+    // Without this the viewer keeps listing the departed host's tabs, and every
+    // action against them fails.
+    expect(pushes[0]).toMatchObject({
+      payload: { tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1" }] },
+    });
+
+    await firstHost.disconnect();
+    await waitFor(() => pushes.length === 2);
+
+    // No host is left to answer a fan-out, so the empty list is the daemon's to send.
+    expect(pushes[1]).toMatchObject({ payload: { tabs: [] } });
+  });
+
+  it("keeps a sibling window's frames running when one window unsubscribes", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const clientId = "app-client-1";
+    const firstWindow = await harness.connectViewerClient({ clientId });
+    const secondWindow = await harness.connectViewerClient({ clientId });
+
+    const secondWindowFrames: BrowserScreencastEvent[] = [];
+    secondWindow.onBrowserScreencastFrame((event) => {
+      secondWindowFrames.push(event);
+    });
+    await startScreencast({ viewer: firstWindow, host: browserHost, browserId: BROWSER_ID });
+    await expect(secondWindow.subscribeBrowserScreencast(BROWSER_ID)).resolves.toMatchObject({
+      browserId: BROWSER_ID,
+      slot: 0,
+    });
+
+    firstWindow.unsubscribeBrowserScreencast(BROWSER_ID);
+
+    // The second window is still watching, so the capture has to stay armed.
+    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
+      "Timed out waiting for browser automation request",
+    );
+    browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
+    await waitFor(() => secondWindowFrames.length === 1);
+
+    expect(new TextDecoder().decode(secondWindowFrames[0].data)).toBe("jpeg-bytes");
+  });
+
+  it("keeps frames off a window that never subscribed", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const clientId = "app-client-1";
+    const watching = await harness.connectViewerClient({ clientId });
+    const pushes = createScreencastPushCounter();
+    await harness.connectViewerClient({ clientId, trace: pushes.trace });
+
+    const frames: BrowserScreencastEvent[] = [];
+    watching.onBrowserScreencastFrame((event) => {
+      frames.push(event);
+    });
+    await startScreencast({ viewer: watching, host: browserHost, browserId: BROWSER_ID });
+
+    browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
+    await waitFor(() => frames.length === 1);
+    // The frame reached the subscribed window, so anything sent alongside it has landed.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(pushes.count()).toBe(0);
+  });
+
   it("refuses a screencast subscribe for a browser outside the requested workspace", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
@@ -482,6 +567,28 @@ async function respondWithNoTabs(host: BrowserHostClientHandle): Promise<void> {
     type: "browser.automation.execute.response",
     payload: { requestId: request.requestId, ok: true, result: { command: "list_tabs", tabs: [] } },
   });
+}
+
+interface ScreencastPushCounter {
+  trace: DaemonClientTrace;
+  /** Frames the daemon pushed down this socket, counted before the client routes them. */
+  count: () => number;
+}
+
+function createScreencastPushCounter(): ScreencastPushCounter {
+  let count = 0;
+  return {
+    trace: {
+      isEnabled: () => true,
+      beginSection: (name, args) => {
+        if (name === "paseo.ws.message.inbound" && args?.messageType === "browser_screencast") {
+          count += 1;
+        }
+      },
+      endSection: () => {},
+    },
+    count: () => count,
+  };
 }
 
 async function startScreencast(params: {
@@ -545,10 +652,11 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
             data: input.data,
           }),
         async disconnect() {
+          const remaining = Math.max(0, broker.getRegisteredClientCount() - 1);
           requests.close();
           clients.delete(client);
           await client.close();
-          await waitFor(() => broker.getRegisteredClientCount() === 0);
+          await waitFor(() => broker.getRegisteredClientCount() === remaining);
         },
       };
     },
@@ -559,6 +667,8 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
         clientType: "browser",
         connectTimeoutMs: 500,
         reconnect: { enabled: false },
+        ...(options.clientId ? { clientId: options.clientId } : {}),
+        ...(options.trace ? { trace: options.trace } : {}),
         ...(understandsBrowserMirror
           ? { capabilities: { [CLIENT_CAPS.browserMirror]: true } }
           : {}),
