@@ -165,6 +165,13 @@ describe("PiSubagentsBridge", () => {
         (event) => event.type === "provider_subagent" && event.event.type === "remove",
       ),
     ).toHaveLength(2);
+
+    const empty = bridge.handleExtensionUiRequest(widget(makeSnapshot({ runs: [] })));
+    expect(
+      empty.events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "remove",
+      ),
+    ).toHaveLength(1);
   });
 
   test("does not duplicate timeline rows across live and terminal inspections", () => {

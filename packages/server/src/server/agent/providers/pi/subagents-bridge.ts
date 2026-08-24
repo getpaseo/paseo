@@ -155,6 +155,7 @@ export class PiSubagentsBridge {
   private readonly targets = new Map<string, PiSubagentTarget>();
   private readonly pendingInspections = new Map<string, PendingInspection>();
   private readonly projectedDescriptorIds = new Set<string>();
+  private readonly descriptorStates = new Map<string, SnapshotNode["state"]>();
   private readonly inspectionFingerprints = new Map<string, Set<string>>();
   private lastCompatibilityError: string | null = null;
 
@@ -202,17 +203,21 @@ export class PiSubagentsBridge {
     const events = flattened.map((entry) => {
       this.targets.set(entry.descriptorId, entry.target);
       this.projectedDescriptorIds.add(entry.descriptorId);
+      this.descriptorStates.set(entry.descriptorId, entry.node.state);
       return toProviderSubagentEvent(entry, parsed.data);
     });
     if (canReconcileAbsence(parsed.data)) {
       for (const descriptorId of this.projectedDescriptorIds) {
         if (currentIds.has(descriptorId)) continue;
+        const previousState = this.descriptorStates.get(descriptorId);
+        if (previousState && isTerminal(previousState)) continue;
         events.push({
           type: "provider_subagent",
           provider: "pi",
           event: { type: "remove", id: descriptorId },
         });
         this.projectedDescriptorIds.delete(descriptorId);
+        this.descriptorStates.delete(descriptorId);
         this.targets.delete(descriptorId);
       }
     }
