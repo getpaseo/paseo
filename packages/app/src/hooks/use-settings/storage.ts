@@ -127,18 +127,13 @@ export const DEFAULT_APP_SETTINGS: Settings = {
 
 function clampedNumber(min: number, max: number) {
   return z
-    .union([z.number(), z.string().trim().min(1).transform(Number)])
-    .refine(Number.isFinite)
-    .transform((value) => Math.min(max, Math.max(min, Math.floor(value))));
+    .unknown()
+    .transform((value) => parseClampedFontSize(value, { min, max }))
+    .pipe(z.number());
 }
 
 function sanitizedFontFamily() {
-  return z
-    .string()
-    .transform((value) => value.trim())
-    .refine((value) => value.length <= MAX_FONT_FAMILY_LENGTH)
-    .refine((value) => !/[;{}<>]/.test(value))
-    .refine((value) => ![...value].some((char) => char.charCodeAt(0) <= 0x1f));
+  return z.unknown().transform(sanitizeFontFamily).pipe(z.string());
 }
 
 const SidebarRowItemsSchema = z
@@ -147,7 +142,7 @@ const SidebarRowItemsSchema = z
     project: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.project),
     host: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.host),
     changeRequest: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.changeRequest),
-    services: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.services),
+    services: z.boolean().optional().catch(undefined),
     labels: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.labels),
     // COMPAT(sidebarRowItemsChecks): migrated in v0.3.0, remove after 2027-08-05.
     checks: z.boolean().optional().catch(undefined),
@@ -155,6 +150,19 @@ const SidebarRowItemsSchema = z
     scripts: z.boolean().optional().catch(undefined),
   })
   .catch(DEFAULT_SIDEBAR_ROW_ITEMS);
+
+type StoredAppSettingsFallback = AppSettings & {
+  uiFontSize?: number;
+  compactToolCalls?: boolean;
+  manageBuiltInDaemon?: boolean;
+  releaseChannel?: ReleaseChannel;
+  needsWrite: boolean;
+};
+
+const DEFAULT_STORED_APP_SETTINGS = {
+  ...DEFAULT_CLIENT_SETTINGS,
+  needsWrite: false,
+} satisfies StoredAppSettingsFallback;
 
 const StoredAppSettingsSchema = z
   .looseObject({
@@ -187,7 +195,10 @@ const StoredAppSettingsSchema = z
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("diff"),
     sidebarRowItems: SidebarRowItemsSchema,
-    sidebarChecksDisplay: z.enum(["iconAndText", "icon", "none"]).optional().catch("iconAndText"),
+    sidebarChecksDisplay: z
+      .enum(["iconAndText", "icon", "none"])
+      .optional()
+      .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
     autoExpandReasoning: z.boolean().catch(false),
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])
@@ -227,13 +238,14 @@ const StoredAppSettingsSchema = z
       sidebarRowItems: {
         ...stored.sidebarRowItems,
         services:
-          stored.sidebarRowItems.scripts === false ? false : stored.sidebarRowItems.services,
+          stored.sidebarRowItems.services ??
+          (stored.sidebarRowItems.scripts === false ? false : DEFAULT_SIDEBAR_ROW_ITEMS.services),
       },
       toolCallDetailLevel,
       needsWrite,
     };
   })
-  .catch({ ...DEFAULT_CLIENT_SETTINGS, needsWrite: false } as never);
+  .catch(DEFAULT_STORED_APP_SETTINGS);
 
 type StoredAppSettings = z.output<typeof StoredAppSettingsSchema>;
 
@@ -282,7 +294,8 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
     if (read.needsWrite) {
       await writeAppSettings(deps.storage, read.stored, read.settings);
     }
-    return await migrateAppSettings(read.settings, deps.storage, read.stored);
+    const { needsWrite: _needsWrite, ...stored } = read.stored;
+    return await migrateAppSettings(read.settings, deps.storage, stored);
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);
     throw error;
@@ -434,10 +447,14 @@ async function loadLegacyDesktopSettingsFromStorage(storage: KeyValueStorage): P
   const result: {
     manageBuiltInDaemon?: boolean;
     releaseChannel?: ReleaseChannel;
-  } = {
-    manageBuiltInDaemon: stored.manageBuiltInDaemon,
-    releaseChannel: stored.releaseChannel,
-  };
+  } = {};
+
+  if (stored.manageBuiltInDaemon !== undefined) {
+    result.manageBuiltInDaemon = stored.manageBuiltInDaemon;
+  }
+  if (stored.releaseChannel !== undefined) {
+    result.releaseChannel = stored.releaseChannel;
+  }
 
   return Object.keys(result).length > 0 ? result : null;
 }
@@ -462,13 +479,15 @@ async function readSettingsObject(
     return null;
   }
 
+  let decoded: unknown;
   try {
-    return StoredAppSettingsSchema.parse(JSON.parse(raw));
+    decoded = JSON.parse(raw);
   } catch {
     console.warn(`[AppSettings] Removing corrupt ${key}: invalid JSON.`);
     await storage.removeItem(key);
     return null;
   }
+  return StoredAppSettingsSchema.parse(decoded);
 }
 
 async function writeAppSettings(

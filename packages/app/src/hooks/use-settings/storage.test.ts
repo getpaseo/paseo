@@ -85,6 +85,32 @@ describe("loadAppSettingsFromStorage", () => {
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "{}").sendBehavior).toBe(
       "steer",
     );
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "{}")).not.toHaveProperty(
+      "needsWrite",
+    );
+  });
+
+  it("keeps an explicit services choice over the legacy scripts fallback", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          contentFontSize: 16,
+          sidebarRowItems: { scripts: false, services: true },
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems.services).toBe(true);
+
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: {
+        sidebarRowItems: { ...DEFAULT_SIDEBAR_ROW_ITEMS, services: true },
+      },
+      deps,
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems.services).toBe(true);
   });
 
   it("keeps an interrupt the user picked after the migration ran", async () => {
