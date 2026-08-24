@@ -340,7 +340,7 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       session.steerActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
-    ).resolves.toEqual({ status: "unavailable" });
+    ).rejects.toThrow("Pi steer input is unavailable: the active turn changed");
     expect(fakeSession.steerRequests).toHaveLength(1);
   });
 
@@ -386,7 +386,29 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       session.followUpActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
-    ).resolves.toEqual({ status: "unavailable" });
+    ).rejects.toThrow("Pi follow-up input is unavailable: the active turn changed");
+  });
+
+  test("does not suppress identical ordinary input after an accepted continuation expires", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+    await session.followUpActiveTurn?.("same text", {
+      expectedTurnId: turnId,
+      clientMessageId: "follow-up-expiring",
+    });
+
+    fakeSession.finishTurn();
+    await session.startTurn("next turn");
+    fakeSession.finishSubmittedUserMessage({
+      id: "ordinary-identical-entry",
+      parentId: null,
+      text: "same text",
+    });
+
+    expect(events.timelineItems()).toContainEqual(
+      expect.objectContaining({ type: "user_message", text: "same text" }),
+    );
   });
 
   test("does not submit extension slash commands through native Pi steer", async () => {
@@ -394,10 +416,11 @@ describe("PiRpcAgentSession", () => {
     const fakeSession = pi.latestSession();
     const { turnId } = await session.startTurn("initial");
 
-    await expect(
-      session.steerActiveTurn?.("/compact", { expectedTurnId: turnId }),
-    ).resolves.toEqual({ status: "unavailable" });
+    await expect(session.steerActiveTurn?.("/compact", { expectedTurnId: turnId })).rejects.toThrow(
+      "Pi steer input is unavailable: slash commands cannot be submitted during an active turn",
+    );
     expect(fakeSession.steerRequests).toEqual([]);
+    expect(fakeSession.abortRequested).toBe(false);
   });
 
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {

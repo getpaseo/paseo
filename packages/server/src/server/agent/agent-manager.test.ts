@@ -735,6 +735,56 @@ test("unavailable steer interrupts once and starts one replacement turn", async 
   }
 });
 
+test("does not replace the active Pi turn when native steering rejects", async () => {
+  const session = new SteeringTestSession({ provider: "pi", cwd: process.cwd() });
+  session.steerResult = new Error("Pi steer input is unavailable: unsupported active input");
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pi-steer-rejected-"));
+  const manager = new AgentManager({
+    clients: {
+      pi: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })("pi"),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(
+      startAgentRun(manager, agent.id, "must-not-replace", logger, {
+        replaceRunning: true,
+        activeTurnBehavior: "steer",
+        runOptions: { clientMessageId: "rejected-steer-client" },
+      }),
+    ).rejects.toThrow("Pi steer input is unavailable: unsupported active input");
+
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeTurnId: "active-turn-1",
+    });
+    expect(manager.getTimeline(agent.id)).not.toContainEqual(
+      expect.objectContaining({ clientMessageId: "rejected-steer-client" }),
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders an accepted steer before output emitted while acknowledgement is pending", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
