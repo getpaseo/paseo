@@ -7,16 +7,14 @@ import {
   useActiveWorkspaceSelection,
   navigateToWorkspace,
 } from "@/stores/navigation-active-workspace-store";
-import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceExists } from "@/stores/session-store-hooks";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { useAgentExistsInWorkspace, useWorkspaceExists } from "@/stores/session-store-hooks";
+import { getFocusedAgentId, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { createPluginClientStateSource } from "../client-state/source";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { buildPluginCommandCenterContributions } from "./contributions";
-import { getFocusedAgentId } from "./context";
 
 export function PluginCommandCenterActions() {
   const pathname = usePathname();
@@ -24,22 +22,12 @@ export function PluginCommandCenterActions() {
   const serverId = selection?.serverId ?? hostIdFromPathname(pathname);
   const workspaceId = selection?.workspaceId ?? null;
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
-  const workspaceKey = serverId && workspaceId ? `${serverId}:${workspaceId}` : null;
-  const layout = useWorkspaceLayoutStore((state) =>
-    workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
+  const workspaceKey =
+    serverId && workspaceId ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId }) : null;
+  const focusedAgentId = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? getFocusedAgentId(state.layoutByWorkspace[workspaceKey] ?? null) : null,
   );
-  const focusedAgentId = getFocusedAgentId(layout);
-  const agentExists = useSessionStore((state) => {
-    if (!serverId || !focusedAgentId) return null;
-    const session = state.sessions[serverId];
-    const agent =
-      session?.agents.get(focusedAgentId) ?? session?.agentDetails.get(focusedAgentId) ?? null;
-    return (
-      Boolean(agent) &&
-      Boolean(workspaceId) &&
-      normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
-    );
-  });
+  const agentExists = useAgentExistsInWorkspace(serverId, workspaceId, focusedAgentId);
   const client = useHostRuntimeClient(serverId ?? "");
   const installed = useInstalledPlugins();
   const plugins = useMemo(

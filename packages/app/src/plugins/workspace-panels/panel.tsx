@@ -14,10 +14,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceExists } from "@/stores/session-store-hooks";
+import { useAgentExistsInWorkspace, useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
@@ -43,15 +41,11 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const plugin = useInstalledPlugin(serverId, target.pluginId);
   const contribution = resolvePluginWorkspacePanel(plugin, target);
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
-  const agentExists = useSessionStore((state) => {
-    if (target.context !== "agent") return null;
-    const session = state.sessions[serverId];
-    const agent = session?.agents.get(target.agentId) ?? session?.agentDetails.get(target.agentId);
-    return (
-      Boolean(agent) &&
-      normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
-    );
-  });
+  const agentExists = useAgentExistsInWorkspace(
+    serverId,
+    workspaceId,
+    target.context === "agent" ? target.agentId : null,
+  );
   const client = useHostRuntimeClient(serverId);
   const runtime = useMemo(
     () => createPluginSurfaceRuntime(client, target.pluginId),

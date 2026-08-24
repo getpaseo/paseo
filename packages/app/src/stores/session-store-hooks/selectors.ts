@@ -5,8 +5,11 @@ import {
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
-import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
+import type { Agent, ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
@@ -19,6 +22,8 @@ export interface SessionsSnapshot {
       hasWorkspaceDirectorySnapshot?: boolean;
       workspaces: Map<string, WorkspaceDescriptor>;
       projects?: Map<string, ProjectDescriptor>;
+      agents?: ReadonlyMap<string, Agent>;
+      agentDetails?: ReadonlyMap<string, Agent>;
     }
   >;
 }
@@ -123,6 +128,30 @@ export function selectWorkspaceExists(
   workspaceId: string | null,
 ): boolean {
   return selectWorkspace(state, serverId, workspaceId) !== null;
+}
+
+/**
+ * Whether an agent is open in a workspace: present in the session, not
+ * archived, and belonging to that workspace. The single membership rule for
+ * every surface that binds an agent-context plugin panel — the launcher, the
+ * Command Center, and PluginPanelBody must agree.
+ */
+export function selectAgentExistsInWorkspace(
+  state: SessionsSnapshot,
+  serverId: string | null,
+  workspaceId: string | null,
+  agentId: string | null,
+): boolean {
+  if (!serverId || !workspaceId || !agentId) {
+    return false;
+  }
+  const session = state.sessions[serverId];
+  const agent = session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null;
+  if (!agent || agent.archivedAt != null) {
+    return false;
+  }
+  const agentWorkspaceId = normalizeWorkspaceOpaqueId(agent.workspaceId);
+  return agentWorkspaceId !== null && agentWorkspaceId === normalizeWorkspaceOpaqueId(workspaceId);
 }
 
 export function selectHasHydratedWorkspaces(

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeLayout, type WorkspaceLayout } from "@/stores/workspace-layout-store";
-import { getFocusedAgentId } from "./context";
+import {
+  getFocusedAgentId,
+  normalizeLayout,
+  type WorkspaceLayout,
+} from "@/stores/workspace-layout-store";
 
 function layout(target: import("@/workspace-tabs/model").WorkspaceTabTarget): WorkspaceLayout {
   return normalizeLayout({
@@ -9,7 +12,6 @@ function layout(target: import("@/workspace-tabs/model").WorkspaceTabTarget): Wo
       kind: "pane",
       pane: {
         id: "main",
-        tabIds: ["focused"],
         focusedTabId: "focused",
         tabs: [{ tabId: "focused", target, createdAt: 1 }],
       },
@@ -17,7 +19,7 @@ function layout(target: import("@/workspace-tabs/model").WorkspaceTabTarget): Wo
   });
 }
 
-describe("plugin Command Center agent context", () => {
+describe("getFocusedAgentId", () => {
   it("uses the focused agent tab", () => {
     expect(getFocusedAgentId(layout({ kind: "agent", agentId: "agent-1" }))).toBe("agent-1");
   });
@@ -32,6 +34,14 @@ describe("plugin Command Center agent context", () => {
           context: "agent",
           agentId: "agent-1",
         }),
+      ),
+    ).toBe("agent-1");
+  });
+
+  it("resolves a focused subagent tab to its parent agent", () => {
+    expect(
+      getFocusedAgentId(
+        layout({ kind: "provider_subagent", parentAgentId: "agent-1", subagentId: "sub-1" }),
       ),
     ).toBe("agent-1");
   });

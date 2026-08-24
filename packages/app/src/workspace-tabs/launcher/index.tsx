@@ -10,15 +10,18 @@ import {
   SquareTerminal,
   type LucideIcon,
 } from "lucide-react-native";
+import equal from "fast-deep-equal";
 import invariant from "tiny-invariant";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
+import { selectAgentExistsInWorkspace, useWorkspaceExists } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
-import type { PluginWorkspaceTabTarget } from "@/workspace-tabs/model";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import type { PluginWorkspacePanelContribution } from "@getpaseo/plugin";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -26,7 +29,7 @@ import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
-import { resolveLauncherAgentId } from "./internal/agent-context";
+import { resolveLauncherAgentCandidates } from "./internal/agent-context";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
@@ -72,39 +75,51 @@ export function NewTabLauncherProvider({
   return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
 }
 
-function pluginPanelTarget(
+function pluginPanelSelection(
   pluginId: string,
   panel: PluginWorkspacePanelContribution,
   agentId: string | null,
-): PluginWorkspaceTabTarget | null {
+): NewTabSelection | null {
   if (panel.context === "workspace") {
-    return { kind: "plugin", pluginId, panelId: panel.id, context: "workspace" };
+    return {
+      kind: "target",
+      target: { kind: "plugin", pluginId, panelId: panel.id, context: "workspace" },
+    };
   }
-  if (!agentId) return null;
-  return { kind: "plugin", pluginId, panelId: panel.id, context: "agent", agentId };
+  // The agent identity is resolved again at launch time; agentId only gates
+  // visibility here.
+  return agentId ? { kind: "plugin-agent-panel", pluginId, panelId: panel.id } : null;
 }
 
+const NO_AGENT_CANDIDATES: string[] = [];
+
 /**
- * The agent an agent-context plugin panel would open against, or null when the
- * workspace has none. Mirrors the Command Center's existence check so the
- * launcher cannot offer a panel that `PluginPanelBody` would refuse to render.
+ * The agent an agent-context plugin panel would bind to right now, or null when
+ * the workspace has no open agent. Uses the shared membership rule
+ * (`selectAgentExistsInWorkspace`) so the launcher cannot offer a panel that
+ * `PluginPanelBody` would refuse to render, and applies it per candidate so one
+ * stale tab reference cannot hide panels while a live agent is open. Both
+ * selectors return primitives, so layout and session churn that leaves the
+ * answer unchanged re-renders nothing.
  */
-function useLaunchAgentId(serverId: string, workspaceId: string): string | null {
-  const workspaceKey = serverId && workspaceId ? `${serverId}:${workspaceId}` : null;
-  const layout = useWorkspaceLayoutStore((state) =>
-    workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
+function useLaunchAgentId(serverId: string, workspaceId: string, enabled: boolean): string | null {
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const candidates = useStoreWithEqualityFn(
+    useWorkspaceLayoutStore,
+    (state) =>
+      enabled && workspaceKey
+        ? resolveLauncherAgentCandidates(state.layoutByWorkspace[workspaceKey] ?? null)
+        : NO_AGENT_CANDIDATES,
+    equal,
   );
-  const agentId = resolveLauncherAgentId(layout);
-  const agentExists = useSessionStore((state) => {
-    if (!serverId || !agentId) return false;
-    const session = state.sessions[serverId];
-    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
-    return (
-      Boolean(agent) &&
-      normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
-    );
-  });
-  return agentExists ? agentId : null;
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) =>
+      candidates.find((agentId) =>
+        selectAgentExistsInWorkspace(state, serverId, workspaceId, agentId),
+      ) ?? null,
+    Object.is,
+  );
 }
 
 const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
@@ -128,7 +143,17 @@ export function useWorkspaceTabLaunchCatalog(input: {
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
-  const agentId = useLaunchAgentId(serverId, workspaceId);
+  const workspaceExists = useWorkspaceExists(serverId, workspaceId);
+  const runtimeClient = useHostRuntimeClient(serverId);
+  // Mirror PluginPanelBody's refusal conditions: it renders "unavailable" when
+  // the workspace is gone and "host is offline" without a runtime client.
+  const pluginsAvailable = workspaceExists && runtimeClient !== null;
+  const hasAgentPanels = plugins.some(
+    (plugin) =>
+      plugin.serverId === serverId &&
+      plugin.workspacePanels.some((panel) => panel.context === "agent"),
+  );
+  const agentId = useLaunchAgentId(serverId, workspaceId, hasAgentPanels);
 
   const launchSelection = useCallback(
     (selection: NewTabSelection) => (destination: WorkspaceTabLaunchDestination) => {
@@ -198,20 +223,22 @@ export function useWorkspaceTabLaunchCatalog(input: {
       return item.hidden ? [] : [item];
     });
 
-    for (const plugin of plugins) {
-      if (plugin.serverId !== serverId) continue;
-      for (const panel of plugin.workspacePanels) {
-        const target = pluginPanelTarget(plugin.id, panel, agentId);
-        // An agent panel with no agent to bind to is skipped rather than
-        // disabled: the row would open a tab that can only say "unavailable".
-        if (!target) continue;
-        tabItems.push({
-          id: `plugin:${plugin.id}:${panel.id}`,
-          label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
-          disabled: false,
-          launch: launchSelection({ kind: "target", target }),
-        });
+    if (pluginsAvailable) {
+      for (const plugin of plugins) {
+        if (plugin.serverId !== serverId) continue;
+        for (const panel of plugin.workspacePanels) {
+          const selection = pluginPanelSelection(plugin.id, panel, agentId);
+          // An agent panel with no agent to bind to is skipped rather than
+          // disabled: the row would open a tab that can only say "unavailable".
+          if (!selection) continue;
+          tabItems.push({
+            id: `plugin:${plugin.id}:${panel.id}`,
+            label: panel.title,
+            Icon: resolvePluginIcon(panel.icon),
+            disabled: false,
+            launch: launchSelection(selection),
+          });
+        }
       }
     }
 
@@ -243,6 +270,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     launchSelection,
     launcher,
     plugins,
+    pluginsAvailable,
     purpose,
     serverId,
     t,
@@ -250,3 +278,4 @@ export function useWorkspaceTabLaunchCatalog(input: {
 }
 
 export { getBuiltInLaunchOrder } from "./internal/catalog";
+export { resolveLauncherAgentId } from "./internal/agent-context";

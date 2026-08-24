@@ -7,7 +7,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
-import { buildAgentRoute } from "../support/helpers/mock-agent";
+import { openAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -23,10 +23,6 @@ import {
 const PLUGIN_ID = "workspace-panel-e2e";
 const WIDE_VIEWPORT = { width: 1280, height: 900 };
 const COMPACT_VIEWPORT = { width: 390, height: 844 };
-
-function isSettledWorkspaceUrl(url: URL): boolean {
-  return url.pathname.includes("/workspace/") && !url.searchParams.has("open");
-}
 
 function pluginSource(): string {
   return `import React, { useRef } from "react";
@@ -214,6 +210,18 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByText("Sidebar collision surface", { exact: true })).toBeVisible();
       });
 
+      const agent = await primary.client.createAgent({
+        provider: "mock",
+        cwd: primary.repoPath,
+        workspaceId: primary.workspaceId,
+        title: "Plugin panel context agent",
+        model: "ten-second-stream",
+        modeId: "load-test",
+      });
+
+      // Runs after createAgent so the assertion is discriminating: an agent now
+      // exists on this daemon, and the agentless workspace's menu must not
+      // offer a panel bound to it.
       await test.step("the launcher hides agent panels in a workspace with no agent", async () => {
         await switchWorkspaceViaSidebar({
           page,
@@ -226,28 +234,22 @@ test.describe("plugin workspace panels and Command Center", () => {
         await page.keyboard.press("Escape");
       });
 
-      const agent = await primary.client.createAgent({
-        provider: "mock",
-        cwd: primary.repoPath,
-        workspaceId: primary.workspaceId,
-        title: "Plugin panel context agent",
-        model: "ten-second-stream",
-        modeId: "load-test",
-      });
-
       await test.step("the launcher offers an agent panel bound to the open agent", async () => {
-        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
-        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await openAgentRoute(page, { workspaceId: primary.workspaceId, agentId: agent.id });
         await openNewTabMenu(page);
         await expect(launchItem(page, "workspace")).toBeVisible();
         await capture(page, testInfo, "plugin-panels-in-new-tab-menu");
         await launchItem(page, "agent").click();
         await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+        // Close the panel tab so the compact step below exercises first-open
+        // creation instead of revealing this tab.
+        await page.locator('[data-testid^="workspace-tab-plugin"]').first().hover();
+        await page.locator('[data-testid^="workspace-plugin-close-"]').first().click();
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toHaveCount(0);
       });
 
       await test.step("agent context opens the compact panel with synchronous snapshots", async () => {
-        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
-        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await openAgentRoute(page, { workspaceId: primary.workspaceId, agentId: agent.id });
         await page.setViewportSize(COMPACT_VIEWPORT);
         await openCompactSidebar(page);
         await runCommand(page, "Open plugin agent");

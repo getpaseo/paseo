@@ -6,7 +6,10 @@ export type NewTabSelection =
   | { kind: "target"; target: WorkspaceTab["target"] }
   | { kind: "agent" }
   | { kind: "terminal"; profile?: TerminalProfile }
-  | { kind: "browser" };
+  | { kind: "browser" }
+  // Agent-context plugin panels stay abstract until launch: the agent they
+  // bind to is resolved at click time, like draft/terminal/browser ids.
+  | { kind: "plugin-agent-panel"; pluginId: string; panelId: string };
 
 export function createNewWorkspaceTab(): WorkspaceTab {
   return {

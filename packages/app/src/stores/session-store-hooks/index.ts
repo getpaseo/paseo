@@ -8,6 +8,7 @@ import {
   selectHydratedWorkspaceServerIds,
   selectWorkspaceDirectoryServerIds,
   selectHasWorkspaces,
+  selectAgentExistsInWorkspace,
   selectProjectOrder,
   selectRecommendedProjectPaths,
   selectWorkspace,
@@ -32,6 +33,7 @@ export type {
   WorkspaceStructure,
   WorkspaceStructureProject,
 } from "./selectors";
+export { selectAgentExistsInWorkspace } from "./selectors";
 
 export function useWorkspace(
   serverId: string | null,
@@ -60,6 +62,18 @@ export function useWorkspaceExists(serverId: string | null, workspaceId: string 
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectWorkspaceExists(state, serverId, workspaceId),
+    workspaceEqualityFns.identity,
+  );
+}
+
+export function useAgentExistsInWorkspace(
+  serverId: string | null,
+  workspaceId: string | null,
+  agentId: string | null,
+): boolean {
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => selectAgentExistsInWorkspace(state, serverId, workspaceId, agentId),
     workspaceEqualityFns.identity,
   );
 }

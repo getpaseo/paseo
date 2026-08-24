@@ -72,6 +72,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import {
   buildWorkspaceTabPersistenceKey,
+  getWorkspaceTabAgentId,
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
@@ -98,7 +99,7 @@ import {
   shouldShowWorkspaceSetup,
   useWorkspaceSetupStore,
 } from "@/stores/workspace-setup-store";
-import { useWorkspace } from "@/stores/session-store-hooks";
+import { selectAgentExistsInWorkspace, useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -159,6 +160,7 @@ import { WorkspaceFocusProvider } from "@/workspace/focus";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import {
   NewTabLauncherProvider,
+  resolveLauncherAgentId,
   type NewTabLauncher,
   type WorkspaceTabLaunchDestination,
 } from "@/workspace-tabs/launcher";
@@ -1875,10 +1877,7 @@ function WorkspaceScreenContent({
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
-    if (target?.kind !== "agent") {
-      return null;
-    }
-    return target.agentId;
+    return target ? getWorkspaceTabAgentId(target) : null;
   }, [focusedPaneTabState.activeTab]);
   const focusedPaneTerminalId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
@@ -2341,6 +2340,35 @@ function WorkspaceScreenContent({
         });
         return;
       }
+      if (selection.kind === "plugin-agent-panel") {
+        // Resolved at click time, like the other stateful selections: fresh
+        // layout and session state, preferring the pane the launch came from.
+        const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey] ?? null;
+        const agentId = resolveLauncherAgentId(layout, {
+          origin:
+            destination.kind === "open"
+              ? { paneId: destination.paneId }
+              : { tabId: destination.tabId },
+          isEligible: (candidate) =>
+            selectAgentExistsInWorkspace(
+              useSessionStore.getState(),
+              normalizedServerId,
+              normalizedWorkspaceId,
+              candidate,
+            ),
+        });
+        if (!agentId) {
+          return;
+        }
+        openTarget({
+          kind: "plugin",
+          pluginId: selection.pluginId,
+          panelId: selection.panelId,
+          context: "agent",
+          agentId,
+        });
+        return;
+      }
       if (selection.kind === "terminal") {
         createTerminal({
           profile: selection.profile,
@@ -2351,7 +2379,14 @@ function WorkspaceScreenContent({
       const { browserId } = createWorkspaceBrowser();
       openTarget({ kind: "browser", browserId });
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(

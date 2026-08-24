@@ -1,6 +1,10 @@
 import invariant from "tiny-invariant";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import {
+  getWorkspaceTabAgentId,
+  type WorkspaceTab,
+  type WorkspaceTabTarget,
+} from "@/workspace-tabs/model";
 import { MIN_SPLIT_SIZE } from "@/stores/workspace-layout-constants";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { defaultWorkspaceLayoutIds } from "@/stores/workspace-layout-ids";
@@ -1159,6 +1163,21 @@ export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined):
     (tab) => tab.tabId === focusedPane.focusedTabId,
   );
   return focusedTab?.target.kind === "browser" ? focusedTab.target.browserId : null;
+}
+
+/** The agent of the focused pane's focused tab, if that tab is a view onto one. */
+export function getFocusedAgentId(layout: WorkspaceLayout | null | undefined): string | null {
+  if (!layout) {
+    return null;
+  }
+  const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
+  if (!focusedPane?.focusedTabId) {
+    return null;
+  }
+  const focusedTab = collectAllTabs(layout.root).find(
+    (tab) => tab.tabId === focusedPane.focusedTabId,
+  );
+  return focusedTab ? getWorkspaceTabAgentId(focusedTab.target) : null;
 }
 
 export function createDefaultLayout(): WorkspaceLayout {

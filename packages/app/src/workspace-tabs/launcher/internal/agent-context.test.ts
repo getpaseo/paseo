@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeLayout, type WorkspaceLayout } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
-import { resolveLauncherAgentId } from "./agent-context";
+import { resolveLauncherAgentCandidates, resolveLauncherAgentId } from "./agent-context";
 
 function agentTab(tabId: string, agentId: string, createdAt: number): WorkspaceTab {
   return { tabId, target: { kind: "agent", agentId }, createdAt };
@@ -11,14 +11,12 @@ function newTab(tabId: string, createdAt = 1): WorkspaceTab {
   return { tabId, target: { kind: "new_tab" }, createdAt };
 }
 
+function pane(id: string, tabs: WorkspaceTab[], focusedTabId: string | null) {
+  return { kind: "pane", pane: { id, focusedTabId, tabs } };
+}
+
 function singlePane(tabs: WorkspaceTab[], focusedTabId: string | null): WorkspaceLayout {
-  return normalizeLayout({
-    focusedPaneId: "main",
-    root: {
-      kind: "pane",
-      pane: { id: "main", tabIds: tabs.map((tab) => tab.tabId), focusedTabId, tabs },
-    },
-  });
+  return normalizeLayout({ focusedPaneId: "main", root: pane("main", tabs, focusedTabId) });
 }
 
 function twoPanes(input: {
@@ -35,24 +33,8 @@ function twoPanes(input: {
         direction: "horizontal",
         sizes: [0.5, 0.5],
         children: [
-          {
-            kind: "pane",
-            pane: {
-              id: "left",
-              tabIds: input.left.tabs.map((tab) => tab.tabId),
-              focusedTabId: input.left.focusedTabId,
-              tabs: input.left.tabs,
-            },
-          },
-          {
-            kind: "pane",
-            pane: {
-              id: "right",
-              tabIds: input.right.tabs.map((tab) => tab.tabId),
-              focusedTabId: input.right.focusedTabId,
-              tabs: input.right.tabs,
-            },
-          },
+          pane("left", input.left.tabs, input.left.focusedTabId),
+          pane("right", input.right.tabs, input.right.focusedTabId),
         ],
       },
     },
@@ -67,6 +49,40 @@ describe("resolveLauncherAgentId", () => {
       focusedPaneId: "left",
     });
     expect(resolveLauncherAgentId(layout)).toBe("agent-left");
+  });
+
+  it("prefers the launching pane's agent over the focused pane's", () => {
+    const layout = twoPanes({
+      left: { tabs: [agentTab("a", "agent-left", 1)], focusedTabId: "a" },
+      right: { tabs: [agentTab("b", "agent-right", 2)], focusedTabId: "b" },
+      focusedPaneId: "left",
+    });
+    expect(resolveLauncherAgentId(layout, { origin: { paneId: "right" } })).toBe("agent-right");
+  });
+
+  it("resolves the launching pane from the replaced tab", () => {
+    const layout = twoPanes({
+      left: { tabs: [agentTab("a", "agent-left", 1)], focusedTabId: "a" },
+      right: { tabs: [newTab("blank"), agentTab("b", "agent-right", 2)], focusedTabId: "b" },
+      focusedPaneId: "left",
+    });
+    expect(resolveLauncherAgentId(layout, { origin: { tabId: "blank" } })).toBe("agent-right");
+  });
+
+  it("skips ineligible candidates instead of returning null", () => {
+    const layout = twoPanes({
+      left: { tabs: [agentTab("stale", "agent-gone", 9)], focusedTabId: "stale" },
+      right: { tabs: [agentTab("live", "agent-live", 1)], focusedTabId: "live" },
+      focusedPaneId: "left",
+    });
+    expect(
+      resolveLauncherAgentId(layout, { isEligible: (agentId) => agentId !== "agent-gone" }),
+    ).toBe("agent-live");
+  });
+
+  it("returns null when no candidate is eligible", () => {
+    const layout = singlePane([agentTab("a", "agent-gone", 1)], "a");
+    expect(resolveLauncherAgentId(layout, { isEligible: () => false })).toBeNull();
   });
 
   it("keeps agent context while an agent-context plugin panel is focused", () => {
@@ -85,6 +101,21 @@ describe("resolveLauncherAgentId", () => {
         },
       ],
       "panel",
+    );
+    expect(resolveLauncherAgentId(layout)).toBe("agent-1");
+  });
+
+  it("resolves a focused subagent tab to its parent agent", () => {
+    const layout = singlePane(
+      [
+        {
+          tabId: "sub",
+          target: { kind: "provider_subagent", parentAgentId: "agent-1", subagentId: "sub-1" },
+          createdAt: 5,
+        },
+        agentTab("other", "agent-2", 9),
+      ],
+      "sub",
     );
     expect(resolveLauncherAgentId(layout)).toBe("agent-1");
   });
@@ -124,5 +155,23 @@ describe("resolveLauncherAgentId", () => {
 
   it("returns null without a layout", () => {
     expect(resolveLauncherAgentId(null)).toBeNull();
+  });
+});
+
+describe("resolveLauncherAgentCandidates", () => {
+  it("orders candidates launching pane first, then focused, visible, newest", () => {
+    const layout = twoPanes({
+      left: {
+        tabs: [agentTab("a", "agent-left", 1), agentTab("bg", "agent-background", 9)],
+        focusedTabId: "a",
+      },
+      right: { tabs: [agentTab("b", "agent-right", 2)], focusedTabId: "b" },
+      focusedPaneId: "left",
+    });
+    expect(resolveLauncherAgentCandidates(layout, { paneId: "right" })).toEqual([
+      "agent-right",
+      "agent-left",
+      "agent-background",
+    ]);
   });
 });

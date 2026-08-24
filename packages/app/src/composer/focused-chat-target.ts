@@ -5,6 +5,7 @@ import {
   findPaneById,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-store";
+import { getWorkspaceTabAgentId } from "@/workspace-tabs/model";
 
 export interface FocusedChatTarget {
   tabId: string;
@@ -50,12 +51,25 @@ export function resolveFocusedChatTarget(input: {
   const tabs = collectAllTabs(input.layout.root);
   const focusedTabId = findPaneById(input.layout.root, input.layout.focusedPaneId)?.focusedTabId;
   if (focusedTabId) {
-    const focusedChat = resolveChatTab(
-      input.serverId,
-      tabs.find((candidate) => candidate.tabId === focusedTabId),
-    );
+    const focusedTab = tabs.find((candidate) => candidate.tabId === focusedTabId);
+    const focusedChat = resolveChatTab(input.serverId, focusedTab);
     if (focusedChat) {
       return focusedChat;
+    }
+    // A tab that is a view onto an agent — a plugin agent panel, a subagent —
+    // attaches to that agent's open chat.
+    const focusedAgentId = focusedTab ? getWorkspaceTabAgentId(focusedTab.target) : null;
+    if (focusedAgentId) {
+      const agentChat = resolveChatTab(
+        input.serverId,
+        tabs.find(
+          (candidate) =>
+            candidate.target.kind === "agent" && candidate.target.agentId === focusedAgentId,
+        ),
+      );
+      if (agentChat) {
+        return agentChat;
+      }
     }
     const parentTabId = input.layout.parentTabIdByTabId?.[focusedTabId];
     const parentChat = resolveChatTab(
