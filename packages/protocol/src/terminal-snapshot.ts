@@ -87,6 +87,12 @@ function renderTerminalRow(row: TerminalCell[], padToCols?: number): string {
 
   for (let index = 0; index < length; index += 1) {
     const cell = row[index] ?? { char: " " };
+    // An empty char marks a wide-char continuation cell. The glyph in the
+    // previous cell already advances the cursor two columns, so emitting
+    // anything here would shift the rest of the row one column right.
+    if (cell.char === "") {
+      continue;
+    }
     const nextStyle = getTerminalStyle(cell);
     if (!terminalStylesEqual(previousStyle, nextStyle)) {
       output.push(styleToAnsi(nextStyle));
