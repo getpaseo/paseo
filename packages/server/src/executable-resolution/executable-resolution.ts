@@ -6,7 +6,7 @@ import { windowsExecutableResolution } from "./windows.js";
 
 export { quoteWindowsArgument, quoteWindowsCommand } from "../utils/windows-command.js";
 
-type Which = (command: string, options: { all: true }) => Promise<string[]>;
+type Which = (command: string, options: { all: true; path?: string }) => Promise<string[]>;
 
 const require = createRequire(import.meta.url);
 const which = require("which") as Which;
@@ -35,10 +35,10 @@ async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]
   }
 }
 
-async function enumerateCandidatesViaLibrary(name: string): Promise<string[]> {
+async function enumerateCandidatesViaLibrary(name: string, path?: string): Promise<string[]> {
   let candidates: string[];
   try {
-    candidates = await which(name, { all: true });
+    candidates = await which(name, { all: true, ...(path === undefined ? {} : { path }) });
   } catch (error) {
     // `which` throws ENOENT when the command is absent from PATH.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -106,6 +106,23 @@ export function executableExists(
     return windowsExecutableResolution.exists(executablePath, { exists });
   }
   return exists(executablePath) ? executablePath : null;
+}
+
+// PATH lookup that never runs the candidate, unlike findExecutable which probes
+// each one with `--version`. A terminal spawn path cannot afford that probe: it
+// would execute the profile command once before the terminal even opens.
+// `path` overrides the PATH to search, so a caller can resolve against the
+// environment its child process will actually get rather than the daemon's own.
+export async function findExecutableWithoutProbing(
+  name: string,
+  options: { path?: string } = {},
+): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const candidates = await enumerateCandidatesViaLibrary(trimmed, options.path);
+  return candidates[0] ?? null;
 }
 
 export async function findExecutable(
