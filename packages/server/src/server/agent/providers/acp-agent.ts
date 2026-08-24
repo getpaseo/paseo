@@ -379,6 +379,21 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+export interface ACPSessionNotificationUsageContext {
+  sessionId: string | null;
+  cwd: string;
+}
+
+/**
+ * Provider-owned extractor for usage attached to a standard `session/update`
+ * notification. Return undefined when this notification does not carry usage.
+ * Grok publishes live context-window tokens on `_meta.totalTokens` this way.
+ */
+export type ACPSessionNotificationUsage = (
+  params: SessionNotification,
+  context: ACPSessionNotificationUsageContext,
+) => AgentUsage | undefined;
+
 /**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
@@ -432,6 +447,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionNotificationUsage?: ACPSessionNotificationUsage;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -462,6 +478,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionNotificationUsage?: ACPSessionNotificationUsage;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -604,6 +621,18 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
     outputTokens: usage.outputTokens ?? undefined,
     cachedInputTokens: usage.cachedReadTokens ?? undefined,
   };
+}
+
+function sameAgentUsage(current: AgentUsage | undefined, next: AgentUsage): boolean {
+  if (!current) return false;
+  return (
+    current.inputTokens === next.inputTokens &&
+    current.outputTokens === next.outputTokens &&
+    current.cachedInputTokens === next.cachedInputTokens &&
+    current.totalCostUsd === next.totalCostUsd &&
+    current.contextWindowMaxTokens === next.contextWindowMaxTokens &&
+    current.contextWindowUsedTokens === next.contextWindowUsedTokens
+  );
 }
 
 export function resolveACPModeSelection({
@@ -822,6 +851,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionNotificationUsage?: ACPSessionNotificationUsage;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -850,6 +880,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionNotificationUsage = options.sessionNotificationUsage;
   }
 
   async createSession(
@@ -880,6 +911,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        sessionNotificationUsage: this.sessionNotificationUsage,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -931,6 +963,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      sessionNotificationUsage: this.sessionNotificationUsage,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1454,6 +1487,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionNotificationUsage?: ACPSessionNotificationUsage;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1494,6 +1528,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionNotificationUsage = options.sessionNotificationUsage;
   }
 
   get id(): string | null {
@@ -2290,6 +2325,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const events = this.translateSessionUpdate(params.update);
+    const notificationUsage = this.sessionNotificationUsage?.(params, {
+      sessionId: this.sessionId,
+      cwd: this.config.cwd,
+    });
+    if (
+      notificationUsage &&
+      !sameAgentUsage(this.currentTurnUsage, { ...this.currentTurnUsage, ...notificationUsage })
+    ) {
+      events.push(this.applyUsageUpdate(notificationUsage));
+    }
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2844,6 +2889,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handleUsageUpdate(update: UsageUpdate): void {
     void update;
+  }
+
+  private applyUsageUpdate(usage: AgentUsage, turnId?: string): AgentStreamEvent {
+    this.currentTurnUsage = { ...this.currentTurnUsage, ...usage };
+    const resolvedTurnId = turnId ?? this.activeForegroundTurnId ?? undefined;
+    if (resolvedTurnId) {
+      return {
+        type: "usage_updated",
+        provider: this.provider,
+        usage: this.currentTurnUsage,
+        turnId: resolvedTurnId,
+      };
+    }
+    return {
+      type: "usage_updated",
+      provider: this.provider,
+      usage: this.currentTurnUsage,
+    };
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
