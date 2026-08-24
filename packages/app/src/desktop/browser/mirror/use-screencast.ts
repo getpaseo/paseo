@@ -95,10 +95,12 @@ export function useBrowserScreencast(
     if (!client) {
       return;
     }
-    let wasConnected = false;
+    // The client replays the current status on subscribe. Taking that as a
+    // reconnect makes every mount subscribe twice, which re-arms the host.
+    let wasConnected: boolean | null = null;
     return client.subscribeConnectionStatus((status) => {
       const isConnected = status.status === "connected";
-      if (isConnected && !wasConnected) {
+      if (wasConnected === false && isConnected) {
         setConnectionEpoch((epoch) => epoch + 1);
       }
       wasConnected = isConnected;

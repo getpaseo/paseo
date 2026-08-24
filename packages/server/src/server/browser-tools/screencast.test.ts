@@ -70,7 +70,7 @@ function jpegFrame(slot: number, payload: string) {
 describe("BrowserScreencastRegistry", () => {
   test("starts the host once and shares one slot across viewers", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const first = createViewer();
     const second = createViewer();
 
@@ -84,7 +84,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("runs the stream at the largest size across viewers", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const phone = createViewer();
     const desktop = createViewer();
 
@@ -110,7 +110,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("keeps the stream as it is when a smaller viewer joins", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const large = createViewer();
     const small = createViewer();
 
@@ -133,7 +133,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("shrinks the stream when the largest viewer leaves", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const large = createViewer();
     const small = createViewer();
     await registry.subscribe({
@@ -159,7 +159,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("a viewer that declares no size holds the stream at the default", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const declaring = createViewer();
     const silent = createViewer();
 
@@ -178,7 +178,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("re-subscribing resizes the running stream on the same slot", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const viewer = createViewer();
     await registry.subscribe({
       viewer,
@@ -207,7 +207,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("stops the host only once the last viewer unsubscribes", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const first = createViewer();
     const second = createViewer();
     await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
@@ -225,7 +225,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("releases the slot for reuse once a stream ends", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const viewer = createViewer();
 
     const first = await registry.subscribe({ viewer, browserId: BROWSER_ID });
@@ -240,7 +240,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("fans frames out to every viewer on the slot", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const first = createViewer();
     const second = createViewer();
     await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
@@ -260,7 +260,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("dropping a viewer stops every stream it was alone on", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const leaving = createViewer();
     const staying = createViewer();
     await registry.subscribe({ viewer: leaving, browserId: BROWSER_ID });
@@ -281,7 +281,7 @@ describe("BrowserScreencastRegistry", () => {
   test("a failed host start releases the slot and reports the broker error", async () => {
     const broker = new FakeBroker();
     broker.failure = "The app hosting the tab disconnected.";
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const viewer = createViewer();
 
     const subscription = await registry.subscribe({ viewer, browserId: BROWSER_ID });
@@ -297,7 +297,7 @@ describe("BrowserScreencastRegistry", () => {
 
   test("subscribing fails cleanly when every slot is taken", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const viewer = createViewer();
     for (let index = 0; index < 256; index += 1) {
       const browserId = `${1_700_000_000_000 + index}-abcdef`;
@@ -310,29 +310,28 @@ describe("BrowserScreencastRegistry", () => {
     });
   });
 
-  test("a re-subscribe during teardown keeps its stream alive", async () => {
+  test("a viewer that returns within the grace rejoins the running capture", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
-    const leaving = createViewer();
-    const arriving = createViewer();
-    await registry.subscribe({ viewer: leaving, browserId: BROWSER_ID });
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 20 });
+    const viewer = createViewer();
+    await registry.subscribe({ viewer, browserId: BROWSER_ID });
 
-    // The pane remounts: the old subscription drops and a new one takes over
-    // before the stop, which waits on the in-flight start, can be sent.
-    const teardown = registry.unsubscribe({ viewer: leaving, browserId: BROWSER_ID });
-    const resubscribed = await registry.subscribe({ viewer: arriving, browserId: BROWSER_ID });
+    // A pane that remounts unsubscribes and subscribes again immediately.
+    const teardown = registry.unsubscribe({ viewer, browserId: BROWSER_ID });
+    const resubscribed = await registry.subscribe({ viewer, browserId: BROWSER_ID });
     await teardown;
 
-    expect(resubscribed).toMatchObject({ ok: true });
-    expect(broker.commandNames()).not.toContain("screencast_stop");
+    expect(resubscribed).toMatchObject({ ok: true, slot: 0 });
+    // Neither stopped nor re-armed: the host never noticed the remount.
+    expect(broker.commandNames()).toEqual(["screencast_start"]);
 
     registry.handleFrame(jpegFrame(0, "jpeg-bytes"));
-    expect(arriving.frames).toHaveLength(1);
+    expect(viewer.frames).toHaveLength(1);
   });
 
   test("replays the last frame to a viewer that joins an existing stream", async () => {
     const broker = new FakeBroker();
-    const registry = new BrowserScreencastRegistry(broker);
+    const registry = new BrowserScreencastRegistry(broker, { stopGraceMs: 0 });
     const first = createViewer();
     await registry.subscribe({ viewer: first, browserId: BROWSER_ID });
 

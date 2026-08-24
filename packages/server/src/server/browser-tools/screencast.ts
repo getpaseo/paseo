@@ -6,6 +6,10 @@ import type { BrowserToolsBroker } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
 
 const SCREENCAST_SLOT_COUNT = 256;
+// A pane that remounts unsubscribes before it subscribes again. Stopping in
+// between would race the new start to the host and could land after it, leaving
+// the daemon with a stream the host is no longer capturing.
+const SCREENCAST_STOP_GRACE_MS = 250;
 // One quality for every frame: a viewer that sees motion drop to a cheaper tier
 // and climb back reads as flicker, which is worse than the bandwidth it saves.
 const SCREENCAST_QUALITY = 90;
@@ -47,9 +51,14 @@ export class BrowserScreencastRegistry {
   private readonly broker: Pick<BrowserToolsBroker, "execute">;
   private readonly streams = new Map<string, BrowserScreencastStream>();
   private readonly streamsBySlot = new Map<number, BrowserScreencastStream>();
+  private readonly stopGraceMs: number;
 
-  public constructor(broker: Pick<BrowserToolsBroker, "execute">) {
+  public constructor(
+    broker: Pick<BrowserToolsBroker, "execute">,
+    options?: { stopGraceMs?: number },
+  ) {
     this.broker = broker;
+    this.stopGraceMs = options?.stopGraceMs ?? SCREENCAST_STOP_GRACE_MS;
   }
 
   public async subscribe(params: {
@@ -112,14 +121,14 @@ export class BrowserScreencastRegistry {
       this.resize(stream);
       return;
     }
-    this.release(stream);
-    await stream.started;
-    // A viewer can re-subscribe while the start we had to wait for settles, and
-    // that subscribe builds a new stream on this browser. Stopping now would
-    // kill the stream that replaced ours and leave the host silent.
-    if (this.streams.has(params.browserId)) {
+    await delay(this.stopGraceMs);
+    // The stream stays registered through the grace, so a viewer that comes back
+    // rejoins the capture already running instead of re-arming it.
+    if (stream.viewers.size > 0 || this.streams.get(params.browserId) !== stream) {
       return;
     }
+    this.release(stream);
+    await stream.started;
     await this.broker.execute({
       command: { command: "screencast_stop", args: { browserId: params.browserId } },
     });
@@ -208,4 +217,8 @@ function largestSize(
     maxHeight = Math.max(maxHeight, size.maxHeight);
   }
   return { maxWidth, maxHeight };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
