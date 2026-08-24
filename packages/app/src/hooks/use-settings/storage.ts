@@ -37,7 +37,7 @@ export type ToolCallDetailLevel = "overview" | "detailed";
 const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
   PLUGIN_THEME_PREFERENCE,
-] as ThemePreference[]);
+]);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
 export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -248,6 +248,7 @@ const StoredAppSettingsSchema = z
   .catch(DEFAULT_STORED_APP_SETTINGS);
 
 type StoredAppSettings = z.output<typeof StoredAppSettingsSchema>;
+export type PersistedAppSettings = Omit<StoredAppSettings, "needsWrite">;
 
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
@@ -370,7 +371,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     uiFontSize: _uiFontSize,
     ...settings
   } = StoredAppSettingsSchema.parse(value);
-  return settings as AppSettings;
+  return settings;
 }
 
 function pickAppSettingsFromLegacy(legacy: StoredAppSettings): AppSettings {
