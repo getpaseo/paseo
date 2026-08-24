@@ -248,6 +248,64 @@ describe("BrowserScreencastController subscriptions", () => {
   });
 });
 
+describe("BrowserScreencastController visibility", () => {
+  it("stops streaming and releases its frames when the pane leaves the screen", async () => {
+    const { client, controller, released, views } = startController();
+    controller.setPaneSize({ width: 800, height: 600 });
+    await settle();
+    client.emitFrame(frame({ data: new Uint8Array([1]) }));
+    expect(client.subscribes).toHaveLength(1);
+
+    controller.setVisible(false);
+    await settle();
+
+    // A retained pane keeps a quality-90 capture open on the host otherwise.
+    expect(client.unsubscribes).toEqual([BROWSER_ID]);
+    expect(released).toHaveLength(1);
+    expect(views.at(-1)).toEqual(EMPTY_SCREENCAST_VIEW);
+  });
+
+  it("resubscribes at the same size when the pane comes back", async () => {
+    const { client, controller } = startController();
+    controller.setPaneSize({ width: 800, height: 600 });
+    await settle();
+    const first = client.subscribes[0];
+
+    controller.setVisible(false);
+    await settle();
+    controller.setVisible(true);
+    await settle();
+
+    expect(client.subscribes).toHaveLength(2);
+    expect(client.subscribes[1]?.options).toEqual(first?.options);
+  });
+
+  it("does not subscribe while hidden, even when the pane resizes", async () => {
+    const { client, controller } = startController();
+    controller.setPaneSize({ width: 800, height: 600 });
+    await settle();
+    controller.setVisible(false);
+    await settle();
+
+    controller.setPaneSize({ width: 1600, height: 1200 });
+    await settle();
+
+    expect(client.subscribes).toHaveLength(1);
+  });
+
+  it("ignores a repeated visibility value", async () => {
+    const { client, controller } = startController();
+    controller.setPaneSize({ width: 800, height: 600 });
+    await settle();
+
+    controller.setVisible(true);
+    await settle();
+
+    expect(client.subscribes).toHaveLength(1);
+    expect(client.unsubscribes).toEqual([]);
+  });
+});
+
 describe("BrowserScreencastController frames", () => {
   it("shows the newest frame with the dimensions the host captured it at", () => {
     const { client, views } = startController();

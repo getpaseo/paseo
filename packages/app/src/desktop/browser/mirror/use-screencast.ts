@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PixelRatio } from "react-native";
 import { Buffer } from "buffer";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   BrowserScreencastController,
@@ -40,6 +41,7 @@ export function useBrowserScreencast(
   paneSize: PaneSize | null,
 ): BrowserScreencastView {
   const client = useHostRuntimeClient(serverId);
+  const isVisible = useRetainedPanelActive();
   const [view, setView] = useState<BrowserScreencastView>(EMPTY_SCREENCAST_VIEW);
   const [controller, setController] = useState<BrowserScreencastController | null>(null);
 
@@ -65,6 +67,10 @@ export function useBrowserScreencast(
   useEffect(() => {
     controller?.setPaneSize(paneSize);
   }, [controller, paneSize]);
+
+  useEffect(() => {
+    controller?.setVisible(isVisible);
+  }, [controller, isVisible]);
 
   return view;
 }

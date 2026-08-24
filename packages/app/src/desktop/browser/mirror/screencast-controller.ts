@@ -105,6 +105,7 @@ export class BrowserScreencastController {
   private frames: ScreencastFrameSource[] = [];
   private requested: ScreencastSizeRequest | null = null;
   private subscribeToken = 0;
+  private visible = true;
   private disposed = false;
 
   constructor(private readonly options: BrowserScreencastControllerOptions) {
@@ -136,9 +137,31 @@ export class BrowserScreencastController {
       return;
     }
     this.requested = next;
-    if (next) {
+    if (next && this.visible) {
       this.subscribe(next);
     }
+  }
+
+  /**
+   * A pane the deck keeps mounted but off screen would otherwise hold a capture
+   * open on the host for pixels nobody sees. Re-subscribing redraws immediately
+   * because the daemon replays the last frame.
+   */
+  setVisible(visible: boolean): void {
+    if (this.disposed || this.visible === visible) {
+      return;
+    }
+    this.visible = visible;
+    if (visible) {
+      if (this.requested) {
+        this.subscribe(this.requested);
+      }
+      return;
+    }
+    this.subscribeToken += 1;
+    this.options.client.unsubscribeBrowserScreencast(this.options.browserId);
+    this.releaseFrames();
+    this.options.onView(EMPTY_SCREENCAST_VIEW);
   }
 
   dispose(): void {
