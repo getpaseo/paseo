@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { encodeLogicalWorkspaceRefLabel } from "@getpaseo/protocol/workspace-labels";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY } from "@/stores/sidebar-view-store";
 import { filterWorkspacesByLabels } from "./sidebar-labels";
@@ -65,5 +66,23 @@ describe("sidebar label filtering", () => {
         labels: [SIDEBAR_UNLABELLED_LABEL_KEY],
       }).map((entry) => entry.workspaceId),
     ).toEqual(["blank"]);
+  });
+
+  test("treats reserved-only assignments as unlabelled and never matches them as a user filter", () => {
+    const reserved = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+    const reservedOnly = workspace("reserved", [reserved]);
+
+    expect(
+      filterWorkspacesByLabels({
+        workspaces: [reservedOnly],
+        labels: [SIDEBAR_UNLABELLED_LABEL_KEY],
+      }).map((entry) => entry.workspaceId),
+    ).toEqual(["reserved"]);
+    expect(
+      filterWorkspacesByLabels({
+        workspaces: [reservedOnly],
+        labels: [reserved],
+      }),
+    ).toEqual([]);
   });
 });

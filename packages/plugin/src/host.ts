@@ -5,6 +5,7 @@ import type {
   PluginCommandCenterItemContribution,
   PluginContext,
   PluginSidebarContribution,
+  PluginSidebarWorkspaceGroupingContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
   PluginThemeContribution,
@@ -18,6 +19,7 @@ import type { ComponentType } from "react";
 interface PluginCollector {
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
   addSidebarItem(contribution: PluginSidebarContribution): void;
+  addSidebarWorkspaceGrouping(contribution: PluginSidebarWorkspaceGroupingContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
@@ -27,6 +29,7 @@ interface PluginCollector {
 export interface PluginRegistrationCollector {
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
+  sidebarWorkspaceGroupings: PluginSidebarWorkspaceGroupingContribution[];
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
@@ -39,6 +42,7 @@ export function createPluginContext(
   PluginContext,
   | "addSurface"
   | "addSidebarItem"
+  | "addSidebarWorkspaceGrouping"
   | "addWorkspacePanel"
   | "addCommandCenterItem"
   | "addAttachmentSource"
@@ -50,6 +54,9 @@ export function createPluginContext(
     },
     addSidebarItem(contribution) {
       collector.addSidebarItem(contribution);
+    },
+    addSidebarWorkspaceGrouping(contribution) {
+      collector.addSidebarWorkspaceGrouping(contribution);
     },
     addWorkspacePanel(contribution) {
       collector.addWorkspacePanel(contribution);

@@ -99,6 +99,27 @@ function resolveNewWorkspaceTarget(
   return null;
 }
 
+export function resolveSidebarLogicalWorkspaceAddHostTarget(input: {
+  project: SidebarProjectEntry;
+  occupiedServerIds: ReadonlySet<string>;
+  allowedServerIds: ReadonlySet<string>;
+  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+}): SidebarProjectHostTarget | null {
+  for (const host of input.project.hosts) {
+    if (input.occupiedServerIds.has(host.serverId)) continue;
+    if (!input.allowedServerIds.has(host.serverId)) continue;
+    if (
+      host.worktreeSupport === "unsupported" &&
+      !input.supportsMultiplicityByServerId.get(host.serverId)
+    ) {
+      continue;
+    }
+    const target = hostTarget(host);
+    if (target) return target;
+  }
+  return null;
+}
+
 function projectTrailingAction(
   project: SidebarProjectEntry,
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,

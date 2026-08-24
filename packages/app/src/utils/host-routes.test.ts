@@ -241,6 +241,20 @@ describe("global routes", () => {
       }),
     ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&draftId=draft-1");
   });
+
+  it("buildNewWorkspaceRoute carries a logical workspace to attach", () => {
+    expect(
+      buildNewWorkspaceRoute({
+        serverId: "nuc",
+        sourceDirectory: "/repo/project",
+        displayName: "Cars",
+        projectId: "project-cars",
+        logicalWorkspaceRef: "cars-parts",
+      }),
+    ).toBe(
+      "/new?serverId=nuc&dir=%2Frepo%2Fproject&name=Cars&projectId=project-cars&logicalWorkspaceRef=cars-parts",
+    );
+  });
 });
 
 describe("host settings section slugs", () => {

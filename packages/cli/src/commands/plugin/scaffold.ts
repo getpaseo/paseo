@@ -154,6 +154,19 @@ declare module "@getpaseo/plugin" {
     surface: string;
   }
 
+  export interface PluginSidebarWorkspaceGroupingContribution {
+    id: string;
+    logicalWorkspaceRefLabelPrefix: string;
+    defaultPlacementLabel: string;
+    retainedHistoryBindings?: readonly PluginSidebarWorkspaceRetainedHistoryBinding[];
+  }
+
+  export interface PluginSidebarWorkspaceRetainedHistoryBinding {
+    workspaceId: string;
+    physicalWorkspaceRef: string;
+    logicalWorkspaceRef: string;
+  }
+
   export interface PluginThemeColors {
     background: string;
     foreground: string;
@@ -218,6 +231,7 @@ declare module "@getpaseo/plugin" {
     ): void;
     addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
     addSidebarItem(contribution: PluginSidebarContribution): void;
+    addSidebarWorkspaceGrouping(contribution: PluginSidebarWorkspaceGroupingContribution): void;
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;

@@ -9415,6 +9415,10 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   await session.handleMessage({
     type: "workspace.create.request",
     requestId: "req-explicit-project",
+    labels: [
+      "paseo:reserved:v1:logical-workspace-ref=lw-explicit",
+      "paseo:reserved:v1:placement-role=default",
+    ],
     source: { kind: "directory", path: REPO_CWD, projectId: "prj_explicit" },
   });
 
@@ -9429,6 +9433,10 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   expect(workspaces.get(workspaceId as string)).toMatchObject({
     cwd: REPO_CWD,
     projectId: "prj_explicit",
+    labels: [
+      "paseo:reserved:v1:logical-workspace-ref=lw-explicit",
+      "paseo:reserved:v1:placement-role=default",
+    ],
   });
 });
 

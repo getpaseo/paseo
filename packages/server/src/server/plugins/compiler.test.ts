@@ -108,3 +108,36 @@ export default function contribute(plugin: PluginContext) {
     },
   );
 });
+
+describe("plugin target registration stripping", () => {
+  it("keeps the native sidebar seam in the client bundle and strips it from server code", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `import type { PluginContext } from "@getpaseo/plugin";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addSidebarWorkspaceGrouping({
+    id: "logical-workspaces",
+    logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+    defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+    retainedHistoryBindings: [{
+      workspaceId: "old-workspace",
+      physicalWorkspaceRef: "project-a-catalog-host-b",
+      logicalWorkspaceRef: "project-a-catalog",
+    }],
+  });
+  return () => undefined;
+}
+`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).toContain("addSidebarWorkspaceGrouping");
+    expect(clientBundle).toContain("old-workspace");
+    expect(serverBundle).not.toContain("addSidebarWorkspaceGrouping");
+    expect(serverBundle).not.toContain("old-workspace");
+  });
+});

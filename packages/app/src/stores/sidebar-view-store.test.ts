@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StateStorage } from "zustand/middleware";
+import { encodeLogicalWorkspaceRefLabel } from "@getpaseo/protocol/workspace-labels";
 import {
   createSidebarViewStorage,
   hasActiveSidebarLabelFilter,
@@ -184,6 +185,23 @@ describe("sidebar view store", () => {
         labelFilter: { labels: [" Urgent ", "BLOCKED", "urgent"], match: "all" },
       }).labelFilter,
     ).toEqual({ labels: ["urgent", "blocked"] });
+  });
+
+  it("drops reserved keys from persisted, toggled, and reconciled user filters", () => {
+    const reserved = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+    expect(
+      migrateSidebarViewState({
+        labelFilter: { labels: [reserved, "paseo:reserved:future:unknown", "Urgent"] },
+      }).labelFilter,
+    ).toEqual({ labels: ["urgent"] });
+
+    const store = useSidebarViewStore.getState();
+    store.toggleLabelFilter(reserved);
+    expect(useSidebarViewStore.getState().labelFilter).toEqual({ labels: [] });
+
+    useSidebarViewStore.setState({ labelFilter: { labels: [reserved, "urgent"] } });
+    store.reconcileLabelFilter([reserved, "Urgent"]);
+    expect(useSidebarViewStore.getState().labelFilter).toEqual({ labels: ["urgent"] });
   });
 
   it("toggles multiple projects into and out of the filter", () => {

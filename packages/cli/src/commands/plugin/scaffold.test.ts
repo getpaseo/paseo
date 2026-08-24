@@ -118,6 +118,16 @@ import { inspect } from "./inspect.shared";
 
 export default function contribute(plugin: PluginContext) {
   plugin.handle(inspect, inspectConfig);
+  plugin.addSidebarWorkspaceGrouping({
+    id: "logical-workspaces",
+    logicalWorkspaceRefLabelPrefix: "paseo:reserved:v1:logical-workspace-ref=",
+    defaultPlacementLabel: "paseo:reserved:v1:placement-role=default",
+    retainedHistoryBindings: [{
+      workspaceId: "old-workspace",
+      physicalWorkspaceRef: "project-a-catalog-host-b",
+      logicalWorkspaceRef: "project-a-catalog",
+    }],
+  });
   plugin.addSurface("main", Surface);
   plugin.addWorkspacePanel({
     id: "review",

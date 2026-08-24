@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+  LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+  encodeLogicalWorkspaceRefLabel,
+} from "@getpaseo/protocol/workspace-labels";
 import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
@@ -172,5 +177,183 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
+  });
+
+  it("keeps managed physical pins inside one logical project row without mutating pin data", () => {
+    const input = projectionInput();
+    const refLabel = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+    const pinnedEntry = input.workspaceEntriesByKey.get("srv:pinned");
+    const unpinnedEntry = input.workspaceEntriesByKey.get("srv:unpinned");
+    if (!pinnedEntry || !unpinnedEntry) throw new Error("fixture entries missing");
+    const workspaceEntriesByKey = new Map([
+      [
+        pinnedEntry.workspaceKey,
+        { ...pinnedEntry, labels: [refLabel, DEFAULT_WORKSPACE_PLACEMENT_LABEL] },
+      ],
+      [unpinnedEntry.workspaceKey, { ...unpinnedEntry, labels: [refLabel] }],
+    ]);
+
+    const projection = buildSidebarProjection({
+      ...input,
+      workspaceEntriesByKey,
+      logicalWorkspaceGroupings: [
+        {
+          key: "paseo-layout/sidebar-workspace-grouping/logical-workspaces",
+          logicalWorkspaceRefLabelPrefix: LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+          defaultPlacementLabel: DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+        },
+      ],
+      activeWorkspaceSelection: null,
+    });
+
+    expect(projection.pinnedGroups.pinnedChats).toEqual([]);
+    expect(projection.pinnedGroups.unpinnedProjects[0]?.workspaces).toHaveLength(2);
+    expect(projection.projectWorkspaceRowsByViewKey.get("project")).toMatchObject([
+      {
+        kind: "logical",
+        logicalWorkspaceRef: "project-a-catalog",
+        placements: [
+          { workspaceKey: "srv:pinned", workspaceId: "pinned" },
+          { workspaceKey: "srv:unpinned", workspaceId: "unpinned" },
+        ],
+        targetPlacement: { workspaceKey: "srv:pinned", workspaceId: "pinned" },
+      },
+    ]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
+    ]);
+    expect(input.pinnedKeys.pinnedWorkspaceKeys).toEqual(["srv:pinned"]);
+    expect(pinnedEntry.pinnedAt).toBeUndefined();
+  });
+
+  it("hides a bound retained agent source from pinned and Status rows", () => {
+    const input = projectionInput({ groupMode: "status" });
+    const retainedEntry = input.workspaceEntriesByKey.get("srv:pinned");
+    const liveEntry = input.workspaceEntriesByKey.get("srv:unpinned");
+    if (!retainedEntry || !liveEntry) throw new Error("fixture entries missing");
+    const refLabel = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+
+    const projection = buildSidebarProjection({
+      ...input,
+      workspaceEntriesByKey: new Map([
+        [retainedEntry.workspaceKey, retainedEntry],
+        [liveEntry.workspaceKey, { ...liveEntry, labels: [refLabel] }],
+      ]),
+      logicalWorkspaceGroupings: [
+        {
+          key: "paseo-layout/sidebar-workspace-grouping/logical-workspaces",
+          logicalWorkspaceRefLabelPrefix: LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+          defaultPlacementLabel: DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+          retainedHistoryBindings: [
+            {
+              serverId: "srv",
+              workspaceId: retainedEntry.workspaceId,
+              physicalWorkspaceRef: "project-a-catalog-host-b",
+              logicalWorkspaceRef: "project-a-catalog",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(projection.pinnedGroups.pinnedChats).toEqual([]);
+    expect(
+      projection.workspaceGroups.flatMap((group) => group.rows).map((row) => row.workspaceId),
+    ).toEqual([liveEntry.workspaceId]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: liveEntry.serverId, workspaceId: liveEntry.workspaceId },
+    ]);
+  });
+
+  it("reattaches retained history after a user-label filter keeps only the live placement", () => {
+    const input = projectionInput();
+    const retainedEntry = input.workspaceEntriesByKey.get("srv:pinned");
+    const liveEntry = input.workspaceEntriesByKey.get("srv:unpinned");
+    if (!retainedEntry || !liveEntry) throw new Error("fixture entries missing");
+    const refLabel = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+    const managedLiveEntry = { ...liveEntry, labels: [refLabel] };
+    const inventoryEntries = new Map([
+      [retainedEntry.workspaceKey, retainedEntry],
+      [managedLiveEntry.workspaceKey, managedLiveEntry],
+    ]);
+    const logicalWorkspaceGroupings = [
+      {
+        key: "paseo-layout/sidebar-workspace-grouping/logical-workspaces",
+        logicalWorkspaceRefLabelPrefix: LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+        defaultPlacementLabel: DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+        retainedHistoryBindings: [
+          {
+            serverId: "srv",
+            workspaceId: retainedEntry.workspaceId,
+            physicalWorkspaceRef: "project-a-catalog-host-b",
+            logicalWorkspaceRef: "project-a-catalog",
+          },
+        ],
+      },
+    ];
+
+    const projection = buildSidebarProjection({
+      ...input,
+      projects: [makeProject([managedLiveEntry])],
+      workspaceEntriesByKey: new Map([[managedLiveEntry.workspaceKey, managedLiveEntry]]),
+      inventoryProjects: input.projects,
+      inventoryWorkspaceEntriesByKey: inventoryEntries,
+      logicalWorkspaceGroupings,
+      activeWorkspaceSelection: null,
+    });
+
+    expect(projection.projectWorkspaceRowsByViewKey.get("project")).toMatchObject([
+      {
+        kind: "logical",
+        logicalWorkspaceRef: "project-a-catalog",
+        placements: [{ workspaceId: liveEntry.workspaceId }],
+        retainedAgentSources: [{ workspaceId: retainedEntry.workspaceId }],
+      },
+    ]);
+    expect(projection.pinnedGroups.pinnedChats).toEqual([]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: liveEntry.serverId, workspaceId: liveEntry.workspaceId },
+    ]);
+  });
+
+  it("does not let a retained-only label match reappear in Pinned, Status, or shortcuts", () => {
+    const input = projectionInput({ groupMode: "status" });
+    const retainedEntry = input.workspaceEntriesByKey.get("srv:pinned");
+    const liveEntry = input.workspaceEntriesByKey.get("srv:unpinned");
+    if (!retainedEntry || !liveEntry) throw new Error("fixture entries missing");
+    const refLabel = encodeLogicalWorkspaceRefLabel("project-a-catalog");
+    const managedLiveEntry = { ...liveEntry, labels: [refLabel] };
+    const inventoryEntries = new Map([
+      [retainedEntry.workspaceKey, retainedEntry],
+      [managedLiveEntry.workspaceKey, managedLiveEntry],
+    ]);
+
+    const projection = buildSidebarProjection({
+      ...input,
+      projects: [makeProject([retainedEntry])],
+      workspaceEntriesByKey: new Map([[retainedEntry.workspaceKey, retainedEntry]]),
+      inventoryProjects: input.projects,
+      inventoryWorkspaceEntriesByKey: inventoryEntries,
+      logicalWorkspaceGroupings: [
+        {
+          key: "paseo-layout/sidebar-workspace-grouping/logical-workspaces",
+          logicalWorkspaceRefLabelPrefix: LOGICAL_WORKSPACE_REF_LABEL_PREFIX,
+          defaultPlacementLabel: DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+          retainedHistoryBindings: [
+            {
+              serverId: "srv",
+              workspaceId: retainedEntry.workspaceId,
+              physicalWorkspaceRef: "project-a-catalog-host-b",
+              logicalWorkspaceRef: "project-a-catalog",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(projection.visibleProjects).toEqual([]);
+    expect(projection.pinnedGroups.pinnedChats).toEqual([]);
+    expect(projection.workspaceGroups).toEqual([]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([]);
   });
 });

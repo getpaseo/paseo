@@ -5,6 +5,7 @@ import type {
 } from "@/hooks/use-sidebar-workspaces-list";
 import {
   buildSidebarProjectRowModel,
+  resolveSidebarLogicalWorkspaceAddHostTarget,
   resolveSidebarProjectIconTarget,
   resolveSidebarProjectIconTargets,
   resolveSidebarProjectLocalPath,
@@ -65,6 +66,64 @@ function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
 }
 
 describe("buildSidebarProjectRowModel", () => {
+  it("targets only a missing host that can create a logical workspace placement", () => {
+    const groupedProject = project({
+      projectKind: "directory",
+      hosts: [
+        {
+          serverId: "host-a",
+          iconWorkingDir: "/repo/a",
+          worktreeSupport: "unsupported" as const,
+        },
+        {
+          serverId: "host-b",
+          iconWorkingDir: "/repo/b",
+          worktreeSupport: "unsupported" as const,
+        },
+        {
+          serverId: "host-c",
+          iconWorkingDir: "/repo/c",
+          worktreeSupport: "supported" as const,
+        },
+      ],
+    });
+
+    expect(
+      resolveSidebarLogicalWorkspaceAddHostTarget({
+        project: groupedProject,
+        occupiedServerIds: new Set(["host-a"]),
+        allowedServerIds: new Set(["host-a", "host-b", "host-c"]),
+        supportsMultiplicityByServerId: new Map([["host-b", false]]),
+      }),
+    ).toMatchObject({ serverId: "host-c", iconWorkingDir: "/repo/c" });
+  });
+
+  it("does not target a host outside the logical grouping namespace", () => {
+    const groupedProject = project({
+      hosts: [
+        {
+          serverId: "host-a",
+          iconWorkingDir: "/repo/a",
+          worktreeSupport: "supported" as const,
+        },
+        {
+          serverId: "host-b",
+          iconWorkingDir: "/repo/b",
+          worktreeSupport: "supported" as const,
+        },
+      ],
+    });
+
+    expect(
+      resolveSidebarLogicalWorkspaceAddHostTarget({
+        project: groupedProject,
+        occupiedServerIds: new Set(["host-a"]),
+        allowedServerIds: new Set(["host-a"]),
+        supportsMultiplicityByServerId: new Map(),
+      }),
+    ).toBeNull();
+  });
+
   it("renders a non-git single-workspace project as an expandable section", () => {
     const result = buildSidebarProjectRowModel({
       project: project({

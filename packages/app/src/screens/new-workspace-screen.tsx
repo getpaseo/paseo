@@ -118,6 +118,18 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { useInstalledPlugins } from "@/plugins/registry";
+import { resolvePluginSidebarWorkspaceGroupings } from "@/plugins/sidebar-workspace-groupings";
+import {
+  NEW_LOGICAL_WORKSPACE_OPTION_ID,
+  buildInitialLogicalWorkspaceLabels,
+  buildLogicalWorkspaceOptions,
+  buildLogicalWorkspaceSelectionScopeKey,
+  resolveLogicalWorkspaceCreationGrouping,
+  resolveLogicalWorkspaceRefOption,
+} from "./new-workspace/logical-workspace-selection";
+import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
+import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -177,6 +189,7 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  logicalWorkspaceRef?: string;
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -809,6 +822,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
+  labels?: string[];
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
@@ -832,6 +846,7 @@ async function createMultiplicityWorkspace(input: {
           projectId,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
+    ...(input.labels ? { labels: input.labels } : {}),
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -1311,6 +1326,13 @@ interface NewWorkspaceFormStackInput {
     selectedServerId: string;
     onSelect: (id: string) => void;
   };
+  logicalWorkspace: FormPickerControl & {
+    visible: boolean;
+    options: ComboboxOptionType[];
+    value: string;
+    triggerLabel: string;
+    onSelect: (id: string) => void;
+  };
   isolation: FormPickerControl & {
     effectiveIsolation: "local" | "worktree";
     options: ComboboxOptionType[];
@@ -1342,7 +1364,7 @@ interface NewWorkspaceFormStackInput {
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = input;
+  const { isCompact, isPending, project, host, logicalWorkspace, isolation, base, launch } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
@@ -1445,6 +1467,48 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
+  const logicalWorkspaceControl = logicalWorkspace.visible ? (
+    <View style={desktopControlStyle}>
+      <Tooltip>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <ComboboxTrigger
+            chevron={metaChevron}
+            ref={logicalWorkspace.anchorRef}
+            testID="new-workspace-logical-workspace-picker-trigger"
+            onPress={logicalWorkspace.open}
+            disabled={isPending}
+            style={badgePressableStyle}
+            accessibilityRole="button"
+            accessibilityLabel={t("newWorkspace.logicalWorkspace.label")}
+          >
+            <View style={styles.badgeIconBox}>
+              <Folder size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            </View>
+            <Text style={styles.badgeText} numberOfLines={1}>
+              {logicalWorkspace.triggerLabel}
+            </Text>
+          </ComboboxTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" offset={8}>
+          <Text style={styles.tooltipText}>{t("newWorkspace.logicalWorkspace.tooltip")}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <Combobox
+        options={logicalWorkspace.options}
+        value={logicalWorkspace.value}
+        onSelect={logicalWorkspace.onSelect}
+        searchable={logicalWorkspace.options.length > 6}
+        searchPlaceholder={t("newWorkspace.logicalWorkspace.search")}
+        title={t("newWorkspace.logicalWorkspace.label")}
+        open={logicalWorkspace.openState}
+        onOpenChange={logicalWorkspace.onOpenChange}
+        desktopPlacement="bottom-start"
+        desktopMinWidth={260}
+        anchorRef={logicalWorkspace.anchorRef}
+      />
+    </View>
+  ) : null;
+
   const isolationControl = isolation.canCreateWorktree ? (
     <View style={desktopControlStyle}>
       <IsolationPickerTrigger
@@ -1518,6 +1582,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   return isCompact ? (
     <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
       <FormRow>{projectControl}</FormRow>
+      {logicalWorkspaceControl ? <FormRow>{logicalWorkspaceControl}</FormRow> : null}
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
@@ -1529,6 +1594,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   ) : (
     <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
       {projectControl}
+      {logicalWorkspaceControl}
       {hostControl}
       {isolationControl}
       {baseControl}
@@ -1544,6 +1610,7 @@ export function NewWorkspaceScreen({
   projectId,
   displayName: displayNameProp,
   draftId,
+  logicalWorkspaceRef: logicalWorkspaceRefProp,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
@@ -1579,12 +1646,14 @@ export function NewWorkspaceScreen({
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [logicalWorkspacePickerOpen, setLogicalWorkspacePickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
+  const logicalWorkspacePickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
@@ -1646,6 +1715,100 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  const installedPlugins = useInstalledPlugins();
+  const logicalWorkspaceGroupings = useMemo(
+    () => resolvePluginSidebarWorkspaceGroupings(installedPlugins),
+    [installedPlugins],
+  );
+  const logicalWorkspaceGrouping = useMemo(
+    () => resolveLogicalWorkspaceCreationGrouping(logicalWorkspaceGroupings, selectedServerId),
+    [logicalWorkspaceGroupings, selectedServerId],
+  );
+  const logicalWorkspaceInventory = useSidebarWorkspacesList({
+    hostFilters: [],
+    enabled: logicalWorkspaceGrouping !== null,
+  });
+  const logicalWorkspaceEntries = useSidebarWorkspaceEntries(
+    logicalWorkspaceInventory.workspacePlacements,
+    logicalWorkspaceGrouping !== null,
+  );
+  const logicalWorkspaceOptions = useMemo(
+    () =>
+      logicalWorkspaceGrouping && selectedProject
+        ? buildLogicalWorkspaceOptions({
+            grouping: logicalWorkspaceGrouping,
+            workspaces: selectedProject.workspaceKeys.flatMap((workspaceKey) => {
+              const entry = logicalWorkspaceEntries.get(workspaceKey);
+              return entry
+                ? [
+                    {
+                      workspaceKey,
+                      serverId: entry.serverId,
+                      name: entry.name,
+                      title: entry.title,
+                      labels: entry.labels,
+                    },
+                  ]
+                : [];
+            }),
+          })
+        : [],
+    [logicalWorkspaceEntries, logicalWorkspaceGrouping, selectedProject],
+  );
+  const newLogicalWorkspaceRef = useRef(`lw-${generateMessageId().slice(4)}`);
+  const initialLogicalWorkspaceRef = logicalWorkspaceRefProp?.trim() || null;
+  const [selectedLogicalWorkspaceRef, setSelectedLogicalWorkspaceRef] = useState<string | null>(
+    initialLogicalWorkspaceRef,
+  );
+  const logicalWorkspaceSelectionScope = buildLogicalWorkspaceSelectionScopeKey(
+    selectedProject?.viewKey ?? null,
+    logicalWorkspaceGrouping,
+  );
+  const logicalWorkspaceSelectionScopeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      logicalWorkspaceSelectionScopeRef.current !== null &&
+      logicalWorkspaceSelectionScopeRef.current !== logicalWorkspaceSelectionScope
+    ) {
+      setSelectedLogicalWorkspaceRef(null);
+    }
+    logicalWorkspaceSelectionScopeRef.current = logicalWorkspaceSelectionScope;
+  }, [logicalWorkspaceSelectionScope]);
+  const logicalWorkspacePickerOptions = useMemo<ComboboxOptionType[]>(
+    () => [
+      { id: NEW_LOGICAL_WORKSPACE_OPTION_ID, label: t("newWorkspace.logicalWorkspace.new") },
+      ...logicalWorkspaceOptions.map((option) => ({
+        id: option.logicalWorkspaceRef,
+        label: option.title,
+      })),
+    ],
+    [logicalWorkspaceOptions, t],
+  );
+  const logicalWorkspaceTriggerLabel =
+    logicalWorkspaceOptions.find(
+      (option) => option.logicalWorkspaceRef === selectedLogicalWorkspaceRef,
+    )?.title ??
+    (selectedLogicalWorkspaceRef
+      ? selectedLogicalWorkspaceRef
+      : t("newWorkspace.logicalWorkspace.new"));
+  const initialWorkspaceLabels = useMemo(
+    () =>
+      logicalWorkspaceGrouping
+        ? buildInitialLogicalWorkspaceLabels({
+            grouping: logicalWorkspaceGrouping,
+            selection: selectedLogicalWorkspaceRef
+              ? {
+                  kind: "existing",
+                  logicalWorkspaceRef: selectedLogicalWorkspaceRef,
+                }
+              : {
+                  kind: "new",
+                  logicalWorkspaceRef: newLogicalWorkspaceRef.current,
+                },
+          })
+        : undefined,
+    [logicalWorkspaceGrouping, selectedLogicalWorkspaceRef],
+  );
   const projectIconTargets = useMemo(
     () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
     [projects, selectedServerId],
@@ -1928,6 +2091,15 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
+  const handleLogicalWorkspacePickerOpenChange = useCallback((nextOpen: boolean) => {
+    setLogicalWorkspacePickerOpen(nextOpen);
+  }, []);
+
+  const handleSelectLogicalWorkspace = useCallback((id: string) => {
+    setSelectedLogicalWorkspaceRef(resolveLogicalWorkspaceRefOption(id));
+    setLogicalWorkspacePickerOpen(false);
+  }, []);
+
   const buildCreateWorktreeInput = useCallback(
     (input: {
       cwd: string;
@@ -1950,12 +2122,13 @@ export function NewWorkspaceScreen({
       return {
         cwd: selectedSourceDirectory,
         projectId: hostProjectId,
+        ...(initialWorkspaceLabels ? { labels: initialWorkspaceLabels } : {}),
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
         ...input.checkoutRequest,
       };
     },
-    [selectedProject, selectedServerId, selectedSourceDirectory],
+    [initialWorkspaceLabels, selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(
@@ -2002,6 +2175,7 @@ export function NewWorkspaceScreen({
             mergeWorkspaces,
             serverId: selectedServerId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+            labels: initialWorkspaceLabels,
           })
         : await createAndMergeWorkspace({
             client: connectedClient,
@@ -2017,6 +2191,7 @@ export function NewWorkspaceScreen({
       buildCreateWorktreeInput,
       createdWorkspace,
       effectiveIsolation,
+      initialWorkspaceLabels,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -2224,6 +2399,17 @@ export function NewWorkspaceScreen({
       onOpenChange: handleHostPickerOpenChange,
       anchorRef: hostPickerAnchorRef,
       open: openHostPicker,
+    },
+    logicalWorkspace: {
+      visible: logicalWorkspaceGrouping !== null,
+      anchorRef: logicalWorkspacePickerAnchorRef,
+      open: () => setLogicalWorkspacePickerOpen(true),
+      openState: logicalWorkspacePickerOpen,
+      onOpenChange: handleLogicalWorkspacePickerOpenChange,
+      options: logicalWorkspacePickerOptions,
+      value: selectedLogicalWorkspaceRef ?? NEW_LOGICAL_WORKSPACE_OPTION_ID,
+      triggerLabel: logicalWorkspaceTriggerLabel,
+      onSelect: handleSelectLogicalWorkspace,
     },
     isolation: {
       anchorRef: isolationPickerAnchorRef,

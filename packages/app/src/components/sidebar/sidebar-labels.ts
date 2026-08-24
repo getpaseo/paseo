@@ -1,4 +1,4 @@
-import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+import { isReservedWorkspaceLabel, workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
 import type { StatusBucket, StatusGroup } from "@/hooks/sidebar-status-view-model";
@@ -31,12 +31,19 @@ export function filterWorkspacesByLabels(
 ): SidebarWorkspaceEntry[] {
   const { workspaces, labels } = input;
   if (labels.length === 0) return [...workspaces];
+  const userFilterLabels = labels.filter((label) => !isReservedWorkspaceLabel(label));
+  if (userFilterLabels.length === 0) return [];
   return workspaces.filter((workspace) => {
     // Whitespace-only names normalize away, so `size === 0` is exactly "carries no real label"
     // and the empty key can only ever mean Unlabelled.
-    const keys = new Set((workspace.labels ?? []).map(workspaceLabelKey).filter(Boolean));
+    const keys = new Set(
+      (workspace.labels ?? [])
+        .filter((label) => !isReservedWorkspaceLabel(label))
+        .map(workspaceLabelKey)
+        .filter(Boolean),
+    );
     const matches = (key: string) =>
       key === SIDEBAR_UNLABELLED_LABEL_KEY ? keys.size === 0 : keys.has(key);
-    return labels.some(matches);
+    return userFilterLabels.some(matches);
   });
 }

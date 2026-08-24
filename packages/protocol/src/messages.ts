@@ -2358,6 +2358,9 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   type: z.literal("create_paseo_worktree_request"),
   cwd: z.string(),
   projectId: z.string().optional(),
+  // Initial assignments are persisted with the workspace so plugin metadata is
+  // visible on the first emitted descriptor, never as a second-step mutation.
+  labels: z.array(z.string()).optional(),
   worktreeSlug: z.string().optional(),
   nameContext: z.string().optional(),
   attachments: AgentAttachmentsSchema.optional(),
@@ -2456,6 +2459,8 @@ export const WorkspaceCreateRequestSchema = z.object({
   requestId: z.string(),
   // Optional user-set title applied to the created workspace.
   title: z.string().optional(),
+  // Optional initial label assignments, committed atomically with the record.
+  labels: z.array(z.string()).optional(),
   // Optional prompt context for workspace-level name/branch generation.
   firstAgentContext: FirstAgentContextSchema.optional(),
   source: z.discriminatedUnion("kind", [

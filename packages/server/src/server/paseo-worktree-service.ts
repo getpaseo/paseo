@@ -33,6 +33,7 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
   title?: string;
+  labels?: string[];
 }
 
 export interface CreatePaseoWorktreeResult {
@@ -99,6 +100,7 @@ async function createPaseoWorktreeWithPriority(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      labels: input.labels,
       expectsInitialAgent: Boolean(input.firstAgentContext),
     });
 

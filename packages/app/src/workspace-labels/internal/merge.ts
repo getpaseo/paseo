@@ -1,5 +1,5 @@
 import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
-import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+import { isReservedWorkspaceLabel, workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 
 export interface HostLabelCatalog {
   serverId: string;
@@ -18,6 +18,7 @@ export function mergeWorkspaceLabelCatalogs(input: {
   const merged = new Map<string, WorkspaceLabelDefinition>();
   for (const catalog of ordered) {
     for (const label of catalog.labels) {
+      if (isReservedWorkspaceLabel(label.name)) continue;
       const key = workspaceLabelKey(label.name);
       if (!merged.has(key)) merged.set(key, label);
     }

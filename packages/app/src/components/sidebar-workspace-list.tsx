@@ -24,6 +24,7 @@ import {
   type ComponentProps,
   type PropsWithChildren,
 } from "react";
+import { useShallow } from "zustand/shallow";
 import { useTranslation } from "react-i18next";
 import { router, usePathname, type Href } from "expo-router";
 import {
@@ -100,6 +101,12 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import {
+  sidebarStatusPlacementsFromRows,
+  type SidebarProjectLogicalWorkspaceRow,
+  type SidebarProjectWorkspaceRow,
+  type SidebarRetainedAgentSource,
+} from "@/components/sidebar/sidebar-logical-workspaces";
+import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
 } from "@/components/sidebar/sidebar-workspace-menu";
@@ -136,6 +143,7 @@ import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attentio
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
+  resolveSidebarLogicalWorkspaceAddHostTarget,
   resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
   type SidebarProjectIconTarget,
@@ -159,12 +167,18 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
+import { useSessionStore, type Agent } from "@/stores/session-store";
+import { selectRetainedHistoryRootAgents } from "@/components/sidebar/sidebar-retained-history-agents";
+import { getProviderIcon } from "@/components/provider-icons";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { AgentStatusDot } from "@/components/agent-status-dot";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
 const projectViewKeyExtractor = (project: SidebarProjectEntry) => project.viewKey;
 
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
+const RETAINED_HISTORY_AGENT_ICON_SIZE = 14;
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -244,6 +258,7 @@ interface SidebarWorkspaceListProps {
   /** What `useProjectIcons` is asked for, straight from the projection. See `SidebarProjection`. */
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectWorkspaceRowsByViewKey: ReadonlyMap<string, SidebarProjectWorkspaceRow[]>;
   projects: SidebarProjectEntry[];
   hasProjectsBeforeFilter: boolean;
   /** Whether a project filter is actually being applied — the resolved list, not the stored one. */
@@ -1530,6 +1545,163 @@ function areWorkspaceRowItemPropsEqual(
 
 const MemoWorkspaceRowItem = memo(WorkspaceRowItem, areWorkspaceRowItemPropsEqual);
 
+function RetainedHistoryAgentRow({
+  agent,
+  serverId,
+  workspaceId,
+  onWorkspacePress,
+}: {
+  agent: Agent;
+  serverId: string;
+  workspaceId: string;
+  onWorkspacePress?: () => void;
+}) {
+  const { t } = useTranslation();
+  const ProviderIcon = getProviderIcon(agent.provider);
+  const handlePress = useCallback(() => {
+    onWorkspacePress?.();
+    navigateToAgent({ serverId, workspaceId, agentId: agent.id, pin: true });
+  }, [agent.id, onWorkspacePress, serverId, workspaceId]);
+  const rowStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.retainedHistoryAgentRow,
+      hovered && styles.retainedHistoryAgentRowHovered,
+      pressed && styles.workspaceRowPressed,
+    ],
+    [],
+  );
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={rowStyle}
+      testID={`sidebar-retained-history-agent-${serverId}-${agent.id}`}
+    >
+      <View style={styles.retainedHistoryAgentStatus}>
+        <AgentStatusDot
+          status={agent.status}
+          requiresAttention={agent.requiresAttention}
+          attentionReason={agent.attentionReason}
+          pendingPermissionCount={agent.pendingPermissions.length}
+          showInactive
+        />
+      </View>
+      <ProviderIcon
+        size={RETAINED_HISTORY_AGENT_ICON_SIZE}
+        color={styles.retainedHistoryAgentProviderIcon.color}
+      />
+      <Text style={styles.retainedHistoryAgentTitle} numberOfLines={1}>
+        {agent.title || t("agentList.fallbackTitle")}
+      </Text>
+    </Pressable>
+  );
+}
+
+function RetainedHistoryAgentLinks({
+  source,
+  onWorkspacePress,
+}: {
+  source: SidebarRetainedAgentSource;
+  onWorkspacePress?: () => void;
+}) {
+  const agents = useSessionStore(
+    useShallow((state) => {
+      const sessionAgents = state.sessions[source.serverId]?.agents;
+      return sessionAgents
+        ? selectRetainedHistoryRootAgents(sessionAgents, source.workspaceId)
+        : [];
+    }),
+  );
+  if (agents.length === 0) return null;
+
+  return (
+    <View
+      style={styles.retainedHistoryAgentList}
+      testID={`sidebar-retained-history-agents-${source.serverId}-${source.workspaceId}`}
+    >
+      {agents.map((agent) => (
+        <RetainedHistoryAgentRow
+          key={agent.id}
+          agent={agent}
+          serverId={source.serverId}
+          workspaceId={source.workspaceId}
+          onWorkspacePress={onWorkspacePress}
+        />
+      ))}
+    </View>
+  );
+}
+
+function LogicalWorkspaceExpansionToggle({
+  expanded,
+  logicalWorkspaceKey,
+  logicalWorkspaceRef,
+  onToggle,
+}: {
+  expanded: boolean;
+  logicalWorkspaceKey: string;
+  logicalWorkspaceRef: string;
+  onToggle: (logicalWorkspaceKey: string) => void;
+}) {
+  const handlePress = useCallback(
+    () => onToggle(logicalWorkspaceKey),
+    [logicalWorkspaceKey, onToggle],
+  );
+
+  return (
+    <SidebarGroupToggleRow
+      expanded={expanded}
+      onPress={handlePress}
+      testID={`sidebar-logical-workspace-toggle-${logicalWorkspaceRef}`}
+    />
+  );
+}
+
+function LogicalWorkspaceAddHostRow({
+  logicalWorkspaceRef,
+  projectName,
+  target,
+  onWorkspacePress,
+}: {
+  logicalWorkspaceRef: string;
+  projectName: string;
+  target: SidebarProjectHostTarget;
+  onWorkspacePress?: () => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => {
+    onWorkspacePress?.();
+    router.navigate(
+      buildNewWorkspaceRoute({
+        serverId: target.serverId,
+        sourceDirectory: target.iconWorkingDir,
+        displayName: projectName,
+        projectId: target.projectId,
+        logicalWorkspaceRef,
+      }) as Href,
+    );
+  }, [logicalWorkspaceRef, onWorkspacePress, projectName, target]);
+
+  return (
+    <Pressable
+      accessibilityRole={platformIsWeb ? undefined : "button"}
+      accessibilityLabel={t("sidebar.workspace.actions.addHost")}
+      onPress={handlePress}
+      style={({ hovered = false, pressed }) => [
+        styles.logicalWorkspaceAddHostRow,
+        hovered && !pressed && styles.logicalWorkspaceAddHostRowHovered,
+        pressed && styles.logicalWorkspaceAddHostRowPressed,
+      ]}
+      testID={`sidebar-logical-workspace-add-host-${logicalWorkspaceRef}`}
+    >
+      <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
+      <Text style={styles.logicalWorkspaceAddHostText}>
+        {t("sidebar.workspace.actions.addHost")}
+      </Text>
+    </Pressable>
+  );
+}
+
 function WorkspaceRow({
   workspaceEntry,
   hostBadge,
@@ -1593,6 +1765,7 @@ function WorkspaceRow({
 
 function ProjectBlock({
   project,
+  workspaceRows,
   workspaceEntriesByKey,
   collapsed,
   displayName,
@@ -1618,6 +1791,7 @@ function ProjectBlock({
   onToggleWorkspacePin,
 }: {
   project: SidebarProjectEntry;
+  workspaceRows: readonly SidebarProjectWorkspaceRow[];
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsed: boolean;
   displayName: string;
@@ -1643,11 +1817,19 @@ function ProjectBlock({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const {
-    visibleItems: visibleWorkspaces,
+    visibleItems: visibleWorkspaceRows,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces);
+  } = useLimitedSidebarGroup(workspaceRows);
+  const [expandedLogicalWorkspaceKeys, setExpandedLogicalWorkspaceKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const hasLogicalWorkspaceRows = workspaceRows.some((row) => row.kind === "logical");
+  const visiblePhysicalWorkspaces = useMemo(
+    () => visibleWorkspaceRows.flatMap((row) => (row.kind === "physical" ? [row.placement] : [])),
+    [visibleWorkspaceRows],
+  );
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1657,11 +1839,15 @@ function ProjectBlock({
       }),
     [collapsed, project, supportsMultiplicityByServerId],
   );
+  const statusPlacements = useMemo(
+    () => sidebarStatusPlacementsFromRows(workspaceRows),
+    [workspaceRows],
+  );
 
   // Collapsed rows hide their workspace rows, so the project row carries the most urgent
   // status among them; expanded rows leave the signal to the child rows themselves.
   const aggregateStatusBucket = useSidebarProjectStatusBucket({
-    workspaces: project.workspaces,
+    workspaces: statusPlacements,
     enabled: collapsed,
   });
 
@@ -1678,17 +1864,23 @@ function ProjectBlock({
         drag?: () => void;
         isDragging?: boolean;
         dragHandleProps?: DraggableListDragHandleProps;
+        workspaceEntry?: SidebarWorkspaceEntry | null;
+        canPin?: boolean;
+        leadingProjectName?: string | null;
       },
     ) => {
       return (
         <MemoWorkspaceRowItem
           workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
+          workspaceEntry={
+            input?.workspaceEntry ?? workspaceEntriesByKey.get(item.workspaceKey) ?? null
+          }
           hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
+          leadingProjectName={input?.leadingProjectName}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
+          canPin={input?.canPin ?? supportsPinningByServerId.get(item.serverId) === true}
           onToggleWorkspacePin={onToggleWorkspacePin}
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
           selectionEnabled={selectionEnabled}
@@ -1729,6 +1921,101 @@ function ProjectBlock({
       });
     },
     [renderWorkspaceRow],
+  );
+
+  const toggleLogicalWorkspaceExpanded = useCallback((logicalWorkspaceKey: string) => {
+    setExpandedLogicalWorkspaceKeys((current) => {
+      const next = new Set(current);
+      if (next.has(logicalWorkspaceKey)) next.delete(logicalWorkspaceKey);
+      else next.add(logicalWorkspaceKey);
+      return next;
+    });
+  }, []);
+
+  const placementSublabel = useCallback(
+    (placement: SidebarWorkspacePlacement) => {
+      const host = hostBadgeByServerId.get(placement.serverId)?.label ?? placement.serverId;
+      return `${host} · ${placement.workspaceId}`;
+    },
+    [hostBadgeByServerId],
+  );
+
+  const renderLogicalWorkspaceRow = useCallback(
+    (row: SidebarProjectLogicalWorkspaceRow) => {
+      const expanded = expandedLogicalWorkspaceKeys.has(row.key);
+      const placementServerIds = new Set(row.placements.map((placement) => placement.serverId));
+      const addHostTarget = resolveSidebarLogicalWorkspaceAddHostTarget({
+        project,
+        occupiedServerIds: placementServerIds,
+        allowedServerIds: new Set(row.creationServerIds),
+        supportsMultiplicityByServerId,
+      });
+      return (
+        <View key={row.key} testID={`sidebar-logical-workspace-${row.logicalWorkspaceRef}`}>
+          {renderWorkspaceRow(row.targetPlacement, {
+            workspaceEntry: row.displayEntry,
+            canPin: false,
+          })}
+          {row.placements.length > 1 ? (
+            <LogicalWorkspaceExpansionToggle
+              expanded={expanded}
+              logicalWorkspaceKey={row.key}
+              logicalWorkspaceRef={row.logicalWorkspaceRef}
+              onToggle={toggleLogicalWorkspaceExpanded}
+            />
+          ) : null}
+          {addHostTarget ? (
+            <LogicalWorkspaceAddHostRow
+              logicalWorkspaceRef={row.logicalWorkspaceRef}
+              projectName={project.projectName}
+              target={addHostTarget}
+              onWorkspacePress={onWorkspacePress}
+            />
+          ) : null}
+          {expanded ? (
+            <View
+              testID={`sidebar-logical-workspace-placements-${row.logicalWorkspaceRef}`}
+              style={styles.logicalWorkspaceChildren}
+            >
+              {row.placements.map((placement) => (
+                <View key={placement.workspaceKey}>
+                  {renderWorkspaceRow(placement, {
+                    leadingProjectName: placementSublabel(placement),
+                  })}
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {row.retainedAgentSources.map((source) => (
+            <RetainedHistoryAgentLinks
+              key={`${source.serverId}:${source.workspaceId}`}
+              source={source}
+              onWorkspacePress={onWorkspacePress}
+            />
+          ))}
+        </View>
+      );
+    },
+    [
+      expandedLogicalWorkspaceKeys,
+      placementSublabel,
+      onWorkspacePress,
+      project.hosts,
+      project.projectName,
+      renderWorkspaceRow,
+      supportsMultiplicityByServerId,
+      toggleLogicalWorkspaceExpanded,
+    ],
+  );
+
+  const renderProjectedWorkspaceRow = useCallback(
+    (row: SidebarProjectWorkspaceRow) =>
+      row.kind === "logical" ? (
+        renderLogicalWorkspaceRow(row)
+      ) : (
+        <View key={row.key}>{renderWorkspaceRow(row.placement)}</View>
+      ),
+    [renderLogicalWorkspaceRow, renderWorkspaceRow],
   );
 
   const handleWorkspaceDragEnd = useCallback(
@@ -1800,23 +2087,32 @@ function ProjectBlock({
 
   let projectChildren = null;
   if (!collapsed) {
-    if (project.workspaces.length > 0) {
+    if (workspaceRows.length > 0) {
       projectChildren = (
         <>
-          <DraggableList
-            testID={`sidebar-workspace-list-${project.viewKey}`}
-            data={visibleWorkspaces}
-            keyExtractor={workspaceKeyExtractor}
-            renderItem={renderWorkspace}
-            onDragEnd={handleWorkspaceDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            scrollEnabled={false}
-            useDragHandle
-            nestable={useNestable}
-            simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostPresented}
-            containerStyle={styles.workspaceListContainer}
-          />
+          {hasLogicalWorkspaceRows ? (
+            <View
+              testID={`sidebar-logical-workspace-list-${project.viewKey}`}
+              style={styles.workspaceListContainer}
+            >
+              {visibleWorkspaceRows.map(renderProjectedWorkspaceRow)}
+            </View>
+          ) : (
+            <DraggableList
+              testID={`sidebar-workspace-list-${project.viewKey}`}
+              data={visiblePhysicalWorkspaces}
+              keyExtractor={workspaceKeyExtractor}
+              renderItem={renderWorkspace}
+              onDragEnd={handleWorkspaceDragEnd}
+              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={useNestable}
+              simultaneousGestureRef={parentGestureRef}
+              gestureHostPresented={dragGestureHostPresented}
+              containerStyle={styles.workspaceListContainer}
+            />
+          )}
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}
@@ -1878,6 +2174,7 @@ type ProjectBlockProps = Parameters<typeof ProjectBlock>[0];
 function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlockProps): boolean {
   return (
     previous.project === next.project &&
+    previous.workspaceRows === next.workspaceRows &&
     previous.workspaceEntriesByKey === next.workspaceEntriesByKey &&
     previous.collapsed === next.collapsed &&
     previous.displayName === next.displayName &&
@@ -1936,6 +2233,7 @@ export function SidebarWorkspaceList({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectWorkspaceRowsByViewKey,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -2034,6 +2332,7 @@ export function SidebarWorkspaceList({
       <ProjectModeList
         projects={projects}
         pinnedGroups={pinnedGroups}
+        projectWorkspaceRowsByViewKey={projectWorkspaceRowsByViewKey}
         workspaceEntriesByKey={workspaceEntriesByKey}
         projectIconByProjectViewKey={projectIconByProjectViewKey}
         collapsedProjectKeys={collapsedProjectKeys}
@@ -2129,6 +2428,7 @@ function SidebarGroupedModeList({
 function ProjectModeList({
   projects,
   pinnedGroups,
+  projectWorkspaceRowsByViewKey,
   workspaceEntriesByKey,
   projectIconByProjectViewKey,
   collapsedProjectKeys,
@@ -2342,6 +2642,7 @@ function ProjectModeList({
         <MemoProjectBlock
           key={item.viewKey}
           project={item}
+          workspaceRows={projectWorkspaceRowsByViewKey.get(item.viewKey) ?? []}
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
@@ -2382,6 +2683,7 @@ function ProjectModeList({
       parentGestureRef,
       dragGestureHostPresented,
       projectIconByProjectViewKey,
+      projectWorkspaceRowsByViewKey,
       selectionEnabled,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
@@ -2568,6 +2870,56 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[3],
   },
   workspaceListContainer: {},
+  logicalWorkspaceChildren: {
+    paddingLeft: theme.spacing[4],
+  },
+  logicalWorkspaceAddHostRow: {
+    minHeight: 26,
+    marginLeft: theme.spacing[6],
+    marginRight: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  logicalWorkspaceAddHostRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  logicalWorkspaceAddHostRowPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  logicalWorkspaceAddHostText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  retainedHistoryAgentList: {
+    paddingLeft: theme.spacing[6],
+  },
+  retainedHistoryAgentRow: {
+    minHeight: 30,
+    marginBottom: theme.spacing[0.5],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  retainedHistoryAgentRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  retainedHistoryAgentStatus: {
+    width: theme.iconSize.sm,
+    alignItems: "center",
+  },
+  retainedHistoryAgentProviderIcon: {
+    color: theme.colors.foregroundMuted,
+  },
+  retainedHistoryAgentTitle: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
   // Kept in step with `workspaceRow` above. It stands in a project's list where a workspace row
   // would be, so it takes that row's geometry and both of its fills.
   //

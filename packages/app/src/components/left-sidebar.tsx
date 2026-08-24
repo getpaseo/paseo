@@ -52,6 +52,7 @@ import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import type { SidebarProjectWorkspaceRow } from "@/components/sidebar/sidebar-logical-workspaces";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -87,6 +88,7 @@ interface SidebarSharedProps {
   workspaceGroups: SidebarWorkspaceGroup[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectWorkspaceRowsByViewKey: ReadonlyMap<string, SidebarProjectWorkspaceRow[]>;
   projects: SidebarProjectEntry[];
   hasProjectsBeforeFilter: boolean;
   hasActiveProjectFilter: boolean;
@@ -153,6 +155,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     workspaceGroups,
     projectIconTargets,
     pinnedGroups,
+    projectWorkspaceRowsByViewKey,
     collapsedProjectKeys,
     toggleProjectCollapsed,
     groupMode,
@@ -252,6 +255,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     workspaceGroups,
     projectIconTargets,
     pinnedGroups,
+    projectWorkspaceRowsByViewKey,
     projects,
     hasProjectsBeforeFilter,
     hasActiveProjectFilter: resolvedProjectFilters.length > 0,
@@ -608,6 +612,7 @@ function MobileSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectWorkspaceRowsByViewKey,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -728,6 +733,7 @@ function MobileSidebar({
             workspaceGroups={workspaceGroups}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
+            projectWorkspaceRowsByViewKey={projectWorkspaceRowsByViewKey}
             projects={projects}
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}
@@ -761,6 +767,7 @@ function DesktopSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  projectWorkspaceRowsByViewKey,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -935,6 +942,7 @@ function DesktopSidebar({
             workspaceGroups={workspaceGroups}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
+            projectWorkspaceRowsByViewKey={projectWorkspaceRowsByViewKey}
             projects={projects}
             hasProjectsBeforeFilter={hasProjectsBeforeFilter}
             hasActiveProjectFilter={hasActiveProjectFilter}

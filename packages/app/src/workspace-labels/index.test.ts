@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_WORKSPACE_PLACEMENT_LABEL,
+  encodeLogicalWorkspaceRefLabel,
+} from "@getpaseo/protocol/workspace-labels";
+import {
   buildWorkspaceLabelPickerRows,
   createWorkspaceLabelManagerModel,
   createWorkspaceLabelPickerModel,
@@ -15,6 +19,59 @@ import {
 // step. There is nothing left here to assert that the compiler does not.
 
 describe("workspace label projection", () => {
+  test("hides every reserved label surface without deleting the raw catalog", () => {
+    const rawLabels = [
+      { name: "Urgent", color: "red" as const },
+      { name: encodeLogicalWorkspaceRefLabel("project-a-catalog"), color: "indigo" as const },
+      { name: DEFAULT_WORKSPACE_PLACEMENT_LABEL, color: "indigo" as const },
+      { name: "paseo:reserved:future:unknown", color: "indigo" as const },
+      { name: "paseo:reserved:v1:logical-workspace-ref=bad/ref", color: "indigo" as const },
+    ];
+    const hostsById: Record<string, WorkspaceLabelHostSnapshot> = {
+      "host-a": {
+        serverId: "host-a",
+        status: "online",
+        error: null,
+        labels: rawLabels,
+      },
+    };
+
+    const projection = projectWorkspaceLabels(hostsById, "host-a");
+    expect(projection.labels).toEqual([{ name: "Urgent", color: "red" }]);
+    expect(projection.hosts[0]?.labels).toEqual([{ name: "Urgent", color: "red" }]);
+    expect(projection.targetHost?.labels).toEqual([{ name: "Urgent", color: "red" }]);
+    expect(
+      selectWorkspaceLabelDefinitions({
+        hostsById,
+        serverId: "host-a",
+        names: rawLabels.map((label) => label.name),
+      }),
+    ).toEqual([{ name: "Urgent", color: "red" }]);
+    expect(
+      buildWorkspaceLabelPickerRows({
+        labels: rawLabels,
+        assigned: rawLabels.map((label) => label.name),
+      }),
+    ).toEqual([{ name: "Urgent", color: "red", assigned: true }]);
+    expect(
+      mergeWorkspaceLabelCatalogs({ catalogs: [{ serverId: "host-a", labels: rawLabels }] }),
+    ).toEqual([{ name: "Urgent", color: "red" }]);
+
+    const manager = createWorkspaceLabelManagerModel({
+      update: async () => ({}),
+      inspectDelete: async () => ({ affectedWorkspaceCount: 0 }),
+      delete: async () => undefined,
+    });
+    manager.syncHosts([
+      { serverId: "host-a", label: "Alpha", status: "online", labels: rawLabels },
+    ]);
+    expect(manager.snapshot().labels).toEqual([{ name: "Urgent", color: "red" }]);
+
+    // Projection is a privacy/UI boundary, not a destructive data migration.
+    expect(hostsById["host-a"]?.labels).toBe(rawLabels);
+    expect(rawLabels).toHaveLength(5);
+  });
+
   test("does not treat a failed online catalog as authoritative", () => {
     expect(
       hasAuthoritativeWorkspaceLabelCatalog([

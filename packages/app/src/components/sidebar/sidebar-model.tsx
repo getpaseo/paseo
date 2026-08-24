@@ -17,12 +17,16 @@ import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
+import type { SidebarProjectWorkspaceRow } from "./sidebar-logical-workspaces";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
 import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
 import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
 } from "@/workspace-labels";
+import { useInstalledPlugins } from "@/plugins/registry";
+import { resolvePluginSidebarWorkspaceGroupings } from "@/plugins/sidebar-workspace-groupings";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -40,6 +44,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceGroups: SidebarWorkspaceGroup[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  projectWorkspaceRowsByViewKey: ReadonlyMap<string, SidebarProjectWorkspaceRow[]>;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
   shortcutModel: SidebarShortcutModel;
@@ -60,6 +65,12 @@ export function SidebarModelProvider({
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
   const { hosts: labelHosts } = useWorkspaceLabelProjection();
+  const installedPlugins = useInstalledPlugins();
+  const logicalWorkspaceGroupings = useMemo(
+    () => resolvePluginSidebarWorkspaceGroupings(installedPlugins),
+    [installedPlugins],
+  );
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -95,7 +106,8 @@ export function SidebarModelProvider({
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
   // live session-store subscription over every workspace on every visible host, so widening this
   // for a filter that does not need it costs a retained-but-inactive sidebar real work.
-  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
+  const needsWorkspaceEntries =
+    groupMode !== "project" || hasActiveLabelFilter || logicalWorkspaceGroupings.length > 0;
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
@@ -145,29 +157,37 @@ export function SidebarModelProvider({
       pinnedKeys,
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
+      inventoryProjects: list.projects,
+      inventoryWorkspaceEntriesByKey: workspaceEntriesByKey,
       projectNamesByViewKey: list.projectNamesByViewKey,
       groupMode,
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      logicalWorkspaceGroupings,
+      activeWorkspaceSelection,
     }),
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,
+      list.projects,
       filteredProjects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,
       filteredWorkspaceEntriesByKey,
+      workspaceEntriesByKey,
+      logicalWorkspaceGroupings,
+      activeWorkspaceSelection,
     ],
   );
   const projection = useMemo(() => buildSidebarProjection(projectionInput), [projectionInput]);
   const value = useMemo(
     () => ({
       ...list,
-      projects: filteredProjects,
+      projects: projection.visibleProjects,
       allProjects: list.projects,
       resolvedProjectFilters,
       hasProjectsBeforeFilter: list.projects.length > 0,
@@ -176,6 +196,7 @@ export function SidebarModelProvider({
       workspaceGroups: projection.workspaceGroups,
       projectIconTargets: projection.projectIconTargets,
       pinnedGroups: projection.pinnedGroups,
+      projectWorkspaceRowsByViewKey: projection.projectWorkspaceRowsByViewKey,
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel: projection.shortcutModel,
@@ -185,7 +206,6 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       groupMode,
       list,
-      filteredProjects,
       projection,
       toggleProjectCollapsed,
       filteredWorkspaceEntriesByKey,

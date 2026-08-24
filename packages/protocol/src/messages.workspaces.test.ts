@@ -1163,6 +1163,10 @@ describe("workspace message schemas", () => {
     const newDirectory = WorkspaceCreateRequestSchema.parse({
       type: "workspace.create.request",
       requestId: "req-dir",
+      labels: [
+        "paseo:reserved:v1:logical-workspace-ref=lw-parts",
+        "paseo:reserved:v1:placement-role=default",
+      ],
       source: {
         kind: "directory",
         path: "/tmp/repo",
@@ -1170,5 +1174,9 @@ describe("workspace message schemas", () => {
     });
     expect(newDirectory.type).toBe("workspace.create.request");
     expect(newDirectory.source.kind).toBe("directory");
+    expect(newDirectory.labels).toEqual([
+      "paseo:reserved:v1:logical-workspace-ref=lw-parts",
+      "paseo:reserved:v1:placement-role=default",
+    ]);
   });
 });
