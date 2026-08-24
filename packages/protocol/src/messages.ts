@@ -57,6 +57,7 @@ import {
 import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
+  BrowserToolNameSchema,
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
@@ -2832,6 +2833,17 @@ export const RenameTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const BrowserToolExecuteRequestSchema = z.object({
+  type: z.literal("browser.tool.execute.request"),
+  tool: BrowserToolNameSchema,
+  input: z.record(z.string(), z.unknown()).optional(),
+  // Anchors the call to a workspace the same way an agent's cwd does, so browser_new_tab and
+  // browser_list_tabs resolve the same workspace scope for CLI callers as for agents.
+  cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const StartWorkspaceScriptRequestSchema = z.object({
   type: z.literal("start_workspace_script_request"),
   workspaceId: z.string(),
@@ -3157,6 +3169,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UnsubscribeTerminalsRequestSchema,
   CreateTerminalRequestSchema,
   RenameTerminalRequestSchema,
+  BrowserToolExecuteRequestSchema,
   StartWorkspaceScriptRequestSchema,
   WorkspaceScriptListRequestSchema,
   WorkspaceScriptStartRequestSchema,
@@ -5966,6 +5979,27 @@ export const RenameTerminalResponseSchema = z.object({
   }),
 });
 
+export const BrowserToolResultContentSchema = z
+  .object({
+    type: z.string(),
+    text: z.string().optional(),
+  })
+  .passthrough();
+
+export const BrowserToolResultSchema = z.object({
+  content: z.array(BrowserToolResultContentSchema),
+  structuredContent: z.unknown().optional(),
+  isError: z.boolean().optional(),
+});
+
+export const BrowserToolExecuteResponseSchema = z.object({
+  type: z.literal("browser.tool.execute.response"),
+  payload: z.object({
+    requestId: z.string(),
+    result: BrowserToolResultSchema,
+  }),
+});
+
 export const SubscribeTerminalResponseSchema = z.object({
   type: z.literal("subscribe_terminal_response"),
   payload: z.union([
@@ -6478,6 +6512,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   TerminalsChangedSchema,
   CreateTerminalResponseSchema,
   RenameTerminalResponseSchema,
+  BrowserToolExecuteResponseSchema,
   SubscribeTerminalResponseSchema,
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
@@ -6929,6 +6964,10 @@ export type CreateTerminalRequest = z.infer<typeof CreateTerminalRequestSchema>;
 export type CreateTerminalResponse = z.infer<typeof CreateTerminalResponseSchema>;
 export type RenameTerminalRequest = z.infer<typeof RenameTerminalRequestSchema>;
 export type RenameTerminalResponse = z.infer<typeof RenameTerminalResponseSchema>;
+export type BrowserToolResultContent = z.infer<typeof BrowserToolResultContentSchema>;
+export type BrowserToolResult = z.infer<typeof BrowserToolResultSchema>;
+export type BrowserToolExecuteRequest = z.infer<typeof BrowserToolExecuteRequestSchema>;
+export type BrowserToolExecuteResponse = z.infer<typeof BrowserToolExecuteResponseSchema>;
 export type StartWorkspaceScriptRequest = z.infer<typeof StartWorkspaceScriptRequestSchema>;
 export type StartWorkspaceScriptResponse = z.infer<
   typeof StartWorkspaceScriptResponseMessageSchema
