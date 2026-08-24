@@ -1422,6 +1422,10 @@ async function attachAutomationDebugger(guest) {
   return (command, params = {}) => guest.debugger.sendCommand(command, params);
 }
 
+const SUSTAINED_STREAM_MS = 2000;
+const STOP_SETTLE_MS = 250;
+const MIN_SUSTAINED_FRAMES = 5;
+
 async function runScreencastGroup() {
   const outputDir = path.join(OUT_DIR, "screencast");
   const state = PERMANENT_PARKING_STATES.find((entry) => entry.code === "P1");
@@ -1563,8 +1567,55 @@ async function runScreencastGroup() {
     );
     results.push(await recordFrame(mutatedFrame, "mutated"));
 
+    // One frame proves the surface is copyable; a mirror needs a stream. A
+    // regression that delivered exactly one frame and then went silent survived
+    // every assertion above, so drive continuous damage and count what arrives.
+    const sustainedStartIndex = frames.length;
+    const sustainedStartedAt = Date.now();
+    await guest.executeJavaScript(
+      `new Promise((resolve) => {
+        const label = document.querySelector(".label");
+        const startedAt = Date.now();
+        const tick = () => {
+          label.textContent = "PASEO SCREENCAST " + (Date.now() - startedAt);
+          if (Date.now() - startedAt < ${SUSTAINED_STREAM_MS}) requestAnimationFrame(tick);
+          else resolve();
+        };
+        requestAnimationFrame(tick);
+      })`,
+      true,
+    );
+    const sustainedElapsedMs = Date.now() - sustainedStartedAt;
+    const sustainedFrames = frames.slice(sustainedStartIndex);
+    const sustainedBytes = sustainedFrames.map(
+      (frame) => Buffer.from(frame.data, "base64").byteLength,
+    );
+    const sustainedFps = (sustainedFrames.length / sustainedElapsedMs) * 1000;
+    const meanFrameBytes =
+      sustainedBytes.length > 0
+        ? Math.round(
+            sustainedBytes.reduce((total, bytes) => total + bytes, 0) / sustainedBytes.length,
+          )
+        : 0;
+    if (sustainedFrames.length < MIN_SUSTAINED_FRAMES) {
+      fail(
+        `screencast sustained frames=${sustainedFrames.length} over ${sustainedElapsedMs}ms was below ${MIN_SUSTAINED_FRAMES}`,
+      );
+    }
+    pass(
+      `screencast sustained frames=${sustainedFrames.length} elapsed=${sustainedElapsedMs}ms fps=${sustainedFps.toFixed(1)} meanFrameBytes=${meanFrameBytes}`,
+    );
+    const lastSustainedFrame = sustainedFrames[sustainedFrames.length - 1];
+    if (lastSustainedFrame) {
+      results.push(await recordFrame(lastSustainedFrame, "sustained"));
+    }
+
     await send("Page.stopScreencast");
     streaming = false;
+    // A frame already encoding when the stop lands still arrives. Let those
+    // settle before taking the baseline, so this asserts the stream stopped
+    // rather than that Chromium cancels work in flight.
+    await delay(STOP_SETTLE_MS);
     const stoppedFrameCount = frames.length;
     await guest.executeJavaScript(
       `document.querySelector(".sub").textContent = "SCREENCAST STOPPED"`,
@@ -1591,6 +1642,12 @@ async function runScreencastGroup() {
           guestMetrics,
           frameCount: stoppedFrameCount,
           framesAfterStop: 0,
+          sustained: {
+            frames: sustainedFrames.length,
+            elapsedMs: sustainedElapsedMs,
+            fps: Number(sustainedFps.toFixed(2)),
+            meanFrameBytes,
+          },
           results,
         },
         null,
