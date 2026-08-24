@@ -575,6 +575,10 @@ export type ProviderSubagentTimelinePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.timeline.get.response" }
 >["payload"];
+export type ProviderSubagentControlPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.provider_subagents.control.response" }
+>["payload"];
 export interface FetchProviderSubagentTimelineOptions {
   direction?: ProviderSubagentTimelinePayload["direction"];
   cursor?: FetchAgentTimelineCursor;
@@ -2956,6 +2960,40 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (response) =>
         response.type === "agent.provider_subagents.timeline.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  async controlProviderSubagent(input: {
+    parentAgentId: string;
+    subagentId: string;
+    action: "stop" | "steer" | "resume";
+    message?: string;
+    requestId?: string;
+    timeout?: number;
+  }): Promise<ProviderSubagentControlPayload> {
+    const requestId = this.createRequestId(input.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.control.request",
+      parentAgentId: input.parentAgentId,
+      subagentId: input.subagentId,
+      action: input.action,
+      ...(input.message ? { message: input.message } : {}),
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: input.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.control.response" &&
         response.payload.requestId === requestId
           ? response.payload
           : null,

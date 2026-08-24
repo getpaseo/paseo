@@ -350,6 +350,76 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("routes provider-subagent controls through the Pi extension RPC bridge", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagents-widget-control",
+      method: "setWidget",
+      widgetKey: "subagent-async",
+      widgetLines: [
+        `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+          kind: "pi-subagents.async-status-snapshot",
+          version: 1,
+          generatedAt: 70_000,
+          caps: {},
+          omitted: { runs: 0, children: 0, byteLimitExceeded: false },
+          runs: [
+            {
+              id: "async-control",
+              kind: "subagent",
+              label: "worker",
+              state: "running",
+              startedAt: 10_000,
+            },
+          ],
+        })}`,
+      ],
+    });
+    const projected = events.providerSubagentEvents()[0];
+    if (!projected || projected.event.type !== "upsert") {
+      throw new Error("Expected projected Pi subagent");
+    }
+
+    fakeSession.subagentControlErrors.push(new Error("Status file not found for async run"));
+    await expect(
+      session.controlProviderSubagent?.({
+        subagentId: projected.event.id,
+        action: "stop",
+      }),
+    ).resolves.toEqual({ status: "accepted", message: "stop accepted" });
+    await expect(
+      session.controlProviderSubagent?.({
+        subagentId: projected.event.id,
+        action: "steer",
+        message: "focus on tests",
+      }),
+    ).resolves.toEqual({ status: "accepted", message: "steer accepted" });
+    await expect(
+      session.controlProviderSubagent?.({
+        subagentId: projected.event.id,
+        action: "resume",
+        message: "continue",
+      }),
+    ).resolves.toEqual({ status: "accepted", message: "resume accepted" });
+
+    expect(fakeSession.subagentControlRequests).toEqual([
+      { requestId: expect.any(String), method: "stop", params: { id: "async-control" } },
+      { requestId: expect.any(String), method: "stop", params: { id: "async-control" } },
+      {
+        requestId: expect.any(String),
+        method: "steer",
+        params: { id: "async-control", message: "focus on tests", mode: "steer" },
+      },
+      {
+        requestId: expect.any(String),
+        method: "resume",
+        params: { id: "async-control", message: "continue" },
+      },
+    ]);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

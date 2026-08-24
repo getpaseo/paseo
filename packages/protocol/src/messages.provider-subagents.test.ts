@@ -36,6 +36,34 @@ describe("provider subagent protocol", () => {
     });
   });
 
+  test("accepts correlated provider-subagent control requests and responses", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.provider_subagents.control.request",
+        parentAgentId: "parent-1",
+        subagentId: "child-1",
+        action: "steer",
+        message: "focus on tests",
+        requestId: "control-1",
+      }),
+    ).toMatchObject({ action: "steer", message: "focus on tests" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.provider_subagents.control.response",
+        payload: {
+          requestId: "control-1",
+          parentAgentId: "parent-1",
+          subagentId: "child-1",
+          action: "steer",
+          accepted: true,
+          message: "steer accepted",
+          error: null,
+        },
+      }),
+    ).toMatchObject({ payload: { accepted: true, message: "steer accepted" } });
+  });
+
   test("accepts a provider child working directory while remaining compatible when absent", () => {
     const descriptor = {
       id: "child-1",

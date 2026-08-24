@@ -2184,6 +2184,8 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg);
+      case "agent.provider_subagents.control.request":
+        return this.handleProviderSubagentControlRequest(msg);
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -7094,6 +7096,48 @@ export class Session {
           hasOlder: false,
           hasNewer: false,
           rows: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleProviderSubagentControlRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.control.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const result = await this.agentManager.controlProviderSubagent({
+        parentAgentId: msg.parentAgentId,
+        subagentId: msg.subagentId,
+        action: msg.action,
+        ...(msg.message ? { message: msg.message } : {}),
+      });
+      this.emit({
+        type: "agent.provider_subagents.control.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          subagentId: msg.subagentId,
+          action: msg.action,
+          accepted: result.status === "accepted",
+          ...(result.message ? { message: result.message } : {}),
+          error: result.status === "accepted" ? null : (result.message ?? "Control unavailable"),
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.provider_subagents.control.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          subagentId: msg.subagentId,
+          action: msg.action,
+          accepted: false,
           error: error instanceof Error ? error.message : String(error),
         },
       });

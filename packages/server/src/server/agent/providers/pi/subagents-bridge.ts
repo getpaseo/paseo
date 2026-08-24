@@ -155,6 +155,7 @@ export class PiSubagentsBridge {
   private readonly targets = new Map<string, PiSubagentTarget>();
   private readonly pendingInspections = new Map<string, PendingInspection>();
   private readonly projectedDescriptorIds = new Set<string>();
+  private readonly inspectionFingerprints = new Map<string, Set<string>>();
   private lastCompatibilityError: string | null = null;
 
   handleExtensionUiRequest(
@@ -269,7 +270,12 @@ export class PiSubagentsBridge {
     this.pendingInspections.delete(parsed.data.requestId);
     return {
       handled: true,
-      events: inspectionEvents(pending.descriptorId, parsed.data),
+      events: inspectionEvents(
+        pending.descriptorId,
+        parsed.data,
+        this.inspectionFingerprints.get(pending.descriptorId) ?? new Set<string>(),
+        (seen) => this.inspectionFingerprints.set(pending.descriptorId, seen),
+      ),
       inspectionTargets: [],
     };
   }
@@ -361,9 +367,14 @@ function toProviderSubagentEvent(entry: FlattenedNode, snapshot: AsyncSnapshot):
   };
 }
 
-function inspectionEvents(descriptorId: string, reply: InspectReply): AgentStreamEvent[] {
+function inspectionEvents(
+  descriptorId: string,
+  reply: InspectReply,
+  seen: Set<string>,
+  saveSeen: (seen: Set<string>) => void,
+): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
-  if (reply.task || reply.label || reply.status) {
+  if (reply.task || reply.label) {
     events.push({
       type: "provider_subagent",
       provider: "pi",
@@ -372,42 +383,64 @@ function inspectionEvents(descriptorId: string, reply: InspectReply): AgentStrea
         id: descriptorId,
         ...(reply.label ? { title: reply.label } : {}),
         ...(reply.task ? { description: reply.task } : {}),
-        ...(reply.status ? { status: mapInspectStatus(reply.status) } : {}),
       },
     });
   }
   if (reply.error) {
-    events.push(
-      toSubagentTimeline(descriptorId, {
+    appendUniqueTimeline(
+      events,
+      descriptorId,
+      {
         type: "error",
         message: `${reply.error.code}: ${reply.error.message}`,
-      }),
+      },
+      seen,
     );
+    saveSeen(seen);
     return events;
   }
   for (const [index, message] of (reply.messages ?? []).entries()) {
-    events.push(toSubagentTimeline(descriptorId, inspectMessageToTimeline(message, index)));
+    appendUniqueTimeline(events, descriptorId, inspectMessageToTimeline(message, index), seen);
   }
   if (reply.finalOutput) {
-    events.push(
-      toSubagentTimeline(descriptorId, {
+    appendUniqueTimeline(
+      events,
+      descriptorId,
+      {
         type: "assistant_message",
         text: reply.finalOutput,
-      }),
+      },
+      seen,
     );
   }
   if (
     reply.truncated &&
     (reply.truncated.task || reply.truncated.messages > 0 || reply.truncated.finalOutput)
   ) {
-    events.push(
-      toSubagentTimeline(descriptorId, {
+    appendUniqueTimeline(
+      events,
+      descriptorId,
+      {
         type: "assistant_message",
         text: `[Inspection truncated: ${reply.truncated.messages} messages omitted]`,
-      }),
+      },
+      seen,
     );
   }
+  saveSeen(seen);
   return events;
+}
+
+function appendUniqueTimeline(
+  events: AgentStreamEvent[],
+  descriptorId: string,
+  item: AgentTimelineItem,
+  seen: Set<string>,
+): void {
+  const fingerprint = JSON.stringify(item);
+  if (seen.has(fingerprint)) return;
+  seen.add(fingerprint);
+  events.push(toSubagentTimeline(descriptorId, item));
 }
 
 function inspectMessageToTimeline(
@@ -446,13 +479,6 @@ function mapStatus(state: SnapshotNode["state"]): "running" | "completed" | "fai
   if (state === "complete") return "completed";
   if (state === "stopped") return "canceled";
   if (state === "failed" || state === "paused" || state === "rejected") return "failed";
-  return "running";
-}
-
-function mapInspectStatus(status: string): "running" | "completed" | "failed" | "canceled" {
-  if (status === "complete" || status === "completed") return "completed";
-  if (status === "stopped" || status === "canceled" || status === "cancelled") return "canceled";
-  if (status === "failed" || status === "paused" || status === "rejected") return "failed";
   return "running";
 }
 

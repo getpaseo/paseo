@@ -221,6 +221,18 @@ export interface AgentSteerOptions extends AgentRunOptions {
 
 export type SteerResult = { status: "accepted" } | { status: "unavailable" };
 
+export type ProviderSubagentControlAction = "stop" | "steer" | "resume";
+
+export interface ProviderSubagentControlInput {
+  subagentId: string;
+  action: ProviderSubagentControlAction;
+  message?: string;
+}
+
+export type ProviderSubagentControlResult =
+  | { status: "accepted"; message?: string }
+  | { status: "unavailable"; message?: string };
+
 export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
@@ -641,6 +653,9 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
+  controlProviderSubagent?(
+    input: ProviderSubagentControlInput,
+  ): Promise<ProviderSubagentControlResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;

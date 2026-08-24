@@ -163,7 +163,6 @@ describe("PiSubagentsBridge", () => {
           id: child.descriptorId,
           title: "worker",
           description: "Review the diff",
-          status: "completed",
         }),
       }),
       expect.objectContaining({

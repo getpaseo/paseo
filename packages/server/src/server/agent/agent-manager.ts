@@ -47,6 +47,8 @@ import {
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
+  type ProviderSubagentControlAction,
+  type ProviderSubagentControlResult,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
@@ -1126,6 +1128,27 @@ export class AgentManager {
   ): AgentTimelineFetchResult {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
+  }
+
+  async controlProviderSubagent(input: {
+    parentAgentId: string;
+    subagentId: string;
+    action: ProviderSubagentControlAction;
+    message?: string;
+  }): Promise<ProviderSubagentControlResult> {
+    const agent = this.requireSessionAgent(input.parentAgentId);
+    const descriptor = this.providerSubagents.get(input.parentAgentId, input.subagentId);
+    if (!descriptor || descriptor.provider !== agent.provider) {
+      return { status: "unavailable", message: "Provider subagent was not found" };
+    }
+    if (!agent.session.controlProviderSubagent) {
+      return { status: "unavailable", message: "Provider subagent controls are unavailable" };
+    }
+    return await agent.session.controlProviderSubagent({
+      subagentId: input.subagentId,
+      action: input.action,
+      ...(input.message ? { message: input.message } : {}),
+    });
   }
 
   createAgent(
