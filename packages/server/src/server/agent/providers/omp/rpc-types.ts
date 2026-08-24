@@ -506,6 +506,18 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...OmpCommandBase,
+    type: z.literal("steer"),
+    message: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+  }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("follow_up"),
+    message: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+  }),
+  z.object({
+    ...OmpCommandBase,
     type: z.literal("compact"),
     customInstructions: z.string().optional(),
   }),

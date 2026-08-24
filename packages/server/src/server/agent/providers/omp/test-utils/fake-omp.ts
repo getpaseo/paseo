@@ -107,6 +107,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
+  followUpError: Error | null = null;
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
@@ -332,15 +334,24 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.branchMessages;
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
-    this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
-  }
-
-  followUp(
+  async steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void {
+  ): Promise<void> {
+    this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
+    if (this.steerError) {
+      throw this.steerError;
+    }
+  }
+
+  async followUp(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
     this.followUpRequests.push({ message, imageCount: images?.length ?? 0 });
+    if (this.followUpError) {
+      throw this.followUpError;
+    }
   }
 
   sendHostToolResult(result: OmpRpcHostToolResult): void {

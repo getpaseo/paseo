@@ -255,15 +255,26 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
-    this.process.send({ type: "steer", message, ...(images?.length ? { images } : {}) });
-  }
-
-  followUp(
+  async steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void {
-    this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
+  async followUp(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "follow_up",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
   }
 
   async handoff(customInstructions?: string): Promise<void> {

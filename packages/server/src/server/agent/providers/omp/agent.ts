@@ -34,6 +34,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -475,6 +477,16 @@ function isOmpRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+interface OmpPendingSteerSubmission {
+  text: string;
+  clientMessageId: string | null;
+}
+
+function isOmpDefinitiveSteerRejection(error: unknown): boolean {
+  const message = toDiagnosticErrorMessage(error).toLowerCase();
+  return message.includes("unknown command") && message.includes("steer");
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: OmpThinkingLevel | undefined,
@@ -877,6 +889,7 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  private readonly pendingSteerSubmissions: OmpPendingSteerSubmission[] = [];
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -965,6 +978,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
+    this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
@@ -993,6 +1007,7 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
         this.usagePoller.stopTurn();
+        this.pendingSteerSubmissions.length = 0;
         this.activeTurnId = null;
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
@@ -1019,6 +1034,58 @@ export class OmpAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    if (this.parseSlashCommandInput(payload.text)) {
+      return { status: "unavailable" };
+    }
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      if (isOmpDefinitiveSteerRejection(error)) {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    this.pendingSteerSubmissions.push({
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    });
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = [...this.pendingExtensionUiRequests.keys()];
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  private takePendingSteerClientMessageId(text: string): string | null {
+    const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
+    if (index < 0) {
+      return null;
+    }
+    const [submission] = this.pendingSteerSubmissions.splice(index, 1);
+    return submission?.clientMessageId ?? null;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1132,6 +1199,7 @@ export class OmpAgentSession implements AgentSession {
       this.activeTurnHasUserMessage = false;
       this.activeAssistantMessageId = null;
       this.activeTurnTerminalAssistantMessage = null;
+      this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.emit({
         type: "turn_canceled",
@@ -1139,6 +1207,8 @@ export class OmpAgentSession implements AgentSession {
         reason: "interrupted",
         turnId,
       });
+    } else if (this.pendingSteerSubmissions.length > 0) {
+      this.pendingSteerSubmissions.length = 0;
     }
   }
 
@@ -1177,6 +1247,7 @@ export class OmpAgentSession implements AgentSession {
   private clearOmpTurnState(): void {
     clearOmpHostToolState(this.runtimeSession);
     this.subagentCardTracker.clear();
+    this.pendingSteerSubmissions.length = 0;
   }
 
   private terminalizeActiveWork(): void {
@@ -1232,9 +1303,9 @@ export class OmpAgentSession implements AgentSession {
       return {
         run: async () => {
           if (commandName === "steer") {
-            this.runtimeSession.steer(message);
+            await this.runtimeSession.steer(message);
           } else {
-            this.runtimeSession.followUp(message);
+            await this.runtimeSession.followUp(message);
           }
         },
       };
@@ -1778,6 +1849,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
+    this.pendingSteerSubmissions.length = 0;
     this.usagePoller.stopTurn();
     this.terminalizeActiveWork();
     this.subagentIndex.clear(this.runtimeSession);
@@ -2043,7 +2115,8 @@ export class OmpAgentSession implements AgentSession {
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
     const messageId = readNativeMessageId(nativeMessage);
-    const clientMessageId = this.activeClientMessageId;
+    const pendingClientMessageId = this.takePendingSteerClientMessageId(text);
+    const clientMessageId = pendingClientMessageId ?? this.activeClientMessageId;
     const emitUserMessage = (resolvedMessageId?: string): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
@@ -2126,6 +2199,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    this.pendingSteerSubmissions.length = 0;
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;

@@ -65,11 +65,14 @@ export interface OmpRuntimeSession {
   branch(entryId: string): Promise<{ text: string }>;
   getBranchMessages(): Promise<Array<{ entryId: string; text: string }>>;
   activeBranchEntryId?: string;
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void;
+  steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void>;
   followUp(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): void;
+  ): Promise<void>;
   handoff(customInstructions?: string): Promise<void>;
   respondToExtensionUiRequest(
     id: string,
