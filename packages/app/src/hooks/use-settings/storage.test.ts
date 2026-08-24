@@ -716,6 +716,20 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).uiBaseFontSize).toBe(16);
   });
 
+  it("falls back to a valid legacy interface scale when the explicit base size is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiBaseFontSize: "abc", uiFontSize: 17 }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+    const persisted = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
+
+    expect(result.uiBaseFontSize).toBe(15);
+    expect(persisted).toMatchObject({ uiBaseFontSize: 15, uiFontSize: 17 });
+  });
+
   it("clamps the UI base font size into range and rejects non-numeric values", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
