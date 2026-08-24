@@ -1211,6 +1211,13 @@ export const ar: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "إنهاء Paseo؟",
+      message: "الإنهاء يوقف الخادم المحلي وأي وكلاء يشغّلهم. سيتم مقاطعة عملهم.",
+      quit: "إنهاء",
+      cancel: "إلغاء",
+      keepDaemonRunning: "إبقاء الخادم قيد التشغيل",
+    },
     quitting: {
       title: "جارٍ إنهاء Paseo...",
       detail: "إيقاف البرنامج الخفي المحلي.",

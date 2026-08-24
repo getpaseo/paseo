@@ -1218,6 +1218,13 @@ export const ko: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "Paseo를 종료할까요?",
+      message: "종료하면 로컬 데몬과 실행 중인 에이전트가 중지됩니다. 작업이 중단됩니다.",
+      quit: "종료",
+      cancel: "취소",
+      keepDaemonRunning: "데몬을 계속 실행",
+    },
     quitting: {
       title: "Paseo 종료 중...",
       detail: "로컬 데몬을 중지하는 중입니다.",

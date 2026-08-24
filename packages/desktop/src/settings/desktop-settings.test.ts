@@ -278,4 +278,31 @@ describe("desktop-settings", () => {
     });
     expect(ignoredSecondMigration).toEqual(migrated);
   });
+
+  describe("getSync", () => {
+    // The before-quit handler must decide whether to veto BEFORE calling the
+    // synchronous event.preventDefault(), so it cannot await store.get().
+    it("returns null until the document has been loaded", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      expect(store.getSync()).toBeNull();
+
+      await store.warm();
+
+      expect(store.getSync()).toEqual(DEFAULT_DESKTOP_SETTINGS);
+    });
+
+    it("agrees with get() after a patch", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      await store.patch({ daemon: { keepRunningAfterQuit: true } });
+
+      expect(store.getSync()).toEqual(await store.get());
+      expect(store.getSync()?.daemon.keepRunningAfterQuit).toBe(true);
+    });
+  });
 });

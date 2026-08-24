@@ -36,6 +36,18 @@ interface PersistedDesktopSettingsDocument {
 
 export interface DesktopSettingsStore {
   get(): Promise<DesktopSettings>;
+  /**
+   * The already-loaded settings, or null before the first load resolves.
+   *
+   * The `before-quit` handler has to decide whether to veto the quit *before*
+   * calling `event.preventDefault()`, and `preventDefault` is synchronous. An
+   * async read there would either preventDefault every quit and re-quit (even
+   * when the feature is off) or stall the quit on a cold-cache `readFile` with
+   * no dialog and no explanation. Callers treat null as "don't veto".
+   */
+  getSync(): DesktopSettings | null;
+  /** Loads the document so a later `getSync()` can answer. */
+  warm(): Promise<void>;
   patch(patch: unknown): Promise<DesktopSettings>;
   migrateLegacyRendererSettings(legacySettings: unknown): Promise<DesktopSettings>;
 }
@@ -292,6 +304,14 @@ export function createDesktopSettingsStore({
     async get(): Promise<DesktopSettings> {
       const document = await loadDocument();
       return document.settings;
+    },
+
+    getSync(): DesktopSettings | null {
+      return cachedDocument?.settings ?? null;
+    },
+
+    async warm(): Promise<void> {
+      await loadDocument();
     },
 
     async patch(patch: unknown): Promise<DesktopSettings> {

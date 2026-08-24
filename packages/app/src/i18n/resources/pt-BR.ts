@@ -1236,6 +1236,14 @@ export const ptBR: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "Sair do Paseo?",
+      message:
+        "Sair interrompe o daemon local e os agentes que ele estiver executando. O trabalho deles será interrompido.",
+      quit: "Sair",
+      cancel: "Cancelar",
+      keepDaemonRunning: "Manter o daemon em execução",
+    },
     quitting: {
       title: "Saindo do Paseo...",
       detail: "Parando o daemon local.",

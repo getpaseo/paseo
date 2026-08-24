@@ -1245,6 +1245,14 @@ export const fr: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "Quitter Paseo ?",
+      message:
+        "Quitter arrête le daemon local ainsi que les agents qu'il exécute. Leur travail sera interrompu.",
+      quit: "Quitter",
+      cancel: "Annuler",
+      keepDaemonRunning: "Laisser le daemon en cours d'exécution",
+    },
     quitting: {
       title: "QuitterPaseo...",
       detail: "Arrêt du démon local.",

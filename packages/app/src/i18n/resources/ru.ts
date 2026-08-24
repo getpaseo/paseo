@@ -1228,6 +1228,14 @@ export const ru: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "Выйти из Paseo?",
+      message:
+        "При выходе останавливается локальный демон и запущенные им агенты. Их работа будет прервана.",
+      quit: "Выйти",
+      cancel: "Отмена",
+      keepDaemonRunning: "Оставить демон запущенным",
+    },
     quitting: {
       title: "Завершение работы Paseo...",
       detail: "Остановка локального демона.",

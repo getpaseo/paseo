@@ -1245,6 +1245,14 @@ export const es: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "¿Salir de Paseo?",
+      message:
+        "Al salir se detiene el daemon local y los agentes que esté ejecutando. Su trabajo se interrumpirá.",
+      quit: "Salir",
+      cancel: "Cancelar",
+      keepDaemonRunning: "Mantener el daemon en ejecución",
+    },
     quitting: {
       title: "Saliendo dePaseo...",
       detail: "Deteniendo el demonio local.",

@@ -36,6 +36,7 @@ import {
 } from "../settings/desktop-settings-commands.js";
 import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { getQuitDialogCopyStore } from "../settings/quit-dialog-copy-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
 import {
@@ -518,6 +519,9 @@ async function resolveRequestedReleaseChannel(
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
+    // The renderer owns translation; main only caches the resolved strings so the
+    // quit dialog never has to reach into the renderer (or disk) at quit time.
+    set_quit_dialog_copy: (args) => getQuitDialogCopyStore().set(args),
     desktop_get_runtime_info: () => ({
       appVersion: resolveDesktopAppVersion(),
       runningUnderARM64Translation: isRunningUnderARM64Translation(),

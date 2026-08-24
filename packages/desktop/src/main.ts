@@ -15,6 +15,7 @@ import {
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -40,7 +41,7 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
-import { registerDialogHandlers } from "./features/dialogs.js";
+import { buildConfirmMessageBoxOptions, registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
@@ -77,7 +78,10 @@ import {
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { PendingOpenProjectStore } from "./pending-open-project-store.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
+import { getQuitDialogCopyStore } from "./settings/quit-dialog-copy-electron.js";
 import { clampWindowStateToWorkAreas, createWindowStateStore } from "./settings/window-state.js";
+import { createQuitConfirmation, selectDialogParentWindow } from "./features/quit-confirmation.js";
+import { shouldVetoWindowClose } from "./window/window-close-policy.js";
 import {
   isDesktopManagedDaemonRunningSync,
   stopDesktopDaemonViaCli,
@@ -717,6 +721,68 @@ function getWorkAreasPrimaryFirst(): Electron.Rectangle[] {
   return [primary, ...others].map((display) => display.workArea);
 }
 
+const quitDialogCopyStore = getQuitDialogCopyStore();
+
+// True once the OS says it is logging out or shutting down. Vetoing a close then
+// either parks the shutdown behind a "this app is preventing you from logging
+// out" dialog or gets the process force-killed with our dialog still on screen.
+//
+// These are BrowserWindow events on win32, not app events, so every window arms
+// the same module-level flag (see markSessionEnding below).
+let sessionEnding = false;
+
+// Constructed above createWindow rather than beside the other quit wiring at the
+// bottom of this file: createWindow reads it, and relying on bootstrap() to
+// suspend at `await app.whenReady()` first would be a temporal-dead-zone trap.
+const quitConfirmation = createQuitConfirmation({
+  readSettingsSync: () => getDesktopSettingsStore().getSync(),
+  isAppReady: () => app.isReady(),
+  hasOpenWindows: () => BrowserWindow.getAllWindows().some((win) => !win.isDestroyed()),
+  isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+  loadCopy: () => quitDialogCopyStore.get(),
+  showDialog: async (copy) => {
+    const parent = selectDialogParentWindow(BrowserWindow.getAllWindows());
+    const options = buildConfirmMessageBoxOptions({
+      message: copy.message,
+      title: copy.title,
+      okLabel: copy.quitLabel,
+      cancelLabel: copy.cancelLabel,
+      checkboxLabel: copy.keepDaemonRunningLabel,
+      kind: "warning",
+      // Enter must cancel. Someone who just hit Cmd+Q by accident will reflexively
+      // hit Enter next, and the default button is the whole point of this dialog.
+      defaultButton: "cancel",
+    });
+    const result = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return { confirmed: result.response === 1, keepDaemonRunning: result.checkboxChecked };
+  },
+  onError: (error) => {
+    log.error("[quit-confirmation] failed; allowing the quit to proceed", error);
+  },
+});
+
+/**
+ * Whether closing this window is about to be vetoed to ask the user first.
+ *
+ * macOS is excluded on purpose: closing the last window there does not quit, so
+ * there is nothing to confirm. Windows and Linux route quits through the last
+ * window close via `window-all-closed`.
+ */
+function willVetoWindowClose(): boolean {
+  if (process.platform === "darwin") {
+    return false;
+  }
+  return (
+    shouldVetoWindowClose({
+      windows: BrowserWindow.getAllWindows(),
+      quitCommitted: quitConfirmation.isQuitCommitted(),
+      sessionEnding,
+    }) && quitConfirmation.shouldConfirm()
+  );
+}
+
 async function createWindow(
   options: {
     initialRoute?: string | null;
@@ -784,8 +850,38 @@ async function createWindow(
   setupDarwinCompositorWatchdog(mainWindow);
   setupWindowResizeEvents(mainWindow);
   if (windowStateStore) {
-    setupWindowStatePersistence(mainWindow, windowStateStore);
+    setupWindowStatePersistence(mainWindow, windowStateStore, {
+      gates: {
+        willVetoClose: willVetoWindowClose,
+        isQuitCommitted: quitConfirmation.isQuitCommitted,
+      },
+    });
   }
+
+  // query-session-end is the earlier, still-cancellable signal; session-end
+  // means the shutdown is already unstoppable. Either way we must stop
+  // prompting. Windows-only events, harmless no-op registrations elsewhere.
+  mainWindow.on("query-session-end", () => {
+    sessionEnding = true;
+  });
+  mainWindow.on("session-end", () => {
+    sessionEnding = true;
+  });
+
+  // Windows/Linux: closing the last window is how people quit, so the guard has
+  // to sit here as well as on before-quit.
+  mainWindow.on("close", (event) => {
+    if (!willVetoWindowClose()) {
+      return;
+    }
+    event.preventDefault();
+    void quitConfirmation.requestConfirmation().then((confirmed) => {
+      if (confirmed && !mainWindow.isDestroyed()) {
+        mainWindow.close();
+      }
+      return undefined;
+    });
+  });
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
@@ -978,6 +1074,20 @@ async function bootstrap(): Promise<void> {
 
   await app.whenReady();
 
+  // The before-quit gate reads both of these synchronously, so they have to be
+  // in memory before the user can press Cmd+Q. Neither is worth failing startup
+  // over: settings fall back to "don't confirm" and copy falls back to English.
+  await Promise.all([
+    getDesktopSettingsStore()
+      .warm()
+      .catch((error) => {
+        log.error("[desktop settings] failed to warm the settings cache", error);
+      }),
+    quitDialogCopyStore.load().catch((error) => {
+      log.error("[quit-confirmation] failed to load localized dialog copy", error);
+    }),
+  ]);
+
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
     const { pathname, search, hash } = new URL(request.url);
@@ -1073,6 +1183,17 @@ void runDesktopStartup({
   process.exit(1);
 });
 
+/**
+ * Platform note: on Windows and Linux, quitting by closing the last window
+ * destroys that window before `window-all-closed` fires `app.quit()`, so by the
+ * time this runs there is nothing left to render the overlay in and the daemon
+ * stop happens with no visible feedback. That is pre-existing behavior, not
+ * something the quit confirmation introduced — the confirmation dialog actually
+ * runs *before* the window is destroyed, so the user is at least told what the
+ * quit will stop. Fixing it properly means keeping the last window alive until
+ * the daemon stop resolves, which changes close semantics for every non-macOS
+ * quit; deliberately out of scope here.
+ */
 function showDaemonShutdownDialog(): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send("paseo:event:quitting", {});
@@ -1081,6 +1202,7 @@ function showDaemonShutdownDialog(): void {
 
 const quitLifecycle = createQuitLifecycle({
   app,
+  quitConfirmation,
   closeTransportSessions: closeAllTransportSessions,
   stopDesktopManagedDaemonIfNeeded: () =>
     stopDesktopManagedDaemonOnQuitIfNeeded({
@@ -1088,6 +1210,7 @@ const quitLifecycle = createQuitLifecycle({
       isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
+      keepDaemonRunningThisQuit: quitConfirmation.shouldKeepDaemonRunningThisQuit,
     }),
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();

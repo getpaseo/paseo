@@ -1223,6 +1223,14 @@ export const ja: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "Paseo を終了しますか?",
+      message:
+        "終了するとローカルデーモンと、実行中のエージェントが停止します。作業は中断されます。",
+      quit: "終了",
+      cancel: "キャンセル",
+      keepDaemonRunning: "デーモンを実行したままにする",
+    },
     quitting: {
       title: "Paseoを終了中...",
       detail: "ローカルデーモンを停止中。",

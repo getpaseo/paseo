@@ -13,7 +13,11 @@ import {
   readWindowTheme,
   resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
+  setupWindowStatePersistence,
+  type PersistableWindow,
+  type QuitEventTarget,
 } from "./window-manager";
+import type { WindowState, WindowStateStore } from "../settings/window-state";
 
 describe("window-manager", () => {
   describe("readBadgeCount", () => {
@@ -237,6 +241,194 @@ describe("window-manager", () => {
         width: 1024,
         height: 720,
       });
+    });
+  });
+
+  describe("setupWindowStatePersistence", () => {
+    function createFakeWindow(): PersistableWindow & {
+      emit(event: string): void;
+      setBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+    } {
+      const handlers = new Map<string, Array<() => void>>();
+      let bounds = { x: 0, y: 0, width: 800, height: 600 };
+
+      return {
+        isMinimized: () => false,
+        isFullScreen: () => false,
+        isMaximized: () => false,
+        getNormalBounds: () => bounds,
+        on(event, handler) {
+          const existing = handlers.get(event) ?? [];
+          existing.push(handler);
+          handlers.set(event, existing);
+          return this;
+        },
+        emit(event) {
+          for (const handler of handlers.get(event) ?? []) {
+            handler();
+          }
+        },
+        setBounds(next) {
+          bounds = next;
+        },
+      };
+    }
+
+    function createFakeQuitEvents(): QuitEventTarget & { emit(): void } {
+      let handlers: Array<() => void> = [];
+      return {
+        on(_event, handler) {
+          handlers.push(handler);
+          return this;
+        },
+        removeListener(_event, handler) {
+          handlers = handlers.filter((existing) => existing !== handler);
+          return this;
+        },
+        emit() {
+          // for-of holds the array it started on, so a listener removing itself
+          // mid-emit (removeListener reassigns `handlers`) can't skip a peer.
+          for (const handler of handlers) {
+            handler();
+          }
+        },
+      };
+    }
+
+    /**
+     * A store that reproduces the real one-way `finalized` latch: once saveSync
+     * lands, every later save() is dropped (see settings/window-state.ts).
+     */
+    function createLatchingStore(): WindowStateStore & { written: WindowState[] } {
+      const written: WindowState[] = [];
+      let finalized = false;
+      return {
+        written,
+        load: async () => null,
+        async save(state) {
+          if (finalized) {
+            return;
+          }
+          written.push(state);
+        },
+        saveSync(state) {
+          finalized = true;
+          written.push(state);
+        },
+      };
+    }
+
+    it("flushes geometry on an ordinary window close", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      setupWindowStatePersistence(win, store, { quitEvents: createFakeQuitEvents() });
+
+      win.setBounds({ x: 10, y: 20, width: 1000, height: 700 });
+      win.emit("close");
+
+      expect(store.written).toEqual([
+        { x: 10, y: 20, width: 1000, height: 700, isMaximized: false },
+      ]);
+    });
+
+    // Cmd+W, the red button, and closing one of several windows all happen with
+    // the quit uncommitted. Gating the close flush on quit-committed would drop
+    // every one of them, and `closed` then unregisters the before-quit listener,
+    // so the geometry would never be written again.
+    it("still flushes on close when the quit is not committed", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      setupWindowStatePersistence(win, store, {
+        quitEvents: createFakeQuitEvents(),
+        gates: { willVetoClose: () => false, isQuitCommitted: () => false },
+      });
+
+      win.emit("close");
+
+      expect(store.written).toHaveLength(1);
+    });
+
+    it("does not flush a close that is about to be vetoed", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      setupWindowStatePersistence(win, store, {
+        quitEvents: createFakeQuitEvents(),
+        gates: { willVetoClose: () => true, isQuitCommitted: () => false },
+      });
+
+      win.emit("close");
+
+      expect(store.written).toEqual([]);
+    });
+
+    it("does not flush a before-quit the user can still cancel", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      const quitEvents = createFakeQuitEvents();
+      setupWindowStatePersistence(win, store, {
+        quitEvents,
+        gates: { willVetoClose: () => true, isQuitCommitted: () => false },
+      });
+
+      quitEvents.emit();
+
+      expect(store.written).toEqual([]);
+    });
+
+    it("flushes on before-quit once the quit is committed", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      const quitEvents = createFakeQuitEvents();
+      let committed = false;
+      setupWindowStatePersistence(win, store, {
+        quitEvents,
+        gates: { willVetoClose: () => !committed, isQuitCommitted: () => committed },
+      });
+
+      quitEvents.emit();
+      committed = true;
+      quitEvents.emit();
+
+      expect(store.written).toHaveLength(1);
+    });
+
+    // The regression this gating exists for: a cancelled quit used to run the
+    // synchronous final write, latching the store, after which resizing the
+    // window and quitting for real persisted nothing.
+    it("still persists the final geometry after the user cancels a quit", async () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      const quitEvents = createFakeQuitEvents();
+      let committed = false;
+      setupWindowStatePersistence(win, store, {
+        quitEvents,
+        gates: { willVetoClose: () => !committed, isQuitCommitted: () => committed },
+      });
+
+      // Cmd+Q, then Cancel.
+      quitEvents.emit();
+
+      // Resize, then quit for real.
+      win.setBounds({ x: 5, y: 5, width: 1280, height: 800 });
+      committed = true;
+      quitEvents.emit();
+
+      expect(store.written).toEqual([{ x: 5, y: 5, width: 1280, height: 800, isMaximized: false }]);
+    });
+
+    it("stops listening for quits once the window is gone", () => {
+      const win = createFakeWindow();
+      const store = createLatchingStore();
+      const quitEvents = createFakeQuitEvents();
+      setupWindowStatePersistence(win, store, {
+        quitEvents,
+        gates: { willVetoClose: () => false, isQuitCommitted: () => true },
+      });
+
+      win.emit("closed");
+      quitEvents.emit();
+
+      expect(store.written).toEqual([]);
     });
   });
 });

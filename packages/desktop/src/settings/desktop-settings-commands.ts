@@ -5,7 +5,7 @@ export type DesktopCommandHandler = (args?: Record<string, unknown>) => unknown;
 export function createDesktopSettingsCommandHandlers({
   settingsStore,
 }: {
-  settingsStore: DesktopSettingsStore;
+  settingsStore: Pick<DesktopSettingsStore, "get" | "patch" | "migrateLegacyRendererSettings">;
 }): Record<string, DesktopCommandHandler> {
   return {
     get_desktop_settings: () => settingsStore.get(),

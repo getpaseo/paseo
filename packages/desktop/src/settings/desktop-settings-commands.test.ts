@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_DESKTOP_SETTINGS, type DesktopSettingsStore } from "./desktop-settings";
 import { createDesktopSettingsCommandHandlers } from "./desktop-settings-commands";
 
-function createStoreMock(): DesktopSettingsStore {
+type SettingsCommandStore = Pick<
+  DesktopSettingsStore,
+  "get" | "patch" | "migrateLegacyRendererSettings"
+>;
+
+function createStoreMock(): SettingsCommandStore {
   return {
     get: vi.fn(async () => DEFAULT_DESKTOP_SETTINGS),
     patch: vi.fn(async () => ({

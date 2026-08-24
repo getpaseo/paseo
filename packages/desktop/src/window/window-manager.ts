@@ -294,13 +294,62 @@ export function setupWindowResizeEvents(win: BrowserWindow): void {
 }
 
 /**
+ * Gates that tell the persistence layer whether a close/quit is actually final.
+ *
+ * `store.saveSync` sets a one-way `finalized` latch (see settings/window-state.ts)
+ * that permanently short-circuits every later `save()`. That is correct for a real
+ * exit and catastrophic for one the user cancels: the window would keep working
+ * but silently stop remembering its geometry until the app restarts.
+ */
+export interface WindowStatePersistenceGates {
+  /** True when this close is about to be vetoed to ask the user, so it isn't final. */
+  willVetoClose: () => boolean;
+  /** True once the quit has been confirmed or handed to the updater. */
+  isQuitCommitted: () => boolean;
+}
+
+// Default gates preserve the pre-confirmation behavior: every close and every
+// before-quit is final.
+const ALWAYS_FINAL: WindowStatePersistenceGates = {
+  willVetoClose: () => false,
+  isQuitCommitted: () => true,
+};
+
+/** The window surface this function actually uses, so tests can supply a fake. */
+export interface PersistableWindow {
+  isMinimized(): boolean;
+  isFullScreen(): boolean;
+  isMaximized(): boolean;
+  getNormalBounds(): { x: number; y: number; width: number; height: number };
+  on(
+    event: "resize" | "move" | "maximize" | "unmaximize" | "close" | "closed",
+    handler: () => void,
+  ): unknown;
+}
+
+/** The `app` surface this function uses. Injectable for the same reason. */
+export interface QuitEventTarget {
+  on(event: "before-quit", handler: () => void): unknown;
+  removeListener(event: "before-quit", handler: () => void): unknown;
+}
+
+export interface WindowStatePersistenceOptions {
+  gates?: WindowStatePersistenceGates;
+  quitEvents?: QuitEventTarget;
+}
+
+/**
  * Persist the window's size/position/maximized state so it can be restored on
  * the next launch. Debounces disk writes on resize/move, writes immediately on
  * maximize/unmaximize, and flushes synchronously on close so the final state
  * survives quit/reboot. The latest geometry is captured into memory on every
  * event so a queued async write can never overwrite the close-time snapshot.
  */
-export function setupWindowStatePersistence(win: BrowserWindow, store: WindowStateStore): void {
+export function setupWindowStatePersistence(
+  win: PersistableWindow,
+  store: WindowStateStore,
+  { gates = ALWAYS_FINAL, quitEvents = app }: WindowStatePersistenceOptions = {},
+): void {
   let latestState: WindowState | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let flushed = false;
@@ -351,9 +400,11 @@ export function setupWindowStatePersistence(win: BrowserWindow, store: WindowSta
     persist();
   }
 
-  // Final synchronous flush. Runs on window close AND on app quit: the app's
-  // before-quit handler calls app.exit(0), which bypasses the window close
-  // event (see daemon/quit-lifecycle.ts), so close alone would miss Cmd+Q.
+  // Final synchronous flush. Reached from window close AND from app quit: the
+  // app's before-quit handler calls app.exit(0), which bypasses the window close
+  // event (see daemon/quit-lifecycle.ts), so close alone would miss Cmd+Q. Both
+  // entry points gate on whether the exit is actually going to happen — see
+  // WindowStatePersistenceGates.
   function flushFinal(): void {
     if (flushed) {
       return;
@@ -370,16 +421,35 @@ export function setupWindowStatePersistence(win: BrowserWindow, store: WindowSta
     }
   }
 
+  // A close that is about to be vetoed (the quit-confirmation prompt on
+  // Windows/Linux) is not final. Every other close is — including Cmd+W and the
+  // red button, which is why this is gated on the veto and not on the quit.
+  function flushOnClose(): void {
+    if (gates.willVetoClose()) {
+      return;
+    }
+    flushFinal();
+  }
+
+  // The quit equivalent: before-quit fires for quits the user can still cancel,
+  // so only a committed quit gets the final write.
+  function flushOnQuit(): void {
+    if (!gates.isQuitCommitted()) {
+      return;
+    }
+    flushFinal();
+  }
+
   win.on("resize", scheduleSave);
   win.on("move", scheduleSave);
   win.on("maximize", saveNow);
   win.on("unmaximize", saveNow);
-  win.on("close", flushFinal);
-  app.on("before-quit", flushFinal);
+  win.on("close", flushOnClose);
+  quitEvents.on("before-quit", flushOnQuit);
 
   win.on("closed", () => {
     clearTimer();
-    app.removeListener("before-quit", flushFinal);
+    quitEvents.removeListener("before-quit", flushOnQuit);
   });
 }
 

@@ -1200,6 +1200,13 @@ export const zhCN: TranslationResources = {
     },
   },
   desktop: {
+    quitConfirm: {
+      title: "退出 Paseo？",
+      message: "退出会停止本地守护进程及其正在运行的代理，它们的工作将被中断。",
+      quit: "退出",
+      cancel: "取消",
+      keepDaemonRunning: "保持守护进程运行",
+    },
     quitting: {
       title: "正在退出 Paseo...",
       detail: "正在停止本地 daemon。",
