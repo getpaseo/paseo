@@ -65,6 +65,7 @@ import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
+import { PiSubagentsBridge } from "./subagents-bridge.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -1200,6 +1201,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
+  private readonly subagentsBridge = new PiSubagentsBridge();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
@@ -1925,6 +1927,14 @@ export class PiRpcAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    const subagents = this.subagentsBridge.handleExtensionUiRequest(event);
+    if (subagents.handled) {
+      for (const bridgeEvent of subagents.events) {
+        this.emit(bridgeEvent);
+      }
+      return;
+    }
+
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       if (

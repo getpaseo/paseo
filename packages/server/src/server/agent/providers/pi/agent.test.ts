@@ -229,6 +229,13 @@ class SessionEvents {
     });
   }
 
+  providerSubagentEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+        event.type === "provider_subagent",
+    );
+  }
+
   turnCompletedEvents() {
     return this.events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -302,6 +309,47 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("projects Pi Subagents async status widgets into provider-subagent events", async () => {
+    const { pi, events } = await createSession();
+    pi.latestSession().emit({
+      type: "extension_ui_request",
+      id: "subagents-widget",
+      method: "setWidget",
+      widgetKey: "subagent-async",
+      widgetLines: [
+        `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+          kind: "pi-subagents.async-status-snapshot",
+          version: 1,
+          generatedAt: 70_000,
+          caps: {},
+          omitted: {},
+          runs: [
+            {
+              id: "async-1",
+              kind: "subagent",
+              label: "worker",
+              state: "running",
+              startedAt: 10_000,
+              activity: { currentTool: "read", toolCount: 2 },
+            },
+          ],
+        })}`,
+      ],
+    });
+
+    expect(events.providerSubagentEvents()).toEqual([
+      expect.objectContaining({
+        provider: "pi",
+        event: expect.objectContaining({
+          type: "upsert",
+          title: "worker",
+          status: "running",
+          subtitle: "running · read · 2 tools · 1m",
+        }),
+      }),
+    ]);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
