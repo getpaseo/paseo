@@ -3,17 +3,18 @@ import { Pressable, Text, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 export interface TerminalPasteActionProps {
-  hasClipboardText: boolean;
+  /** Clipboard holds text or an image, so a paste attempt can do something. */
+  hasClipboardContent: boolean;
   onPaste: () => void;
 }
 
-export function TerminalPasteAction({ hasClipboardText, onPaste }: TerminalPasteActionProps) {
+export function TerminalPasteAction({ hasClipboardContent, onPaste }: TerminalPasteActionProps) {
   return (
     <TerminalActionButton
       label="Paste"
       accessibilityLabel="Paste"
       testID="terminal-paste"
-      disabled={!hasClipboardText}
+      disabled={!hasClipboardContent}
       onPress={onPaste}
       variant="key"
     />
