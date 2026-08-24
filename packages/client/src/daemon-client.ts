@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type { BrowserToolName } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -8,6 +9,7 @@ import {
   AgentResumedStatusPayloadSchema,
   CheckoutRenameBranchResponseSchema,
   parseServerInfoStatusPayload,
+  BrowserToolExecuteResponseSchema,
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
@@ -502,6 +504,7 @@ type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
+export type ExecuteBrowserToolResult = z.infer<typeof BrowserToolExecuteResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
@@ -784,6 +787,13 @@ export interface RenameBranchInput {
 export interface RenameTerminalInput {
   terminalId: string;
   title: string;
+  requestId?: string;
+}
+export interface ExecuteBrowserToolInput {
+  tool: BrowserToolName;
+  input?: Record<string, unknown>;
+  cwd?: string;
+  workspaceId?: string;
   requestId?: string;
 }
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
@@ -5328,6 +5338,24 @@ export class DaemonClient {
         title: input.title,
       },
       responseType: "terminal.rename.response",
+    });
+  }
+
+  /**
+   * Runs one browser automation tool through the daemon's browser tool catalog -- the same
+   * catalog the agent MCP server exposes, so CLI and MCP callers share one implementation.
+   */
+  async executeBrowserTool(input: ExecuteBrowserToolInput): Promise<ExecuteBrowserToolResult> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "browser.tool.execute.request",
+        tool: input.tool,
+        ...(input.input ? { input: input.input } : {}),
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      },
+      responseType: "browser.tool.execute.response",
     });
   }
 
