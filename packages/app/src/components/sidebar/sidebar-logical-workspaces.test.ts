@@ -159,20 +159,30 @@ describe("logical workspace sidebar projection", () => {
     ).toEqual([projectB.workspaceKey]);
   });
 
-  it("carries the contributing plugin host namespace onto the logical row", () => {
+  it("allows creation only on project hosts with exactly the row's grouping namespace", () => {
     const member = placement({ id: "member", serverId: "host-a" });
+    const nativeProject = project("project-a", [member]);
+    nativeProject.hosts.push({
+      serverId: "host-b",
+      projectId: "project-a-host-b",
+      iconWorkingDir: "/projects/project-a",
+      worktreeSupport: "supported",
+    });
     const projection = buildSidebarLogicalWorkspaceProjection({
-      projects: [project("project-a", [member])],
+      projects: [nativeProject],
       workspaceEntriesByKey: new Map([
         [member.workspaceKey, entry(member, { ref: "project-a-catalog" })],
       ]),
-      groupings: [{ ...GROUPING, serverIds: ["host-a", "host-b"] }],
+      groupings: [
+        { ...GROUPING, serverIds: ["host-a", "host-b"] },
+        { ...GROUPING, key: "other/sidebar-workspace-grouping/main", serverIds: ["host-b"] },
+      ],
       activeWorkspaceSelection: null,
     });
 
     expect(
-      logicalRows(projection.rowsByProjectViewKey.get("project-a"))[0]?.groupingServerIds,
-    ).toEqual(["host-a", "host-b"]);
+      logicalRows(projection.rowsByProjectViewKey.get("project-a"))[0]?.creationServerIds,
+    ).toEqual(["host-a"]);
   });
 
   it("applies a host contribution only to native workspaces on that installed host", () => {

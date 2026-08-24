@@ -92,6 +92,7 @@ describe("buildSidebarProjectRowModel", () => {
       resolveSidebarLogicalWorkspaceAddHostTarget({
         project: groupedProject,
         occupiedServerIds: new Set(["host-a"]),
+        allowedServerIds: new Set(["host-a", "host-b", "host-c"]),
         supportsMultiplicityByServerId: new Map([["host-b", false]]),
       }),
     ).toMatchObject({ serverId: "host-c", iconWorkingDir: "/repo/c" });

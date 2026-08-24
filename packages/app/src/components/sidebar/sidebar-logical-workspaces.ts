@@ -24,7 +24,7 @@ export interface SidebarProjectLogicalWorkspaceRow {
   kind: "logical";
   key: string;
   groupingKey: string;
-  groupingServerIds: string[] | null;
+  creationServerIds: string[];
   logicalWorkspaceRef: string;
   title: string;
   statusBucket: SidebarWorkspaceEntry["statusBucket"];
@@ -124,6 +124,8 @@ export function buildSidebarLogicalWorkspaceProjection(input: {
     });
     const result = emitProjectRows({
       projectViewKey: project.viewKey,
+      projectServerIds: project.hosts.map((host) => host.serverId),
+      groupings,
       nativeIdentities,
       classified,
       activeWorkspaceSelection: input.activeWorkspaceSelection,
@@ -200,6 +202,8 @@ function classifyProjectPlacements(input: {
 
 function emitProjectRows(input: {
   projectViewKey: string;
+  projectServerIds: readonly string[];
+  groupings: readonly SidebarLogicalWorkspaceGrouping[];
   nativeIdentities: readonly NativePlacementIdentity[];
   classified: ClassifiedProjectPlacements;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
@@ -238,6 +242,11 @@ function emitProjectRows(input: {
     const logicalRow = buildLogicalRow({
       projectViewKey: input.projectViewKey,
       grouping: group.grouping,
+      creationServerIds: resolveGroupingCreationServerIds({
+        groupingKey: group.grouping.key,
+        projectServerIds: input.projectServerIds,
+        groupings: input.groupings,
+      }),
       logicalWorkspaceRef: group.logicalWorkspaceRef,
       members: group.members,
       retainedHistory,
@@ -345,6 +354,19 @@ function groupingAppliesToServer(
   return !grouping.serverIds || grouping.serverIds.includes(serverId);
 }
 
+function resolveGroupingCreationServerIds(input: {
+  groupingKey: string;
+  projectServerIds: readonly string[];
+  groupings: readonly SidebarLogicalWorkspaceGrouping[];
+}): string[] {
+  return input.projectServerIds.filter((serverId) => {
+    const matching = input.groupings.filter((grouping) =>
+      groupingAppliesToServer(grouping, serverId),
+    );
+    return matching.length === 1 && matching[0]?.key === input.groupingKey;
+  });
+}
+
 function logicalGroupIdentity(groupingKey: string, logicalWorkspaceRef: string): string {
   return JSON.stringify([groupingKey, logicalWorkspaceRef]);
 }
@@ -356,6 +378,7 @@ function physicalRow(placement: SidebarWorkspacePlacement): SidebarProjectPhysic
 function buildLogicalRow(input: {
   projectViewKey: string;
   grouping: SidebarLogicalWorkspaceGrouping;
+  creationServerIds: string[];
   logicalWorkspaceRef: string;
   members: ManagedPlacement[];
   retainedHistory: RetainedHistoryPlacement[];
@@ -376,7 +399,7 @@ function buildLogicalRow(input: {
     kind: "logical",
     key: JSON.stringify([input.grouping.key, input.projectViewKey, input.logicalWorkspaceRef]),
     groupingKey: input.grouping.key,
-    groupingServerIds: input.grouping.serverIds ? [...input.grouping.serverIds] : null,
+    creationServerIds: input.creationServerIds,
     logicalWorkspaceRef: input.logicalWorkspaceRef,
     title,
     statusBucket,

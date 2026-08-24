@@ -1947,7 +1947,7 @@ function ProjectBlock({
       const addHostTarget = resolveSidebarLogicalWorkspaceAddHostTarget({
         project,
         occupiedServerIds: placementServerIds,
-        ...(row.groupingServerIds ? { allowedServerIds: new Set(row.groupingServerIds) } : {}),
+        allowedServerIds: new Set(row.creationServerIds),
         supportsMultiplicityByServerId,
       });
       return (
