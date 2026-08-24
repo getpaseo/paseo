@@ -674,6 +674,17 @@ export interface AgentSession {
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
+
+  /**
+   * Release the session's foreground-turn slot for `turnId`, returning whether
+   * it was released. The manager calls this after force-canceling a run: its
+   * own `turn_canceled` dispatch settles the run record only, and a session
+   * that tracks a foreground slot will otherwise hold it until the provider
+   * reports a turn end that a force-cancel means is never coming. Keyed, so a
+   * newer turn that already owns the slot keeps it. Optional: providers that
+   * do not track a foreground slot need not implement it.
+   */
+  releaseForegroundTurn?(turnId: string): boolean;
 }
 
 export type FetchCatalogOptions =
