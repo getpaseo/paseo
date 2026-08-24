@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 - 2026-08-23
+
+### Fixed
+
+- Fixed multiline composers stopping resizing after workspace and agent transitions on iOS and Android ([#3740](https://github.com/getpaseo/paseo/pull/3740))
+
 ## 0.5.0 - 2026-08-23
 
 ### Added

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
 import { APP_SETTINGS_KEY, SETTINGS_MIGRATIONS_KEY } from "./keys";
-import type { AppSettings, KeyValueStorage } from "./storage";
+import type { AppSettings, KeyValueStorage, PersistedAppSettings } from "./storage";
 
 const AppliedMigrationsSchema = z.strictObject({ applied: z.array(z.string()) });
 
@@ -22,9 +22,14 @@ const STEER_DEFAULT_MIGRATION = "steer-default";
 export async function migrateAppSettings(
   settings: AppSettings,
   storage: KeyValueStorage,
+  stored?: PersistedAppSettings,
 ): Promise<AppSettings> {
-  const stored = await readValidatedJson(storage, SETTINGS_MIGRATIONS_KEY, AppliedMigrationsSchema);
-  const applied = new Set(stored?.applied ?? []);
+  const migrationMarker = await readValidatedJson(
+    storage,
+    SETTINGS_MIGRATIONS_KEY,
+    AppliedMigrationsSchema,
+  );
+  const applied = new Set(migrationMarker?.applied ?? []);
   if (applied.has(STEER_DEFAULT_MIGRATION)) {
     return settings;
   }
@@ -32,7 +37,15 @@ export async function migrateAppSettings(
   const migrated: AppSettings =
     settings.sendBehavior === "interrupt" ? { ...settings, sendBehavior: "steer" } : settings;
   if (migrated !== settings) {
-    await storage.setItem(APP_SETTINGS_KEY, JSON.stringify(migrated));
+    const storedSidebarRowItems = stored?.sidebarRowItems ?? {};
+    await storage.setItem(
+      APP_SETTINGS_KEY,
+      JSON.stringify({
+        ...stored,
+        ...migrated,
+        sidebarRowItems: { ...storedSidebarRowItems, ...migrated.sidebarRowItems },
+      }),
+    );
   }
 
   applied.add(STEER_DEFAULT_MIGRATION);

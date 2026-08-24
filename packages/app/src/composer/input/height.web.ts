@@ -1,28 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
-import type {
-  NativeSyntheticEvent,
-  TextInputContentSizeChangeEventData,
-  TextInputScrollEventData,
-  TextStyle,
-} from "react-native";
-import { clampComposerHeight } from "./height-state";
+import type { ComposerHeightResult } from "./height.types";
 
 interface ComposerHeightArgs {
   value: string;
   textareaRef: RefObject<HTMLElement | null>;
   minHeight: number;
   maxHeight: number;
-  onHeightChange?: (height: number) => void;
-}
-
-interface ComposerHeightResult {
-  style: TextStyle;
-  scrollEnabled: boolean;
-  onTextChange: (previousText: string, nextText: string) => void;
-  onContentSizeChange: (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => void;
-  onScroll: (event: NativeSyntheticEvent<TextInputScrollEventData>) => void;
-  reset: () => void;
 }
 
 const COPIED_STYLES = [
@@ -52,28 +36,19 @@ export function useComposerHeight({
   textareaRef,
   minHeight,
   maxHeight,
-  onHeightChange,
 }: ComposerHeightArgs): ComposerHeightResult {
   const [height, setHeight] = useState(minHeight);
   const heightRef = useRef(minHeight);
-  const paramsRef = useRef({ value, minHeight, maxHeight, onHeightChange });
-  paramsRef.current = { value, minHeight, maxHeight, onHeightChange };
+  const paramsRef = useRef({ value, minHeight, maxHeight });
+  paramsRef.current = { value, minHeight, maxHeight };
   const mirrorRef = useRef<HTMLTextAreaElement | null>(null);
 
   const setBoundedHeight = useCallback((nextHeight: number) => {
-    const {
-      minHeight: currentMin,
-      maxHeight: currentMax,
-      onHeightChange: onChange,
-    } = paramsRef.current;
-    const bounded = clampComposerHeight(nextHeight, {
-      minHeight: currentMin,
-      maxHeight: currentMax,
-    });
+    const { minHeight: currentMin, maxHeight: currentMax } = paramsRef.current;
+    const bounded = Math.max(currentMin, Math.min(currentMax, nextHeight));
     if (Math.abs(heightRef.current - bounded) < 1) return;
     heightRef.current = bounded;
     setHeight(bounded);
-    onChange?.(bounded);
   }, []);
 
   const measure = useCallback(
@@ -145,22 +120,13 @@ export function useComposerHeight({
     [measure],
   );
   const reset = useCallback(() => setBoundedHeight(minHeight), [minHeight, setBoundedHeight]);
-  const onContentSizeChange = useCallback(
-    (_event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => undefined,
-    [],
-  );
-  const onScroll = useCallback(
-    (_event: NativeSyntheticEvent<TextInputScrollEventData>) => undefined,
-    [],
-  );
   const style = useMemo(() => ({ height, minHeight, maxHeight }), [height, maxHeight, minHeight]);
 
   return {
+    mode: "measured",
     style,
     scrollEnabled: height >= maxHeight,
     onTextChange,
-    onContentSizeChange,
-    onScroll,
     reset,
   };
 }
