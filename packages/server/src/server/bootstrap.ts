@@ -182,6 +182,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import type { NotificationPolicy } from "@getpaseo/protocol/messages";
 import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -454,9 +455,9 @@ export interface PaseoDaemonConfig {
   pushNotificationSender?: PushNotificationSender;
   managedProcesses?: ManagedProcessRegistry;
   notifications?: {
-    // When true, always send remote push notifications when a reason is
-    // eligible, even while a client is present or focused on the target.
-    alwaysPush?: boolean;
+    // Controls when the daemon sends a remote push to mobile devices when an
+    // attention event fires. See agent-attention-policy.ts.
+    policy?: NotificationPolicy;
   };
   configReload?: {
     env: NodeJS.ProcessEnv;

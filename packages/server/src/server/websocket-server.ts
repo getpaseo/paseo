@@ -66,6 +66,7 @@ import {
   isPushEligibleAttentionReason,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
+import type { NotificationPolicy } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
@@ -2526,8 +2527,8 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
-  private alwaysPushNotifications(): boolean {
-    return this.daemonConfigStore.get().notifications?.alwaysPush === true;
+  private notificationPolicy(): NotificationPolicy {
+    return this.daemonConfigStore.get().notifications?.policy ?? "smart";
   }
 
   private async broadcastAgentAttention(params: {
@@ -2571,7 +2572,7 @@ export class VoiceAssistantWebSocketServer {
       focusTarget: { kind: "agent", id: params.agentId },
       pushEligible: isPushEligibleAttentionReason(params.reason),
       nowMs,
-      alwaysPush: this.alwaysPushNotifications(),
+      policy: this.notificationPolicy(),
     });
 
     if (plan.shouldPush) {
@@ -2649,7 +2650,7 @@ export class VoiceAssistantWebSocketServer {
       focusTarget: { kind: "terminal", id: params.terminalId },
       pushEligible: true,
       nowMs,
-      alwaysPush: this.alwaysPushNotifications(),
+      policy: this.notificationPolicy(),
     });
 
     const title = terminalAttentionTitle(params.reason);

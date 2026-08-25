@@ -12,6 +12,7 @@ import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.j
 import {
   AgentProfileSchema,
   AgentSkillSelectionSchema,
+  NotificationPolicySchema,
   PluginIdSchema,
   PluginSourceSchema,
   TerminalProfileSchema,
@@ -296,9 +297,9 @@ export const PersistedConfigSchema = z
         auth: DaemonAuthSchema.optional(),
         notifications: z
           .object({
-            // When true, always send remote push notifications when a reason is
-            // eligible, even while a client is present or focused on the target.
-            alwaysPush: z.boolean().optional(),
+            // Controls when the daemon sends a remote push to mobile devices when
+            // an attention event fires. See agent-attention-policy.ts.
+            policy: NotificationPolicySchema.optional(),
           })
           .strict()
           .optional(),
