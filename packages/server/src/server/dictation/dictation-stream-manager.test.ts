@@ -63,6 +63,15 @@ class FakeSttProvider implements SpeechToTextProvider {
   }
 }
 
+class SyncFinalSession extends FakeRealtimeSession {
+  override commit(): void {
+    this.commitCalls += 1;
+    const segmentId = `seg-${this.commitCalls}`;
+    this.emitCommitted(segmentId);
+    this.emitTranscript(segmentId, `transcript ${this.commitCalls}`, true);
+  }
+}
+
 const buildPcmBase64 = (sampleValue: number, sampleCount: number): string => {
   const samples = new Int16Array(sampleCount);
   samples.fill(sampleValue);
@@ -409,5 +418,32 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       process.env.PASEO_DICTATION_DEBUG = previousDebug;
       vi.useRealTimers();
     }
+  });
+
+  it("emits one final transcript when synchronous STT events re-enter finalization", async () => {
+    const session = new SyncFinalSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 0,
+    });
+
+    await manager.handleStart("d-sync-final", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-sync-final",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 2400),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+
+    await manager.handleFinish("d-sync-final", 0);
+    await tick();
+
+    const finals = emitted.filter((msg) => msg.type === "dictation_stream_final");
+    expect(finals).toHaveLength(1);
+    expect((finals[0]?.payload as { text?: string } | undefined)?.text).toBe("transcript 1");
   });
 });
