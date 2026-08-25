@@ -869,7 +869,13 @@ describe("workspace-layout-store actions", () => {
     const explorerSidebarPaneId = state.explorerSidebarPaneIdByWorkspace.legacy;
     expect(findPaneById(layout.root, "main")).toBeTruthy();
     expect(explorerSidebarPaneId).toBeTruthy();
-    expect(findPaneById(layout.root, explorerSidebarPaneId)?.hidden).toBe(true);
+    const explorerPane = findPaneById(layout.root, explorerSidebarPaneId);
+    expect(explorerPane?.hidden).toBe(true);
+    const tabsById = new Map(collectAllTabs(layout.root).map((tab) => [tab.tabId, tab]));
+    expect(explorerPane?.tabIds.map((tabId) => tabsById.get(tabId)?.target)).toEqual([
+      { kind: "files" },
+      { kind: "changes_tree" },
+    ]);
     expect(restored.getState().splitSizesByWorkspace).toEqual({});
     await expect(AsyncStorage.getItem("workspace-layout-state")).resolves.not.toBeNull();
   });

@@ -466,7 +466,14 @@ function ensurePersistedExplorerSidebarPane(input: {
     paneId: split.paneId,
     hidden: true,
   });
-  return { layout: hiddenLayout ?? split.layout, paneId: split.paneId };
+  return {
+    layout: migrateExplorerSidebarTabs(
+      input.workspaceKey,
+      hiddenLayout ?? split.layout,
+      split.paneId,
+    ),
+    paneId: split.paneId,
+  };
 }
 
 /** Keeps hydration compatible while enforcing the Explorer's navigation-only contract. */
@@ -495,6 +502,50 @@ function migrateExplorerSidebarTabs(
     }
     nextLayout =
       moveTabToPaneInLayout({ layout: nextLayout, tabId, toPaneId: targetPane.id }) ?? nextLayout;
+  }
+
+  const migratedPane = findPaneById(nextLayout.root, paneId);
+  if (!migratedPane) return nextLayout;
+  const migratedTabsById = new Map(collectAllTabs(nextLayout.root).map((tab) => [tab.tabId, tab]));
+  const newTabIds = migratedPane.tabIds.filter(
+    (tabId) => migratedTabsById.get(tabId)?.target.kind === "new_tab",
+  );
+  const hasExplorerTab = migratedPane.tabIds.some(
+    (tabId) => migratedTabsById.get(tabId)?.target.kind !== "new_tab",
+  );
+
+  if (!hasExplorerTab && newTabIds[0]) {
+    const filesReplacement = replaceTabTargetInLayout({
+      layout: nextLayout,
+      tabId: newTabIds[0],
+      target: { kind: "files" },
+      createTabId: createWorkspaceTabInstanceId,
+    });
+    if (filesReplacement) {
+      nextLayout = filesReplacement.layout;
+    }
+    for (const tabId of newTabIds.slice(1)) {
+      nextLayout =
+        closeTabInLayout({ layout: nextLayout, tabId, preserveEmptyPaneId: paneId }) ?? nextLayout;
+    }
+    const changesTab = createTabInLayout({
+      layout: nextLayout,
+      placement: { mode: "pane", paneId },
+      explorerSidebarPaneId: paneId,
+      target: { kind: "changes_tree" },
+      now: Date.now(),
+      createTabId: createWorkspaceTabInstanceId,
+    });
+    return keepWorkspaceFocusOutOfExplorerSidebar(
+      changesTab?.layout ?? nextLayout,
+      paneId,
+      layout.focusedPaneId,
+    );
+  }
+
+  for (const tabId of newTabIds) {
+    nextLayout =
+      closeTabInLayout({ layout: nextLayout, tabId, preserveEmptyPaneId: paneId }) ?? nextLayout;
   }
   return nextLayout;
 }
