@@ -129,7 +129,7 @@ export interface CreateAgentCommandResult {
   liveSnapshot: ManagedAgent;
   background: boolean;
   initialPromptStarted: boolean;
-  initialPromptDisposition: PromptDispatchDisposition | null;
+  finishNotificationRegistered: boolean;
   initialPromptError: unknown | null;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
@@ -209,18 +209,18 @@ export async function createAgentCommand(
     initialPromptError = sendResult.error ?? null;
   }
 
-  if (
+  const finishNotificationRegistered =
     input.kind === "mcp" &&
     input.background &&
     input.notifyOnFinish &&
-    input.callerAgentId &&
-    initialPromptDisposition === "turn_started"
-  ) {
+    !!input.callerAgentId &&
+    initialPromptDisposition === "turn_started";
+  if (finishNotificationRegistered) {
     setupFinishNotification({
       agentManager: dependencies.agentManager,
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
-      callerAgentId: input.callerAgentId,
+      callerAgentId: input.callerAgentId!,
       requireParentOwnership: true,
       logger: dependencies.logger,
     });
@@ -231,7 +231,7 @@ export async function createAgentCommand(
     liveSnapshot,
     background: resolved.background,
     initialPromptStarted,
-    initialPromptDisposition,
+    finishNotificationRegistered,
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };

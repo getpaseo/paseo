@@ -1435,7 +1435,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         snapshot,
         background: createdInBackground,
         initialPromptStarted,
-        initialPromptDisposition,
+        finishNotificationRegistered,
       } = await createAgentCommand(
         {
           agentManager,
@@ -1504,13 +1504,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
-      const guidance =
-        callerAgentId &&
-        notifyOnFinish &&
-        createdInBackground &&
-        initialPromptDisposition === "turn_started"
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
-          : undefined;
+      const guidance = finishNotificationRegistered
+        ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
+        : undefined;
       const response = {
         content: [],
         structuredContent: ensureValidJson({

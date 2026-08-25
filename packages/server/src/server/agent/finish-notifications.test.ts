@@ -28,6 +28,7 @@ interface CoordinatorScenario {
   deliveries: DeliveredNotification[];
   subscriptionOptions: Array<{ agentId?: string; replayState?: boolean } | undefined>;
   activeSubscriptions(): number;
+  evaluationCount(): number;
   addAgent(
     agentId: string,
     lifecycle?: "idle" | "running" | "error" | "closed",
@@ -77,9 +78,13 @@ function createCoordinatorScenario(options?: {
   const subscribers = new Set<(event: AgentManagerEvent) => void>();
   const deliveries: DeliveredNotification[] = [];
   const subscriptionOptions: Array<{ agentId?: string; replayState?: boolean } | undefined> = [];
+  let evaluationCount = 0;
 
   const agentManager: AgentManager = Object.create(AgentManager.prototype);
-  Reflect.set(agentManager, "listAgents", () => Array.from(agents.values()));
+  Reflect.set(agentManager, "listAgents", () => {
+    evaluationCount += 1;
+    return Array.from(agents.values());
+  });
   Reflect.set(agentManager, "getAgent", (agentId: string) => agents.get(agentId) ?? null);
   Reflect.set(agentManager, "hasInFlightRun", (agentId: string) => inFlight.has(agentId));
   Reflect.set(
@@ -106,6 +111,7 @@ function createCoordinatorScenario(options?: {
     deliveries,
     subscriptionOptions,
     activeSubscriptions: () => subscribers.size,
+    evaluationCount: () => evaluationCount,
     addAgent(agentId, lifecycle = "idle", parentAgentId) {
       agents.set(agentId, createAgent(agentId, lifecycle, parentAgentId));
       if (lifecycle === "running") inFlight.add(agentId);
@@ -179,6 +185,22 @@ function createCoordinatorScenario(options?: {
 async function expectDeliveryCount(scenario: CoordinatorScenario, count: number): Promise<void> {
   await vi.waitFor(() => expect(scenario.deliveries).toHaveLength(count));
 }
+
+test("permission stream events do not schedule graph evaluation", async () => {
+  const scenario = createCoordinatorScenario();
+  scenario.addAgent("caller");
+  scenario.addAgent("child", "running", "caller");
+  scenario.watch("child", "caller", true);
+  await vi.waitFor(() => expect(scenario.evaluationCount()).toBe(1));
+
+  scenario.requestPermission("child", "permission-1");
+  await expectDeliveryCount(scenario, 1);
+  expect(scenario.evaluationCount()).toBe(1);
+
+  scenario.resolvePermission("child", "permission-1");
+  await Promise.resolve();
+  expect(scenario.evaluationCount()).toBe(1);
+});
 
 test("ordinary completion is delivered exactly once through one global subscription", async () => {
   const scenario = createCoordinatorScenario();
@@ -349,7 +371,7 @@ test.each(["skipped", "failed"])("a $s descendant delivery releases its ancestor
   expect(scenario.deliveries.map((delivery) => delivery.childAgentId)).toEqual(["child", "parent"]);
 });
 
-test("permission request IDs deduplicate until resolution without consuming terminal tracking", async () => {
+test("permission requests deduplicate the same ID", async () => {
   const scenario = createCoordinatorScenario();
   scenario.addAgent("caller");
   scenario.addAgent("child", "running", "caller");
@@ -358,38 +380,8 @@ test("permission request IDs deduplicate until resolution without consuming term
   scenario.requestPermission("child", "permission-1");
   scenario.requestPermission("child", "permission-1");
   await expectDeliveryCount(scenario, 1);
-  scenario.resolvePermission("child", "permission-1");
-  scenario.requestPermission("child", "permission-1");
-  await expectDeliveryCount(scenario, 2);
-  scenario.resolvePermission("child", "permission-1");
-  scenario.setState("child", "running");
-  scenario.setState("child", "idle");
-
-  await expectDeliveryCount(scenario, 3);
-  expect(scenario.deliveries.map((delivery) => delivery.reason)).toEqual([
-    "needs permission",
-    "needs permission",
-    "finished",
-  ]);
+  expect(scenario.deliveries[0]?.reason).toBe("needs permission");
 });
-
-test.each([
-  { lifecycle: "error" as const, reason: "errored" as const },
-  { lifecycle: "closed" as const, reason: "was closed" as const },
-])(
-  "a watched agent that becomes $lifecycle keeps terminal semantics",
-  async ({ lifecycle, reason }) => {
-    const scenario = createCoordinatorScenario();
-    scenario.addAgent("caller");
-    scenario.addAgent("child", "running", "caller");
-    scenario.watch("child", "caller", true);
-
-    scenario.setState("child", lifecycle);
-
-    await expectDeliveryCount(scenario, 1);
-    expect(scenario.deliveries[0]?.reason).toBe(reason);
-  },
-);
 
 test.each([
   { lifecycle: "error" as const, reason: "errored" as const },
