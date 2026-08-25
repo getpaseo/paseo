@@ -177,8 +177,11 @@ interface StartTurnResult {
 
 interface OmpAgentSessionOptions {
   runtimeSession: OmpRuntimeSession;
-  /** Relaunches the OMP CLI for this session. Omitted when the session cannot be recovered. */
-  restartRuntime?: (sessionFile: string | null) => Promise<OmpRuntimeSession>;
+  /**
+   * Relaunches the OMP CLI for this session against the given session file,
+   * or as a fresh conversation when there is nothing to resume.
+   */
+  restartRuntime: (sessionFile: string | null) => Promise<OmpRuntimeSession>;
   config: AgentSessionConfig;
   initialState: OmpSessionState;
   currentModeId?: string | null;
@@ -875,7 +878,15 @@ export class OmpAgentSession implements AgentSession {
   private readonly usagePoller: OmpUsagePoller;
   private closed = false;
   private live: boolean;
+  private runtimeDead = false;
   private readonly emittedUserMessageIds = new Set<string>();
+  private runtimeSession: OmpRuntimeSession;
+  private unsubscribeRuntime: (() => void) | null = null;
+  private readonly restartRuntime: OmpAgentSessionOptions["restartRuntime"];
+  private readonly config: AgentSessionConfig;
+  private readonly logger: Logger;
+  private readonly paseoTools?: PaseoToolCatalog;
+
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
     this.restartRuntime = options.restartRuntime;
@@ -909,18 +920,11 @@ export class OmpAgentSession implements AgentSession {
       normalizeOmpThinkingOption(options.config.thinkingOptionId) ??
       this.state.thinkingLevel ??
       null;
-    this.runtimeSession.onEvent((event) => {
+    this.unsubscribeRuntime = this.runtimeSession.onEvent((event) => {
       this.handleRuntimeEvent(event);
     });
     this.subscribeSubagents();
   }
-
-  private runtimeSession: OmpRuntimeSession;
-  private readonly restartRuntime?: OmpAgentSessionOptions["restartRuntime"];
-  private readonly config: AgentSessionConfig;
-  private readonly logger: Logger;
-  private readonly paseoTools?: PaseoToolCatalog;
-  private runtimeDead = false;
 
   private subscribeSubagents(): void {
     void this.runtimeSession.setSubagentSubscription("events").catch((eventsError: unknown) => {
@@ -959,21 +963,43 @@ export class OmpAgentSession implements AgentSession {
     if (!this.runtimeDead) {
       return;
     }
-    if (!this.restartRuntime) {
-      throw new Error("OMP session cannot be recovered because runtime restart is unavailable");
-    }
     const previous = this.runtimeSession;
+    const previousSessionId = this.state.sessionId;
     const next = await this.restartRuntime(this.state.sessionFile ?? null);
+    // close() can land while the replacement is still starting. It tears down
+    // whatever `runtimeSession` pointed at then — the dead process — so adopting
+    // `next` here would leave a live CLI that nothing owns and no later close()
+    // reaches. Discard it instead.
+    if (this.closed) {
+      await next.close().catch(() => undefined);
+      throw new Error("OMP session was closed while its runtime was relaunching");
+    }
+    // Drop the dead runtime's subscription before adopting the replacement, so a
+    // late frame from the old transport cannot mark the new process dead.
+    this.unsubscribeRuntime?.();
+    this.unsubscribeRuntime = null;
     clearOmpHostToolState(previous);
+    await previous.close().catch(() => undefined);
     this.runtimeSession = next;
     this.runtimeDead = false;
-    next.onEvent((event) => {
+    this.unsubscribeRuntime = next.onEvent((event) => {
       this.handleRuntimeEvent(event);
     });
     this.state = await next.getState();
     this.subscribeSubagents();
     this.live = true;
+    if (this.state.sessionId !== previousSessionId) {
+      // An unrecoverable session (no file, or an internal --no-session chat)
+      // comes back as a different native conversation. Announce it so the
+      // manager repoints persistence instead of holding a stale handle.
+      this.emit({
+        type: "thread_started",
+        provider: this.provider,
+        sessionId: this.state.sessionId,
+      });
+    }
   }
+
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("An OMP turn is already active");
@@ -1185,6 +1211,8 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.unsubscribeRuntime?.();
+    this.unsubscribeRuntime = null;
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
     try {
@@ -1816,6 +1844,10 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.runtimeDead = true;
+    this.logger.warn(
+      { err: error, sessionId: this.state.sessionId },
+      "OMP runtime exited unexpectedly",
+    );
     this.usagePoller.stopTurn();
     this.terminalizeActiveWork();
     this.subagentIndex.clear(this.runtimeSession);
@@ -1830,7 +1862,7 @@ export class OmpAgentSession implements AgentSession {
       type: "turn_failed",
       provider: this.provider,
       ...(turnId ? { turnId } : {}),
-      error,
+      error: `${error}. Any tool calls or subagents it had running were terminated with it.`,
     });
   }
 
@@ -2281,19 +2313,7 @@ export class OmpAgentClient implements AgentClient {
       env: launchContext?.env,
     };
     const runtimeSession = await this.runtime.startSession(startInput);
-    const restartRuntime = async (sessionFile: string | null): Promise<OmpRuntimeSession> => {
-      const next = await this.runtime.startSession({
-        ...startInput,
-        ...(!startInput.noSession && sessionFile ? { session: sessionFile } : {}),
-      });
-      try {
-        await this.configureNativePaseoTools(next, launchContext?.paseoTools);
-        return next;
-      } catch (error) {
-        await next.close().catch(() => undefined);
-        throw error;
-      }
-    };
+    const restartRuntime = this.buildRestartRuntime(startInput, launchContext);
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       return new OmpAgentSession({
@@ -2313,6 +2333,31 @@ export class OmpAgentClient implements AgentClient {
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * Builds the relaunch used to recover this session after its CLI process dies.
+   * `session` is overlaid only when there is a file to resume and the session
+   * was not launched with `--no-session`, so an internal chat comes back clean
+   * instead of adopting an unrelated conversation.
+   */
+  private buildRestartRuntime(
+    startInput: OmpStartSessionInput,
+    launchContext?: AgentLaunchContext,
+  ): (sessionFile: string | null) => Promise<OmpRuntimeSession> {
+    return async (sessionFile: string | null): Promise<OmpRuntimeSession> => {
+      const next = await this.runtime.startSession({
+        ...startInput,
+        ...(!startInput.noSession && sessionFile ? { session: sessionFile } : {}),
+      });
+      try {
+        await this.configureNativePaseoTools(next, launchContext?.paseoTools);
+        return next;
+      } catch (error) {
+        await next.close().catch(() => undefined);
+        throw error;
+      }
+    };
   }
 
   async resumeSession(
@@ -2335,19 +2380,7 @@ export class OmpAgentClient implements AgentClient {
       launchMode,
     });
     const runtimeSession = await this.runtime.startSession(startInput);
-    const restartRuntime = async (nextSessionFile: string | null): Promise<OmpRuntimeSession> => {
-      const next = await this.runtime.startSession({
-        ...startInput,
-        ...(nextSessionFile ? { session: nextSessionFile } : {}),
-      });
-      try {
-        await this.configureNativePaseoTools(next, launchContext?.paseoTools);
-        return next;
-      } catch (error) {
-        await next.close().catch(() => undefined);
-        throw error;
-      }
-    };
+    const restartRuntime = this.buildRestartRuntime(startInput, launchContext);
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       return new OmpAgentSession({

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,17 @@ import type { OmpRuntimeSession } from "./runtime.js";
 // Evidence is written to OMP_REPRO_EVIDENCE (default $TMPDIR/omp-repro-evidence.json)
 // because the server vitest setup silences console output.
 const OMP_COMMAND = process.env.OMP_COMMAND ?? "omp";
+
+// Skip rather than fail when the binary is absent: `npm run test:e2e:local`
+// collects this file on machines that have no omp installed.
+const ompAvailable = ((): boolean => {
+  try {
+    execFileSync(OMP_COMMAND, ["--version"], { encoding: "utf8", timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 interface ProcessExit {
   code: number | null;
@@ -89,7 +100,7 @@ async function promptOutcome(session: OmpRuntimeSession, message: string): Promi
   );
 }
 
-describe("OMP runtime session after its CLI process dies", () => {
+describe.skipIf(!ompAvailable)("OMP runtime session after its CLI process dies", () => {
   const evidence: Record<string, unknown> = { ompCommand: OMP_COMMAND };
 
   async function recordEvidence(): Promise<void> {
@@ -171,6 +182,10 @@ describe("OMP runtime session after its CLI process dies", () => {
     const { runtime, children, nextSpawn } = createRuntime();
     const client = new OmpAgentClient({ logger: pino({ level: "silent" }), runtime });
     const session = await client.createSession({ provider: "omp", cwd });
+    const seen: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      seen.push(event);
+    });
 
     expect(children.length).toBe(1);
     const child = children.at(0);
@@ -182,10 +197,17 @@ describe("OMP runtime session after its CLI process dies", () => {
     const failure = await reported;
 
     // The next prompt in the SAME session relaunches the CLI instead of
-    // rejecting forever. Arm the spawn watcher before prompting.
+    // rejecting forever, and the turn has to actually run to completion in the
+    // replacement process. Arm the watchers before prompting.
     const relaunched = nextSpawn();
+    const settled = nextMatchingEvent(
+      session,
+      (event) => event.type === "turn_completed" || event.type === "turn_failed",
+    );
     await session.startTurn("Reply with exactly: RECOVERED");
     const replacement = await relaunched;
+    const outcome = await settled;
+    const replied = seen.some((event) => JSON.stringify(event).includes("RECOVERED"));
 
     evidence.agentRecoversInPlace = {
       childExit: exit,
@@ -193,11 +215,16 @@ describe("OMP runtime session after its CLI process dies", () => {
       runtimeProcessesSpawned: children.length,
       killedPid: child.pid ?? null,
       relaunchedPid: replacement.pid ?? null,
+      turnOutcome: outcome.type,
+      turnFailure: outcome.type === "turn_failed" ? outcome.error : null,
+      assistantAnswered: replied,
     };
     await recordEvidence();
 
     expect(children.length).toBe(2);
     expect(replacement.pid).not.toBe(child.pid);
+    expect(outcome.type).toBe("turn_completed");
+    expect(replied).toBe(true);
     await session.close();
-  }, 120_000);
+  }, 180_000);
 });

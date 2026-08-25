@@ -20,7 +20,7 @@ import {
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
-import { FakeOmp } from "./fake-omp.js";
+import { FakeOmp, type FakeOmpSession } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
 
@@ -83,12 +83,7 @@ export class OmpHarness {
   }
 
   failNextRuntimeStart(error: Error): void {
-    const runtime = this.omp;
-    const startSession = runtime.startSession.bind(runtime);
-    runtime.startSession = async () => {
-      runtime.startSession = startSession;
-      throw error;
-    };
+    this.omp.failNextStartSession(error);
   }
 
   runtimeSessionCount(): number {
@@ -223,6 +218,19 @@ export class OmpHarness {
     runtime.finishTurn();
     return await run;
   }
+
+  /**
+   * Starts a turn without awaiting it, so a test can interleave another
+   * lifecycle call (a close, say) with the relaunch it triggers.
+   */
+  startTurnDetached(input: string): Promise<{ turnId: string }> {
+    return this.requireSession().startTurn(input);
+  }
+
+  runtimeSessions(): FakeOmpSession[] {
+    return this.omp.allSessions();
+  }
+
   async startTurnAfterRuntimeExit(input: string): Promise<void> {
     await this.requireSession().startTurn(input);
     await waitForImmediate();
@@ -546,6 +554,12 @@ export class OmpHarness {
 
   turnFailures(): string[] {
     return this.events.flatMap((event) => (event.type === "turn_failed" ? [event.error] : []));
+  }
+
+  threadStartedSessionIds(): string[] {
+    return this.events.flatMap((event) =>
+      event.type === "thread_started" ? [event.sessionId] : [],
+    );
   }
 
   async close(): Promise<void> {

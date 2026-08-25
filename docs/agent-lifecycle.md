@@ -30,8 +30,17 @@ workflows all live in the CLI process, and the completion notification that woul
 agent never arrives. A runtime that dies mid-turn is reported by whatever is draining its stream, but
 between turns nothing is watching, so the agent sits at `idle` looking healthy while its background
 work is gone. Report that exit as a turn failure so the agent lands in `error` with a timeline entry.
-Only the Claude provider does this today; the others still report a death only when a turn happens to
-be in flight.
+Claude and OMP do this today; the others still report a death only when a turn happens to be in
+flight.
+
+Reporting the death is not enough on its own when the whole session lives in one process. OMP has no
+per-turn process to respawn: its session, tool calls, and subagents all share a single long-running
+CLI, and once that transport is disposed every later prompt in the chat fails against it. So the OMP
+provider also relaunches lazily on the next prompt, against the session file it already holds, which
+restores the same native session and lets the user keep typing in the same chat. Claude reaches the
+same outcome by respawning its query on the next write. A session with nothing to resume — an
+internal `--no-session` chat, or a crash before the session file existed — comes back as a fresh
+conversation and announces the new session ID so persistence is repointed rather than left stale.
 
 ### Cancellation
 
