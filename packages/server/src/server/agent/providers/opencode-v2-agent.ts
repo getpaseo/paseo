@@ -85,6 +85,7 @@ import {
   type OpenCodeV2ProviderOptions,
 } from "./opencode-v2/options.js";
 import { applyOpenCodeV2PermissionConfig } from "./opencode-v2/permission-config.js";
+import { reconcileOpenCodeV2McpServers } from "./opencode-v2/mcp-config.js";
 import {
   OpenCodeV2ServerManager,
   type OpenCodeV2EventSource,
@@ -536,6 +537,16 @@ export class OpenCodeV2AgentClient implements AgentClient {
         ...(modeId ? { agent: modeId } : {}),
       });
 
+      // Inject configured MCP servers before the session is returned, so the
+      // tool set is ready before the first prompt (VAL-OC2-MCP-002). Failures
+      // are non-fatal: diagnostics are logged and surfaced on the first turn.
+      const mcpDiagnostics = await reconcileOpenCodeV2McpServers({
+        client,
+        mcpServers: openCodeV2Config.mcpServers,
+        directory: openCodeV2Config.cwd,
+        logger: this.logger,
+      });
+
       return new OpenCodeV2AgentSession(
         openCodeV2Config,
         client,
@@ -545,6 +556,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
         acquisition.release,
         options?.persistSession,
         launchContext?.agentId,
+        mcpDiagnostics,
       );
     } catch (error) {
       await acquisition.release();
@@ -582,6 +594,15 @@ export class OpenCodeV2AgentClient implements AgentClient {
 
     try {
       await client.session.get({ sessionID: handle.sessionId });
+      // Reconcile MCP servers on resume too: re-adds configured servers
+      // (idempotent) and removes any that are no longer in the config, so a
+      // removed server's tools disappear (VAL-OC2-MCP-009).
+      const mcpDiagnostics = await reconcileOpenCodeV2McpServers({
+        client,
+        mcpServers: openCodeV2Config.mcpServers,
+        directory: openCodeV2Config.cwd,
+        logger: this.logger,
+      });
       return new OpenCodeV2AgentSession(
         openCodeV2Config,
         client,
@@ -591,6 +612,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
         acquisition.release,
         undefined,
         launchContext?.agentId,
+        mcpDiagnostics,
       );
     } catch (error) {
       await acquisition.release();
@@ -769,6 +791,9 @@ export class OpenCodeV2AgentSession implements AgentSession {
   private ingress: Promise<void> = Promise.resolve();
   private unsubscribeEvents: (() => void) | null = null;
   private nextTurnOrdinal = 0;
+  /** Non-fatal MCP server diagnostics to surface once, on the first turn. */
+  private readonly mcpDiagnostics: string[];
+  private mcpDiagnosticsEmitted = false;
 
   constructor(
     config: OpenCodeV2AgentConfig,
@@ -779,6 +804,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     releaseServer?: () => Promise<void>,
     persistSession = true,
     agentId?: string,
+    mcpDiagnostics: string[] = [],
   ) {
     this.config = config;
     this.client = client;
@@ -787,6 +813,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.events = events;
     this.releaseServer = releaseServer ?? null;
     this.persistSession = persistSession;
+    this.mcpDiagnostics = mcpDiagnostics;
     this.providerId = parseOpenCodeV2ModelRef(config.model)?.providerID ?? null;
     this.currentMode = normalizeOpenCodeV2ModeId(config.modeId);
     // A tool policy (exact MCP preapproval) governs tool access, so blanket
@@ -865,6 +892,8 @@ export class OpenCodeV2AgentSession implements AgentSession {
     const turnId = this.createTurnId();
     this.turnState = { status: "running", turnId };
     this.notifySubscribers({ type: "turn_started", provider: "opencode-v2" }, turnId);
+
+    this.emitMcpDiagnostics();
 
     void this.client.session
       .prompt({
@@ -1349,6 +1378,29 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
+  }
+
+  /**
+   * Surface non-fatal MCP server diagnostics (e.g. a misconfigured server that
+   * failed to connect) as timeline error items, once, on the first turn. The
+   * session itself is unaffected: the prompt still runs without the failed
+   * server's tools (VAL-OC2-MCP-005).
+   */
+  private emitMcpDiagnostics(): void {
+    if (this.mcpDiagnosticsEmitted || this.mcpDiagnostics.length === 0) {
+      return;
+    }
+    this.mcpDiagnosticsEmitted = true;
+    for (const message of this.mcpDiagnostics) {
+      this.notifySubscribers(
+        {
+          type: "timeline",
+          provider: "opencode-v2",
+          item: { type: "error", message },
+        },
+        null,
+      );
+    }
   }
 
   private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string | null): void {

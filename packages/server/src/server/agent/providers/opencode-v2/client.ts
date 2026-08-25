@@ -5,6 +5,11 @@ import {
   type EventSubscribeOutput,
   type FormCancelInput,
   type FormReplyInput,
+  type McpAddInput,
+  type McpConnectInput,
+  type McpListInput,
+  type McpListOutput,
+  type McpRemoveInput,
   type MessageListInput,
   type ModelListInput,
   type ModelListOutput,
@@ -64,6 +69,12 @@ export interface OpenCodeV2ClientLike {
     reply(input: FormReplyInput): Promise<void>;
     cancel(input: FormCancelInput): Promise<void>;
   };
+  mcp: {
+    add(input: McpAddInput): Promise<void>;
+    connect(input: McpConnectInput): Promise<void>;
+    list(input?: McpListInput): Promise<McpListOutput>;
+    remove(input: McpRemoveInput): Promise<void>;
+  };
   event: {
     subscribe(requestOptions?: { signal?: AbortSignal }): AsyncIterable<EventSubscribeOutput>;
   };
@@ -116,6 +127,12 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
     form: {
       reply: (input) => client.form.reply(input),
       cancel: (input) => client.form.cancel(input),
+    },
+    mcp: {
+      add: (input) => client.mcp.add(input),
+      connect: (input) => client.mcp.connect(input),
+      list: (input) => client.mcp.list(input),
+      remove: (input) => client.mcp.remove(input),
     },
     event: {
       subscribe: (requestOptions) => client.event.subscribe(requestOptions),

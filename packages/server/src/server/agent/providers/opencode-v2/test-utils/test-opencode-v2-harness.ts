@@ -7,6 +7,11 @@ import type {
   EventSubscribeOutput,
   FormCancelInput,
   FormReplyInput,
+  McpAddInput,
+  McpConnectInput,
+  McpListInput,
+  McpListOutput,
+  McpRemoveInput,
   MessageListInput,
   ModelListInput,
   ModelListOutput,
@@ -147,6 +152,10 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     permissionReply: [] as unknown[],
     formReply: [] as unknown[],
     formCancel: [] as unknown[],
+    mcpAdd: [] as unknown[],
+    mcpConnect: [] as unknown[],
+    mcpList: [] as unknown[],
+    mcpRemove: [] as unknown[],
     eventSubscribe: [] as unknown[],
   };
 
@@ -235,6 +244,19 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   permissionReplyError: unknown = null;
   formReplyError: unknown = null;
   formCancelError: unknown = null;
+
+  mcpListResponse: McpListOutput = {
+    location: {
+      directory: "/workspace/repo",
+      project: { id: "project-1", directory: "/workspace/repo", canonical: "/workspace/repo" },
+    },
+    data: [],
+  };
+  mcpListImplementation: ((input?: McpListInput) => Promise<McpListOutput>) | null = null;
+  mcpListError: unknown = null;
+  mcpAddError: unknown = null;
+  mcpConnectError: unknown = null;
+  mcpRemoveError: unknown = null;
 
   private readonly queuedEventStream = createQueuedEventStream();
   private eventObserver: ((input: OpenCodeV2EventSourceInput) => void) | null = null;
@@ -392,6 +414,38 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     }
   }
 
+  async mcpAdd(input: McpAddInput): Promise<void> {
+    this.calls.mcpAdd.push(input);
+    if (this.mcpAddError) {
+      throw this.mcpAddError;
+    }
+  }
+
+  async mcpConnect(input: McpConnectInput): Promise<void> {
+    this.calls.mcpConnect.push(input);
+    if (this.mcpConnectError) {
+      throw this.mcpConnectError;
+    }
+  }
+
+  async mcpList(input?: McpListInput): Promise<McpListOutput> {
+    this.calls.mcpList.push(input);
+    if (this.mcpListError) {
+      throw this.mcpListError;
+    }
+    if (this.mcpListImplementation) {
+      return await this.mcpListImplementation(input);
+    }
+    return this.mcpListResponse;
+  }
+
+  async mcpRemove(input: McpRemoveInput): Promise<void> {
+    this.calls.mcpRemove.push(input);
+    if (this.mcpRemoveError) {
+      throw this.mcpRemoveError;
+    }
+  }
+
   event = {
     subscribe: (requestOptions?: { signal?: AbortSignal }) => {
       this.calls.eventSubscribe.push(requestOptions);
@@ -436,6 +490,13 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   form = {
     reply: (input: FormReplyInput) => this.formReply(input),
     cancel: (input: FormCancelInput) => this.formCancel(input),
+  };
+
+  mcp = {
+    add: (input: McpAddInput) => this.mcpAdd(input),
+    connect: (input: McpConnectInput) => this.mcpConnect(input),
+    list: (input?: McpListInput) => this.mcpList(input),
+    remove: (input: McpRemoveInput) => this.mcpRemove(input),
   };
 }
 
