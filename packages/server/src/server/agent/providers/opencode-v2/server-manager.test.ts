@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -16,6 +16,8 @@ import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill
 import {
   buildBasicAuthHeader,
   OpenCodeV2ServerManager,
+  resolveOpenCodeV2CredentialSourcePath,
+  toOpenCodeV2CredentialValue,
   type OpenCodeV2CommandPrefixResolver,
   type OpenCodeV2EventSourceInput,
   type OpenCodeV2PortAllocator,
@@ -347,20 +349,224 @@ describe("OpenCodeV2ServerManager managed process ledger", () => {
   });
 });
 
+describe("OpenCodeV2ServerManager credential seeding", () => {
+  test("copies the user's opencode2 auth file into the isolated home when the source exists", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-seed-"));
+    const sourcePath = path.join(tempDir, "source", "opencode", "auth.json");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    const authContent = JSON.stringify({ baseten: { token: "fake" }, openai: { token: "fake" } });
+    writeFileSync(sourcePath, authContent, "utf8");
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    try {
+      const { manager } = createTestManager([4041], {
+        opencodeV2HomeDir,
+        credentialSourcePath: sourcePath,
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      const seededPath = path.join(opencodeV2HomeDir, ".local", "share", "opencode", "auth.json");
+      expect(readFileSync(seededPath, "utf8")).toBe(authContent);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("skips credential seeding when the source auth file is absent", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-seed-"));
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    const missingSource = path.join(tempDir, "no-such-dir", "auth.json");
+    try {
+      const { manager } = createTestManager([4042], {
+        opencodeV2HomeDir,
+        credentialSourcePath: missingSource,
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      expect(
+        existsSync(path.join(opencodeV2HomeDir, ".local", "share", "opencode", "auth.json")),
+      ).toBe(false);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("creates the target data directory when seeding credentials", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-seed-"));
+    const sourcePath = path.join(tempDir, "source", "opencode", "auth.json");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, "{}", "utf8");
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    try {
+      const { manager } = createTestManager([4043], {
+        opencodeV2HomeDir,
+        credentialSourcePath: sourcePath,
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      expect(existsSync(path.join(opencodeV2HomeDir, ".local", "share", "opencode"))).toBe(true);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("seeds credentials into the isolated home database when the source auth file exists", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-db-"));
+    const sourcePath = path.join(tempDir, "source", "opencode", "auth.json");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        baseten: { type: "api", key: "fake-baseten-key" },
+        openai: {
+          type: "oauth",
+          refresh: "fake-refresh",
+          access: "fake-access",
+          expires: 1_234_567_890,
+          accountId: "fake-account",
+        },
+      }),
+      "utf8",
+    );
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    const dbPath = path.join(opencodeV2HomeDir, ".local", "share", "opencode", "opencode.db");
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+    const { DatabaseSync } = await import("node:sqlite");
+    const precreated = new DatabaseSync(dbPath);
+    precreated.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT NOT NULL, value TEXT NOT NULL, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+    );
+    precreated.close();
+    try {
+      const { manager } = createTestManager([4044], {
+        opencodeV2HomeDir,
+        credentialSourcePath: sourcePath,
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      const seededDb = new DatabaseSync(dbPath, { readOnly: true });
+      const rows = seededDb
+        .prepare("SELECT integration_id, label FROM credential ORDER BY integration_id")
+        .all();
+      seededDb.close();
+      expect(rows).toEqual([
+        { integration_id: "baseten", label: "default" },
+        { integration_id: "openai", label: "default" },
+      ]);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("skips database seeding when the source auth file is absent", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-db-"));
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    const dbPath = path.join(opencodeV2HomeDir, ".local", "share", "opencode", "opencode.db");
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+    const { DatabaseSync } = await import("node:sqlite");
+    const precreated = new DatabaseSync(dbPath);
+    precreated.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT NOT NULL, value TEXT NOT NULL, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+    );
+    precreated.close();
+    try {
+      const { manager } = createTestManager([4045], {
+        opencodeV2HomeDir,
+        credentialSourcePath: path.join(tempDir, "no-such-auth.json"),
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      const seededDb = new DatabaseSync(dbPath, { readOnly: true });
+      const rows = seededDb.prepare("SELECT integration_id FROM credential").all();
+      seededDb.close();
+      expect(rows).toEqual([]);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("toOpenCodeV2CredentialValue", () => {
+  test("maps an api key entry to a key credential", () => {
+    expect(toOpenCodeV2CredentialValue("baseten", { type: "api", key: "abc" })).toEqual({
+      type: "key",
+      key: "abc",
+    });
+  });
+
+  test("maps an oauth entry to an oauth credential with the integration method", () => {
+    expect(
+      toOpenCodeV2CredentialValue("openai", {
+        type: "oauth",
+        refresh: "r",
+        access: "a",
+        expires: 123,
+        accountId: "acc",
+      }),
+    ).toEqual({
+      type: "oauth",
+      methodID: "chatgpt-browser",
+      refresh: "r",
+      access: "a",
+      expires: 123,
+      metadata: { accountID: "acc" },
+    });
+  });
+
+  test("returns undefined for unrecognized entries", () => {
+    expect(toOpenCodeV2CredentialValue("baseten", { type: "unknown" })).toBeUndefined();
+    expect(toOpenCodeV2CredentialValue("baseten", "not-an-object")).toBeUndefined();
+  });
+});
+
+describe("resolveOpenCodeV2CredentialSourcePath", () => {
+  test("honors XDG_DATA_HOME when set", () => {
+    expect(
+      resolveOpenCodeV2CredentialSourcePath({
+        XDG_DATA_HOME: "/custom/data",
+        HOME: "/custom/home",
+      }),
+    ).toBe(path.join("/custom/data", "opencode", "auth.json"));
+  });
+
+  test("defaults to ~/.local/share/opencode/auth.json when XDG_DATA_HOME is unset", () => {
+    expect(resolveOpenCodeV2CredentialSourcePath({ HOME: "/custom/home" })).toBe(
+      path.join(os.homedir(), ".local", "share", "opencode", "auth.json"),
+    );
+  });
+});
+
 function createTestManager(
   ports: number[],
   options: {
     autoAnnounce?: boolean;
     opencodeV2HomeDir?: string;
+    credentialSourcePath?: string;
   } = {},
 ): {
   manager: OpenCodeV2ServerManager;
   runtime: FakeOpenCodeV2ServerRuntime;
 } {
-  const { opencodeV2HomeDir } = options;
+  const { opencodeV2HomeDir, credentialSourcePath } = options;
   const runtime = new FakeOpenCodeV2ServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
   });
+  const credentialSource =
+    credentialSourcePath ?? path.join(os.tmpdir(), "opencode-v2-no-auth-source.json");
   return {
     manager: new OpenCodeV2ServerManager({
       logger: createTestLogger(),
@@ -368,6 +574,7 @@ function createTestManager(
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
       ...(opencodeV2HomeDir ? { resolveHomeDir: () => opencodeV2HomeDir } : {}),
+      resolveCredentialSourcePath: () => credentialSource,
       spawnServerProcess: runtime.spawnServerProcess,
       terminateProcess: runtime.terminateProcess,
     }),

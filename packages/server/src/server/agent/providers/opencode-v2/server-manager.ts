@@ -1,8 +1,9 @@
 import type { ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import type { V2Event } from "@opencode-ai/client";
 import type { Logger } from "pino";
@@ -98,6 +99,8 @@ export interface OpenCodeV2ServerManagerOptions {
   portAllocator?: OpenCodeV2PortAllocator;
   resolveCommandPrefix?: OpenCodeV2CommandPrefixResolver;
   resolveHomeDir?: () => string;
+  /** Resolve the real user's opencode2 auth file to seed into the isolated home. */
+  resolveCredentialSourcePath?: () => string;
   spawnServerProcess?: OpenCodeV2ServerProcessSpawner;
   createEventSource?: OpenCodeV2EventConsumerFactory;
 }
@@ -118,6 +121,7 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
   private readonly portAllocator: OpenCodeV2PortAllocator;
   private readonly resolveCommandPrefix: OpenCodeV2CommandPrefixResolver;
   private readonly resolveHomeDir: () => string;
+  private readonly resolveCredentialSourcePath: () => string;
   private readonly spawnServerProcess: OpenCodeV2ServerProcessSpawner;
   private readonly createEventSource: OpenCodeV2EventConsumerFactory;
 
@@ -133,6 +137,8 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeV2Binary));
     this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeV2HomeDir;
+    this.resolveCredentialSourcePath =
+      options.resolveCredentialSourcePath ?? resolveOpenCodeV2CredentialSourcePath;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
     this.createEventSource =
       options.createEventSource ?? ((input) => new OpenCodeV2ServerEventSource(input));
@@ -351,11 +357,16 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
     // are pinned under $PASEO_HOME/opencode2-home.
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
+    const dataHome = path.join(serverCwd, ".local", "share");
+    // Seed the user's real opencode2 credentials (auth.json) into the isolated
+    // home's data dir so credentialed-provider models (Baseten, OpenAI) work
+    // through the daemon. Runtime-only, never committed; no-op if absent.
+    this.seedCredentialsIntoIsolatedHome(dataHome);
     const serverEnv: Record<string, string> = {
       OPENCODE_PASSWORD: password,
       HOME: serverCwd,
       XDG_CONFIG_HOME: path.join(serverCwd, ".config"),
-      XDG_DATA_HOME: path.join(serverCwd, ".local", "share"),
+      XDG_DATA_HOME: dataHome,
       XDG_CACHE_HOME: path.join(serverCwd, ".cache"),
     };
 
@@ -486,16 +497,101 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
       });
     });
 
-    server.ready = ready.catch(async (error) => {
-      await this.killServer(server);
-      if (this.currentServer === server) {
-        this.currentServer = null;
-      }
-      this.retiredServers.delete(server);
-      throw error;
-    });
+    server.ready = ready
+      .then(() => this.seedCredentialsIntoDatabase(dataHome))
+      .catch(async (error) => {
+        await this.killServer(server);
+        if (this.currentServer === server) {
+          this.currentServer = null;
+        }
+        this.retiredServers.delete(server);
+        throw error;
+      });
 
     return server;
+  }
+
+  private seedCredentialsIntoIsolatedHome(dataHome: string): void {
+    const source = this.resolveCredentialSourcePath();
+    if (!existsSync(source)) {
+      this.logger.debug({ source }, "OpenCode 2 credential source not found; skipping seeding");
+      return;
+    }
+    const targetDir = path.join(dataHome, "opencode");
+    const target = path.join(targetDir, "auth.json");
+    try {
+      mkdirSync(targetDir, { recursive: true });
+      copyFileSync(source, target);
+      this.logger.debug({ source, target }, "Seeded OpenCode 2 credentials into the isolated home");
+    } catch (error) {
+      this.logger.warn(
+        { err: error, source, target },
+        "Failed to seed OpenCode 2 credentials into the isolated home",
+      );
+    }
+  }
+
+  /**
+   * beta-18155 stores credentials in the isolated home's SQLite database, not
+   * just auth.json: a fresh database bootstraps with every migration marked
+   * complete, so the legacy auth.json import never runs. After the server is
+   * ready (its database exists), copy the credential rows in directly so
+   * credentialed-provider models (Baseten, OpenAI) work through the daemon.
+   * Graceful no-op when the source auth file or the database is missing.
+   */
+  private async seedCredentialsIntoDatabase(dataHome: string): Promise<void> {
+    const source = this.resolveCredentialSourcePath();
+    if (!existsSync(source)) {
+      return; // the file-copy step already logged the skip
+    }
+    const dbPath = path.join(dataHome, "opencode", "opencode.db");
+    if (!existsSync(dbPath)) {
+      this.logger.debug(
+        { dbPath },
+        "OpenCode 2 database not found; skipping credential DB seeding",
+      );
+      return;
+    }
+    try {
+      const sqlite = await loadOpenCodeV2NodeSqlite();
+      if (!sqlite) {
+        this.logger.debug("node:sqlite unavailable; skipping OpenCode 2 credential DB seeding");
+        return;
+      }
+      const auth = JSON.parse(readFileSync(source, "utf8")) as Record<string, unknown>;
+      const db = new sqlite.DatabaseSync(dbPath);
+      try {
+        const now = Date.now();
+        for (const [integrationID, raw] of Object.entries(auth)) {
+          const value = toOpenCodeV2CredentialValue(integrationID, raw);
+          if (!value) continue;
+          const existing = db
+            .prepare("SELECT id FROM credential WHERE integration_id = ?")
+            .get(integrationID);
+          if (existing) continue;
+          db.prepare(
+            "INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES (?, ?, 'default', ?, ?, ?)",
+          ).run(
+            `cred_${randomBytes(12).toString("hex")}`,
+            integrationID,
+            JSON.stringify(value),
+            now,
+            now,
+          );
+        }
+      } finally {
+        db.close();
+      }
+      this.logger.debug(
+        { dbPath },
+        "Seeded OpenCode 2 credentials into the isolated home database",
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, dbPath },
+        "Failed to seed OpenCode 2 credentials into the isolated home database",
+      );
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -686,6 +782,84 @@ function generateServerPassword(): string {
 
 export function buildBasicAuthHeader(password: string): string {
   return `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`;
+}
+
+/**
+ * The real user's opencode2 auth file, read from the daemon process env. The
+ * isolated home pins XDG_DATA_HOME, which would otherwise hide these stored
+ * credentials; the server manager seeds this file into the isolated home so
+ * credentialed-provider models (Baseten, OpenAI) work through the daemon.
+ */
+export function resolveOpenCodeV2CredentialSourcePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const dataHome = env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share");
+  return path.join(dataHome, "opencode", "auth.json");
+}
+
+// @types/node@20 predates the node:sqlite typings; declare the slice we use.
+// The runtime (Node 22+ / Electron) provides it. Mirrors quota-fetcher/cursor.ts.
+interface OpenCodeV2CredentialStatement {
+  get(...params: unknown[]): { id?: string } | undefined;
+  run(...params: unknown[]): unknown;
+}
+interface OpenCodeV2CredentialDatabase {
+  prepare(sql: string): OpenCodeV2CredentialStatement;
+  close(): void;
+}
+interface OpenCodeV2NodeSqliteModule {
+  DatabaseSync: new (path: string) => OpenCodeV2CredentialDatabase;
+}
+
+async function loadOpenCodeV2NodeSqlite(): Promise<OpenCodeV2NodeSqliteModule | null> {
+  const sqliteSpecifier: string = "node:sqlite";
+  try {
+    return (await import(sqliteSpecifier)) as unknown as OpenCodeV2NodeSqliteModule;
+  } catch {
+    return null; // runtime without node:sqlite
+  }
+}
+
+/**
+ * Convert a legacy auth.json entry into the credential value stored in the
+ * opencode2 database. Mirrors opencode2's legacy-credential import: `api` keys
+ * become `key` credentials and `oauth` entries become `oauth` credentials with
+ * the integration's method id.
+ */
+export function toOpenCodeV2CredentialValue(
+  integrationID: string,
+  raw: unknown,
+): Record<string, unknown> | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (record.type === "api" && typeof record.key === "string") {
+    return { type: "key", key: record.key };
+  }
+  if (
+    record.type === "oauth" &&
+    typeof record.refresh === "string" &&
+    typeof record.access === "string" &&
+    typeof record.expires === "number"
+  ) {
+    const value: Record<string, unknown> = {
+      type: "oauth",
+      methodID: resolveOpenCodeV2CredentialMethodID(integrationID),
+      refresh: record.refresh,
+      access: record.access,
+      expires: record.expires,
+    };
+    if (typeof record.accountId === "string") {
+      value.metadata = { accountID: record.accountId };
+    }
+    return value;
+  }
+  return undefined;
+}
+
+function resolveOpenCodeV2CredentialMethodID(integrationID: string): string {
+  if (integrationID === "openai") return "chatgpt-browser";
+  if (["github-copilot", "opencode", "xai"].includes(integrationID)) return "device";
+  return "oauth";
 }
 
 async function resolveOpenCodeV2Binary(): Promise<string> {
