@@ -762,4 +762,18 @@ describe("checkout PR schemas", () => {
       providerRemoval: true,
     });
   });
+
+  test("accepts the snapshot inventory server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: {
+          inventorySessionsSnapshot: true,
+        },
+      }).features,
+    ).toEqual({
+      inventorySessionsSnapshot: true,
+    });
+  });
 });

@@ -125,6 +125,11 @@ import {
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
+  InventorySnapshotError,
+  InventorySnapshotService,
+  type InventorySessionEntry,
+} from "./agent/inventory-snapshot-service.js";
+import {
   ImportSessionsRequestError,
   importProviderSession,
   listImportableProviderSessions,
@@ -418,6 +423,112 @@ class SessionRequestError extends Error {
   }
 }
 
+export function captureInventorySessions(
+  agentManager: AgentManager,
+  agentStorage: AgentStorage,
+): Promise<InventorySessionEntry[]> {
+  return captureFreshInventorySessions(agentManager, agentStorage);
+}
+
+async function captureFreshInventorySessions(
+  agentManager: AgentManager,
+  agentStorage: AgentStorage,
+): Promise<InventorySessionEntry[]> {
+  // The two inventory authorities do not share a filesystem lock. Capture the
+  // live map before the asynchronous verified registry scan, then require its
+  // generation to remain unchanged until the scan has completed. If it did,
+  // the live projection was constant at the registry scan's materialization
+  // point, so their union has a real linearization point.
+  for (let attempt = 0; attempt < INVENTORY_CAPTURE_MAX_ATTEMPTS; attempt += 1) {
+    const live = agentManager.captureInventoryLiveState();
+    const registry = await agentStorage.inventoryFreshState();
+    if (registry.issues.length > 0) {
+      if (registry.issues.every((issue) => issue.reason === "registry_changed")) {
+        continue;
+      }
+      throw new SessionRequestError(
+        "inventory_malformed_state",
+        `Paseo registry contains ${registry.issues.length} malformed, duplicate, or unreadable path(s)`,
+      );
+    }
+    if (agentManager.captureInventoryLiveState().epoch !== live.epoch) {
+      continue;
+    }
+
+    return materializeInventorySessions(registry.records, live.agents);
+  }
+
+  throw new SessionRequestError(
+    "inventory_state_changed",
+    "Paseo live state or registry changed while inventory was being materialized",
+  );
+}
+
+const INVENTORY_CAPTURE_MAX_ATTEMPTS = 3;
+
+function materializeInventorySessions(
+  records: StoredAgentRecord[],
+  liveAgents: ReturnType<AgentManager["captureInventoryLiveState"]>["agents"],
+): InventorySessionEntry[] {
+  const storedById = new Map(records.map((record) => [record.id, record]));
+  const entriesById = new Map<string, InventorySessionEntry>();
+  for (const record of records) {
+    entriesById.set(record.id, inventoryEntryFromStored(record));
+  }
+  for (const live of liveAgents) {
+    const stored = storedById.get(live.id);
+    if (stored && stored.provider !== live.provider) {
+      throw new SessionRequestError(
+        "inventory_identity_conflict",
+        `Paseo agent ${live.id} has conflicting live and persisted providers`,
+      );
+    }
+    entriesById.set(live.id, {
+      backend: "paseo",
+      native_id: live.id,
+      provider: live.provider,
+      status_raw: live.lifecycle,
+      archived: Boolean(stored?.archivedAt),
+      archived_at: stored?.archivedAt ?? null,
+      internal: live.internal === true || stored?.internal === true,
+      live: true,
+      cwd: live.cwd,
+      created_at: live.createdAt.toISOString(),
+      updated_at: live.updatedAt.toISOString(),
+      persistence_session_id: live.persistence?.sessionId ?? stored?.persistence?.sessionId ?? null,
+    });
+  }
+  return Array.from(entriesById.values());
+}
+
+function inventoryEntryFromStored(record: StoredAgentRecord): InventorySessionEntry {
+  return {
+    backend: "paseo",
+    native_id: record.id,
+    provider: record.provider,
+    status_raw: record.lastStatus,
+    archived: Boolean(record.archivedAt),
+    archived_at: record.archivedAt ?? null,
+    internal: record.internal === true,
+    live: false,
+    cwd: record.cwd,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    persistence_session_id: record.persistence?.sessionId ?? null,
+  };
+}
+
+function resolveInventorySnapshotService(
+  inventorySnapshots: InventorySnapshotService | undefined,
+  agentManager: AgentManager,
+  agentStorage: AgentStorage,
+): InventorySnapshotService {
+  return (
+    inventorySnapshots ??
+    new InventorySnapshotService(() => captureInventorySessions(agentManager, agentStorage))
+  );
+}
+
 export interface SessionFileSystem {
   isDirectory(path: string): Promise<boolean>;
 }
@@ -451,6 +562,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  inventorySnapshots?: InventorySnapshotService;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -736,6 +848,7 @@ export class Session {
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
+  private readonly inventorySnapshots: InventorySnapshotService;
 
   constructor(options: SessionOptions) {
     const {
@@ -757,6 +870,7 @@ export class Session {
       worktreesRoot,
       agentManager,
       agentStorage,
+      inventorySnapshots,
       projectRegistry,
       workspaceRegistry,
       directorySync,
@@ -830,6 +944,11 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.inventorySnapshots = resolveInventorySnapshotService(
+      inventorySnapshots,
+      this.agentManager,
+      this.agentStorage,
+    );
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -2222,13 +2341,11 @@ export class Session {
   }
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    const directoryOperation = this.dispatchAgentDirectoryMessage(msg);
+    if (directoryOperation) {
+      return directoryOperation;
+    }
     switch (msg.type) {
-      case "fetch_agents_request":
-        return this.handleFetchAgents(msg);
-      case "fetch_agent_history_request":
-        return this.handleFetchAgentHistory(msg);
-      case "fetch_recent_provider_sessions_request":
-        return this.handleFetchRecentProviderSessions(msg);
       case "fetch_agent_request":
         return this.handleFetchAgent(msg.agentId, msg.requestId);
       case "delete_agent_request":
@@ -2261,6 +2378,21 @@ export class Session {
         return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchAgentDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "fetch_agents_request":
+        return this.handleFetchAgents(msg);
+      case "inventory.sessions.request":
+        return this.handleInventorySessions(msg);
+      case "fetch_agent_history_request":
+        return this.handleFetchAgentHistory(msg);
+      case "fetch_recent_provider_sessions_request":
+        return this.handleFetchRecentProviderSessions(msg);
       default:
         return undefined;
     }
@@ -5352,6 +5484,41 @@ export class Session {
       const code = error instanceof SessionRequestError ? error.code : "fetch_agents_failed";
       const message = error instanceof Error ? error.message : "Failed to fetch agents";
       this.sessionLogger.error({ err: error }, "Failed to handle fetch_agents_request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: request.type,
+          error: message,
+          code,
+        },
+      });
+    }
+  }
+
+  private async handleInventorySessions(
+    request: Extract<SessionInboundMessage, { type: "inventory.sessions.request" }>,
+  ): Promise<void> {
+    try {
+      const page = await this.inventorySnapshots.page(
+        {
+          snapshot_id: request.snapshot_id,
+          cursor: request.cursor,
+          limit: request.limit,
+        },
+        this.clientId,
+      );
+      this.emit({
+        type: "inventory.sessions.response",
+        payload: { requestId: request.requestId, ...page },
+      });
+    } catch (error) {
+      let code = "inventory_snapshot_failed";
+      if (error instanceof InventorySnapshotError || error instanceof SessionRequestError) {
+        code = error.code;
+      }
+      const message = error instanceof Error ? error.message : "Failed to capture Paseo inventory";
+      this.sessionLogger.error({ err: error }, "Failed to handle inventory.sessions.request");
       this.emit({
         type: "rpc_error",
         payload: {

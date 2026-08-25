@@ -1,4 +1,5 @@
-import { promises as fs, type Dirent } from "node:fs";
+import { createHash } from "node:crypto";
+import { promises as fs, type Dirent, type Stats } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
@@ -94,6 +95,20 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+export interface InventoryRegistryIssue {
+  path: string;
+  reason: "malformed_record" | "duplicate_agent_id" | "unreadable_path" | "registry_changed";
+}
+
+interface InventoryRegistryState {
+  records: StoredAgentRecord[];
+  issues: InventoryRegistryIssue[];
+}
+
+interface InventoryRegistryScan extends InventoryRegistryState {
+  manifest: string[];
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
@@ -103,6 +118,7 @@ export class AgentStorage {
   private daemonAgentIdsByExecution: Map<string, string> = new Map();
   private daemonExecutionKeysByAgentId: Map<string, string> = new Map();
   private loaded = false;
+  private inventoryIssues: InventoryRegistryIssue[] = [];
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
   private logger: Logger;
@@ -119,6 +135,48 @@ export class AgentStorage {
   async list(): Promise<StoredAgentRecord[]> {
     await this.load();
     return Array.from(this.cache.values());
+  }
+
+  /**
+   * The inventory RPC reads this synchronous view together with AgentManager's
+   * in-memory map. Once bootstrap has initialized storage, no await occurs
+   * between those reads, giving the materializer one event-loop turn over the
+   * canonical registry state. Invalid or duplicate on-disk records are never
+   * silently omitted from a complete inventory claim.
+   */
+  inventoryState(): { records: StoredAgentRecord[]; issues: InventoryRegistryIssue[] } {
+    if (!this.loaded) {
+      throw new Error("Agent storage is not initialized");
+    }
+    return {
+      records: Array.from(this.cache.values()),
+      issues: this.inventoryIssues.map((issue) => ({ ...issue })),
+    };
+  }
+
+  /**
+   * Reads the registry from disk for a new inventory snapshot. This intentionally
+   * bypasses the startup cache used by legacy/UI callers. Two complete manifests
+   * must match, otherwise an external filesystem mutation has invalidated the
+   * materialization point and inventory fails closed.
+   */
+  async inventoryFreshState(): Promise<InventoryRegistryState> {
+    const before = await this.scanInventoryRegistry();
+    if (before.issues.length > 0) {
+      return before;
+    }
+    const after = await this.scanInventoryRegistry();
+    if (after.issues.length > 0) {
+      return after;
+    }
+    if (!sameManifest(before.manifest, after.manifest)) {
+      this.logger.warn("Agent registry changed during inventory scan");
+      return {
+        records: [],
+        issues: [{ path: this.baseDir, reason: "registry_changed" }],
+      };
+    }
+    return { records: after.records, issues: [] };
   }
 
   async get(agentId: string): Promise<StoredAgentRecord | null> {
@@ -188,8 +246,10 @@ export class AgentStorage {
     const agentId = record.id;
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
+    const paseoHome = path.dirname(this.baseDir);
+    const tempDir = path.join(paseoHome, ".tmp", "atomic");
 
-    await writeJsonFileAtomic(nextPath, record);
+    await writeJsonFileAtomic(nextPath, record, tempDir);
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {
@@ -297,6 +357,7 @@ export class AgentStorage {
     this.pathsById.clear();
     this.daemonAgentIdsByExecution.clear();
     this.daemonExecutionKeysByAgentId.clear();
+    this.inventoryIssues = [];
 
     try {
       const records = await this.scanDisk();
@@ -308,8 +369,223 @@ export class AgentStorage {
         return [];
       }
       this.logger.error({ err: error }, "Failed to load agents");
+      this.inventoryIssues.push({ path: this.baseDir, reason: "unreadable_path" });
       this.loaded = true;
       return [];
+    }
+  }
+
+  private classifyDirent(
+    entry: Dirent,
+    entryPath: string,
+    context: "root" | "project",
+  ): "directory" | "record" | "rejected" {
+    if (entry.isSymbolicLink()) {
+      this.logger.warn({ path: entryPath, context }, "Symbolic link in agent registry");
+      this.inventoryIssues.push({ path: entryPath, reason: "unreadable_path" });
+      return "rejected";
+    }
+    if (entry.isDirectory()) {
+      if (context === "project") {
+        this.logger.warn({ path: entryPath }, "Nested directory in agent project directory");
+        this.inventoryIssues.push({ path: entryPath, reason: "unreadable_path" });
+        return "rejected";
+      }
+      return "directory";
+    }
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".json")) {
+        return "record";
+      }
+      this.logger.warn({ path: entryPath, context }, "Unexpected file in agent registry");
+      this.inventoryIssues.push({ path: entryPath, reason: "unreadable_path" });
+      return "rejected";
+    }
+    this.logger.warn({ path: entryPath, context }, "Unexpected entry in agent registry");
+    this.inventoryIssues.push({ path: entryPath, reason: "unreadable_path" });
+    return "rejected";
+  }
+
+  private async scanInventoryRegistry(): Promise<InventoryRegistryScan> {
+    const issues: InventoryRegistryIssue[] = [];
+    const manifest: string[] = [];
+    const root = await this.inspectInventoryPath(this.baseDir, "root", manifest, issues, true);
+    if (root === "absent") {
+      return { records: [], issues, manifest };
+    }
+    if (root !== "directory") {
+      return { records: [], issues, manifest };
+    }
+
+    const rootEntries = await this.readInventoryDirectory(this.baseDir, "root", manifest, issues);
+    const recordPaths: string[] = [];
+    const projectDirs: string[] = [];
+    for (const entry of rootEntries) {
+      const entryPath = path.join(this.baseDir, entry.name);
+      const kind = await this.inspectInventoryPath(entryPath, "root", manifest, issues);
+      if (kind === "directory") {
+        projectDirs.push(entryPath);
+      } else if (kind === "record") {
+        recordPaths.push(entryPath);
+      }
+    }
+
+    for (const projectDir of projectDirs.sort(comparePathCodeUnits)) {
+      const projectEntries = await this.readInventoryDirectory(
+        projectDir,
+        "project",
+        manifest,
+        issues,
+      );
+      for (const entry of projectEntries) {
+        const entryPath = path.join(projectDir, entry.name);
+        if (
+          (await this.inspectInventoryPath(entryPath, "project", manifest, issues)) === "record"
+        ) {
+          recordPaths.push(entryPath);
+        }
+      }
+    }
+
+    const records: StoredAgentRecord[] = [];
+    const recordPathById = new Map<string, string>();
+    for (const recordPath of recordPaths.sort(comparePathCodeUnits)) {
+      const record = await this.readStableInventoryRecord(recordPath, manifest, issues);
+      if (!record) continue;
+      const previousPath = recordPathById.get(record.id);
+      if (previousPath) {
+        issues.push({ path: previousPath, reason: "duplicate_agent_id" });
+        issues.push({ path: recordPath, reason: "duplicate_agent_id" });
+        continue;
+      }
+      recordPathById.set(record.id, recordPath);
+      records.push(record);
+    }
+
+    manifest.sort(comparePathCodeUnits);
+    return { records, issues, manifest };
+  }
+
+  private async readInventoryDirectory(
+    directory: string,
+    context: "root" | "project",
+    manifest: string[],
+    issues: InventoryRegistryIssue[],
+  ): Promise<Dirent[]> {
+    try {
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      manifest.push(
+        `directory:${directory}:${entries
+          .map((entry) => entry.name)
+          .sort(comparePathCodeUnits)
+          .join("\u0000")}`,
+      );
+      return entries.sort((left, right) => comparePathCodeUnits(left.name, right.name));
+    } catch (error) {
+      this.logger.warn(
+        { err: error, directory, context },
+        "Failed to scan inventory registry directory",
+      );
+      issues.push({
+        path: directory,
+        reason:
+          (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? "registry_changed"
+            : "unreadable_path",
+      });
+      return [];
+    }
+  }
+
+  private async inspectInventoryPath(
+    entryPath: string,
+    context: "root" | "project",
+    manifest: string[],
+    issues: InventoryRegistryIssue[],
+    allowAbsent = false,
+  ): Promise<"absent" | "directory" | "record" | "rejected"> {
+    let stats: Stats;
+    try {
+      stats = await fs.lstat(entryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && allowAbsent) {
+        manifest.push(`absent:${entryPath}`);
+        return "absent";
+      }
+      this.logger.warn(
+        { err: error, entryPath, context },
+        "Failed to inspect inventory registry path",
+      );
+      issues.push({
+        path: entryPath,
+        reason:
+          (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? "registry_changed"
+            : "unreadable_path",
+      });
+      return "rejected";
+    }
+    manifest.push(`path:${entryPath}:${inventoryPathFingerprint(stats)}`);
+    if (stats.isSymbolicLink()) {
+      issues.push({ path: entryPath, reason: "unreadable_path" });
+      return "rejected";
+    }
+    if (stats.isDirectory()) {
+      if (context === "project") {
+        issues.push({ path: entryPath, reason: "unreadable_path" });
+        return "rejected";
+      }
+      return "directory";
+    }
+    if (stats.isFile() && entryPath.endsWith(".json")) {
+      return "record";
+    }
+    issues.push({ path: entryPath, reason: "unreadable_path" });
+    return "rejected";
+  }
+
+  private async readStableInventoryRecord(
+    filePath: string,
+    manifest: string[],
+    issues: InventoryRegistryIssue[],
+  ): Promise<StoredAgentRecord | null> {
+    let before: Stats;
+    let content: string;
+    let after: Stats;
+    try {
+      before = await fs.lstat(filePath);
+      if (!before.isFile() || before.isSymbolicLink()) {
+        issues.push({ path: filePath, reason: "registry_changed" });
+        return null;
+      }
+      content = await fs.readFile(filePath, "utf8");
+      after = await fs.lstat(filePath);
+    } catch (error) {
+      this.logger.warn({ err: error, filePath }, "Failed to read inventory registry record");
+      issues.push({
+        path: filePath,
+        reason:
+          (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? "registry_changed"
+            : "unreadable_path",
+      });
+      return null;
+    }
+    if (
+      !after.isFile() ||
+      after.isSymbolicLink() ||
+      inventoryPathFingerprint(before) !== inventoryPathFingerprint(after)
+    ) {
+      issues.push({ path: filePath, reason: "registry_changed" });
+      return null;
+    }
+    manifest.push(`content:${filePath}:${createHash("sha256").update(content).digest("hex")}`);
+    try {
+      return parseStoredAgentRecord(JSON.parse(content));
+    } catch (error) {
+      this.logger.warn({ err: error, filePath }, "Invalid inventory registry record");
+      issues.push({ path: filePath, reason: "malformed_record" });
+      return null;
     }
   }
 
@@ -325,22 +601,38 @@ export class AgentStorage {
       throw error;
     }
 
-    const rootRecordPaths = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => path.join(this.baseDir, entry.name));
+    const rootRecordPaths: string[] = [];
+    const projectDirs: string[] = [];
 
-    const projectDirs = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(this.baseDir, entry.name));
+    for (const entry of entries) {
+      const entryPath = path.join(this.baseDir, entry.name);
+      const kind = this.classifyDirent(entry, entryPath, "root");
+      if (kind === "directory") {
+        projectDirs.push(entryPath);
+      } else if (kind === "record") {
+        rootRecordPaths.push(entryPath);
+      }
+    }
 
     const projectFileLists = await Promise.all(
       projectDirs.map(async (projectDir) => {
         try {
           const files = await fs.readdir(projectDir, { withFileTypes: true });
-          return files
-            .filter((file) => file.isFile() && file.name.endsWith(".json"))
-            .map((file) => path.join(projectDir, file.name));
-        } catch {
+          const projectRecordPaths: string[] = [];
+          for (const file of files) {
+            const filePath = path.join(projectDir, file.name);
+            const kind = this.classifyDirent(file, filePath, "project");
+            if (kind === "record") {
+              projectRecordPaths.push(filePath);
+            }
+          }
+          return projectRecordPaths;
+        } catch (error) {
+          // The directory was observed in the root listing. Even ENOENT now
+          // means a record could have vanished during this scan, so inventory
+          // must fail closed rather than assert completeness over a subset.
+          this.logger.error({ err: error, projectDir }, "Failed to scan agent registry directory");
+          this.inventoryIssues.push({ path: projectDir, reason: "unreadable_path" });
           return [];
         }
       }),
@@ -354,9 +646,20 @@ export class AgentStorage {
       }),
     );
 
+    const recordPathById = new Map<string, string>();
     for (const item of loaded) {
       if (!item) continue;
       const { record, filePath } = item;
+      const previousPath = recordPathById.get(record.id);
+      if (previousPath) {
+        this.inventoryIssues.push({ path: filePath, reason: "duplicate_agent_id" });
+        this.inventoryIssues.push({ path: previousPath, reason: "duplicate_agent_id" });
+        // Keep the duplicate path indexed for remove(), even though a complete
+        // inventory correctly fails rather than selecting one arbitrarily.
+        this.addIndexedPath(record.id, filePath);
+        continue;
+      }
+      recordPathById.set(record.id, filePath);
       records.push(record);
       this.cache.set(record.id, record);
       this.indexOwner(record);
@@ -368,12 +671,23 @@ export class AgentStorage {
   }
 
   private async readRecordFile(filePath: string): Promise<StoredAgentRecord | null> {
+    let content: string;
     try {
-      const content = await fs.readFile(filePath, "utf8");
+      content = await fs.readFile(filePath, "utf8");
+    } catch (error) {
+      // This file was observed in a directory listing. Its disappearance is
+      // not equivalent to an absent registry root: it may hide one inventory
+      // identity, so preserve legacy list behavior but fail inventory closed.
+      this.logger.error({ err: error, filePath }, "Failed to read agent record");
+      this.inventoryIssues.push({ path: filePath, reason: "unreadable_path" });
+      return null;
+    }
+    try {
       const parsed = JSON.parse(content);
       return parseStoredAgentRecord(parsed);
     } catch (error) {
       this.logger.error({ err: error, filePath }, "Skipping invalid agent record");
+      this.inventoryIssues.push({ path: filePath, reason: "malformed_record" });
       return null;
     }
   }
@@ -425,6 +739,20 @@ export class AgentStorage {
   private async waitForPendingWrite(agentId: string): Promise<void> {
     await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
+}
+
+function inventoryPathFingerprint(stats: Stats): string {
+  return [stats.dev, stats.ino, stats.mode, stats.size, stats.mtimeMs, stats.ctimeMs].join(":");
+}
+
+function sameManifest(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function comparePathCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function projectDirNameFromCwd(cwd: string): string {

@@ -1878,6 +1878,18 @@ export const AgentRewindResponseMessageSchema = z.object({
   }),
 });
 
+// A deliberately separate, read-only inventory contract. It bypasses the UI
+// directory's provider, availability, project-placement, and active-scope
+// filters so an external controller can prove it reached the end of the whole
+// daemon registry snapshot.
+export const InventorySessionsRequestMessageSchema = z.object({
+  type: z.literal("inventory.sessions.request"),
+  requestId: z.string(),
+  snapshot_id: z.string().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+
 export const UpdateAgentResponseMessageSchema = z.object({
   type: z.literal("update_agent_response"),
   payload: AgentActionResponsePayloadSchema,
@@ -2947,6 +2959,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
+  InventorySessionsRequestMessageSchema,
   FetchAgentHistoryRequestMessageSchema,
   FetchRecentProviderSessionsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
@@ -3409,6 +3422,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(inventorySessionsSnapshot): added in v0.2.5, remove after 2027-02-10.
+        inventorySessionsSnapshot: z.boolean().optional(),
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: z.boolean().optional(),
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
@@ -3841,6 +3856,41 @@ export const FetchAgentsResponseMessageSchema = z.object({
     pageInfo: AgentDirectoryPageInfoSchema,
     sync: DirectorySyncMetadataSchema.optional(),
   }),
+});
+
+export const InventorySessionEntrySchema = z.object({
+  backend: z.literal("paseo"),
+  native_id: z.string().min(1),
+  provider: z.string().min(1),
+  status_raw: z.string().min(1),
+  archived: z.boolean(),
+  archived_at: z.string().nullable(),
+  internal: z.boolean(),
+  live: z.boolean(),
+  cwd: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  persistence_session_id: z.string().nullable(),
+});
+
+export type InventorySessionEntry = z.infer<typeof InventorySessionEntrySchema>;
+
+export const InventorySessionsResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  schema_version: z.literal("paseo.inventory_sessions.v1"),
+  snapshot_id: z.string().min(1),
+  entries: z.array(InventorySessionEntrySchema),
+  next_cursor: z.string().nullable(),
+  has_more: z.boolean(),
+});
+
+export type InventorySessionsResponsePayload = z.infer<
+  typeof InventorySessionsResponsePayloadSchema
+>;
+
+export const InventorySessionsResponseMessageSchema = z.object({
+  type: z.literal("inventory.sessions.response"),
+  payload: InventorySessionsResponsePayloadSchema,
 });
 
 export const FetchAgentHistoryResponseMessageSchema = z.object({
@@ -6206,6 +6256,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
+  InventorySessionsResponseMessageSchema,
   FetchAgentHistoryResponseMessageSchema,
   FetchRecentProviderSessionsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
@@ -6371,6 +6422,7 @@ export type ServerCapabilityState = z.infer<typeof ServerCapabilityStateSchema>;
 export type ServerVoiceCapabilities = z.infer<typeof ServerVoiceCapabilitiesSchema>;
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>;
 export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSchema>;
+export type ServerInfoStatusFeatures = NonNullable<ServerInfoStatusPayload["features"]>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
@@ -6393,6 +6445,12 @@ export type WorkspaceScriptLifecycle = z.infer<typeof WorkspaceScriptLifecycleSc
 export type WorkspaceScriptHealth = z.infer<typeof WorkspaceScriptHealthSchema>;
 export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
+export type InventorySessionsResponseMessage = z.infer<
+  typeof InventorySessionsResponseMessageSchema
+>;
+export type InventorySessionMessage =
+  | InventorySessionsRequestMessage
+  | InventorySessionsResponseMessage;
 export type FetchAgentHistoryResponseMessage = z.infer<
   typeof FetchAgentHistoryResponseMessageSchema
 >;
@@ -6535,6 +6593,7 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
+export type InventorySessionsRequestMessage = z.infer<typeof InventorySessionsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
 export type FetchRecentProviderSessionsRequestMessage = z.infer<
   typeof FetchRecentProviderSessionsRequestMessageSchema

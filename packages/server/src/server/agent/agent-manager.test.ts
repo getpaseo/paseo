@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import pino from "pino";
 
+import { captureInventorySessions } from "../session.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
@@ -36,6 +38,7 @@ import type {
   AgentPersistenceHandle,
   AgentRunOptions,
   AgentRunResult,
+  AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -1475,6 +1478,66 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test("captures inventory live entries and epoch at one synchronous boundary", async () => {
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000097",
+  });
+  const created = await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+  });
+
+  const beforeMutation = manager.captureInventoryLiveState();
+  const epochBeforeMutation = beforeMutation.epoch;
+  const started = waitForAgentLifecycle(manager, created.id, "running");
+  client.sessions[0]!.pushEvent({ type: "turn_started", provider: "codex", turnId: "inventory" });
+  await started;
+
+  // captureInventoryLiveState has no await: the captured entry remains the
+  // pre-mutation value and the next capture exposes a strictly newer epoch.
+  expect(beforeMutation.agents).toEqual([
+    expect.objectContaining({ id: created.id, lifecycle: "idle" }),
+  ]);
+  expect(manager.captureInventoryLiveState()).toMatchObject({
+    epoch: expect.any(Number),
+    agents: [expect.objectContaining({ id: created.id, lifecycle: "running" })],
+  });
+  expect(manager.captureInventoryLiveState().epoch).toBeGreaterThan(epochBeforeMutation);
+});
+
+test("inventory capture observes an epoch bump injected while copying a live entry", async () => {
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000096",
+  });
+  const created = await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+  });
+  const agents = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents;
+  const live = agents.get(created.id)!;
+  const epochBeforeBoundaryMutation = manager.captureInventoryLiveState().epoch;
+  let mutateDuringCopy = true;
+  Object.defineProperty(live, "id", {
+    configurable: true,
+    get() {
+      if (mutateDuringCopy) {
+        mutateDuringCopy = false;
+        manager.notifyAgentState(created.id);
+      }
+      return created.id;
+    },
+  });
+
+  manager.captureInventoryLiveState();
+  // Session capture compares this newer epoch after the registry await, so an
+  // entry copy spanning this boundary is retried rather than materialized.
+  expect(manager.captureInventoryLiveState().epoch).toBeGreaterThan(epochBeforeBoundaryMutation);
+});
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
@@ -10082,4 +10145,319 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   await manager.runAgent(snapshot.id, { text: "merge it" });
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+class NoInitialPersistenceRuntimeInfoSession extends TestAgentSession {
+  private runtimeInfoQueue: Array<{
+    resolve: (value: AgentRuntimeInfo) => void;
+    reject: (reason?: unknown) => void;
+  }> = [];
+  private runtimeInfoRequestCount = 0;
+  private readonly runtimeInfoRequested = deferred<void>();
+
+  override describePersistence() {
+    return null;
+  }
+
+  waitForRuntimeInfoRequest(): Promise<void> {
+    return this.runtimeInfoRequested.promise;
+  }
+
+  finishNextRuntimeInfo(value: AgentRuntimeInfo): void {
+    const next = this.runtimeInfoQueue.shift();
+    if (next) {
+      next.resolve(value);
+    }
+  }
+
+  getRuntimeInfoRequestCount(): number {
+    return this.runtimeInfoRequestCount;
+  }
+
+  override async getRuntimeInfo() {
+    this.runtimeInfoRequested.resolve();
+    this.runtimeInfoRequestCount += 1;
+    return new Promise<AgentRuntimeInfo>((resolve, reject) => {
+      this.runtimeInfoQueue.push({ resolve, reject });
+    });
+  }
+}
+
+class HoldingInventoryStorage extends AgentStorage {
+  private firstScanResolve?: () => void;
+  private firstScanPromise: Promise<void> = Promise.resolve();
+  scanCount = 0;
+
+  constructor(baseDir: string, parentLogger: pino.Logger) {
+    super(baseDir, parentLogger);
+    const d = deferred<void>();
+    this.firstScanPromise = d.promise;
+    this.firstScanResolve = d.resolve;
+  }
+
+  override async inventoryFreshState() {
+    this.scanCount += 1;
+    if (this.firstScanResolve) {
+      await this.firstScanPromise;
+      this.firstScanResolve = undefined;
+    }
+    return super.inventoryFreshState();
+  }
+
+  releaseFirstScan(): void {
+    this.firstScanResolve?.();
+  }
+}
+
+function waitForRuntimeInfoRequestCount(
+  session: NoInitialPersistenceRuntimeInfoSession,
+  count: number,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const check = () => {
+      if (session.getRuntimeInfoRequestCount() >= count) {
+        resolve();
+      } else {
+        setTimeout(check, 0);
+      }
+    };
+    check();
+  });
+}
+
+test("B-NEW-4: registration refreshRuntimeInfo(emit:false) changes persistence and bumps inventory epoch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bnew4-epoch-"));
+  const session = new NoInitialPersistenceRuntimeInfoSession({ provider: "codex", cwd: workdir });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000000b4",
+  });
+
+  try {
+    const agentId = "00000000-0000-4000-8000-0000000000b4";
+    const register = (
+      manager as unknown as { registerSession: (...args: unknown[]) => Promise<ManagedAgent> }
+    ).registerSession(session, { provider: "codex", cwd: workdir }, agentId, {
+      publishWhenReady: true,
+      workspaceId: undefined,
+    });
+    await session.waitForRuntimeInfoRequest();
+
+    const before = manager.captureInventoryLiveState();
+    expect(before.agents).toHaveLength(1);
+    expect(before.agents[0]?.persistence).toBeNull();
+    const epochBefore = before.epoch;
+
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "reg-session",
+      model: null,
+      modeId: null,
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const after = manager.captureInventoryLiveState();
+    expect(after.agents[0]?.persistence?.sessionId).toBe("reg-session");
+    expect(after.epoch).toBeGreaterThan(epochBefore);
+
+    await waitForRuntimeInfoRequestCount(session, 2);
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "reg-session",
+      model: null,
+      modeId: null,
+    });
+    await register;
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("B-NEW-4: persistence change during registration triggers inventory retry before mixed-authority materialization", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bnew4-retry-"));
+  const session = new NoInitialPersistenceRuntimeInfoSession({ provider: "codex", cwd: workdir });
+  const storage = new HoldingInventoryStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000000b5",
+  });
+
+  try {
+    const agentId = "00000000-0000-4000-8000-0000000000b5";
+    const register = (
+      manager as unknown as { registerSession: (...args: unknown[]) => Promise<ManagedAgent> }
+    ).registerSession(session, { provider: "codex", cwd: workdir }, agentId, {
+      publishWhenReady: true,
+      workspaceId: undefined,
+    });
+    await session.waitForRuntimeInfoRequest();
+
+    const capture = captureInventorySessions(manager, storage);
+
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "reg-session",
+      model: null,
+      modeId: null,
+    });
+
+    await waitForRuntimeInfoRequestCount(session, 2);
+    storage.releaseFirstScan();
+
+    const entries = await capture;
+
+    expect(storage.scanCount).toBe(2);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      backend: "paseo",
+      native_id: agentId,
+      live: true,
+      persistence_session_id: "reg-session",
+    });
+
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "reg-session",
+      model: null,
+      modeId: null,
+    });
+    await register;
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("B-NEW-4: markInventoryVisiblePersistence bumps epoch only when persistence session id changes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bnew4-mark-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000000b6",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const agent = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
+      snapshot.id,
+    )!;
+    const mark = (
+      manager as unknown as {
+        markInventoryVisiblePersistence: (
+          agent: unknown,
+          handle: AgentPersistenceHandle | null,
+          options?: { bump?: boolean },
+        ) => boolean;
+      }
+    ).markInventoryVisiblePersistence;
+
+    const e0 = manager.captureInventoryLiveState().epoch;
+    mark.call(manager, agent, { provider: "codex", sessionId: "t1" });
+    const e1 = manager.captureInventoryLiveState().epoch;
+    expect(e1).toBeGreaterThan(e0);
+
+    mark.call(manager, agent, { provider: "codex", sessionId: "t1" });
+    const e2 = manager.captureInventoryLiveState().epoch;
+    expect(e2).toBe(e1);
+
+    mark.call(manager, agent, { provider: "codex", sessionId: "t2" });
+    const e3 = manager.captureInventoryLiveState().epoch;
+    expect(e3).toBeGreaterThan(e2);
+
+    mark.call(manager, agent, null);
+    const e4 = manager.captureInventoryLiveState().epoch;
+    expect(e4).toBeGreaterThan(e3);
+
+    mark.call(manager, agent, null);
+    const e5 = manager.captureInventoryLiveState().epoch;
+    expect(e5).toBe(e4);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("B-NEW-4: refreshRuntimeInfo(emit:false) bumps epoch only when persistence session id changes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bnew4-refresh-"));
+  const session = new NoInitialPersistenceRuntimeInfoSession({ provider: "codex", cwd: workdir });
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000000b7",
+  });
+
+  try {
+    const agentId = "00000000-0000-4000-8000-0000000000b7";
+    const register = (
+      manager as unknown as { registerSession: (...args: unknown[]) => Promise<ManagedAgent> }
+    ).registerSession(session, { provider: "codex", cwd: workdir }, agentId, {
+      publishWhenReady: true,
+      workspaceId: undefined,
+    });
+    await session.waitForRuntimeInfoRequest();
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "r1",
+      model: null,
+      modeId: null,
+    });
+    await waitForRuntimeInfoRequestCount(session, 2);
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "r1",
+      model: null,
+      modeId: null,
+    });
+    await register;
+
+    const agent = (manager as unknown as { agents: Map<string, ManagedAgent> }).agents.get(
+      agentId,
+    )!;
+    const refreshRuntimeInfo = (
+      manager as unknown as {
+        refreshRuntimeInfo: (agent: unknown, options?: { emit?: boolean }) => Promise<void>;
+      }
+    ).refreshRuntimeInfo;
+
+    const e0 = manager.captureInventoryLiveState().epoch;
+    const same = refreshRuntimeInfo.call(manager, agent, { emit: false });
+    await waitForRuntimeInfoRequestCount(session, 3);
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "r1",
+      model: "gpt-5.2-codex",
+      modeId: null,
+    });
+    await same;
+    const e1 = manager.captureInventoryLiveState().epoch;
+    expect(e1).toBe(e0);
+
+    agent.persistence = null;
+    agent.runtimeInfo = undefined;
+    const e2 = manager.captureInventoryLiveState().epoch;
+    const changed = refreshRuntimeInfo.call(manager, agent, { emit: false });
+    await waitForRuntimeInfoRequestCount(session, 4);
+    session.finishNextRuntimeInfo({
+      provider: "codex",
+      sessionId: "r2",
+      model: null,
+      modeId: null,
+    });
+    await changed;
+    const e3 = manager.captureInventoryLiveState().epoch;
+    expect(e3).toBeGreaterThan(e2);
+    expect(agent.persistence?.sessionId).toBe("r2");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });

@@ -366,6 +366,26 @@ test("sets the complete viewed timeline subscription only when the daemon suppor
   });
 });
 
+test("does not send inventory RPCs to a daemon without the snapshot feature", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "inventory_legacy",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+
+  await expect(client.inventorySessions()).rejects.toThrow(
+    "Update the host to use immutable session inventory snapshots.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
 test("normalizes legacy and dedicated agent attention notifications", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
@@ -1297,6 +1317,49 @@ test("honors explicit fetchAgents timeout below the session RPC default", async 
   await vi.advanceTimersByTimeAsync(1_199);
   expect(settled).toBe(false);
 
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1200ms)");
+});
+
+test("honors explicit inventorySessions timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "inventory_timeout",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { inventorySessionsSnapshot: true } });
+  await connecting;
+
+  const responsePromise = client.inventorySessions({
+    requestId: "req-inventory-timeout",
+    timeout: 1_200,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "inventory.sessions.request",
+    requestId: "req-inventory-timeout",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_199);
+  expect(settled).toBe(false);
   await vi.advanceTimersByTimeAsync(1);
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1200ms)");
 });

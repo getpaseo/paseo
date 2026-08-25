@@ -5,13 +5,17 @@ import path from "node:path";
 export async function writeFileAtomic(
   filePath: string,
   data: string | NodeJS.ArrayBufferView,
+  tempDir?: string,
 ): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = path.join(
-    path.dirname(filePath),
+    tempDir ?? path.dirname(filePath),
     `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   try {
+    if (tempDir !== undefined) {
+      await fs.mkdir(tempDir, { recursive: true });
+    }
     await fs.writeFile(tempPath, data, "utf8");
     await fs.rename(tempPath, filePath);
   } catch (error) {
@@ -20,6 +24,10 @@ export async function writeFileAtomic(
   }
 }
 
-export async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
-  await writeFileAtomic(filePath, JSON.stringify(value, null, 2));
+export async function writeJsonFileAtomic(
+  filePath: string,
+  value: unknown,
+  tempDir?: string,
+): Promise<void> {
+  await writeFileAtomic(filePath, JSON.stringify(value, null, 2), tempDir);
 }
