@@ -111,6 +111,7 @@ function createFinishNotificationScenario(
     }
     return null;
   });
+  Reflect.set(agentManager, "listAgents", () => [childAgent, callerAgent]);
   Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
     subscriber = callback;
     return () => {
@@ -121,7 +122,11 @@ function createFinishNotificationScenario(
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
-  Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
+  Reflect.set(
+    agentManager,
+    "hasInFlightRun",
+    (agentId: string) => agentId === "caller-agent" && Boolean(options?.parentPromptError),
+  );
   Reflect.set(agentManager, "steerOrReplaceActiveTurn", async () => {
     steerAttemptCount += 1;
     return { status: "inactive" };
@@ -294,12 +299,14 @@ test("finish notifications tell the parent the child's last assistant message", 
 });
 
 test("finish notification waits for an asynchronously woken dispatcher", async () => {
-  const callerRecordRead = createDeferred<void>();
   const grandchildRecordRead = createDeferred<void>();
   const dispatcherPromptSent = createDeferred<void>();
   const parentPrompts: string[] = [];
   const dispatcherPrompts: string[] = [];
-  const subscribers = new Map<string, (event: AgentManagerEvent) => void>();
+  const subscribers = new Set<{
+    callback: (event: AgentManagerEvent) => void;
+    agentId?: string;
+  }>();
   let dispatcherResponse = "The dispatcher is waiting for its grandchild.";
 
   function createAgent(id: string, title: string, lifecycle: "idle" | "running"): ManagedAgent {
@@ -312,7 +319,11 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
   }
 
   function emitState(agent: ManagedAgent): void {
-    subscribers.get(agent.id)?.({ type: "agent_state", agent });
+    for (const subscriber of subscribers) {
+      if (!subscriber.agentId || subscriber.agentId === agent.id) {
+        subscriber.callback({ type: "agent_state", agent });
+      }
+    }
   }
 
   const caller = createAgent("caller-agent", "Caller", "idle");
@@ -330,16 +341,14 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
     agentManager,
     "subscribe",
     (callback: (event: AgentManagerEvent) => void, options?: { agentId?: string }) => {
-      if (options?.agentId) {
-        subscribers.set(options.agentId, callback);
-      }
+      const subscriber = { callback, agentId: options?.agentId };
+      subscribers.add(subscriber);
       return () => {
-        if (options?.agentId) {
-          subscribers.delete(options.agentId);
-        }
+        subscribers.delete(subscriber);
       };
     },
   );
+  Reflect.set(agentManager, "listAgents", () => [caller, dispatcher, grandchild]);
   Reflect.set(agentManager, "getLastAssistantMessage", async (agentId: string) => {
     return agentId === dispatcher.id ? dispatcherResponse : null;
   });
@@ -359,14 +368,21 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
   Reflect.set(agentManager, "replaceAgentRun", async () => (async function* noop() {})());
 
   const getAgentRecord = vi.fn(async (agentId: string) => {
-    if (agentId === caller.id) {
-      await callerRecordRead.promise;
-    }
     if (agentId === grandchild.id) {
       await grandchildRecordRead.promise;
     }
     const agent = agentManager.getAgent(agentId);
-    return agent ? { title: agent.config.title, labels: {} } : null;
+    if (!agent) return null;
+    let parentAgentId: string | null = null;
+    if (agentId === dispatcher.id) {
+      parentAgentId = caller.id;
+    } else if (agentId === grandchild.id) {
+      parentAgentId = dispatcher.id;
+    }
+    return {
+      title: agent.config.title,
+      labels: parentAgentId ? { "paseo.parent-agent-id": parentAgentId } : {},
+    };
   });
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
   Reflect.set(agentStorage, "get", getAgentRecord);
@@ -388,7 +404,7 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
 
   dispatcher.lifecycle = "idle";
   emitState(dispatcher);
-  await vi.waitFor(() => expect(getAgentRecord).toHaveBeenCalledWith(caller.id));
+  await Promise.resolve();
   expect(parentPrompts).toHaveLength(0);
 
   grandchild.lifecycle = "idle";
@@ -397,7 +413,6 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
   expect(parentPrompts).toHaveLength(0);
   expect(dispatcherPrompts).toHaveLength(0);
 
-  callerRecordRead.resolve();
   grandchildRecordRead.resolve();
   await dispatcherPromptSent.promise;
 
@@ -620,6 +635,7 @@ it("does not notify archived callers", async () => {
       return null;
     }),
   );
+  Reflect.set(agentManager, "listAgents", () => [childAgent, callerAgent]);
   Reflect.set(
     agentManager,
     "subscribe",
