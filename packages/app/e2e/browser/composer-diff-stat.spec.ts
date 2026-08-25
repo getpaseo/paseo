@@ -90,8 +90,14 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
       agentId: workspace.agentId,
     });
 
+    const closeExplorer = page
+      .getByTestId("explorer-header")
+      .getByRole("button", { name: "Close Explorer sidebar" });
+    await expect(closeExplorer).not.toBeInViewport();
+
     await page.getByTestId("composer-diff-stat-pill").click();
 
+    await expect(closeExplorer).toBeInViewport({ timeout: 30_000 });
     await expect(page.getByTestId("changes-header").filter({ visible: true }).first()).toBeVisible({
       timeout: 30_000,
     });

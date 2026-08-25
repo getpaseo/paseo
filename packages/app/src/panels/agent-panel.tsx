@@ -94,7 +94,7 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { openWorkspaceSupportingView } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
@@ -1349,6 +1349,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         <AgentTracks
           serverId={serverId}
           workspaceId={workspaceId}
+          cwd={cwd}
           subagentRows={subagentRows}
           tasks={tasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
@@ -1617,15 +1618,15 @@ function ActiveAgentComposer({
       if (attachment.kind !== "review") {
         return;
       }
-      openPreferredWorkspaceTarget({
+      openWorkspaceSupportingView({
+        view: "changes",
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
-        target: { kind: "working_diff" },
-        source: "changesLinks",
+        checkout: { serverId, cwd, isGit: true },
         preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
+    [cwd, isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const handleClientSlashCommand = useCallback(
