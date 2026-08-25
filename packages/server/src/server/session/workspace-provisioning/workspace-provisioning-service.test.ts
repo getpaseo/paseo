@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
@@ -17,6 +17,8 @@ import {
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
+import type { ImportSessionCwdScopeResolver } from "../../import-session-cwd-scope.js";
+import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import {
   createWorkspaceProvisioningService,
   WorkspaceProvisioningError,
@@ -696,6 +698,146 @@ test("runInImportWorkspace creates one fresh workspace for an untargeted import"
   expect(await workspaceRegistry.list()).toEqual([result.createdWorkspace]);
 });
 
+test("runInImportWorkspace creates a linked-worktree workspace under the source project", async () => {
+  const projectRoot = path.join(tmpDir, "main-project");
+  const linkedCwd = path.join(tmpDir, "linked-worktree");
+  mkdirSync(projectRoot);
+  mkdirSync(linkedCwd);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "main-project",
+    timestamp: "2026-08-10T00:00:00.000Z",
+  });
+  const resolver = cwdScopeResolver([projectRoot, linkedCwd]);
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    importSessionCwdScopeResolver: resolver,
+    logger,
+  });
+
+  const result = await provisioning.runInImportWorkspace(
+    { cwd: linkedCwd, requestedSourceCwd: projectRoot },
+    async (workspace) => workspace,
+  );
+
+  expect(result.value).toMatchObject({ cwd: linkedCwd, projectId: project.projectId });
+  expect(result.createdWorkspace).toEqual(result.value);
+  expect(resolver.resolve).toHaveBeenCalledWith(projectRoot, {
+    force: true,
+    reason: "provider-session-import",
+  });
+});
+
+test("runInImportWorkspace rejects a cwd outside the source scope without registry mutation", async () => {
+  const projectRoot = path.join(tmpDir, "main-project");
+  const unrelatedCwd = path.join(tmpDir, "unrelated");
+  mkdirSync(projectRoot);
+  mkdirSync(unrelatedCwd);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "main-project",
+    timestamp: "2026-08-10T00:00:00.000Z",
+  });
+  const resolver = cwdScopeResolver([projectRoot]);
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    importSessionCwdScopeResolver: resolver,
+    logger,
+  });
+
+  await expect(
+    provisioning.runInImportWorkspace(
+      { cwd: unrelatedCwd, requestedSourceCwd: projectRoot },
+      async () => undefined,
+    ),
+  ).rejects.toThrow(`Import cwd is not linked to source directory: ${projectRoot}`);
+  expect(await workspaceRegistry.list()).toEqual([]);
+  expect(await projectRegistry.list()).toEqual([project]);
+});
+
+test("runInImportWorkspace rolls back a failed linked-worktree import", async () => {
+  const projectRoot = path.join(tmpDir, "main-project");
+  const linkedCwd = path.join(tmpDir, "linked-worktree");
+  mkdirSync(projectRoot);
+  mkdirSync(linkedCwd);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "main-project",
+    timestamp: "2026-08-10T00:00:00.000Z",
+  });
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    importSessionCwdScopeResolver: cwdScopeResolver([projectRoot, linkedCwd]),
+    logger,
+  });
+
+  await expect(
+    provisioning.runInImportWorkspace(
+      { cwd: linkedCwd, requestedSourceCwd: projectRoot },
+      async () => {
+        throw new Error("provider session is unavailable");
+      },
+    ),
+  ).rejects.toThrow("provider session is unavailable");
+  expect(await workspaceRegistry.list()).toEqual([]);
+  expect(await projectRegistry.list()).toEqual([project]);
+});
+
+test("runInImportWorkspace preserves a concurrent active-project update after import failure", async () => {
+  const projectRoot = path.join(tmpDir, "main-project");
+  const linkedCwd = path.join(tmpDir, "linked-worktree");
+  mkdirSync(projectRoot);
+  mkdirSync(linkedCwd);
+  const project = await projectRegistry.getOrCreateActiveByRoot({
+    rootPath: projectRoot,
+    kind: "non_git",
+    displayName: "main-project",
+    timestamp: "2026-08-10T00:00:00.000Z",
+  });
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    importSessionCwdScopeResolver: cwdScopeResolver([projectRoot, linkedCwd]),
+    logger,
+  });
+
+  await expect(
+    provisioning.runInImportWorkspace(
+      { cwd: linkedCwd, requestedSourceCwd: projectRoot },
+      async () => {
+        const current = await projectRegistry.get(project.projectId);
+        if (!current) throw new Error("project disappeared during import");
+        await projectRegistry.upsert({ ...current, customName: "Concurrent project rename" });
+        throw new Error("provider session is unavailable");
+      },
+    ),
+  ).rejects.toThrow("provider session is unavailable");
+
+  expect(await workspaceRegistry.list()).toEqual([]);
+  expect(await projectRegistry.get(project.projectId)).toMatchObject({
+    customName: "Concurrent project rename",
+  });
+});
+
+test("runInImportWorkspace rejects simultaneous workspace and source-directory targets", async () => {
+  await expect(
+    provisioning.runInImportWorkspace(
+      { cwd: tmpDir, requestedWorkspaceId: "workspace", requestedSourceCwd: tmpDir },
+      async () => undefined,
+    ),
+  ).rejects.toThrow("Import cannot target both a workspace and a source directory");
+});
+
 test.each(["missing", "archived"] as const)(
   "runInImportWorkspace restores the exact %s project state when an untargeted import fails",
   async (state) => {
@@ -718,3 +860,14 @@ test.each(["missing", "archived"] as const)(
     expect(await projectRegistry.list()).toEqual(previousProject ? [previousProject] : []);
   },
 );
+
+function cwdScopeResolver(exactCwds: string[]): ImportSessionCwdScopeResolver {
+  const matchers = exactCwds.map((cwd) => createRealpathAwarePathMatcher(cwd));
+  return {
+    resolve: vi.fn(async (sourceCwd: string) => ({
+      sourceCwd,
+      exactCwds,
+      matchesCwd: async (candidate: string) => matchers.some((matches) => matches(candidate)),
+    })),
+  };
+}

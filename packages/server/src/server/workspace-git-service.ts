@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
 import pLimit from "p-limit";
@@ -13,6 +13,7 @@ import {
   type CheckoutSnapshotFacts,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
+  type GitWorktreeEntry,
   getCheckoutDiff,
   getCheckoutRefDerivedState,
   getCheckoutSnapshotFacts,
@@ -26,6 +27,7 @@ import {
   resolveRepositoryDefaultBranch,
   resolveBranchCheckout,
   resolveAbsoluteGitDir,
+  parseWorktreeList,
 } from "../utils/checkout-git.js";
 import type {
   ForgeAuthState,
@@ -44,6 +46,7 @@ import {
   createRealpathAwarePathMatcher,
   getRealpathAwareRelativePath,
   isRealpathInsideRoot,
+  normalizePathForIdentity,
 } from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { branchNameFromRef } from "../utils/worktree-metadata.js";
@@ -213,6 +216,14 @@ export interface WorkspaceGitService {
     cwdOrRepoRoot: string,
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitWorktreeInfo[]>;
+  getGitCheckoutIdentity(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<WorkspaceGitCheckoutIdentity | null>;
+  listLinkedWorktrees(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<WorkspaceGitCheckoutIdentity[]>;
   getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(cwdOrRepoRoot: string, options?: WorkspaceGitReadOptions): Promise<string>;
@@ -286,6 +297,12 @@ export interface WorkspaceGitStashEntry {
 export type WorkspaceGitBranchValidationResult = BranchCheckoutResolution;
 export type WorkspaceGitBranchSuggestion = BranchSuggestion;
 export type WorkspaceGitWorktreeInfo = PaseoWorktreeInfo;
+
+/** Lightweight Git identity used to prove that two directories are linked worktrees. */
+export interface WorkspaceGitCheckoutIdentity {
+  worktreeRoot: string;
+  commonDir: string;
+}
 
 export type WorkspaceGitSnapshotOptions =
   | {
@@ -561,6 +578,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly worktreeListCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitWorktreeInfo[]>
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly gitCheckoutIdentityCache = new LRUCache<
+    string,
+    WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitCheckoutIdentity | null>
+  >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly linkedWorktreeListCache = new LRUCache<
+    string,
+    WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitCheckoutIdentity[]>
   >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
   private readonly defaultBranchCache = new LRUCache<
     string,
@@ -853,6 +878,98 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         worktreesRoot: this.worktreesRoot,
       }),
     );
+  }
+
+  getGitCheckoutIdentity(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<WorkspaceGitCheckoutIdentity | null> {
+    this.assertNotDisposed();
+    const normalizedCwd = resolve(cwd);
+    const key = JSON.stringify(["git-checkout-identity", normalizedCwd]);
+    return this.readAuxiliaryCache(this.gitCheckoutIdentityCache, key, options, async () => {
+      const cwdStats = await stat(normalizedCwd).catch(() => null);
+      if (!cwdStats?.isDirectory()) return null;
+
+      try {
+        const [{ stdout: worktreeRootOutput }, { stdout: commonDirOutput }] = await Promise.all([
+          this.deps.runGitCommand(["rev-parse", "--show-toplevel"], {
+            cwd: normalizedCwd,
+            envOverlay: READ_ONLY_GIT_ENV,
+          }),
+          this.deps.runGitCommand(["rev-parse", "--git-common-dir"], {
+            cwd: normalizedCwd,
+            envOverlay: READ_ONLY_GIT_ENV,
+          }),
+        ]);
+        const worktreeRootValue = parseGitRevParsePath(worktreeRootOutput);
+        const commonDirValue = parseGitRevParsePath(commonDirOutput);
+        if (!worktreeRootValue || !commonDirValue) return null;
+
+        const worktreeRoot = resolve(normalizedCwd, worktreeRootValue);
+        const commonDir = resolve(normalizedCwd, commonDirValue);
+        const [worktreeStats, commonDirStats] = await Promise.all([
+          stat(worktreeRoot).catch(() => null),
+          stat(commonDir).catch(() => null),
+        ]);
+        if (!worktreeStats?.isDirectory() || !commonDirStats?.isDirectory()) return null;
+
+        return {
+          worktreeRoot: normalizePathForIdentity(worktreeRoot),
+          commonDir: normalizePathForIdentity(commonDir),
+        };
+      } catch {
+        return null;
+      }
+    });
+  }
+
+  async listLinkedWorktrees(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<WorkspaceGitCheckoutIdentity[]> {
+    this.assertNotDisposed();
+    const selected = await this.getGitCheckoutIdentity(cwd, options);
+    if (!selected) return [];
+
+    const key = JSON.stringify(["linked-worktrees", selected.commonDir]);
+    return this.readAuxiliaryCache(this.linkedWorktreeListCache, key, options, async () => {
+      const { stdout } = await this.deps.runGitCommand(["worktree", "list", "--porcelain"], {
+        cwd: selected.worktreeRoot,
+        envOverlay: READ_ONLY_GIT_ENV,
+      });
+      const candidates = parseWorktreeList(stdout).filter(
+        (entry) => !entry.isBare && !entry.isPrunable,
+      );
+      const limit = pLimit({ concurrency: WORKSPACE_GIT_REFRESH_CONCURRENCY });
+      const verified = await Promise.all(
+        candidates.map((entry) =>
+          limit(() => this.verifyLinkedWorktreeCandidate(entry, selected, options)),
+        ),
+      );
+
+      const unique = new Map<string, WorkspaceGitCheckoutIdentity>();
+      for (const identity of verified) {
+        if (identity) unique.set(identity.worktreeRoot, identity);
+      }
+      return Array.from(unique.values());
+    });
+  }
+
+  private async verifyLinkedWorktreeCandidate(
+    entry: GitWorktreeEntry,
+    selected: WorkspaceGitCheckoutIdentity,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<WorkspaceGitCheckoutIdentity | null> {
+    const expectedRoot = resolve(entry.path);
+    const expectedStats = await stat(expectedRoot).catch(() => null);
+    if (!expectedStats?.isDirectory()) return null;
+
+    const identity = await this.getGitCheckoutIdentity(expectedRoot, options);
+    if (!identity) return null;
+    if (!createRealpathAwarePathMatcher(expectedRoot)(identity.worktreeRoot)) return null;
+    if (!createRealpathAwarePathMatcher(selected.commonDir)(identity.commonDir)) return null;
+    return identity;
   }
 
   async resolveRepoRoot(cwd: string, options?: WorkspaceGitReadOptions): Promise<string> {

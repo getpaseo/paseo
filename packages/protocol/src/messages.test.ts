@@ -344,6 +344,34 @@ describe("agent detach RPC", () => {
     }
     expect(parsed.features?.importSessionWorkspaceTarget).toBe(true);
   });
+
+  test("parses linked-worktree session import messages and feature gate", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "fetch_recent_provider_sessions_request",
+        requestId: "list-linked-sessions",
+        cwd: "/tmp/main",
+        includeLinkedWorktrees: true,
+      }),
+    ).toMatchObject({ cwd: "/tmp/main", includeLinkedWorktrees: true });
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "import_agent_request",
+        requestId: "import-linked-session",
+        providerId: "codex",
+        providerHandleId: "thread-1",
+        cwd: "/tmp/worktree",
+        sourceCwd: "/tmp/main",
+      }),
+    ).toMatchObject({ sourceCwd: "/tmp/main" });
+
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: { importSessionLinkedWorktrees: true },
+    });
+    expect(parsed?.features?.importSessionLinkedWorktrees).toBe(true);
+  });
 });
 
 describe("agent setting action responses", () => {

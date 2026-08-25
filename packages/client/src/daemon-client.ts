@@ -180,6 +180,7 @@ const PROJECT_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 interface ImportAgentInputBase {
   cwd?: string;
   workspaceId?: string;
+  sourceCwd?: string;
   labels?: Record<string, string>;
 }
 
@@ -2085,11 +2086,15 @@ export class DaemonClient {
   async fetchRecentProviderSessions(
     options?: FetchRecentProviderSessionsOptions,
   ): Promise<FetchRecentProviderSessionsPayload> {
+    this.assertImportSessionLinkedWorktreesSupported(options?.includeLinkedWorktrees === true);
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_recent_provider_sessions_request",
       requestId: resolvedRequestId,
       ...(options?.cwd ? { cwd: options.cwd } : {}),
+      ...(options?.includeLinkedWorktrees !== undefined
+        ? { includeLinkedWorktrees: options.includeLinkedWorktrees }
+        : {}),
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
@@ -2776,6 +2781,7 @@ export class DaemonClient {
   }
 
   async importAgent(input: ImportAgentInput): Promise<AgentSnapshotPayload> {
+    this.assertImportSessionLinkedWorktreesSupported(input.sourceCwd !== undefined);
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "import_agent_request",
@@ -2785,6 +2791,7 @@ export class DaemonClient {
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.sourceCwd !== undefined ? { sourceCwd: input.sourceCwd } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
 
@@ -2815,6 +2822,12 @@ export class DaemonClient {
     }
 
     return status.agent;
+  }
+
+  private assertImportSessionLinkedWorktreesSupported(requested: boolean): void {
+    if (requested && this.lastServerInfoMessage?.features?.importSessionLinkedWorktrees !== true) {
+      throw new Error("Update the host to import sessions from linked worktrees.");
+    }
   }
 
   async refreshAgent(agentId: string, requestId?: string): Promise<AgentRefreshedStatusPayload> {

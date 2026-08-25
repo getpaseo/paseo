@@ -4519,6 +4519,135 @@ test("fetches scoped recent provider sessions", async () => {
   });
 });
 
+test("fetches and imports linked-worktree sessions when the host supports it", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { importSessionLinkedWorktrees: true } });
+  await connectPromise;
+
+  const listPromise = client.fetchRecentProviderSessions({
+    cwd: "/tmp/main-worktree",
+    includeLinkedWorktrees: true,
+    providers: ["codex"],
+  });
+  const listRequest = JSON.parse(String(mock.sent.at(-1))) as {
+    message: { requestId: string; includeLinkedWorktrees?: boolean; cwd?: string };
+  };
+  expect(listRequest.message).toMatchObject({
+    cwd: "/tmp/main-worktree",
+    includeLinkedWorktrees: true,
+  });
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "fetch_recent_provider_sessions_response",
+        payload: { requestId: listRequest.message.requestId, entries: [] },
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({ entries: [] });
+
+  const importPromise = client.importAgent({
+    providerId: "codex",
+    providerHandleId: "thread-1",
+    cwd: "/tmp/linked-worktree",
+    sourceCwd: "/tmp/main-worktree",
+  });
+  const importRequest = JSON.parse(String(mock.sent.at(-1))) as {
+    message: { requestId: string; sourceCwd?: string; cwd?: string };
+  };
+  expect(importRequest.message).toMatchObject({
+    cwd: "/tmp/linked-worktree",
+    sourceCwd: "/tmp/main-worktree",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_resumed",
+        requestId: importRequest.message.requestId,
+        agentId: "agent-project",
+        timelineSize: 0,
+        agent: {
+          id: "agent-project",
+          provider: "codex",
+          cwd: "/tmp/linked-worktree",
+          model: null,
+          features: [],
+          thinkingOptionId: null,
+          effectiveThinkingOptionId: null,
+          createdAt: "2026-04-30T00:00:00.000Z",
+          updatedAt: "2026-04-30T00:00:00.000Z",
+          lastUserMessageAt: null,
+          status: "idle",
+          capabilities: {
+            supportsStreaming: false,
+            supportsSessionPersistence: false,
+            supportsDynamicModes: false,
+            supportsMcpServers: false,
+            supportsReasoningStream: false,
+            supportsToolInvocations: false,
+          },
+          currentModeId: null,
+          availableModes: [],
+          pendingPermissions: [],
+          persistence: { provider: "codex", sessionId: "thread-1" },
+          title: null,
+          labels: {},
+          workspaceId: "workspace-project",
+          requiresAttention: false,
+          attentionReason: null,
+        },
+      },
+    }),
+  );
+  await expect(importPromise).resolves.toMatchObject({ id: "agent-project" });
+});
+
+test("rejects linked-worktree session requests on older hosts", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(
+    client.fetchRecentProviderSessions({
+      cwd: "/tmp/main-worktree",
+      includeLinkedWorktrees: true,
+    }),
+  ).rejects.toThrow("Update the host to import sessions from linked worktrees.");
+  await expect(
+    client.importAgent({
+      providerId: "codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/linked-worktree",
+      sourceCwd: "/tmp/main-worktree",
+    }),
+  ).rejects.toThrow("Update the host to import sessions from linked worktrees.");
+  expect(mock.sent).toHaveLength(0);
+});
+
 test("imports an agent by provider handle id", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

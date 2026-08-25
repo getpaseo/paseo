@@ -1,4 +1,5 @@
 import { basename, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Logger } from "pino";
 import {
   generateWorkspaceId,
@@ -16,6 +17,10 @@ import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
+import {
+  createImportSessionCwdScopeResolver,
+  type ImportSessionCwdScopeResolver,
+} from "../../import-session-cwd-scope.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -27,6 +32,7 @@ export interface ResolveOrCreateWorkspaceIdInput {
 export interface ImportWorkspaceInput {
   cwd: string;
   requestedWorkspaceId?: string;
+  requestedSourceCwd?: string;
 }
 
 export interface ImportWorkspaceResult<T> {
@@ -88,16 +94,30 @@ export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    | "getCheckout"
+    | "getSnapshot"
+    | "peekSnapshot"
+    | "getGitCheckoutIdentity"
+    | "listLinkedWorktrees"
+  >;
+  importSessionCwdScopeResolver?: ImportSessionCwdScopeResolver;
   logger: Logger;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const importSessionCwdScopeResolver =
+    deps.importSessionCwdScopeResolver ??
+    createImportSessionCwdScopeResolver({ workspaceGitService });
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
   ): Promise<ImportWorkspaceResult<T>> {
-    if (input.requestedWorkspaceId) {
+    if (input.requestedWorkspaceId !== undefined && input.requestedSourceCwd !== undefined) {
+      throw new Error("Import cannot target both a workspace and a source directory");
+    }
+    if (input.requestedWorkspaceId !== undefined) {
       const workspace = await workspaceRegistry.get(input.requestedWorkspaceId);
       if (!workspace || workspace.archivedAt) {
         throw new Error(`Workspace not found: ${input.requestedWorkspaceId}`);
@@ -116,9 +136,25 @@ export function createWorkspaceProvisioningService(deps: {
     }
 
     const projectsBeforeImport = await projectRegistry.list();
-    const workspace = await createWorkspaceForDirectory(input.cwd);
+    let projectIdForImport: string | undefined;
+    if (input.requestedSourceCwd !== undefined) {
+      const scope = await importSessionCwdScopeResolver.resolve(input.requestedSourceCwd, {
+        force: true,
+        reason: "provider-session-import",
+      });
+      if (!(await scope.matchesCwd(input.cwd))) {
+        throw new Error(
+          `Import cwd is not linked to source directory: ${input.requestedSourceCwd}`,
+        );
+      }
+      projectIdForImport = (await findOrCreateProjectForDirectory(input.requestedSourceCwd))
+        .projectId;
+    }
+
+    const workspace = await createWorkspaceForDirectory(input.cwd, null, projectIdForImport);
     const previousProject =
       projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
+    const projectAfterWorkspace = await projectRegistry.get(workspace.projectId);
 
     try {
       return {
@@ -126,7 +162,7 @@ export function createWorkspaceProvisioningService(deps: {
         createdWorkspace: workspace,
       };
     } catch (error) {
-      await rollbackFailedImportWorkspace(workspace, previousProject);
+      await rollbackFailedImportWorkspace(workspace, previousProject, projectAfterWorkspace);
       throw error;
     }
   }
@@ -134,6 +170,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function rollbackFailedImportWorkspace(
     workspace: PersistedWorkspaceRecord,
     previousProject: PersistedProjectRecord | null,
+    projectAfterWorkspace: PersistedProjectRecord | null,
   ): Promise<void> {
     try {
       await workspaceRegistry.remove(workspace.workspaceId);
@@ -143,9 +180,17 @@ export function createWorkspaceProvisioningService(deps: {
       if (projectHasActiveWorkspace) {
         return;
       }
-      if (previousProject?.archivedAt) {
+      const currentProject = await projectRegistry.get(workspace.projectId);
+      if (
+        !currentProject ||
+        !projectAfterWorkspace ||
+        !isDeepStrictEqual(currentProject, projectAfterWorkspace)
+      ) {
+        return;
+      }
+      if (previousProject) {
         await projectRegistry.upsert(previousProject);
-      } else if (!previousProject) {
+      } else {
         await projectRegistry.remove(workspace.projectId);
       }
     } catch (error) {

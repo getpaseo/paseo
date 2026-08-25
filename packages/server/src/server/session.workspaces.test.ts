@@ -3222,6 +3222,53 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
   ]);
 });
 
+test("fetch_recent_provider_sessions_request resolves and applies a linked-worktree cwd scope", async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "session-import-cwd-scope-"));
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  try {
+    const session = createSessionForWorkspaceTests();
+    const requestedCwds: Array<string | undefined> = [];
+    session.emit = (message) =>
+      emitted.push(message as { type: string; payload: Record<string, unknown> });
+    session.agentManager.listAgents = () => [];
+    session.agentStorage.list = async () => [];
+    session.agentManager.listImportableSessions = async (options?: unknown) => {
+      const cwd = (options as { cwd?: string } | undefined)?.cwd;
+      requestedCwds.push(cwd);
+      return [
+        makeImportableProviderSession({
+          provider: "codex",
+          sessionId: "project-session",
+          cwd: tempDir,
+          title: "Project session",
+          lastActivityAt: "2026-08-10T12:00:00.000Z",
+        }),
+      ];
+    };
+
+    await session.handleMessage({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: "req-linked-worktree-scope",
+      cwd: tempDir,
+      includeLinkedWorktrees: true,
+      providers: ["codex"],
+    });
+
+    expect(requestedCwds).toEqual([tempDir]);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "fetch_recent_provider_sessions_response",
+        payload: expect.objectContaining({
+          requestId: "req-linked-worktree-scope",
+          entries: [expect.objectContaining({ providerHandleId: "project-session", cwd: tempDir })],
+        }),
+      }),
+    ]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("fetch_recent_provider_sessions_request forwards providerFilter to agent manager", async () => {
   const emitted: Array<{ type: string; payload: unknown }> = [];
   const session = createSessionForWorkspaceTests();

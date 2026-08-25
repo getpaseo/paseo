@@ -470,6 +470,80 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["pi-handle"]);
 });
 
+test("listImportableProviderSessions scans every linked worktree for a cwd scope", async () => {
+  const mainCwd = "/tmp/project-main";
+  const linkedCwd = "/tmp/project-linked";
+  const listImportableSessions = vi.fn(async ({ cwd }: { cwd?: string }) => {
+    if (cwd === mainCwd) {
+      return [
+        makeImportableSession({
+          sessionId: "main-session",
+          cwd: mainCwd,
+          lastActivityAt: "2026-04-30T12:00:00.000Z",
+        }),
+      ];
+    }
+    return [
+      makeImportableSession({
+        sessionId: "linked-session",
+        cwd: linkedCwd,
+        lastActivityAt: "2026-04-30T12:01:00.000Z",
+      }),
+      makeImportableSession({
+        sessionId: "outside-session",
+        cwd: "/tmp/other-project",
+        lastActivityAt: "2026-04-30T12:02:00.000Z",
+      }),
+    ];
+  });
+  const exactCwds = [mainCwd, linkedCwd];
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({
+      cwd: mainCwd,
+      includeLinkedWorktrees: true,
+      providers: ["codex"],
+    }),
+    agentManager: { listAgents: () => [], listImportableSessions },
+    agentStorage: { list: async () => [] },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    importSessionCwdScopeResolver: {
+      resolve: async () => ({
+        sourceCwd: mainCwd,
+        exactCwds,
+        matchesCwd: async (candidate) => exactCwds.includes(candidate),
+      }),
+    },
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledTimes(2);
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    cwd: mainCwd,
+    limit: 20,
+    providerFilter: new Set(["codex"]),
+  });
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    cwd: linkedCwd,
+    limit: 20,
+    providerFilter: new Set(["codex"]),
+  });
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual([
+    "linked-session",
+    "main-session",
+  ]);
+});
+
+test("listImportableProviderSessions rejects linked-worktree scope without a cwd", async () => {
+  await expect(
+    listImportableProviderSessions({
+      request: makeRequest({ includeLinkedWorktrees: true }),
+      agentManager: { listAgents: () => [], listImportableSessions: async () => [] },
+      agentStorage: { list: async () => [] },
+      providerSnapshotManager: { getProviderLabel: () => "" },
+    }),
+  ).rejects.toMatchObject({ code: "invalid_scope" });
+});
+
 test("listImportableProviderSessions rejects invalid since values", async () => {
   await expect(
     listImportableProviderSessions({
@@ -514,6 +588,29 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
     provider: "codex",
     providerHandleId: "thread-2",
   });
+});
+
+test("normalizeImportAgentRequest preserves a source cwd and rejects ambiguous placement", () => {
+  expect(
+    normalizeImportAgentRequest({
+      type: "import_agent_request",
+      requestId: "linked-worktree-shape",
+      providerId: "codex",
+      providerHandleId: "thread-1",
+      sourceCwd: "/tmp/main-worktree",
+    }),
+  ).toMatchObject({ sourceCwd: "/tmp/main-worktree" });
+
+  expect(
+    normalizeImportAgentRequest({
+      type: "import_agent_request",
+      requestId: "ambiguous-shape",
+      providerId: "codex",
+      providerHandleId: "thread-1",
+      workspaceId: "workspace-1",
+      sourceCwd: "/tmp/main-worktree",
+    }),
+  ).toEqual({ error: "Import cannot target both a workspace and a source directory" });
 });
 
 function makeStoredProviderSession(input: {

@@ -62,16 +62,33 @@ interface SessionsQueryConfig {
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
+function getSessionsRequestScope(
+  cwd: string | null | undefined,
+  workspaceId: string | null | undefined,
+): { cwd?: string; includeLinkedWorktrees?: boolean } {
+  if (cwd && !workspaceId) return { cwd, includeLinkedWorktrees: true };
+  if (cwd) return { cwd };
+  return {};
+}
+
 function buildSessionsQueriesConfig(args: {
   providersToFetch: AgentProvider[] | null;
   sessionsQueryRoot: ReadonlyArray<string | null>;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   cwd: string | null | undefined;
+  workspaceId: string | null | undefined;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, sessionsQueryRoot, visible, client, cwd, hostDisconnectedMessage } =
-    args;
+  const {
+    providersToFetch,
+    sessionsQueryRoot,
+    visible,
+    client,
+    cwd,
+    workspaceId,
+    hostDisconnectedMessage,
+  } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
@@ -82,7 +99,7 @@ function buildSessionsQueriesConfig(args: {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await client.fetchRecentProviderSessions({
-        ...(cwd ? { cwd } : {}),
+        ...getSessionsRequestScope(cwd, workspaceId),
         providers: [provider],
         limit: PER_PROVIDER_LIMIT,
       });
@@ -277,9 +294,13 @@ export function ImportSessionSheet({
     enabled: visible,
   });
   const supportsWorkspaceTarget = useHostFeature(serverId, "importSessionWorkspaceTarget");
+  const supportsLinkedWorktrees = useHostFeature(serverId, "importSessionLinkedWorktrees");
+  const usesLinkedWorktreeScope = Boolean(cwd && !workspaceId);
   const requiresHostUpgrade = requiresImportSessionsHostUpgrade({
     supportsSnapshot,
     workspaceId,
+    usesLinkedWorktreeScope,
+    supportsLinkedWorktrees,
     supportsWorkspaceTarget,
   });
 
@@ -294,8 +315,8 @@ export function ImportSessionSheet({
   );
 
   const sessionsQueryRoot = useMemo(
-    () => ["recent-provider-sessions", cwd ?? null] as const,
-    [cwd],
+    () => ["recent-provider-sessions", serverId, workspaceId ?? null, cwd ?? null] as const,
+    [cwd, serverId, workspaceId],
   );
 
   const queriesConfig = useMemo(
@@ -306,9 +327,10 @@ export function ImportSessionSheet({
         visible,
         client,
         cwd,
+        workspaceId,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, sessionsQueryRoot, visible, client, cwd, t],
+    [providersToFetch, sessionsQueryRoot, visible, client, cwd, workspaceId, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -419,6 +441,7 @@ export function ImportSessionSheet({
         providerHandleId: entry.providerHandleId,
         cwd: entry.cwd,
         ...(workspaceId ? { workspaceId } : {}),
+        ...(usesLinkedWorktreeScope && cwd ? { sourceCwd: cwd } : {}),
       });
       return agent;
     },
@@ -548,7 +571,7 @@ export function ImportSessionSheet({
               entry={entry}
               disabled={importMutation.isPending}
               importing={importingSessionKey === `${entry.providerId}:${entry.providerHandleId}`}
-              showCwd={!cwd}
+              showCwd={!workspaceId}
               onImportSession={handleImportSession}
             />
           ))}
