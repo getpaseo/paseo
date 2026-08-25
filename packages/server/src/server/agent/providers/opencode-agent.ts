@@ -76,6 +76,7 @@ import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
+  OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
   OpenCodeServerManager,
   OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
   type OpenCodeServerAcquisition,
@@ -83,6 +84,7 @@ import {
 } from "./opencode/server-manager.js";
 import {
   OpenCodeEventConsumer,
+  type OpenCodeEventStreamDiagnostics,
   type OpenCodeEventSource,
   type OpenCodeEventSourceInput,
 } from "./opencode/event-consumer.js";
@@ -111,6 +113,17 @@ import {
   OpenCodeProviderOptionsSchema,
   type OpenCodeProviderOptions,
 } from "./opencode/options.js";
+
+function formatOpenCodeEventStreamDiagnostics(diagnostics: OpenCodeEventStreamDiagnostics): string {
+  return [
+    "opencode-stream",
+    `attempt=${diagnostics.attempt}`,
+    `phase=${diagnostics.phase}`,
+    `elapsedMs=${diagnostics.elapsedMs}`,
+    ...(diagnostics.lastOutcome ? [`lastOutcome=${diagnostics.lastOutcome}`] : []),
+    ...(diagnostics.lastError ? [`lastError=${JSON.stringify(diagnostics.lastError)}`] : []),
+  ].join(" ");
+}
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1370,10 +1383,11 @@ export class OpenCodeAgentClient implements AgentClient {
       OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
         managedProcesses: deps.managedProcesses,
         resolveHomeDir: deps.resolveHomeDir,
-        createEventSource: ({ serverUrl, processExit }) =>
+        createEventSource: ({ serverUrl, processExit, logger: eventLogger }) =>
           new OpenCodeEventConsumer({
             serverUrl,
             processExit,
+            logger: eventLogger,
             createClient: (baseUrl) => this.createOpenCodeClient({ baseUrl, directory: "" }),
           }),
       });
@@ -3654,21 +3668,7 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
-    try {
-      // The stream cannot deliver its first record before OpenCode finished booting, so
-      // this wait gets the same budget as server startup instead of a shorter one that
-      // fails turns on slow (plugin-heavy or cold) starts.
-      await withTimeout(
-        this.events.ready(),
-        OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
-        "OpenCode event stream first record",
-      );
-    } catch (error) {
-      if (this.abortController === turnAbortController) {
-        this.abortController = null;
-      }
-      throw error;
-    }
+    await this.awaitEventStreamReady(turnAbortController);
 
     const turnId = this.createTurnId();
     this.materializedParts.clear();
@@ -3846,6 +3846,27 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     return { turnId };
+  }
+
+  private async awaitEventStreamReady(turnAbortController: AbortController): Promise<void> {
+    try {
+      await withTimeout(
+        this.events.ready(),
+        OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
+        "OpenCode event stream first record",
+      );
+    } catch (error) {
+      if (this.abortController === turnAbortController) this.abortController = null;
+      if (!(error instanceof Error) || error.message !== "OpenCode event stream first record") {
+        throw error;
+      }
+      const diagnostics = this.events.diagnostics?.();
+      if (!diagnostics) throw error;
+      throw new Error(
+        `${error.message}; your message was not sent. ${formatOpenCodeEventStreamDiagnostics(diagnostics)}`,
+        { cause: error },
+      );
+    }
   }
 
   private rethrowRunnerWaitError(error: unknown): never {
