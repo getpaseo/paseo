@@ -281,6 +281,67 @@ describe("OpenCodeV2AgentClient session core", () => {
     expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
   });
 
+  test("createSession shares the current server when the launch env only has paseo defaults", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession(buildConfig("/workspace/repo"), {
+      agentId: "agent-1",
+      env: { PASEO_AGENT_ID: "agent-1", PASEO_AGENT_CWD: "/workspace/repo" },
+    });
+    expect(runtime.acquisitions[0]?.kind).toBe("current");
+    await session.close();
+  });
+
+  test("createSession uses a dedicated server when the launch env has custom keys", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession(buildConfig("/workspace/repo"), {
+      agentId: "agent-1",
+      env: {
+        PASEO_AGENT_ID: "agent-1",
+        PASEO_AGENT_CWD: "/workspace/repo",
+        CUSTOM_VAR: "custom-value",
+      },
+    });
+    expect(runtime.acquisitions[0]?.kind).toBe("dedicated");
+    await session.close();
+  });
+
+  test("resumeSession shares the current server when the launch env only has paseo defaults", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.resumeSession(
+      {
+        provider: "opencode-v2",
+        sessionId: "session-1",
+        nativeHandle: "session-1",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      {
+        agentId: "agent-1",
+        env: { PASEO_AGENT_ID: "agent-1", PASEO_AGENT_CWD: "/workspace/repo" },
+      },
+    );
+    expect(runtime.acquisitions[0]?.kind).toBe("current");
+    await session.close();
+  });
+
   test("createSession passes the mode as the v2 agent when a modeId is configured", async () => {
     const runtime = new TestOpenCodeV2Harness();
     const openCode = new TestOpenCodeV2Client();

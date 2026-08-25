@@ -139,6 +139,22 @@ function parseOpenCodeV2ModelRef(
   };
 }
 
+const OPENCODE_V2_LAUNCH_ENV_DEFAULTS = new Set(["PASEO_AGENT_ID", "PASEO_AGENT_CWD"]);
+
+/**
+ * The agent manager always stamps `PASEO_AGENT_ID`/`PASEO_AGENT_CWD` onto the
+ * launch context env. Those defaults are per-agent metadata, not a reason to
+ * give the agent its own opencode2 server. Only genuinely custom env vars
+ * (e.g. `--env FOO=bar`) require a dedicated server so they reach the spawned
+ * process; otherwise agents share the ref-counted current server.
+ */
+function hasOpenCodeV2CustomLaunchEnv(env: Record<string, string> | undefined): boolean {
+  if (!env) {
+    return false;
+  }
+  return Object.keys(env).some((key) => !OPENCODE_V2_LAUNCH_ENV_DEFAULTS.has(key));
+}
+
 function buildOpenCodeV2PromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
@@ -350,9 +366,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeV2Config = this.assertConfig(config);
-    const acquisition = launchContext?.env
-      ? await this.serverManager.acquireDedicated(launchContext.env)
-      : await this.serverManager.acquireCurrent();
+    const launchEnv = launchContext?.env;
+    const acquisition =
+      launchEnv && hasOpenCodeV2CustomLaunchEnv(launchEnv)
+        ? await this.serverManager.acquireDedicated(launchEnv)
+        : await this.serverManager.acquireCurrent();
     const { url, authorization } = acquisition.server;
     const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
 
@@ -400,9 +418,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
       cwd,
     };
     const openCodeV2Config = this.assertConfig(config);
-    const acquisition = launchContext?.env
-      ? await this.serverManager.acquireDedicated(launchContext.env)
-      : await this.serverManager.acquireCurrent();
+    const launchEnv = launchContext?.env;
+    const acquisition =
+      launchEnv && hasOpenCodeV2CustomLaunchEnv(launchEnv)
+        ? await this.serverManager.acquireDedicated(launchEnv)
+        : await this.serverManager.acquireCurrent();
     const { url, authorization } = acquisition.server;
     const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
 
