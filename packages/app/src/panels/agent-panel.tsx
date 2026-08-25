@@ -66,7 +66,7 @@ import {
   type ReconnectToastState,
 } from "@/panels/reconnect-toast-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
@@ -94,7 +94,8 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openSidePanelView } from "@/workspace-tabs/side-panel";
+import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem, TodoEntry } from "@/types/stream";
@@ -439,12 +440,10 @@ export function AgentConversationPanel() {
   invariant(false, "AgentConversationPanel requires an agent or draft target");
 }
 
-export const agentPanelRegistration: PanelRegistration<"agent"> = {
-  kind: "agent",
-  resourceKey: (target) => target.agentId,
+export const agentPanelRegistration = definePanel("agent", {
   component: AgentConversationPanel,
   useDescriptor: useAgentPanelDescriptor,
-};
+});
 
 export function useDraftPanelDescriptor(
   target: { kind: "draft"; draftId: string },
@@ -1350,7 +1349,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         <AgentTracks
           serverId={serverId}
           workspaceId={workspaceId}
-          cwd={cwd}
           subagentRows={subagentRows}
           tasks={tasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
@@ -1599,6 +1597,7 @@ function ActiveAgentComposer({
     { initialIsBelow: isCompactFormFactor },
   );
   const paneContext = usePaneContext();
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
@@ -1618,14 +1617,15 @@ function ActiveAgentComposer({
       if (attachment.kind !== "review") {
         return;
       }
-      openSidePanelView({
+      openPreferredWorkspaceTarget({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
-        checkout: { serverId, cwd: attachment.attachment.cwd, isGit: true },
-        view: "changes",
+        target: { kind: "working_diff" },
+        source: "changesLinks",
+        preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, serverId, workspaceId],
+    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const handleClientSlashCommand = useCallback(

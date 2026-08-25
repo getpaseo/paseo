@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import path from "node:path";
+import { killProcessTree } from "./spawn-node";
 
 export interface OutdatedDaemon {
   endpoint: string;
@@ -55,14 +55,10 @@ export async function startOutdatedDaemon(options?: {
       endpoint: ready.endpoint,
       label: options?.desktopManaged === true ? "outdated Desktop host" : "outdated host",
       serverId: ready.serverId,
-      async close() {
-        if (child.exitCode !== null || child.signalCode !== null) return;
-        child.kill("SIGTERM");
-        await once(child, "exit");
-      },
+      close: () => killProcessTree(child),
     };
   } catch (error) {
-    child.kill("SIGTERM");
+    await killProcessTree(child);
     throw error;
   }
 }

@@ -5,7 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
-import { getPanelRegistration } from "@/panels/panel-registry";
+import { getPanelRegistration, type PanelIconProps } from "@/panels/panel-registry";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -27,7 +27,7 @@ export interface WorkspaceTabPresentation {
   tooltip: string;
   modified: boolean;
   titleState: "ready" | "loading";
-  icon: React.ComponentType<{ size: number; color: string }>;
+  icon: React.ComponentType<PanelIconProps>;
   statusBucket: SidebarStateBucket | null;
 }
 
@@ -114,6 +114,7 @@ interface WorkspaceTabIconProps {
   presentation: WorkspaceTabPresentation;
   active?: boolean;
   size?: number;
+  strokeWidth?: number;
   statusDotBorderColor?: string;
   /**
    * The surface this icon is sitting on, so the running ring can knock out of it. This icon is
@@ -136,6 +137,7 @@ export function WorkspaceTabIcon({
   presentation,
   active = false,
   size = 14,
+  strokeWidth,
   statusDotBorderColor,
   backdrop,
 }: WorkspaceTabIconProps): ReactElement {
@@ -164,7 +166,7 @@ export function WorkspaceTabIcon({
 
   return (
     <View style={agentIconWrapperStyle}>
-      <Icon size={size} color={iconColor} />
+      <Icon size={size} color={iconColor} strokeWidth={strokeWidth} />
       {isRunning ? (
         <View
           style={styles.statusRing}
@@ -261,6 +263,7 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   statusDot: {
     position: "absolute",
