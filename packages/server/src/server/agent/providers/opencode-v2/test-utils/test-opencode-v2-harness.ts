@@ -4,6 +4,8 @@ import path from "node:path";
 import type {
   AgentListInput,
   AgentListOutput,
+  CommandListInput,
+  CommandListOutput,
   EventSubscribeOutput,
   FormCancelInput,
   FormReplyInput,
@@ -16,9 +18,12 @@ import type {
   ModelListInput,
   ModelListOutput,
   PermissionReplyInput,
+  SessionCommandInput,
+  SessionCompactInput,
   SessionCreateInput,
   SessionGetInput,
   SessionInfo,
+  SessionInboxCompaction,
   SessionInboxUser,
   SessionInterruptInput,
   SessionInterruptResponse,
@@ -138,6 +143,8 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   readonly calls = {
     sessionCreate: [] as unknown[],
     sessionPrompt: [] as unknown[],
+    sessionCommand: [] as unknown[],
+    sessionCompact: [] as unknown[],
     sessionInterrupt: [] as unknown[],
     sessionGet: [] as unknown[],
     sessionRemove: [] as unknown[],
@@ -147,6 +154,7 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     sessionRevertClear: [] as unknown[],
     sessionRevertCommit: [] as unknown[],
     messageList: [] as unknown[],
+    commandList: [] as unknown[],
     modelList: [] as unknown[],
     agentList: [] as unknown[],
     permissionReply: [] as unknown[],
@@ -181,6 +189,22 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   sessionPromptImplementation: ((input: SessionPromptInput) => Promise<SessionInboxUser>) | null =
     null;
   sessionPromptError: unknown = null;
+
+  sessionCommandImplementation: ((input: SessionCommandInput) => Promise<void>) | null = null;
+  sessionCommandError: unknown = null;
+
+  sessionCompactResponse: SessionInboxCompaction = {
+    id: "msg_compact_1",
+    sessionID: "session-1",
+    timeCreated: 0,
+    type: "compaction",
+    payload: {},
+    delivery: "steer",
+  };
+  sessionCompactImplementation:
+    | ((input: SessionCompactInput) => Promise<SessionInboxCompaction>)
+    | null = null;
+  sessionCompactError: unknown = null;
 
   sessionInterruptResponse: SessionInterruptResponse = { interrupted: true };
   sessionInterruptImplementation:
@@ -220,6 +244,18 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     | ((input: MessageListInput) => Promise<SessionMessagesResponse>)
     | null = null;
   messageListError: unknown = null;
+
+  commandListResponse: CommandListOutput = {
+    location: {
+      directory: "/workspace/repo",
+      workspaceID: undefined,
+      project: { id: "project-1", directory: "/workspace/repo", canonical: "/workspace/repo" },
+    },
+    data: [],
+  };
+  commandListImplementation: ((input?: CommandListInput) => Promise<CommandListOutput>) | null =
+    null;
+  commandListError: unknown = null;
 
   modelListResponse: ModelListOutput = {
     location: {
@@ -290,6 +326,27 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
       return await this.sessionPromptImplementation(input);
     }
     return this.sessionPromptResponse;
+  }
+
+  async sessionCommand(input: SessionCommandInput): Promise<void> {
+    this.calls.sessionCommand.push(input);
+    if (this.sessionCommandError) {
+      throw this.sessionCommandError;
+    }
+    if (this.sessionCommandImplementation) {
+      return await this.sessionCommandImplementation(input);
+    }
+  }
+
+  async sessionCompact(input: SessionCompactInput): Promise<SessionInboxCompaction> {
+    this.calls.sessionCompact.push(input);
+    if (this.sessionCompactError) {
+      throw this.sessionCompactError;
+    }
+    if (this.sessionCompactImplementation) {
+      return await this.sessionCompactImplementation(input);
+    }
+    return this.sessionCompactResponse;
   }
 
   async sessionInterrupt(input: SessionInterruptInput): Promise<SessionInterruptResponse> {
@@ -393,6 +450,17 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     return this.messageListResponse;
   }
 
+  async commandList(input?: CommandListInput): Promise<CommandListOutput> {
+    this.calls.commandList.push(input);
+    if (this.commandListError) {
+      throw this.commandListError;
+    }
+    if (this.commandListImplementation) {
+      return await this.commandListImplementation(input);
+    }
+    return this.commandListResponse;
+  }
+
   async permissionReply(input: PermissionReplyInput): Promise<void> {
     this.calls.permissionReply.push(input);
     if (this.permissionReplyError) {
@@ -459,6 +527,8 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   session = {
     create: (input: SessionCreateInput) => this.sessionCreate(input),
     prompt: (input: SessionPromptInput) => this.sessionPrompt(input),
+    command: (input: SessionCommandInput) => this.sessionCommand(input),
+    compact: (input: SessionCompactInput) => this.sessionCompact(input),
     interrupt: (input: SessionInterruptInput) => this.sessionInterrupt(input),
     get: (input: SessionGetInput) => this.sessionGet(input),
     remove: (input: SessionRemoveInput) => this.sessionRemove(input),
@@ -473,6 +543,10 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
 
   message = {
     list: (input: MessageListInput) => this.messageList(input),
+  };
+
+  command = {
+    list: (input?: CommandListInput) => this.commandList(input),
   };
 
   model = {

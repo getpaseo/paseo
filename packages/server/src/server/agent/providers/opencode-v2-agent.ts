@@ -21,6 +21,7 @@ import type {
   AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
+  AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
   FetchCatalogOptions,
@@ -61,6 +62,11 @@ import {
   type OpenCodeV2ClientFactory,
   type OpenCodeV2ClientLike,
 } from "./opencode-v2/client.js";
+import {
+  isOpenCodeV2CompactCommand,
+  listOpenCodeV2Commands,
+  parseOpenCodeV2SlashCommandInput,
+} from "./opencode-v2/commands.js";
 import {
   filterOpenCodeV2ModelInfosByCredentials,
   isSelectableOpenCodeV2Agent,
@@ -748,6 +754,19 @@ export class OpenCodeV2AgentClient implements AgentClient {
     return [buildOpenCodeV2AutoAcceptFeature(this.assertConfig(config))];
   }
 
+  async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+    const openCodeV2Config = this.assertConfig(config);
+    const acquisition = await this.serverManager.acquireCurrent();
+    const { url, authorization } = acquisition.server;
+    const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+
+    try {
+      return await listOpenCodeV2Commands(client, openCodeV2Config.cwd, this.logger);
+    } finally {
+      await acquisition.release();
+    }
+  }
+
   /**
    * Map the agent's `permission` provider option and exact-MCP preapproval
    * grants into v2 permission rules and write them into the isolated opencode2
@@ -895,6 +914,38 @@ export class OpenCodeV2AgentSession implements AgentSession {
 
     this.emitMcpDiagnostics();
 
+    const parsedSlashCommand = parseOpenCodeV2SlashCommandInput(text);
+    if (parsedSlashCommand) {
+      // Built-in compact/summarize are handled directly: session.compact
+      // triggers compaction events plus a normal execution turn, so the turn
+      // completes on the server's `session.execution.succeeded` like any other
+      // turn. Handled before resolving against the live listing so a built-in
+      // never waits on the command registry.
+      if (isOpenCodeV2CompactCommand(parsedSlashCommand.commandName)) {
+        this.dispatchCompactTurn(turnId);
+        return { turnId };
+      }
+      const resolved = await this.resolveOpenCodeV2SlashCommand(parsedSlashCommand);
+      if (resolved) {
+        this.dispatchCommandTurn(turnId, resolved.commandName, resolved.args ?? "");
+        return { turnId };
+      }
+      // Unknown slash command: surface a clear notice, then send the raw text
+      // as a plain prompt so the model can respond (e.g. explain the command is
+      // not valid) and the session stays usable.
+      this.notifySubscribers(
+        {
+          type: "timeline",
+          provider: "opencode-v2",
+          item: {
+            type: "error",
+            message: `Unknown command '/${parsedSlashCommand.commandName}'; sending as plain text`,
+          },
+        },
+        turnId,
+      );
+    }
+
     void this.client.session
       .prompt({
         sessionID: this.sessionId,
@@ -917,6 +968,75 @@ export class OpenCodeV2AgentSession implements AgentSession {
       });
 
     return { turnId };
+  }
+
+  async listCommands(): Promise<AgentSlashCommand[]> {
+    return await listOpenCodeV2Commands(this.client, this.config.cwd, this.logger);
+  }
+
+  /**
+   * Resolve a parsed slash command against the live command listing. Returns
+   * null when the command is unknown (or the listing could not be fetched), so
+   * the caller falls back to plain prompt input. Unknown commands are never
+   * dispatched to the server as commands — a message like "/etc/hosts" must
+   * reach the model as plain text.
+   */
+  private async resolveOpenCodeV2SlashCommand(parsed: {
+    commandName: string;
+    args?: string;
+  }): Promise<{ commandName: string; args?: string } | null> {
+    try {
+      const commands = await this.listCommands();
+      return commands.some((command) => command.name === parsed.commandName) ? parsed : null;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, commandName: parsed.commandName },
+        "Failed to resolve OpenCode 2 slash command; falling back to plain prompt input",
+      );
+      return null;
+    }
+  }
+
+  private dispatchCommandTurn(turnId: string, commandName: string, text: string): void {
+    void this.client.session
+      .command({
+        sessionID: this.sessionId,
+        command: commandName,
+        text,
+      })
+      .then(() => undefined)
+      .catch((error) => {
+        if (this.activeForegroundTurnId !== turnId) {
+          return;
+        }
+        this.finishForegroundTurn(
+          {
+            type: "turn_failed",
+            provider: "opencode-v2",
+            error: toOpenCodeV2TurnErrorMessage(error, this.providerId),
+          },
+          turnId,
+        );
+      });
+  }
+
+  private dispatchCompactTurn(turnId: string): void {
+    void this.client.session
+      .compact({ sessionID: this.sessionId })
+      .then(() => undefined)
+      .catch((error) => {
+        if (this.activeForegroundTurnId !== turnId) {
+          return;
+        }
+        this.finishForegroundTurn(
+          {
+            type: "turn_failed",
+            provider: "opencode-v2",
+            error: toOpenCodeV2TurnErrorMessage(error, this.providerId),
+          },
+          turnId,
+        );
+      });
   }
 
   async steerActiveTurn(

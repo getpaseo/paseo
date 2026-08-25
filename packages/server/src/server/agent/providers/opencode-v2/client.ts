@@ -2,6 +2,8 @@ import {
   OpenCode,
   type AgentListInput,
   type AgentListOutput,
+  type CommandListInput,
+  type CommandListOutput,
   type EventSubscribeOutput,
   type FormCancelInput,
   type FormReplyInput,
@@ -14,12 +16,15 @@ import {
   type ModelListInput,
   type ModelListOutput,
   type PermissionReplyInput,
+  type SessionCommandInput,
+  type SessionCompactInput,
   type SessionCreateInput,
   type SessionGetInput,
   type SessionInfo,
+  type SessionInboxCompaction,
+  type SessionInboxUser,
   type SessionInterruptInput,
   type SessionInterruptResponse,
-  type SessionInboxUser,
   type SessionMessagesResponse,
   type SessionPromptInput,
   type SessionRemoveInput,
@@ -42,6 +47,8 @@ export interface OpenCodeV2ClientLike {
   session: {
     create(input: SessionCreateInput): Promise<SessionInfo>;
     prompt(input: SessionPromptInput): Promise<SessionInboxUser>;
+    command(input: SessionCommandInput): Promise<void>;
+    compact(input: SessionCompactInput): Promise<SessionInboxCompaction>;
     interrupt(input: SessionInterruptInput): Promise<SessionInterruptResponse>;
     get(input: SessionGetInput): Promise<SessionInfo>;
     remove(input: SessionRemoveInput): Promise<void>;
@@ -55,6 +62,9 @@ export interface OpenCodeV2ClientLike {
   };
   message: {
     list(input: MessageListInput): Promise<SessionMessagesResponse>;
+  };
+  command: {
+    list(input?: CommandListInput): Promise<CommandListOutput>;
   };
   model: {
     list(input: ModelListInput): Promise<ModelListOutput>;
@@ -101,6 +111,8 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
     session: {
       create: (input) => client.session.create(input),
       prompt: (input) => client.session.prompt(input),
+      command: (input) => client.session.command(input),
+      compact: (input) => client.session.compact(input),
       interrupt: (input) => client.session.interrupt(input),
       get: (input) => client.session.get(input),
       remove: (input) => client.session.remove(input),
@@ -114,6 +126,9 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
     },
     message: {
       list: (input) => client.message.list(input),
+    },
+    command: {
+      list: (input) => client.command.list(input),
     },
     model: {
       list: (input) => client.model.list(input),
