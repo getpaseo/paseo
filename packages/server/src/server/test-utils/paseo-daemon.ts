@@ -15,6 +15,7 @@ import type { PushNotificationSender } from "../push/index.js";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 
 interface TestPaseoDaemonOptions {
+  backgroundGitFetchIntervalMinutes?: number;
   daemonVersion?: string;
   desktopManaged?: boolean;
   downloadTokenTtlMs?: number;
@@ -182,6 +183,7 @@ async function prepareTestDaemonConfig(
     agentClients: options.agentClients ?? createTestAgentClients(),
     providerOverrides: options.providerOverrides,
     agentStoragePath: path.join(paseoHome, "agents"),
+    backgroundGitFetchIntervalMinutes: options.backgroundGitFetchIntervalMinutes ?? 0,
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
     relayUseTls: options.relayUseTls,
