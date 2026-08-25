@@ -6,6 +6,7 @@ export const BUILTIN_PROVIDER_ICON_NAMES = [
   "minimax",
   "omp",
   "opencode",
+  "opencode-v2",
   "pi",
 ];
 

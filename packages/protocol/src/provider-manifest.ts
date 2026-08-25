@@ -142,6 +142,23 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const OPENCODE_V2_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "build",
+    label: "Build",
+    description: "Allows edits and tool execution for implementation work",
+    icon: "Shield",
+    colorTier: "moderate",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Read-only planning mode that avoids file edits",
+    icon: "ShieldEllipsis",
+    colorTier: "planning",
+  },
+];
+
 export const OMP_MODES: AgentProviderModeDefinition[] = [
   {
     id: "full",
@@ -235,6 +252,20 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     // itself decide (see normalizeOpenCodeModeId in opencode-agent.ts).
     defaultModeId: null,
     modes: OPENCODE_MODES,
+    voice: {
+      enabled: true,
+      defaultModeId: "build",
+    },
+  },
+  {
+    id: "opencode-v2",
+    label: "OpenCode 2",
+    description: "Open-source coding assistant with multi-provider model support (v2)",
+    // No static default: opencode2 discovers its own agents at runtime via
+    // /api/agent. Modes are UI scaffolding only; defaultModeId null means the
+    // v2 default agent is used.
+    defaultModeId: null,
+    modes: OPENCODE_V2_MODES,
     voice: {
       enabled: true,
       defaultModeId: "build",

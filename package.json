@@ -117,6 +117,9 @@
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
     "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
   },
+  "dependencies": {
+    "node-pty": "1.2.0-beta.15"
+  },
   "devDependencies": {
     "@types/ws": "^8.5.14",
     "@typescript/native-preview": "7.0.0-dev.20260423.1",
@@ -143,5 +146,8 @@
     "react-dom": "19.1.0",
     "react-native-reanimated": "4.3.1",
     "react-native-worklets": "0.8.3"
+  },
+  "allowScripts": {
+    "node-pty@1.2.0-beta.15": true
   }
 }

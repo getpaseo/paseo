@@ -49,6 +49,7 @@ const mockState = vi.hoisted(() => {
         providerParams?: unknown;
       }>,
       pi: [] as ConstructorEntry[],
+      opencodeV2: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
         command: string[];
         env?: Record<string, string>;
@@ -68,6 +69,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.trae = [];
       this.constructorArgs.kimi = [];
       this.constructorArgs.pi = [];
+      this.constructorArgs.opencodeV2 = [];
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
@@ -231,6 +233,45 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
           await import("../../executable-resolution/executable-resolution.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
+      return true;
+    }
+  },
+}));
+
+vi.mock("./providers/opencode-v2-agent.js", () => ({
+  OpenCodeV2AgentClient: class OpenCodeV2AgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "opencode-v2";
+    readonly runtimeSettings?: unknown;
+
+    constructor(_logger: unknown, runtimeSettings?: unknown) {
+      this.runtimeSettings = runtimeSettings;
+      mockState.constructorArgs.opencodeV2.push({ runtimeSettings });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
       return true;
     }
   },
@@ -649,6 +690,57 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
   expect(registry.zai.createClient(logger).provider).toBe("zai");
+});
+
+test("opencode-v2 is a registered built-in with build/plan scaffolding and voice", () => {
+  const registry = buildProviderRegistry(logger);
+  expect(registry["opencode-v2"]).toMatchObject({
+    id: "opencode-v2",
+    label: "OpenCode 2",
+    defaultModeId: null,
+    enabled: true,
+    derivedFromProviderId: null,
+    supportsExactMcpPreapproval: true,
+  });
+  expect(registry["opencode-v2"].modes.map((mode) => mode.id)).toEqual(["build", "plan"]);
+  expect(registry["opencode-v2"].voice).toEqual({ enabled: true, defaultModeId: "build" });
+  expect(registry["opencode-v2"].optionsSchema).toBeDefined();
+});
+
+test("opencode-v2 factory produces a client with the opencode-v2 provider id", () => {
+  const registry = buildProviderRegistry(logger);
+  const client = registry["opencode-v2"].createClient(logger);
+  expect(client.provider).toBe("opencode-v2");
+});
+
+test("opencode-v2 factory receives runtime settings overrides", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      "opencode-v2": {
+        command: ["/opt/opencode2"],
+      },
+    },
+  });
+  expect(mockState.constructorArgs.opencodeV2[0]).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["/opt/opencode2"],
+      },
+      env: undefined,
+    },
+  });
+});
+
+test("opencode-v2 validates options with its strict schema", () => {
+  const registry = buildProviderRegistry(logger);
+  expect(registry["opencode-v2"].validateOptions({ permission: { shell: "allow" } })).toEqual({
+    permission: { shell: "allow" },
+  });
+  // v1-only action names (e.g. bash) are rejected by the v2 strict schema.
+  expect(() => registry["opencode-v2"].validateOptions({ permission: { bash: "allow" } })).toThrow(
+    'Unrecognized key: "bash"',
+  );
 });
 
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {

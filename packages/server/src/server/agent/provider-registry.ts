@@ -42,6 +42,7 @@ import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OpenCodeV2AgentClient } from "./providers/opencode-v2-agent.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
 import type { OmpRuntime } from "./providers/omp/runtime.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
@@ -51,6 +52,7 @@ import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import { ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
 import { CodexProviderOptionsSchema } from "./providers/codex/options.js";
 import { OpenCodeProviderOptionsSchema } from "./providers/opencode/options.js";
+import { OpenCodeV2ProviderOptionsSchema } from "./providers/opencode-v2/options.js";
 import { ToolPolicyUnsupportedError, validateProviderOptions } from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -153,6 +155,10 @@ const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
   claude: { optionsSchema: ClaudeProviderOptionsSchema, supportsExactMcpPreapproval: true },
   codex: { optionsSchema: CodexProviderOptionsSchema, supportsExactMcpPreapproval: true },
   opencode: { optionsSchema: OpenCodeProviderOptionsSchema, supportsExactMcpPreapproval: true },
+  "opencode-v2": {
+    optionsSchema: OpenCodeV2ProviderOptionsSchema,
+    supportsExactMcpPreapproval: true,
+  },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
@@ -211,6 +217,10 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   opencode: (logger, runtimeSettings, options) =>
     new OpenCodeAgentClient(logger, runtimeSettings, {
+      managedProcesses: options?.managedProcesses,
+    }),
+  "opencode-v2": (logger, runtimeSettings, options) =>
+    new OpenCodeV2AgentClient(logger, runtimeSettings, {
       managedProcesses: options?.managedProcesses,
     }),
   pi: (logger, runtimeSettings, options) =>
