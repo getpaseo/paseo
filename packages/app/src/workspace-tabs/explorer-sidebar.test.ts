@@ -17,6 +17,7 @@ import {
 import {
   isExplorerSidebarOpen,
   openExplorerSidebarView,
+  resolveExplorerSidebarPresentation,
   toggleExplorerSidebar,
 } from "@/workspace-tabs/explorer-sidebar";
 
@@ -34,6 +35,16 @@ beforeEach(() => {
 });
 
 describe("Explorer sidebar", () => {
+  it("selects the Explorer shell from layout and split capabilities", () => {
+    expect(resolveExplorerSidebarPresentation({ isCompact: true })).toBe("overlay");
+    expect(
+      resolveExplorerSidebarPresentation({ isCompact: false, supportsPaneSplits: false }),
+    ).toBe("dock");
+    expect(resolveExplorerSidebarPresentation({ isCompact: false, supportsPaneSplits: true })).toBe(
+      "pane",
+    );
+  });
+
   it("uses the compact explorer without creating a desktop pane", () => {
     openExplorerSidebarView({
       isCompact: true,

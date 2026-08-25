@@ -1,9 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
-import { View } from "react-native";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View, type LayoutChangeEvent } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import { CompactExplorerSidebar } from "@/components/compact-explorer-sidebar";
+import {
+  CompactExplorerSidebar,
+  NativeExplorerSidebarDock,
+} from "@/components/compact-explorer-sidebar";
 import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { selectIsCompactFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
@@ -95,10 +98,16 @@ function useActiveCompactExplorerSidebarModel(
 interface CompactExplorerSidebarHostProps {
   children: ReactNode;
   enabled: boolean;
+  presentation: "overlay" | "dock";
 }
 
-export function CompactExplorerSidebarHost({ children, enabled }: CompactExplorerSidebarHostProps) {
+export function CompactExplorerSidebarHost({
+  children,
+  enabled,
+  presentation,
+}: CompactExplorerSidebarHostProps) {
   const model = useActiveCompactExplorerSidebarModel(enabled);
+  const [containerWidth, setContainerWidth] = useState(0);
   const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const openTab = useWorkspaceLayoutStore((state) => state.openTab);
@@ -128,13 +137,53 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
       openWorkspaceFileFromExplorer({
         filePath,
         persistenceKey: model.persistenceKey,
+        closeExplorerAfterOpen: presentation === "overlay",
         showMobileAgent,
         openWorkspaceTabInFocusedPane,
         focusWorkspaceTab,
       });
     },
-    [focusWorkspaceTab, model, openWorkspaceTabInFocusedPane, showMobileAgent],
+    [focusWorkspaceTab, model, openWorkspaceTabInFocusedPane, presentation, showMobileAgent],
   );
+
+  const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = event.nativeEvent.layout.width;
+    setContainerWidth((current) => (current === nextWidth ? current : nextWidth));
+  }, []);
+
+  const explorer =
+    enabled && model ? (
+      <DiffDocumentWorkspaceCacheProvider key={model.persistenceKey}>
+        {presentation === "dock" ? (
+          <NativeExplorerSidebarDock
+            serverId={model.serverId}
+            workspaceId={model.workspaceId}
+            workspaceRoot={model.workspaceRoot}
+            isGit={model.isGit}
+            persistenceKey={model.persistenceKey}
+            containerWidth={containerWidth}
+            onOpenFile={handleOpenFile}
+          />
+        ) : (
+          <CompactExplorerSidebar
+            serverId={model.serverId}
+            workspaceId={model.workspaceId}
+            workspaceRoot={model.workspaceRoot}
+            isGit={model.isGit}
+            onOpenFile={handleOpenFile}
+          />
+        )}
+      </DiffDocumentWorkspaceCacheProvider>
+    ) : null;
+
+  if (presentation === "dock") {
+    return (
+      <View style={styles.row} onLayout={handleContainerLayout}>
+        <View style={styles.fill}>{children}</View>
+        {explorer}
+      </View>
+    );
+  }
 
   return (
     <>
@@ -144,17 +193,7 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
       >
         {children}
       </CompactExplorerOpenGestureSurface>
-      {enabled && model ? (
-        <DiffDocumentWorkspaceCacheProvider key={model.persistenceKey}>
-          <CompactExplorerSidebar
-            serverId={model.serverId}
-            workspaceId={model.workspaceId}
-            workspaceRoot={model.workspaceRoot}
-            isGit={model.isGit}
-            onOpenFile={handleOpenFile}
-          />
-        </DiffDocumentWorkspaceCacheProvider>
-      ) : null}
+      {explorer}
     </>
   );
 }
@@ -162,5 +201,9 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
 const styles = {
   fill: {
     flex: 1,
+  },
+  row: {
+    flex: 1,
+    flexDirection: "row",
   },
 } as const;

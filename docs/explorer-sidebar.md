@@ -34,8 +34,11 @@ The fixed tab rail has no add or close controls. Its context menu adds or remove
 Explorer tabs can be reordered, but their host contract prevents moving them to workspace panes or
 creating split previews there. Selecting an Explorer tab does not change workspace focus.
 
-Cmd+E selects Changes for Git workspaces and Files otherwise. On compact and native non-split
-layouts, the same command uses the existing Explorer overlay.
+Cmd+E selects Changes for Git workspaces and Files otherwise. Compact layouts use the combined
+full-screen Explorer overlay and close it after a file opens. Wide native layouts without pane
+splits use the same combined content in a resizable inline dock; opening a file leaves that dock
+visible. Both presentations keep their selection in the panel store and reuse the layout store's
+per-workspace Explorer width. They do not create a second Explorer lifecycle.
 
 ## Side pane
 

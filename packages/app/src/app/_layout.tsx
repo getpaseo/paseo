@@ -87,6 +87,7 @@ import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-ac
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
@@ -474,6 +475,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
+  const explorerSidebarPresentation = resolveExplorerSidebarPresentation({
+    isCompact: isCompactLayout,
+  });
+  const usesCompactExplorerHost = explorerSidebarPresentation !== "pane";
   useCompactWebViewportZoomLock(isCompactLayout);
   const pathname = usePathname();
   const isWorkspaceRoute = parseHostWorkspaceRouteFromPathname(pathname) !== null;
@@ -546,8 +551,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           {sidebarChrome}
         </WindowChromeRegion>
       ) : null}
-      {isCompactLayout ? (
-        <CompactExplorerSidebarHost enabled={chromeEnabled}>
+      {usesCompactExplorerHost ? (
+        <CompactExplorerSidebarHost
+          enabled={chromeEnabled}
+          presentation={explorerSidebarPresentation === "dock" ? "dock" : "overlay"}
+        >
           <WindowChromeRegion corners={chromeEnabled ? "both" : appChromeLayout.contentCorners}>
             <View style={flexStyle}>{children}</View>
           </WindowChromeRegion>
