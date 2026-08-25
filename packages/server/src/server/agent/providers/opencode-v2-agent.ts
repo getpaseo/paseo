@@ -1,10 +1,13 @@
 import type { SessionMessageInfo } from "@opencode-ai/client";
+import { ClientError } from "@opencode-ai/client";
 import type { Logger } from "pino";
 
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentCreateConfigUnattendedInput,
   AgentCreateSessionOptions,
+  AgentFeature,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -23,6 +26,8 @@ import type {
   FetchCatalogOptions,
   ProviderCatalog,
   ProviderRefreshContext,
+  ResolveAgentCreateConfigInput,
+  ResolveAgentCreateConfigResult,
   SteerActiveTurnOptions,
   SteerResult,
 } from "../agent-sdk-types.js";
@@ -32,6 +37,10 @@ import {
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
+import {
+  isDefaultAgentCreateConfigUnattended,
+  resolveDefaultAgentCreateConfig,
+} from "../create-agent-mode.js";
 import { execCommand } from "../../../utils/spawn.js";
 import {
   raceProviderRefreshAbort,
@@ -72,8 +81,10 @@ import {
 import { mapOpenCodeV2ToolCall } from "./opencode-v2/tool-call-mapper.js";
 import {
   OpenCodeV2ProviderOptionsSchema,
+  buildOpenCodeV2PermissionRules,
   type OpenCodeV2ProviderOptions,
 } from "./opencode-v2/options.js";
+import { applyOpenCodeV2PermissionConfig } from "./opencode-v2/permission-config.js";
 import {
   OpenCodeV2ServerManager,
   type OpenCodeV2EventSource,
@@ -115,8 +126,84 @@ const EMPTY_OPENCODE_V2_EVENT_SOURCE: OpenCodeV2EventSource = {
 const OPENCODE_V2_MODE_REFRESH_ATTEMPTS = 5;
 const OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS = 100;
 
+const OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+
 function delayOpenCodeV2ModeRefresh(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isOpenCodeV2AutoAcceptEnabled(config: AgentSessionConfig): boolean {
+  return config.featureValues?.[OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID] === true;
+}
+
+function withOpenCodeV2AutoAcceptFeature(
+  featureValues: Record<string, unknown> | undefined,
+  enabled: boolean,
+): Record<string, unknown> {
+  return {
+    ...featureValues,
+    [OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID]: enabled,
+  };
+}
+
+/**
+ * Apply provider-owned create-config defaults for opencode-v2. Unattended
+ * creates (and children of unattended parents) get auto_accept enabled unless
+ * the caller already set it, so an unattended agent does not pause on tool
+ * permission prompts. There is no v2 legacy full-access mode (unlike v1), so
+ * this only carries auto_accept; mode resolution delegates to the default.
+ */
+function resolveOpenCodeV2CreateConfig(
+  input: ResolveAgentCreateConfigInput,
+): ResolveAgentCreateConfigResult {
+  const parent = input.parent;
+  const isUnattendedCreate = input.unattended || parent?.isUnattended === true;
+  const inheritsUnattended = input.requestedMode === undefined && isUnattendedCreate;
+  const inheritedOpenCodeMode =
+    inheritsUnattended && parent?.provider === input.provider
+      ? (parent.modeId ?? undefined)
+      : undefined;
+  const requestedMode = input.requestedMode ?? inheritedOpenCodeMode;
+  const featureValues =
+    isUnattendedCreate && input.featureValues?.[OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID] === undefined
+      ? withOpenCodeV2AutoAcceptFeature(input.featureValues, true)
+      : input.featureValues;
+  if (inheritsUnattended && requestedMode === undefined) {
+    // Unattendedness for opencode-v2 is carried by auto_accept (set above), not
+    // by any particular agent. Leave the mode unset so v2 uses its own default
+    // agent — `build` may not exist in the user's opencode2 config.
+    return { modeId: undefined, featureValues };
+  }
+  const resolved = resolveDefaultAgentCreateConfig({
+    ...input,
+    requestedMode,
+    featureValues,
+  });
+  return { ...resolved, featureValues };
+}
+
+function isOpenCodeV2CreateConfigUnattended(input: AgentCreateConfigUnattendedInput): boolean {
+  return (
+    isDefaultAgentCreateConfigUnattended(input) ||
+    input.config.featureValues?.[OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID] === true ||
+    input.features?.some(
+      (feature) =>
+        feature.id === OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID &&
+        (feature.value === true || feature.value === "true"),
+    ) === true
+  );
+}
+
+function buildOpenCodeV2AutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
+  return {
+    type: "toggle",
+    id: OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID,
+    label: "Auto Accept",
+    description: "Automatically approves OpenCode 2 tool permission prompts.",
+    tooltip: "Auto accept permission prompts",
+    icon: "shield-check",
+    value: isOpenCodeV2AutoAcceptEnabled(config),
+  };
 }
 
 type OpenCodeV2AgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
@@ -216,6 +303,24 @@ function buildOpenCodeV2PromptText(prompt: AgentPromptInput): string {
 function isOpenCodeV2DefinitiveSteerRejection(error: unknown): boolean {
   const message = toDiagnosticErrorMessage(error).toLowerCase();
   return /session\s+(?:is\s+)?(?:not found|inactive|not active|not running|idle)/.test(message);
+}
+
+/**
+ * A permission/form reply that hit an expired or unknown request. The v2 client
+ * surfaces these as a ClientError with an UnexpectedStatus reason; the daemon
+ * treats them as a graceful no-op (the agent already moved on) rather than a
+ * failure.
+ */
+function isOpenCodeV2StalePermissionError(error: unknown): boolean {
+  if (error instanceof ClientError) {
+    const status = (error.cause as { status?: number } | undefined)?.status ?? 0;
+    return error.reason === "UnexpectedStatus" && status >= 400;
+  }
+  const message = toDiagnosticErrorMessage(error).toLowerCase();
+  return (
+    /(?:not found|expired|no longer|unknown|invalid).*(?:permission|request|form)/.test(message) ||
+    /(?:permission|request|form).*(?:not found|expired|no longer|unknown|invalid)/.test(message)
+  );
 }
 
 function extractOpenCodeV2ToolOutputText(content: unknown): string | undefined {
@@ -365,6 +470,8 @@ export interface OpenCodeV2AgentClientDeps {
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode-v2" as const;
   readonly capabilities = OPENCODE_V2_CAPABILITIES;
+  readonly resolveCreateConfig = resolveOpenCodeV2CreateConfig;
+  readonly isCreateConfigUnattended = isOpenCodeV2CreateConfigUnattended;
 
   private readonly serverManager: OpenCodeV2ServerManagerLike;
   private readonly createOpenCodeV2Client: OpenCodeV2ClientFactory;
@@ -411,6 +518,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeV2Config = this.assertConfig(config);
+    this.applyPermissionRules(openCodeV2Config);
     const launchEnv = launchContext?.env;
     const acquisition =
       launchEnv && hasOpenCodeV2CustomLaunchEnv(launchEnv)
@@ -463,6 +571,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       cwd,
     };
     const openCodeV2Config = this.assertConfig(config);
+    this.applyPermissionRules(openCodeV2Config);
     const launchEnv = launchContext?.env;
     const acquisition =
       launchEnv && hasOpenCodeV2CustomLaunchEnv(launchEnv)
@@ -612,6 +721,27 @@ export class OpenCodeV2AgentClient implements AgentClient {
     const providerOptions = OpenCodeV2ProviderOptionsSchema.parse(config.providerOptions ?? {});
     return { ...config, provider: "opencode-v2", providerOptions };
   }
+
+  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return [buildOpenCodeV2AutoAcceptFeature(this.assertConfig(config))];
+  }
+
+  /**
+   * Map the agent's `permission` provider option and exact-MCP preapproval
+   * grants into v2 permission rules and write them into the isolated opencode2
+   * config. Called before acquiring the server so a fresh spawn reads the rules
+   * at startup; an already-running shared server reloads the config within ~1s.
+   * The rules apply to every agent on the shared server (v2 permissions are
+   * per-agent config, not per-session), so agents with conflicting permission
+   * options should not share a server.
+   */
+  private applyPermissionRules(config: OpenCodeV2AgentConfig): void {
+    const rules = buildOpenCodeV2PermissionRules(config.providerOptions, config.toolPolicy);
+    // Write into the same isolated home the server manager runs servers in, so
+    // the rules land in the config the server actually reads (the manager may
+    // override its home for tests/isolated runs).
+    applyOpenCodeV2PermissionConfig(rules, this.logger, this.serverManager.getHomeDir());
+  }
 }
 
 export class OpenCodeV2AgentSession implements AgentSession {
@@ -633,6 +763,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
   private translationState: OpenCodeV2EventTranslationState;
   private turnState: OpenCodeV2TurnState = { status: "idle" };
   private currentMode: string | null;
+  private autoAcceptEnabled: boolean;
   private abortController: AbortController | null = null;
   private closed = false;
   private ingress: Promise<void> = Promise.resolve();
@@ -658,6 +789,9 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.persistSession = persistSession;
     this.providerId = parseOpenCodeV2ModelRef(config.model)?.providerID ?? null;
     this.currentMode = normalizeOpenCodeV2ModeId(config.modeId);
+    // A tool policy (exact MCP preapproval) governs tool access, so blanket
+    // auto-accept is disabled when one is present (mirrors v1).
+    this.autoAcceptEnabled = !config.toolPolicy && isOpenCodeV2AutoAcceptEnabled(config);
     this.translationState = createOpenCodeV2EventTranslationState(sessionId, {
       providerId: this.providerId,
     });
@@ -997,6 +1131,19 @@ export class OpenCodeV2AgentSession implements AgentSession {
     return response.data.map(mapOpenCodeV2ModelToDefinition);
   }
 
+  get features(): AgentFeature[] {
+    return [buildOpenCodeV2AutoAcceptFeature(this.config)];
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID) {
+      throw new Error(`Unknown feature '${featureId}' for opencode-v2`);
+    }
+    const enabled = value === true || value === "true";
+    this.config.featureValues = withOpenCodeV2AutoAcceptFeature(this.config.featureValues, enabled);
+    this.autoAcceptEnabled = !this.config.toolPolicy && enabled;
+  }
+
   getPendingPermissions(): AgentPermissionRequest[] {
     return Array.from(this.pendingPermissions.values());
   }
@@ -1008,31 +1155,58 @@ export class OpenCodeV2AgentSession implements AgentSession {
     }
 
     if (pending.kind === "question") {
-      if (response.behavior === "deny") {
-        await this.client.form.cancel({
-          sessionID: this.sessionId,
-          formID: requestId,
-        });
-      } else {
-        const answers = readOpenCodeV2FormAnswers(pending, response);
-        await this.client.form.reply({
-          sessionID: this.sessionId,
-          formID: requestId,
-          answer: answers,
-        });
+      try {
+        if (response.behavior === "deny") {
+          await this.client.form.cancel({
+            sessionID: this.sessionId,
+            formID: requestId,
+          });
+        } else {
+          const answers = readOpenCodeV2FormAnswers(pending, response);
+          await this.client.form.reply({
+            sessionID: this.sessionId,
+            formID: requestId,
+            answer: answers,
+          });
+        }
+      } catch (error) {
+        if (!isOpenCodeV2StalePermissionError(error)) {
+          throw error;
+        }
+        // The request expired or the session went away; treat the reply as a
+        // no-op and drop the stale pending entry.
+        this.logger.debug(
+          { err: error, sessionId: this.sessionId, requestId },
+          "OpenCode 2 form reply hit a stale request; ignoring",
+        );
       }
       this.pendingPermissions.delete(requestId);
       return;
     }
 
     const reply = resolveOpenCodeV2PermissionReply(response);
-    await this.client.permission.reply({
-      sessionID: this.sessionId,
-      requestID: requestId,
-      reply,
-      ...(response.behavior === "deny" && response.message ? { message: response.message } : {}),
-    });
+    try {
+      await this.client.permission.reply({
+        sessionID: this.sessionId,
+        requestID: requestId,
+        reply,
+        ...(response.behavior === "deny" && response.message ? { message: response.message } : {}),
+      });
+    } catch (error) {
+      if (!isOpenCodeV2StalePermissionError(error)) {
+        throw error;
+      }
+      // The request expired or the session went away; treat the reply as a
+      // no-op and drop the stale pending entry.
+      this.logger.debug(
+        { err: error, sessionId: this.sessionId, requestId },
+        "OpenCode 2 permission reply hit a stale request; ignoring",
+      );
+    }
     this.pendingPermissions.delete(requestId);
+    if (response.behavior === "deny" && response.interrupt) {
+      await this.interrupt();
+    }
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -1086,11 +1260,18 @@ export class OpenCodeV2AgentSession implements AgentSession {
     }
     const translated = translateOpenCodeV2Event(input.event, this.translationState);
     for (const event of translated) {
-      this.handleTranslatedEvent(event);
+      await this.handleTranslatedEvent(event);
     }
   }
 
-  private handleTranslatedEvent(event: AgentStreamEvent): void {
+  private async handleTranslatedEvent(event: AgentStreamEvent): Promise<void> {
+    if (event.type === "permission_requested" && event.request.kind === "tool") {
+      const approved = await this.tryAutoApproveToolPermission(event.request);
+      if (approved) {
+        // Auto-approved without surfacing: the tool proceeds on its own.
+        return;
+      }
+    }
     const turnId = this.activeForegroundTurnId;
     if (!turnId) {
       // No active foreground turn. Background permission requests still surface
@@ -1110,6 +1291,31 @@ export class OpenCodeV2AgentSession implements AgentSession {
       this.pendingPermissions.set(event.request.id, event.request);
     }
     this.notifySubscribers(event, turnId);
+  }
+
+  /**
+   * Auto-approve a tool-kind permission request when auto_accept is enabled.
+   * Forms are never auto-approved: they carry user input, not just tool access.
+   * Returns true when the request was approved (and should not be surfaced).
+   */
+  private async tryAutoApproveToolPermission(request: AgentPermissionRequest): Promise<boolean> {
+    if (!this.autoAcceptEnabled || request.kind !== "tool") {
+      return false;
+    }
+    try {
+      await this.client.permission.reply({
+        sessionID: this.sessionId,
+        requestID: request.id,
+        reply: "once",
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId, requestId: request.id },
+        "OpenCode 2 auto_accept permission reply failed",
+      );
+      return false;
+    }
   }
 
   private finishForegroundTurn(event: OpenCodeV2TerminalTurnEvent, turnId: string): void {

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
   AgentListInput,
   AgentListOutput,
@@ -42,6 +45,8 @@ export class TestOpenCodeV2Harness implements OpenCodeV2ServerManagerLike {
   private readonly eventsReadyPromise: Promise<void> = new Promise<void>((resolve) => {
     this.resolveEventsReady = resolve;
   });
+  /** Isolated home the harness "runs" servers in; config writes land here. */
+  private readonly homeDir = mkdtempSync(path.join(os.tmpdir(), "paseo-oc2-harness-"));
   readonly events = {
     ready: () => this.eventsReadyPromise,
     subscribe: (listener: (input: OpenCodeV2EventSourceInput) => void) => {
@@ -72,6 +77,10 @@ export class TestOpenCodeV2Harness implements OpenCodeV2ServerManagerLike {
 
   async acquireCurrent(): Promise<OpenCodeV2ServerAcquisition> {
     return this.recordAcquisition({ kind: "current" });
+  }
+
+  getHomeDir(): string {
+    return this.homeDir;
   }
 
   async acquireNew(): Promise<OpenCodeV2ServerAcquisition> {

@@ -65,6 +65,8 @@ export interface OpenCodeV2ServerManagerLike {
   acquireNew(signal?: AbortSignal): Promise<OpenCodeV2ServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeV2ServerAcquisition>;
   acquireExisting(url: string): OpenCodeV2ServerAcquisition | null;
+  /** The isolated opencode2 home the manager runs servers in. */
+  getHomeDir(): string;
   shutdown(): Promise<void>;
 }
 
@@ -202,6 +204,10 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
     const server = await waitForServerAcquisition(this.getCurrentServer(), signal);
     signal?.throwIfAborted();
     return this.acquireServer(server);
+  }
+
+  getHomeDir(): string {
+    return this.resolveHomeDir();
   }
 
   async acquireNew(signal?: AbortSignal): Promise<OpenCodeV2ServerAcquisition> {
