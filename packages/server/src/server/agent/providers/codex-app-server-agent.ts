@@ -86,6 +86,15 @@ import {
 } from "./codex/app-server-transport.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
+  CodexAuthFileMonitor,
+  readCodexAuthIdentity,
+  type CodexAuthIdentity,
+} from "./codex/codex-auth-file-monitor.js";
+import {
+  verifyCodexAccountReadResponse,
+  type CodexAccountVerification,
+} from "./codex/codex-account-read.js";
+import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -137,6 +146,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+const ACCOUNT_READ_TIMEOUT_MS = 5_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3135,6 +3145,22 @@ export function buildCodexAppServerEnv(
   });
 }
 
+function resolveCodexAuthFilePath(
+  runtimeSettings?: ProviderRuntimeSettings,
+  launchEnv?: Record<string, string>,
+): string | undefined {
+  const env = buildCodexAppServerEnv(runtimeSettings, launchEnv);
+  if (env.OPENAI_API_KEY?.trim() || env.CODEX_API_KEY?.trim() || env.CODEX_ACCESS_TOKEN?.trim()) {
+    return undefined;
+  }
+  const codexHome = env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
+  return path.join(codexHome, "auth.json");
+}
+
+export function shouldMonitorCodexAuthFileStorage(value: unknown): boolean {
+  return value == null || value === "file";
+}
+
 function buildCodexAppServerInitializeParams(): {
   clientInfo: { name: string; title: string; version: string };
   capabilities: { experimentalApi: true; mcpServerOpenaiFormElicitation: true };
@@ -3307,6 +3333,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     name: string;
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> | null = null;
+  private launchAuthIdentity: CodexAuthIdentity | null = null;
+  private observedAuthIdentity: CodexAuthIdentity | null = null;
+  private codexAuthFileMonitor: CodexAuthFileMonitor | null = null;
+  private appServerAccountVerification: CodexAccountVerification | null = null;
+  private authFileMonitoringEnabled = true;
+  private authChangeRevision = 0;
 
   constructor(
     config: AgentSessionConfig,
@@ -3319,6 +3351,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly authFilePath?: string,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3387,6 +3420,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async establishConnection(): Promise<void> {
+    this.stopAuthFileMonitor();
+    this.appServerAccountVerification = null;
+    this.launchAuthIdentity = this.authFilePath
+      ? await readCodexAuthIdentity(this.authFilePath)
+      : null;
+    this.observedAuthIdentity = this.launchAuthIdentity;
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
     if (this.closed) {
@@ -3404,6 +3443,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
 
+      await this.loadAppServerAccountVerification(client);
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3419,6 +3459,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connected = true;
+      this.startAuthFileMonitor();
     } catch (error) {
       try {
         if (this.client === client) {
@@ -3436,6 +3477,40 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private async loadAppServerAccountVerification(client: CodexAppServerClient): Promise<void> {
+    if (!this.launchAuthIdentity) return;
+    try {
+      const response = await client.request(
+        "account/read",
+        { refreshToken: false },
+        ACCOUNT_READ_TIMEOUT_MS,
+      );
+      const verification = verifyCodexAccountReadResponse(
+        response,
+        this.launchAuthIdentity?.label ?? null,
+      );
+      this.appServerAccountVerification = verification;
+      const context = {
+        source: "account/read",
+        status: verification.status,
+        accountType: verification.accountType,
+        expectedAccountFingerprint: verification.expectedFingerprint,
+        actualAccountFingerprint: verification.actualFingerprint,
+        sessionId: this.currentThreadId,
+      };
+      if (verification.status === "mismatch") {
+        this.logger.warn(context, "Codex app-server reported a different account");
+      } else {
+        this.logger.info(context, "Codex app-server account verification completed");
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, source: "account/read", sessionId: this.currentThreadId },
+        "Could not verify Codex app-server account",
+      );
+    }
+  }
+
   private async loadResolvedWorkspaceWrite(): Promise<void> {
     if (!this.client) return;
     try {
@@ -3444,6 +3519,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       );
       const config = toObjectRecord(response?.config);
       this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
+      this.authFileMonitoringEnabled = shouldMonitorCodexAuthFileStorage(
+        config?.cli_auth_credentials_store,
+      );
     } catch (error) {
       this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
     }
@@ -3469,6 +3547,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleUnexpectedTermination(error: Error): void {
+    this.stopAuthFileMonitor();
     this.connected = false;
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
     this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
@@ -4306,15 +4385,35 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.currentThreadId) {
       await this.ensureThread();
     }
+    const extra: Record<string, unknown> = {};
+    if (this.resolvedCollaborationMode) {
+      extra.collaborationMode = this.resolvedCollaborationMode.name;
+    }
+    if (this.appServerAccountVerification?.label) {
+      extra.codexAccountLabel = this.appServerAccountVerification.label;
+    }
+    if (this.launchAuthIdentity) {
+      extra.codexAccountVerificationStatus =
+        this.appServerAccountVerification?.status ?? "unavailable";
+    }
+    if (
+      this.launchAuthIdentity &&
+      this.observedAuthIdentity &&
+      this.launchAuthIdentity.key !== this.observedAuthIdentity.key
+    ) {
+      extra.codexAccountChange = {
+        previousLabel: this.appServerAccountVerification?.label ?? this.launchAuthIdentity.label,
+        nextLabel: this.observedAuthIdentity.label,
+        revision: this.authChangeRevision,
+      };
+    }
     const info: AgentRuntimeInfo = {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,
       model: this.config.model ?? null,
       thinkingOptionId: normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null,
       modeId: this.currentMode ?? null,
-      extra: this.resolvedCollaborationMode
-        ? { collaborationMode: this.resolvedCollaborationMode.name }
-        : undefined,
+      extra: Object.keys(extra).length > 0 ? extra : undefined,
     };
     this.cachedRuntimeInfo = info;
     return { ...info };
@@ -4704,6 +4803,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.stopAuthFileMonitor();
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
@@ -4729,6 +4829,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async disposeClient(): Promise<void> {
+    this.stopAuthFileMonitor();
     const client = this.client;
     this.client = null;
     this.connected = false;
@@ -5038,6 +5139,44 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.notifySubscribers(event);
+  }
+
+  private startAuthFileMonitor(): void {
+    if (
+      !this.authFileMonitoringEnabled ||
+      !this.authFilePath ||
+      !this.launchAuthIdentity ||
+      this.closed
+    ) {
+      return;
+    }
+    this.codexAuthFileMonitor = new CodexAuthFileMonitor({
+      filePath: this.authFilePath,
+      initialIdentity: this.launchAuthIdentity,
+      onIdentityChange: (identity) => {
+        this.observedAuthIdentity = identity;
+        this.authChangeRevision += 1;
+        this.cachedRuntimeInfo = null;
+        void this.publishAuthRuntimeInfo();
+      },
+    });
+    this.codexAuthFileMonitor.start();
+  }
+
+  private stopAuthFileMonitor(): void {
+    this.codexAuthFileMonitor?.close();
+    this.codexAuthFileMonitor = null;
+  }
+
+  private async publishAuthRuntimeInfo(): Promise<void> {
+    if (this.closed || !this.connected) return;
+    try {
+      const runtimeInfo = await this.getRuntimeInfo();
+      if (this.closed || !this.connected) return;
+      this.emitEvent({ type: "model_changed", provider: CODEX_PROVIDER, runtimeInfo });
+    } catch (error) {
+      this.logger.debug({ error }, "Failed to publish Codex account change");
+    }
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
@@ -6764,6 +6903,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly requiresExclusiveSessionWriter = true;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
 
@@ -6891,6 +7031,8 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      "interactive",
+      resolveCodexAuthFilePath(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;
@@ -6923,6 +7065,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      resolveCodexAuthFilePath(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;

@@ -500,6 +500,16 @@ interface AgentMetadataPatch {
 }
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
+const EXCLUSIVE_WRITER_RETRY_DELAYS_MS = [0, 100, 300, 700] as const;
+
+function isActiveWriterError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /already has an active writer/i.test(message);
+}
+
+function waitForReloadRetry(delayMs: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, delayMs));
+}
 
 function attachPersistenceCwd(
   handle: AgentPersistenceHandle | null,
@@ -1369,22 +1379,30 @@ export class AgentManager {
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-
-    const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
-    await this.requireExternalMcpSupport(session, storedConfig);
-
+    const requiresExclusiveWriterHandoff =
+      client.requiresExclusiveSessionWriter === true && handle !== null;
+    let session: AgentSession | null = null;
     let handedToRegistration = false;
     try {
       this.assertAcceptingAgentRegistrations();
 
-      this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
+      if (requiresExclusiveWriterHandoff) {
+        this.requireExternalMcpClientSupport(client, storedConfig);
+        await this.retireExistingSessionForReload(existing, agentId, true);
+      }
+
+      session = await this.createReloadReplacementSession({
+        client,
+        handle,
+        providerLaunchConfig,
+        launchContext,
+        retryActiveWriter: requiresExclusiveWriterHandoff,
+      });
+      await this.requireExternalMcpSupport(session, storedConfig);
+
+      this.assertAcceptingAgentRegistrations();
+      if (!requiresExclusiveWriterHandoff) {
+        await this.retireExistingSessionForReload(existing, agentId, false);
       }
 
       if (rehydrateFromDisk) {
@@ -1411,13 +1429,74 @@ export class AgentManager {
         attention: preservedAttention,
       });
     } finally {
-      if (!handedToRegistration) {
+      if (session && !handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
     }
   }
 
-  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+  private requireExternalMcpClientSupport(
+    client: AgentClient,
+    storedConfig: AgentSessionConfig,
+  ): void {
+    if (
+      storedConfig.mcpServers == null ||
+      Object.keys(storedConfig.mcpServers).length === 0 ||
+      client.capabilities.supportsMcpServers === true
+    ) {
+      return;
+    }
+    throw new Error(`Provider '${storedConfig.provider}' does not support MCP servers`);
+  }
+
+  private async createReloadReplacementSession(input: {
+    client: AgentClient;
+    handle: AgentPersistenceHandle | null;
+    providerLaunchConfig: AgentSessionConfig;
+    launchContext: AgentLaunchContext;
+    retryActiveWriter: boolean;
+  }): Promise<AgentSession> {
+    const retryDelays = input.retryActiveWriter ? EXCLUSIVE_WRITER_RETRY_DELAYS_MS : ([0] as const);
+    let lastError: unknown = null;
+    for (const delayMs of retryDelays) {
+      if (delayMs > 0) await waitForReloadRetry(delayMs);
+      try {
+        return input.handle
+          ? await input.client.resumeSession(
+              input.handle,
+              input.providerLaunchConfig,
+              input.launchContext,
+            )
+          : await input.client.createSession(input.providerLaunchConfig, input.launchContext);
+      } catch (error) {
+        lastError = error;
+        if (!input.retryActiveWriter || !isActiveWriterError(error)) throw error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private async retireExistingSessionForReload(
+    existing: LiveManagedAgent,
+    agentId: string,
+    requireStopped: boolean,
+  ): Promise<void> {
+    this.cancelRunningProviderSubagents(agentId);
+    const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+    let persistError: unknown = null;
+    try {
+      await this.persistSnapshot(closedExisting);
+    } catch (error) {
+      persistError = error;
+    }
+    const stopped = await this.closeReloadedSession(existing.session, agentId);
+    if (persistError) throw persistError;
+    if (requireStopped && !stopped) {
+      throw new Error(`Cannot reload agent ${agentId} because its previous session did not stop`);
+    }
+  }
+
+  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.close(),
@@ -1435,9 +1514,12 @@ export class AgentManager {
           { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
           "Timed out closing previous session during refresh",
         );
+        return false;
       }
+      return true;
     } catch (error) {
       this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+      return false;
     }
   }
 

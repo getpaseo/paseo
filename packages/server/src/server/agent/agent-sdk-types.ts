@@ -713,6 +713,7 @@ export interface ResolveAgentDefaultModeInput {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  readonly requiresExclusiveSessionWriter?: boolean;
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,

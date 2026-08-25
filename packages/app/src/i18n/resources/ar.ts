@@ -223,6 +223,17 @@ export const ar: TranslationResources = {
       archivingTitle: "وكيل الارشيف...",
       archivingSubtitle: "الرجاء الانتظار بينما نقوم بأرشفة هذا الوكيل.",
     },
+    codexAccountChange: {
+      title: "تم تغيير حساب Codex",
+      message:
+        "يستخدم هذا الوكيل {{previousAccount}}، لكن Codex مسجل الدخول الآن باسم {{nextAccount}}. أعد تحميل الوكيل لاستخدام الحساب الجديد، أو احتفظ بالجلسة الحالية على الحساب السابق.",
+      reload: "إعادة تحميل الوكيل",
+      keepCurrent: "الاحتفاظ بالجلسة الحالية",
+      reloaded: "تم التحقق: تمت إعادة تحميل الوكيل باستخدام {{account}}",
+      reloadedUnverified: "تمت إعادة تحميل الوكيل، ولكن تعذر التحقق من حساب Codex.",
+      reloadedMismatch:
+        "تمت إعادة تحميل الوكيل، لكن Codex يستخدم {{actualAccount}} بدلاً من {{expectedAccount}}.",
+    },
     unavailable: {
       selectedHost: "المضيف المختار",
       unknownHost: "لا يمكن فتح هذا الوكيل لأنه لم يتم تكوين{{serverLabel}}على هذا الجهاز.",

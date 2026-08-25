@@ -87,7 +87,12 @@ export interface RefreshAgentInput {
   hostDisconnectedMessage?: string;
 }
 
-export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
+export interface RefreshAgentResult {
+  providerAccountLabel?: string | null;
+  providerAccountVerificationStatus?: "verified" | "mismatch" | "unavailable";
+}
+
+export async function refreshAgent(input: RefreshAgentInput): Promise<RefreshAgentResult> {
   const { serverId, agentId, client, runtime, setAgentInitializing } = input;
   if (!client) {
     throw new Error(input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -95,8 +100,12 @@ export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
   setAgentInitializing(agentId, true);
 
   try {
-    await client.refreshAgent(agentId);
+    const result = await client.refreshAgent(agentId);
     await runtime.fetchAgentTimeline(serverId, agentId, planTimelineTailFetch());
+    return {
+      providerAccountLabel: result.providerAccountLabel,
+      providerAccountVerificationStatus: result.providerAccountVerificationStatus,
+    };
   } catch (error) {
     setAgentInitializing(agentId, false);
     throw error;
@@ -147,7 +156,7 @@ export function useAgentInitialization({
   );
 
   const refreshAgentCallback = useCallback(
-    (agentId: string): Promise<void> =>
+    (agentId: string): Promise<RefreshAgentResult> =>
       refreshAgent({
         serverId,
         agentId,

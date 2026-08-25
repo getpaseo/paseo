@@ -223,6 +223,17 @@ export const ru: TranslationResources = {
       archivingTitle: "Агент перемещается в архив...",
       archivingSubtitle: "Подождите, пока агент будет перемещён в архив.",
     },
+    codexAccountChange: {
+      title: "Учётная запись Codex изменена",
+      message:
+        "Этот агент использует {{previousAccount}}, но Codex теперь выполнен вход как {{nextAccount}}. Перезагрузите агента, чтобы использовать новую учётную запись, или оставьте текущую сессию на прежней учётной записи.",
+      reload: "Перезагрузить агента",
+      keepCurrent: "Оставить текущую сессию",
+      reloaded: "Проверено: агент перезагружен с учётной записью {{account}}",
+      reloadedUnverified: "Агент перезагружен, но не удалось проверить учётную запись Codex.",
+      reloadedMismatch:
+        "Агент перезагружен, но Codex использует {{actualAccount}} вместо {{expectedAccount}}.",
+    },
     unavailable: {
       selectedHost: "Выбранный хост",
       unknownHost:

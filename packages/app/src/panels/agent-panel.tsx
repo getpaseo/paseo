@@ -105,6 +105,9 @@ import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-w
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import { useCodexAccountChangePrompt } from "@/hooks/use-codex-account-change-prompt";
+import { CodexAccountChangeDialog } from "@/components/codex-account-change-dialog";
+import { resolveCodexAccountReloadNotice } from "@/utils/codex-account-change";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -852,7 +855,7 @@ function ChatAgentContent({
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
-  const { ensureAgentIsInitialized } = useAgentInitialization({
+  const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization({
     serverId,
     client: hasSession ? client : null,
   });
@@ -862,6 +865,46 @@ function ChatAgentContent({
 
   const hasHydratedHistoryBefore =
     hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted";
+
+  const codexAccountChangePrompt = useCodexAccountChangePrompt({
+    agentId,
+    provider: agentState.provider,
+    status: agentState.status,
+    runtimeInfo: agentState.runtimeInfo,
+    archived: agentState.archivedAt !== null,
+    isInitializing: isInitializingFromMap,
+    isConnected,
+    isPaneFocused,
+    isPaneVisible,
+    refreshAgent,
+    onReloaded: (result, accountChange) => {
+      const notice = resolveCodexAccountReloadNotice(result, accountChange);
+      if (notice.kind === "unverified") {
+        toastApi.show(t("agentPanel.codexAccountChange.reloadedUnverified"), {
+          variant: "warning",
+          durationMs: 5200,
+        });
+        return;
+      }
+      if (notice.kind === "mismatch") {
+        toastApi.show(
+          t("agentPanel.codexAccountChange.reloadedMismatch", {
+            actualAccount: notice.actualAccount,
+            expectedAccount: notice.expectedAccount,
+          }),
+          { variant: "warning", durationMs: 5200 },
+        );
+        return;
+      }
+      toastApi.show(
+        t("agentPanel.codexAccountChange.reloaded", {
+          account: notice.account,
+        }),
+        { variant: "success", durationMs: 4200 },
+      );
+    },
+    onError: toastApi.error,
+  });
 
   const attentionController = useAgentAttentionClear({
     agentId,
@@ -1169,32 +1212,43 @@ function ChatAgentContent({
     viewState.sync.isRetrying;
 
   return (
-    <ChatAgentReadyContent
-      serverId={serverId}
-      workspaceId={workspaceId}
-      agentId={agentId}
-      isPaneFocused={isPaneFocused}
-      isArchivingCurrentAgent={isArchivingCurrentAgent}
-      agentState={agentState}
-      effectiveAgent={effectiveAgent}
-      routeBottomAnchorRequest={routeBottomAnchorRequest}
-      hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-      toastApi={toastApi}
-      toast={toastState}
-      dismiss={dismissToast}
-      streamViewRef={streamViewRef}
-      animatedContentStyle={animatedContentStyle}
-      handleComposerHeightChange={handleComposerHeightChange}
-      handleMessageSent={handleMessageSent}
-      showHistorySyncOverlay={showHistorySyncOverlay}
-      showHistorySyncError={showHistorySyncError}
-      isRetryingHistorySync={isRetryingHistorySync}
-      cwd={agentCwd}
-      retryTimelineSync={retryTimelineSync}
-      onAttentionInputFocus={attentionController.clearOnInputFocus}
-      onAttentionPromptSend={attentionController.clearOnPromptSend}
-      onOpenWorkspaceFile={onOpenWorkspaceFile}
-    />
+    <>
+      <ChatAgentReadyContent
+        serverId={serverId}
+        workspaceId={workspaceId}
+        agentId={agentId}
+        isPaneFocused={isPaneFocused}
+        isArchivingCurrentAgent={isArchivingCurrentAgent}
+        agentState={agentState}
+        effectiveAgent={effectiveAgent}
+        routeBottomAnchorRequest={routeBottomAnchorRequest}
+        hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+        toastApi={toastApi}
+        toast={toastState}
+        dismiss={dismissToast}
+        streamViewRef={streamViewRef}
+        animatedContentStyle={animatedContentStyle}
+        handleComposerHeightChange={handleComposerHeightChange}
+        handleMessageSent={handleMessageSent}
+        showHistorySyncOverlay={showHistorySyncOverlay}
+        showHistorySyncError={showHistorySyncError}
+        isRetryingHistorySync={isRetryingHistorySync}
+        cwd={agentCwd}
+        retryTimelineSync={retryTimelineSync}
+        onAttentionInputFocus={attentionController.clearOnInputFocus}
+        onAttentionPromptSend={attentionController.clearOnPromptSend}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+      {codexAccountChangePrompt.accountChange ? (
+        <CodexAccountChangeDialog
+          accountChange={codexAccountChangePrompt.accountChange}
+          visible={codexAccountChangePrompt.visible}
+          isReloading={codexAccountChangePrompt.isReloading}
+          onKeepCurrentSession={codexAccountChangePrompt.keepCurrentSession}
+          onReloadAgent={codexAccountChangePrompt.reloadAgent}
+        />
+      ) : null}
+    </>
   );
 }
 

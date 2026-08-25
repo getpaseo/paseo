@@ -223,6 +223,17 @@ export const ptBR: TranslationResources = {
       archivingTitle: "Arquivando agente...",
       archivingSubtitle: "Aguarde enquanto arquivamos este agente.",
     },
+    codexAccountChange: {
+      title: "A conta do Codex foi alterada",
+      message:
+        "Este agente está usando {{previousAccount}}, mas o Codex agora está conectado como {{nextAccount}}. Recarregue o agente para usar a nova conta ou mantenha a sessão atual na conta anterior.",
+      reload: "Recarregar agente",
+      keepCurrent: "Manter sessão atual",
+      reloaded: "Verificado: agente recarregado com {{account}}",
+      reloadedUnverified: "O agente foi recarregado, mas a conta do Codex não pôde ser verificada.",
+      reloadedMismatch:
+        "O agente foi recarregado, mas o Codex está usando {{actualAccount}} em vez de {{expectedAccount}}.",
+    },
     unavailable: {
       selectedHost: "Host selecionado",
       unknownHost:

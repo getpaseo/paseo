@@ -223,6 +223,18 @@ export const ja: TranslationResources = {
       archivingTitle: "エージェントをアーカイブ中...",
       archivingSubtitle: "このエージェントをアーカイブするまでお待ちください。",
     },
+    codexAccountChange: {
+      title: "Codex アカウントが変更されました",
+      message:
+        "このエージェントは {{previousAccount}} を使用していますが、Codex は現在 {{nextAccount}} でサインインしています。新しいアカウントを使用するにはエージェントを再読み込みしてください。現在のセッションを維持すると、以前のアカウントを引き続き使用します。",
+      reload: "エージェントを再読み込み",
+      keepCurrent: "現在のセッションを維持",
+      reloaded: "確認済み：{{account}} でエージェントを再読み込みしました",
+      reloadedUnverified:
+        "エージェントを再読み込みしましたが、Codex アカウントを確認できませんでした。",
+      reloadedMismatch:
+        "エージェントを再読み込みしましたが、Codex は {{expectedAccount}} ではなく {{actualAccount}} を使用しています。",
+    },
     unavailable: {
       selectedHost: "選択中のホスト",
       unknownHost:

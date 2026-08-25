@@ -2311,6 +2311,103 @@ test("reloadAgentSession completes when the previous session close hangs", async
   }
 });
 
+test("reloadAgentSession closes an exclusive writer before resuming its thread", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-exclusive-writer-reload-"));
+  const operations: string[] = [];
+  let writerActive = false;
+
+  class ExclusiveWriterSession extends TestAgentSession {
+    override async close(): Promise<void> {
+      operations.push("close");
+      writerActive = false;
+    }
+  }
+
+  class ExclusiveWriterClient extends TestAgentClient {
+    readonly requiresExclusiveSessionWriter = true;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      operations.push("create");
+      writerActive = true;
+      return new ExclusiveWriterSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      operations.push("resume");
+      if (writerActive) {
+        throw new Error("thread already has an active writer");
+      }
+      writerActive = true;
+      return new ExclusiveWriterSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ExclusiveWriterClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.reloadAgentSession(snapshot.id);
+    expect(operations).toEqual(["create", "close", "resume"]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reloadAgentSession does not overlap an exclusive replacement when close times out", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-exclusive-writer-timeout-"));
+
+  class HangingExclusiveWriterClient extends TestAgentClient {
+    readonly requiresExclusiveSessionWriter = true;
+    resumeSessionCalls = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          await new Promise(() => {});
+        }
+      })(config);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      this.resumeSessionCalls += 1;
+      return new TestAgentSession({ provider: "codex", cwd: workdir });
+    }
+  }
+
+  const client = new HangingExclusiveWriterClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.reloadAgentSession(snapshot.id)).rejects.toThrow(
+      "previous session did not stop",
+    );
+    expect(client.resumeSessionCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",

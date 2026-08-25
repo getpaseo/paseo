@@ -220,6 +220,17 @@ export const en = {
       archivingTitle: "Archiving agent...",
       archivingSubtitle: "Please wait while we archive this agent.",
     },
+    codexAccountChange: {
+      title: "Codex account changed",
+      message:
+        "This agent is using {{previousAccount}}, but Codex is now signed in as {{nextAccount}}. Reload the agent to use the new account, or keep the current session on the previous account.",
+      reload: "Reload agent",
+      keepCurrent: "Keep current session",
+      reloaded: "Verified: agent reloaded with {{account}}",
+      reloadedUnverified: "Agent reloaded, but the Codex account could not be verified.",
+      reloadedMismatch:
+        "Agent reloaded, but Codex is using {{actualAccount}} instead of {{expectedAccount}}.",
+    },
     unavailable: {
       selectedHost: "Selected host",
       unknownHost:

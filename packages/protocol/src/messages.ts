@@ -3494,6 +3494,8 @@ export const AgentResumedStatusPayloadSchema = z
 export const AgentRefreshedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_refreshed"),
+    providerAccountLabel: z.string().nullable().optional(),
+    providerAccountVerificationStatus: z.enum(["verified", "mismatch", "unavailable"]).optional(),
   })
   .extend(AgentStatusWithTimelineSchema.shape);
 

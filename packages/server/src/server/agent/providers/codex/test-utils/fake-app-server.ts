@@ -138,6 +138,10 @@ export function createFakeCodexAppServer(
   const recordedRollbacks: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
+    "account/read": () => ({
+      account: { type: "chatgpt", email: "user@example.com", planType: "pro" },
+      requiresOpenaiAuth: true,
+    }),
     "collaborationMode/list": () => ({ data: [] }),
     "config/read": () => ({ config: {} }),
     getUserSavedConfig: () => ({ config: {} }),

@@ -223,6 +223,17 @@ export const zhCN: TranslationResources = {
       archivingTitle: "正在归档 Agent...",
       archivingSubtitle: "请稍候，我们正在归档这个 Agent。",
     },
+    codexAccountChange: {
+      title: "Codex 账号已切换",
+      message:
+        "此 Agent 当前使用 {{previousAccount}}，但 Codex 已切换为 {{nextAccount}}。重新加载 Agent 后将使用新账号；保留当前会话则继续使用原账号。",
+      reload: "重新加载 Agent",
+      keepCurrent: "保留当前会话",
+      reloaded: "已验证：Agent 已使用 {{account}} 重新加载",
+      reloadedUnverified: "Agent 已重新加载，但无法验证 Codex 当前使用的账号。",
+      reloadedMismatch:
+        "Agent 已重新加载，但 Codex 当前使用的是 {{actualAccount}}，而不是 {{expectedAccount}}。",
+    },
     unavailable: {
       selectedHost: "选中的 Host",
       unknownHost: "无法打开此 Agent，因为此设备上未配置 {{serverLabel}}。",

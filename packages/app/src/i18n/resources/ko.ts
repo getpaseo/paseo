@@ -223,6 +223,17 @@ export const ko: TranslationResources = {
       archivingTitle: "에이전트 보관 중...",
       archivingSubtitle: "이 에이전트를 보관하는 동안 잠시 기다려 주세요.",
     },
+    codexAccountChange: {
+      title: "Codex 계정이 변경되었습니다",
+      message:
+        "이 에이전트는 {{previousAccount}}을(를) 사용 중이지만 Codex는 현재 {{nextAccount}} 계정으로 로그인되어 있습니다. 새 계정을 사용하려면 에이전트를 다시 불러오세요. 현재 세션을 유지하면 이전 계정을 계속 사용합니다.",
+      reload: "에이전트 다시 불러오기",
+      keepCurrent: "현재 세션 유지",
+      reloaded: "확인됨: {{account}} 계정으로 에이전트를 다시 불러왔습니다",
+      reloadedUnverified: "에이전트를 다시 불러왔지만 Codex 계정을 확인할 수 없습니다.",
+      reloadedMismatch:
+        "에이전트를 다시 불러왔지만 Codex에서 {{expectedAccount}} 대신 {{actualAccount}} 계정을 사용하고 있습니다.",
+    },
     unavailable: {
       selectedHost: "선택된 호스트",
       unknownHost:

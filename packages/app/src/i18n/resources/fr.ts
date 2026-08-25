@@ -225,6 +225,17 @@ export const fr: TranslationResources = {
       archivingTitle: "Agent d'archivage...",
       archivingSubtitle: "Veuillez patienter pendant que nous archivons cet agent.",
     },
+    codexAccountChange: {
+      title: "Le compte Codex a changé",
+      message:
+        "Cet agent utilise {{previousAccount}}, mais Codex est maintenant connecté avec {{nextAccount}}. Rechargez l’agent pour utiliser le nouveau compte, ou conservez la session actuelle avec l’ancien compte.",
+      reload: "Recharger l’agent",
+      keepCurrent: "Conserver la session actuelle",
+      reloaded: "Vérifié : agent rechargé avec {{account}}",
+      reloadedUnverified: "L’agent a été rechargé, mais le compte Codex n’a pas pu être vérifié.",
+      reloadedMismatch:
+        "L’agent a été rechargé, mais Codex utilise {{actualAccount}} au lieu de {{expectedAccount}}.",
+    },
     unavailable: {
       selectedHost: "Hôte sélectionné",
       unknownHost:

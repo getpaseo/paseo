@@ -3789,6 +3789,20 @@ export class Session {
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
+      const codexAccountLabel = snapshot.runtimeInfo?.extra?.codexAccountLabel;
+      const providerAccountLabel = typeof codexAccountLabel === "string" ? codexAccountLabel : null;
+      const codexAccountVerificationStatus =
+        snapshot.runtimeInfo?.extra?.codexAccountVerificationStatus;
+      const providerAccountVerificationStatus =
+        codexAccountVerificationStatus === "verified" ||
+        codexAccountVerificationStatus === "mismatch" ||
+        codexAccountVerificationStatus === "unavailable"
+          ? codexAccountVerificationStatus
+          : undefined;
+      this.sessionLogger.info(
+        { agentId, timelineSize, providerAccountVerificationStatus },
+        "Agent refresh completed",
+      );
       if (requestId) {
         this.emit({
           type: "status",
@@ -3797,6 +3811,8 @@ export class Session {
             agentId,
             requestId,
             timelineSize,
+            providerAccountLabel,
+            providerAccountVerificationStatus,
           },
         });
       }

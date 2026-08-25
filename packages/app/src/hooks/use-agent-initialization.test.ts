@@ -16,8 +16,12 @@ const agentId = "agent-1";
 class FakeDaemonClient {
   readonly refreshedAgentIds: string[] = [];
 
-  async refreshAgent(requestedAgentId: string): Promise<void> {
+  async refreshAgent(requestedAgentId: string) {
     this.refreshedAgentIds.push(requestedAgentId);
+    return {
+      providerAccountLabel: "new@example.com",
+      providerAccountVerificationStatus: "verified" as const,
+    };
   }
 }
 
@@ -268,7 +272,7 @@ describe("refreshAgent", () => {
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
 
-    await refreshAgent({
+    const result = await refreshAgent({
       serverId,
       agentId,
       client: client as never,
@@ -277,6 +281,10 @@ describe("refreshAgent", () => {
     });
 
     expect(client.refreshedAgentIds).toEqual([agentId]);
+    expect(result).toEqual({
+      providerAccountLabel: "new@example.com",
+      providerAccountVerificationStatus: "verified",
+    });
     expect(runtime.requests).toEqual([
       {
         serverId,
