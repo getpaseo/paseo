@@ -1,6 +1,5 @@
 const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 320;
 const MIN_EXPLORER_SIDEBAR_WIDTH = 240;
-const MAX_EXPLORER_SIDEBAR_WIDTH = 600;
 const MIN_WORKSPACE_BODY_WIDTH = 400;
 
 export function resolveExplorerSidebarWidth(input: {
@@ -10,11 +9,8 @@ export function resolveExplorerSidebarWidth(input: {
   const requestedWidth = input.requestedWidth ?? DEFAULT_EXPLORER_SIDEBAR_WIDTH;
   const maximumVisibleWidth =
     input.containerWidth > 0
-      ? Math.max(
-          MIN_EXPLORER_SIDEBAR_WIDTH,
-          Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, input.containerWidth - MIN_WORKSPACE_BODY_WIDTH),
-        )
-      : MAX_EXPLORER_SIDEBAR_WIDTH;
+      ? Math.max(MIN_EXPLORER_SIDEBAR_WIDTH, input.containerWidth - MIN_WORKSPACE_BODY_WIDTH)
+      : requestedWidth;
   return Math.max(MIN_EXPLORER_SIDEBAR_WIDTH, Math.min(maximumVisibleWidth, requestedWidth));
 }
 

@@ -588,6 +588,7 @@ export const ru: TranslationResources = {
         closeLeft: "Закрыть вкладки слева",
         closeRight: "Закрыть вкладки справа",
         closeOthers: "Закрыть другие вкладки",
+        moveToMain: "Переместить на основную панель",
         reloadAgent: "Перезагрузить агента",
         reloadAgentTooltip: "Перезагрузите агента, чтобы обновить навыки, MCP или статус входа.",
         close: "Закрыть",
@@ -869,6 +870,7 @@ export const ru: TranslationResources = {
       },
       diff: {
         openChangesTab: "Открыть вкладку «Изменения»",
+        openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
         binaryFile: "Бинарный файл",
         tooLarge: "Дифф слишком велик для отображения",
@@ -879,6 +881,7 @@ export const ru: TranslationResources = {
         switchToUnified: "Переключиться на унифицированный дифф",
         switchToSplit: "Переключиться на параллельный дифф",
         options: "Параметры диффа",
+        inlineDiff: "Встроенный дифф",
         hideWhitespace: "Скрыть пробельные изменения",
         showWhitespace: "Показать пробельные изменения",
         scrollLongLines: "Прокручивать длинные строки",
@@ -1782,6 +1785,7 @@ export const ru: TranslationResources = {
     },
     diff: {
       changesLabel: "Изменения",
+      diffLabel: "Дифф",
       changesSubtitle: "Изменения в worktree",
       commitSubtitle: "Изменения в коммите",
       uncommittedSubtitle: "Незафиксированные изменения",

@@ -178,11 +178,11 @@ test.describe("Tab creation", () => {
     const panel = page.getByTestId("workspace-new-tab-panel").filter({ visible: true });
     const agent = panel.getByRole("button", { name: /^Agent/ });
     const terminal = panel.getByRole("button", { name: /^Terminal/ });
-    const changes = panel.getByRole("button", { name: /Changes/ });
+    const diff = panel.getByRole("button", { name: /Diff/ });
     const shortcutPrefix = process.platform === "darwin" ? /⇧⌘/ : /Ctrl.*Shift/;
     await expect(agent).toContainText(new RegExp(`${shortcutPrefix.source}.*A`));
     await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
-    await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
+    await expect(diff).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
     await expect(agent).toBeFocused();
 
     await page.keyboard.press("ArrowDown");

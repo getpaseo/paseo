@@ -4,9 +4,13 @@ import { panelResourceKey, panelSupportsHost } from "@/panels/panel-manifest";
 describe("panel manifest", () => {
   it("answers host support without React panel registration", () => {
     expect(panelSupportsHost("agent", "main")).toBe(true);
-    expect(panelSupportsHost("agent", "explorer")).toBe(false);
+    expect(panelSupportsHost("agent", "explorer")).toBe(true);
+    expect(panelSupportsHost("file", "explorer")).toBe(true);
+    expect(panelSupportsHost("working_diff", "explorer")).toBe(true);
+    expect(panelSupportsHost("new_tab", "explorer")).toBe(true);
     expect(panelSupportsHost("files", "explorer")).toBe(true);
     expect(panelSupportsHost("files", "main")).toBe(false);
+    expect(panelSupportsHost("setup", "explorer")).toBe(false);
   });
 
   it("keeps durable resource identity separate from transient target input", () => {

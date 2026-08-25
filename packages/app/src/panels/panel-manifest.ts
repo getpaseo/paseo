@@ -15,22 +15,22 @@ type PanelManifestByKind = {
 const manifests = {
   new_tab: {
     kind: "new_tab",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: () => "new_tab",
   },
   draft: {
     kind: "draft",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: (target) => target.draftId,
   },
   agent: {
     kind: "agent",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: (target) => target.agentId,
   },
   provider_subagent: {
     kind: "provider_subagent",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: (target) => `${target.parentAgentId}:${target.subagentId}`,
   },
   terminal: {
@@ -60,12 +60,12 @@ const manifests = {
   },
   file: {
     kind: "file",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: (target) => target.path,
   },
   working_diff: {
     kind: "working_diff",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: () => "working_diff",
   },
   plugin: {
@@ -84,7 +84,7 @@ const manifests = {
   },
   commit_diff: {
     kind: "commit_diff",
-    supportedHosts: ["main"],
+    supportedHosts: ["main", "explorer"],
     resourceKey: (target) => target.sha,
   },
 } satisfies PanelManifestByKind;

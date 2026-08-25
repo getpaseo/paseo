@@ -6,22 +6,17 @@ import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
 import { FileExplorerPane } from "@/components/file-explorer-pane";
 import { usePaneContext } from "@/panels/pane-context";
-import { definePanel } from "@/panels/panel-registry";
+import { definePanel, type PanelPresentation } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
 const ThemedFiles = withUnistyles(Files);
-function useFilesPanelDescriptor() {
-  const { t } = useTranslation();
-  return {
-    label: t("panels.files.label"),
-    subtitle: t("panels.files.subtitle"),
-    tooltip: t("panels.files.tooltip"),
-    titleState: "ready" as const,
-    icon: ThemedFiles,
-    statusBucket: null,
-  };
-}
+const filesPanelPresentation = {
+  label: (t) => t("panels.files.label"),
+  subtitle: (t) => t("panels.files.subtitle"),
+  tooltip: (t) => t("panels.files.tooltip"),
+  icon: ThemedFiles,
+} satisfies PanelPresentation;
 
 function FilesPanel() {
   const { t } = useTranslation();
@@ -58,7 +53,7 @@ function FilesPanel() {
 
 export const filesPanelRegistration = definePanel("files", {
   component: FilesPanel,
-  useDescriptor: useFilesPanelDescriptor,
+  presentation: filesPanelPresentation,
 });
 
 const styles = StyleSheet.create((theme) => ({

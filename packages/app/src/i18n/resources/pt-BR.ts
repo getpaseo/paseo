@@ -587,6 +587,7 @@ export const ptBR: TranslationResources = {
         closeLeft: "Fechar à esquerda",
         closeRight: "Fechar à direita",
         closeOthers: "Fechar outras abas",
+        moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
         reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
         close: "Fechar",
@@ -876,6 +877,7 @@ export const ptBR: TranslationResources = {
       },
       diff: {
         openChangesTab: "Abrir a aba Alterações",
+        openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
@@ -886,6 +888,7 @@ export const ptBR: TranslationResources = {
         switchToUnified: "Alternar para diff unificado",
         switchToSplit: "Alternar para diff lado a lado",
         options: "Opções do diff",
+        inlineDiff: "Diff embutido",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
@@ -1783,6 +1786,7 @@ export const ptBR: TranslationResources = {
     },
     diff: {
       changesLabel: "Alterações",
+      diffLabel: "Diff",
       changesSubtitle: "Diff da árvore de trabalho",
       commitSubtitle: "Diff do commit",
       uncommittedSubtitle: "Alterações não commitadas",

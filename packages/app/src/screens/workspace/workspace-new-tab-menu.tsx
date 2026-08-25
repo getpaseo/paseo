@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, type ComponentType, type ReactElement } from "react";
 import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import {
@@ -16,12 +16,18 @@ import {
   type WorkspaceTabLaunchItem,
   type WorkspaceTabLaunchPurpose,
 } from "@/workspace-tabs/launcher";
-import type { LucideIcon } from "lucide-react-native";
 import type { PaneHost } from "@/panels/panel-manifest";
+import type { PanelIconProps } from "@/panels/panel-registry";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function LaunchItemIconGlyph({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
+function LaunchItemIconGlyph({
+  Icon,
+  color = "",
+}: {
+  Icon: ComponentType<PanelIconProps>;
+  color?: string;
+}) {
   return <Icon size={14} color={color} />;
 }
 

@@ -220,6 +220,7 @@ interface MoveTabToPaneInLayoutInput {
   layout: WorkspaceLayout;
   tabId: string;
   toPaneId: string;
+  explorerSidebarPaneId?: string | null;
 }
 
 interface FocusTabInLayoutInput {
@@ -1132,29 +1133,40 @@ export function stripEphemeralTabsFromLayout(layout: WorkspaceLayout): Workspace
   });
 }
 
-function restoreEmptyPanesInNode(node: SplitNodeInternal): SplitNodeInternal {
+function restoreEmptyPanesInNode(
+  node: SplitNodeInternal,
+  explorerSidebarPaneId: string | null,
+): SplitNodeInternal {
   if (node.kind === "pane") {
     return node.pane.tabs.length > 0
       ? node
       : createPaneNode({
           id: node.pane.id,
-          tabs: [createNewWorkspaceTab()],
+          tabs:
+            node.pane.id === explorerSidebarPaneId
+              ? createDefaultExplorerSidebarTabs()
+              : [createNewWorkspaceTab()],
           hidden: node.pane.hidden,
         });
   }
   return createGroupNode({
     id: node.group.id,
     direction: node.group.direction,
-    children: node.group.children.map(restoreEmptyPanesInNode),
+    children: node.group.children.map((child) =>
+      restoreEmptyPanesInNode(child, explorerSidebarPaneId),
+    ),
     sizes: node.group.sizes,
   });
 }
 
-export function restoreEmptyPanesInLayout(layout: WorkspaceLayout): WorkspaceLayout {
+export function restoreEmptyPanesInLayout(
+  layout: WorkspaceLayout,
+  explorerSidebarPaneId: string | null = null,
+): WorkspaceLayout {
   const normalized = normalizeLayout(layout);
   return {
     ...normalized,
-    root: restoreEmptyPanesInNode(asInternalNode(normalized.root)),
+    root: restoreEmptyPanesInNode(asInternalNode(normalized.root), explorerSidebarPaneId),
   };
 }
 
@@ -1963,17 +1975,23 @@ export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): Worksp
     sourcePane.id !== input.toPaneId &&
     sourcePane.tabIds.length === 1 &&
     sourceTab?.target.kind === "new_tab";
-  if (isMovingSoleNewTab) {
-    return sourcePane.id === EXPLORER_SIDEBAR_PANE_ID
+  if (isMovingSoleNewTab && input.toPaneId !== input.explorerSidebarPaneId) {
+    return sourcePane.id === input.explorerSidebarPaneId
       ? setPaneHiddenInLayout({ layout, paneId: sourcePane.id, hidden: true })
-      : closePaneInLayout({ layout, paneId: sourcePane.id });
+      : closePaneInLayout({
+          layout,
+          paneId: sourcePane.id,
+          explorerSidebarPaneId: input.explorerSidebarPaneId,
+        });
   }
 
   const detached = detachTabFromTree(layout.root, {
     tabId: input.tabId,
-    // The Explorer keeps its shell when its final tab moves; ordinary panes collapse.
+    // Crossing into or out of Explorer cannot remove either host shell.
     preserveEmptyPaneId:
-      sourcePane.id === input.toPaneId || sourcePane.id === EXPLORER_SIDEBAR_PANE_ID
+      sourcePane.id === input.toPaneId ||
+      sourcePane.id === input.explorerSidebarPaneId ||
+      input.toPaneId === input.explorerSidebarPaneId
         ? sourcePane.id
         : null,
   });

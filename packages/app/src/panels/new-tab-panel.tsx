@@ -1,7 +1,15 @@
-import { memo, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentType,
+  type ReactElement,
+} from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Pencil, Plus, type LucideIcon } from "lucide-react-native";
+import { Pencil, Plus } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -10,7 +18,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import { definePanel } from "@/panels/panel-registry";
+import { definePanel, type PanelIconProps } from "@/panels/panel-registry";
 import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 import {
   useWorkspaceTabLaunchCatalog,
@@ -29,7 +37,13 @@ const LAUNCHER_MAX_WIDTH = 380;
 const EDIT_PROFILES_HIT_SIZE = ICON_SIZE.xs + SPACING[2];
 const ROW_DATA_SET = { newTabLauncherRow: "true" };
 const ROW_SELECTOR = '[data-new-tab-launcher-row="true"]';
-function LauncherIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
+function LauncherIcon({
+  Icon,
+  color = "",
+}: {
+  Icon: ComponentType<PanelIconProps>;
+  color?: string;
+}) {
   return <Icon size={LAUNCHER_ICON_SIZE} color={color} />;
 }
 
@@ -196,7 +210,9 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
         return true;
       }
       if (action.id === "workspace.tab.target.changes") {
-        itemsById.get("changes")?.launch({ kind: "replace", tabId });
+        const changesItem = itemsById.get("changes") ?? itemsById.get("diff");
+        if (!changesItem) return false;
+        changesItem.launch({ kind: "replace", tabId });
         return true;
       }
       if (action.id === "workspace.tab.target.files") {

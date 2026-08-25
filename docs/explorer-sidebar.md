@@ -10,14 +10,15 @@ contracts.
 
 ## Panel host contract
 
-Every desktop panel registers its supported `PaneHost` values in
-`packages/app/src/panels/panel-registry.ts`. Launchers filter by host, tab moves reject unsupported
-destinations, and placement resolves only to a compatible pane.
+Every desktop panel registers its supported `PaneHost` values and presentation. Launchers derive
+fixed-target labels and icons from that registration, filter by host, and never substitute one
+panel type for another. Tab moves reject unsupported destinations, and placement resolves only to
+a compatible pane.
 
-The Explorer host accepts `files` and `changes_tree`. Content panels use the `main` host; an
-ordinary side pane is a main-host pane. Keep panel implementations independent of either shell.
-`WorkspacePanelHost` owns mounting and retention, while each shell owns its tabs, focus, dragging,
-resizing, and shortcuts.
+Files and Changes are the Explorer defaults and its singleton navigation views. Other compatible
+tabs, including agents, terminals, files, and diffs, can move between Explorer and main panes.
+Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
+retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
 
 ## Explorer sidebar
 
@@ -30,9 +31,10 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-The fixed tab rail has no add or close controls. Its context menu adds or removes Files and Changes.
-Explorer tabs can be reordered, but their host contract prevents moving them to workspace panes or
-creating split previews there. Selecting an Explorer tab does not change workspace focus.
+The tab rail has no inline add or close controls. Its context menu opens a New Tab launcher and
+toggles the singleton Files and Changes views. Individual tab menus close instances or move
+compatible tabs to main. Explorer tabs can be reordered, but the dock cannot be split. Selecting
+an Explorer tab does not change workspace focus.
 
 Cmd+E selects Changes for Git workspaces and Files otherwise. Compact layouts use the combined
 full-screen Explorer overlay and close it after a file opens. Wide native layouts without pane

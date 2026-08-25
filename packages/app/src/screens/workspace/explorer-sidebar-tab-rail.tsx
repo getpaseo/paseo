@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
-import { type LucideIcon } from "lucide-react-native";
+import { useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { Text, View } from "react-native";
+import { ArrowLeftToLine, Plus, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import Animated from "react-native-reanimated";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
@@ -31,15 +32,15 @@ import {
   useWorkspaceTabLaunchCatalog,
   type WorkspaceTabLaunchItem,
 } from "@/workspace-tabs/launcher";
+import { panelSupportsHost } from "@/panels/panel-manifest";
+import type { PanelIconProps } from "@/panels/panel-registry";
+import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 import type { Theme } from "@/styles/theme";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
-import { resolvePluginIcon } from "@/plugins/icons";
-import { useInstalledPlugins } from "@/plugins/registry";
-import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 
 const TAB_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
@@ -55,6 +56,8 @@ interface ExplorerSidebarTabRailProps {
   tabDropPreviewIndex: number | null;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onCreateNewTab: () => void;
+  onMoveTabToMain: (tabId: string) => void;
   onReorderTabs: (tabs: WorkspaceTabDescriptor[]) => void;
   trailingAccessory?: ReactNode;
 }
@@ -72,6 +75,8 @@ function ExplorerSidebarTab({
   isDragging,
   dragHandleProps,
   onNavigateTab,
+  onCloseTab,
+  onMoveTabToMain,
   normalizedServerId,
   normalizedWorkspaceId,
 }: {
@@ -79,9 +84,12 @@ function ExplorerSidebarTab({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   onNavigateTab: (tabId: string) => void;
+  onCloseTab: (tabId: string) => Promise<void> | void;
+  onMoveTabToMain: (tabId: string) => void;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
 }) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const handlePress = useCallback(
     () => onNavigateTab(item.tab.tabId),
@@ -89,60 +97,92 @@ function ExplorerSidebarTab({
   );
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
+  const handleClose = useCallback(() => {
+    void onCloseTab(item.tab.tabId);
+  }, [item.tab.tabId, onCloseTab]);
+  const handleMoveToMain = useCallback(
+    () => onMoveTabToMain(item.tab.tabId),
+    [item.tab.tabId, onMoveTabToMain],
+  );
+  const canMoveToMain = panelTargetSupportsHost(normalizedServerId, item.tab.target, "main");
+  const moveToMainLeading = useMemo(
+    () => <ThemedArrowLeftToLine size={14} uniProps={mutedColorMapping} />,
+    [],
+  );
+  const closeLeading = useMemo(() => <ThemedX size={14} uniProps={mutedColorMapping} />, []);
   const accessibilityState = useMemo(() => ({ selected: item.isActive }), [item.isActive]);
   const renderPresentation = useCallback(
     (presentation: WorkspaceTabPresentation) => (
-      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild triggerRefProp="ref">
-          <Pressable
-            {...(dragHandleProps?.attributes as object | undefined)}
-            {...(dragHandleProps?.listeners as object | undefined)}
-            ref={dragHandleProps?.setActivatorNodeRef as never}
-            testID={`explorer-sidebar-tab-${item.tab.tabId}`}
-            accessibilityRole="button"
-            accessibilityLabel={presentation.tooltip}
-            accessibilityState={accessibilityState}
-            onPress={handlePress}
-            onHoverIn={handleHoverIn}
-            onHoverOut={handleHoverOut}
-            style={[
-              styles.tab,
-              hovered ? styles.tabHovered : null,
-              item.isActive ? styles.tabActive : null,
-              isDragging ? styles.tabDragging : null,
-            ]}
-          >
-            <WorkspaceTabIcon
-              presentation={presentation}
-              active={item.isActive}
-              size={iconButtonChromeGlyphSize("small")}
-              strokeWidth={1.5}
-              backdrop={resolveExplorerSidebarTabBackdrop()}
-            />
-            <Text
-              selectable={false}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={[styles.tabLabel, item.isActive ? styles.tabLabelActive : null]}
+      <ContextMenu>
+        <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild triggerRefProp="triggerRef">
+            <ContextMenuTrigger
+              {...(dragHandleProps?.attributes as object | undefined)}
+              {...(dragHandleProps?.listeners as object | undefined)}
+              triggerRef={dragHandleProps?.setActivatorNodeRef as never}
+              testID={`explorer-sidebar-tab-${item.tab.tabId}`}
+              accessibilityRole="button"
+              accessibilityLabel={presentation.tooltip}
+              accessibilityState={accessibilityState}
+              onPress={handlePress}
+              onHoverIn={handleHoverIn}
+              onHoverOut={handleHoverOut}
+              style={[
+                styles.tab,
+                hovered ? styles.tabHovered : null,
+                item.isActive ? styles.tabActive : null,
+                isDragging ? styles.tabDragging : null,
+              ]}
             >
-              {presentation.label}
-            </Text>
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <Text style={styles.tooltipText}>{presentation.tooltip}</Text>
-        </TooltipContent>
-      </Tooltip>
+              <WorkspaceTabIcon
+                presentation={presentation}
+                active={item.isActive}
+                size={iconButtonChromeGlyphSize("small")}
+                strokeWidth={1.5}
+                backdrop={resolveExplorerSidebarTabBackdrop()}
+              />
+              <Text
+                selectable={false}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                style={[styles.tabLabel, item.isActive ? styles.tabLabelActive : null]}
+              >
+                {presentation.label}
+              </Text>
+            </ContextMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <Text style={styles.tooltipText}>{presentation.tooltip}</Text>
+          </TooltipContent>
+        </Tooltip>
+        <ContextMenuContent align="start" minWidth={180}>
+          {canMoveToMain ? (
+            <ContextMenuItem leading={moveToMainLeading} onSelect={handleMoveToMain}>
+              {t("workspace.tabs.menu.moveToMain")}
+            </ContextMenuItem>
+          ) : null}
+          {canMoveToMain ? <ContextMenuSeparator /> : null}
+          <ContextMenuItem leading={closeLeading} onSelect={handleClose}>
+            {t("workspace.tabs.menu.close")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     ),
     [
       accessibilityState,
       dragHandleProps,
       handleHoverIn,
       handleHoverOut,
+      handleClose,
+      handleMoveToMain,
       handlePress,
       hovered,
       isDragging,
       item,
+      canMoveToMain,
+      closeLeading,
+      moveToMainLeading,
+      t,
     ],
   );
 
@@ -157,11 +197,20 @@ function ExplorerSidebarTab({
   );
 }
 
-function CatalogIcon({ Icon, color = "" }: { Icon: LucideIcon; color?: string }) {
+function CatalogIcon({
+  Icon,
+  color = "",
+}: {
+  Icon: ComponentType<PanelIconProps>;
+  color?: string;
+}) {
   return <Icon size={14} color={color} />;
 }
 
 const ThemedCatalogIcon = withUnistyles(CatalogIcon);
+const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
+const ThemedPlus = withUnistyles(Plus);
+const ThemedX = withUnistyles(X);
 
 function ExplorerSidebarConfigurationItem({
   item,
@@ -199,9 +248,7 @@ function ExplorerSidebarConfigurationItem({
 }
 
 function catalogItemMatchesTab(item: WorkspaceTabLaunchItem, tab: WorkspaceTabDescriptor): boolean {
-  if (item.panelKind !== tab.target.kind) return false;
-  if (item.panelKind !== "plugin" || tab.target.kind !== "plugin") return true;
-  return item.id === `plugin:${tab.target.pluginId}:${tab.target.panelId}`;
+  return item.panelKind === tab.target.kind;
 }
 
 export function ExplorerSidebarTabRail({
@@ -213,56 +260,26 @@ export function ExplorerSidebarTabRail({
   tabDropPreviewIndex,
   onNavigateTab,
   onCloseTab,
+  onCreateNewTab,
+  onMoveTabToMain,
   onReorderTabs,
   trailingAccessory,
 }: ExplorerSidebarTabRailProps) {
   const scrollBoundary = useHorizontalScrollBoundary();
+  const { t } = useTranslation();
   const groups = useWorkspaceTabLaunchCatalog({
     serverId: normalizedServerId,
     purpose: "supporting",
     host: "explorer",
   });
-  const installedPlugins = useInstalledPlugins();
-  const builtInConfigurationItems = useMemo(
-    () => groups.find((group) => group.id === "tabs")?.items ?? [],
+  const singletonConfigurationItems = useMemo(
+    () =>
+      (groups.find((group) => group.id === "tabs")?.items ?? []).filter(
+        (item) => !panelSupportsHost(item.panelKind, "main"),
+      ),
     [groups],
   );
-  const pluginConfigurationItems = useMemo(() => {
-    const genericItems = groups.find((group) => group.id === "plugin-panels")?.items ?? [];
-    const agentItems = tabs.flatMap(({ tab }) => {
-      if (tab.target.kind !== "plugin" || tab.target.context !== "agent") return [];
-      const target = tab.target;
-      const plugin = installedPlugins.find(
-        (candidate) =>
-          candidate.serverId === normalizedServerId && candidate.id === target.pluginId,
-      );
-      const panel = plugin?.workspacePanels.find(
-        (candidate) =>
-          candidate.id === target.panelId &&
-          candidate.context === "agent" &&
-          pluginPanelSupportsLocation(candidate, "explorer"),
-      );
-      if (!plugin || !panel) return [];
-      return [
-        {
-          id: `plugin:${plugin.id}:${panel.id}:agent:${target.agentId}`,
-          label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
-          disabled: false,
-          panelKind: "plugin" as const,
-          launch() {},
-          tab,
-        },
-      ];
-    });
-    return [
-      ...genericItems.map((item) => ({
-        item,
-        tab: tabs.find(({ tab }) => catalogItemMatchesTab(item, tab))?.tab ?? null,
-      })),
-      ...agentItems.map(({ tab, ...item }) => ({ item, tab })),
-    ];
-  }, [groups, installedPlugins, normalizedServerId, tabs]);
+  const newTabLeading = useMemo(() => <ThemedPlus size={14} uniProps={mutedColorMapping} />, []);
   const handleDragEnd = useCallback(
     (nextTabs: WorkspaceDesktopTabRowItem[]) => onReorderTabs(nextTabs.map((item) => item.tab)),
     [onReorderTabs],
@@ -295,6 +312,8 @@ export function ExplorerSidebarTabRail({
             isDragging={isActive}
             dragHandleProps={dragHandleProps}
             onNavigateTab={onNavigateTab}
+            onCloseTab={onCloseTab}
+            onMoveTabToMain={onMoveTabToMain}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
           />
@@ -307,6 +326,8 @@ export function ExplorerSidebarTabRail({
       normalizedServerId,
       normalizedWorkspaceId,
       onNavigateTab,
+      onCloseTab,
+      onMoveTabToMain,
       tabDropPreviewIndex,
       tabs.length,
     ],
@@ -353,22 +374,16 @@ export function ExplorerSidebarTabRail({
         ) : null}
       </ContextMenuTrigger>
       <ContextMenuContent align="start" minWidth={200} testID="explorer-sidebar-tab-configuration">
-        {builtInConfigurationItems.map((item) => (
+        <ContextMenuItem leading={newTabLeading} onSelect={onCreateNewTab}>
+          {t("workspace.tabs.actions.newTab")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        {singletonConfigurationItems.map((item) => (
           <ExplorerSidebarConfigurationItem
             key={item.id}
             item={item}
             paneId={paneId}
             tab={tabs.find(({ tab }) => catalogItemMatchesTab(item, tab))?.tab ?? null}
-            onCloseTab={onCloseTab}
-          />
-        ))}
-        {pluginConfigurationItems.length > 0 ? <ContextMenuSeparator /> : null}
-        {pluginConfigurationItems.map(({ item, tab }) => (
-          <ExplorerSidebarConfigurationItem
-            key={item.id}
-            item={item}
-            paneId={paneId}
-            tab={tab}
             onCloseTab={onCloseTab}
           />
         ))}

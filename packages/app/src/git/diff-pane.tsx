@@ -23,7 +23,7 @@ import {
   ExternalLink,
   ListChevronsDownUp,
   ListChevronsUpDown,
-  Maximize2,
+  Maximize,
   MoreHorizontal,
   Pilcrow,
   RotateCw,
@@ -212,7 +212,7 @@ const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
 const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
-const ThemedMaximize2 = withUnistyles(Maximize2);
+const ThemedMaximize = withUnistyles(Maximize);
 const noopStateChange = () => {};
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
@@ -233,7 +233,7 @@ const DIFF_OPTIONS_EXPAND_ICON = (
   <ThemedListChevronsUpDown size={14} uniProps={foregroundMutedIconColorMapping} />
 );
 const DIFF_OPTIONS_CHANGES_TAB_ICON = (
-  <ThemedMaximize2 size={14} uniProps={foregroundMutedIconColorMapping} />
+  <ThemedMaximize size={14} uniProps={foregroundMutedIconColorMapping} />
 );
 
 interface DiffLayoutToggleProps {
@@ -355,6 +355,11 @@ interface ChangesToolbarRefreshAction {
   onRefresh: () => void;
 }
 
+interface ChangesToolbarInlineDiffToggle {
+  value: boolean;
+  onToggle: () => void;
+}
+
 interface ChangesToolbarDiffOptions {
   collapse: {
     allFilesCollapsed: boolean;
@@ -375,6 +380,7 @@ type ChangesToolbarMode =
   | {
       kind: "tree";
       onOpenDiff: () => void;
+      inlineDiff: ChangesToolbarInlineDiffToggle | null;
       refresh: ChangesToolbarRefreshAction | null;
     }
   | {
@@ -387,6 +393,7 @@ type ChangesToolbarMode =
       options: ChangesToolbarDiffOptions;
       refresh: ChangesToolbarRefreshAction | null;
       treeToggle: { visible: boolean; onToggle: () => void } | null;
+      inlineDiff: ChangesToolbarInlineDiffToggle | null;
     };
 
 function buildChangesToolbarMode(input: {
@@ -401,6 +408,7 @@ function buildChangesToolbarMode(input: {
   wrapLines: boolean;
   treeVisible: boolean;
   onOpenDiff: () => void;
+  inlineDiff: ChangesToolbarInlineDiffToggle | null;
   onRefresh: () => void;
   onCollapseAll: () => void;
   onExpandAll: () => void;
@@ -414,7 +422,12 @@ function buildChangesToolbarMode(input: {
     ? { isRefreshing: input.isRefreshing, onRefresh: input.onRefresh }
     : null;
   if (input.presentation === "tree") {
-    return { kind: "tree", onOpenDiff: input.onOpenDiff, refresh };
+    return {
+      kind: "tree",
+      onOpenDiff: input.onOpenDiff,
+      inlineDiff: input.inlineDiff,
+      refresh,
+    };
   }
   const options: ChangesToolbarDiffOptions = {
     collapse: input.hasChanges
@@ -443,6 +456,7 @@ function buildChangesToolbarMode(input: {
       !input.compact && input.hasChanges
         ? { visible: input.treeVisible, onToggle: input.onToggleTree }
         : null,
+    inlineDiff: input.inlineDiff,
   };
 }
 
@@ -881,9 +895,17 @@ function ChangesOptionsMenu({ mode, compact }: { mode: ChangesOptionsMenuMode; c
   const optionsLabel = t("workspace.git.diff.options");
   const content =
     mode.kind === "tree" ? (
-      <ChangesTreeOptions onOpenDiff={mode.onOpenDiff} />
+      <ChangesTreeOptions onOpenDiff={mode.onOpenDiff} inlineDiff={mode.inlineDiff} />
     ) : (
-      <ChangesDiffOptions options={mode.options} />
+      <>
+        <ChangesDiffOptions options={mode.options} />
+        {mode.inlineDiff ? (
+          <>
+            <DropdownMenuSeparator />
+            <ChangesInlineDiffOption toggle={mode.inlineDiff} />
+          </>
+        ) : null}
+      </>
     );
 
   return (
@@ -906,15 +928,42 @@ function ChangesOptionsMenu({ mode, compact }: { mode: ChangesOptionsMenuMode; c
   );
 }
 
-function ChangesTreeOptions({ onOpenDiff }: { onOpenDiff: () => void }) {
+function ChangesTreeOptions({
+  onOpenDiff,
+  inlineDiff,
+}: {
+  onOpenDiff: () => void;
+  inlineDiff: ChangesToolbarInlineDiffToggle | null;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <DropdownMenuItem
+        leading={DIFF_OPTIONS_CHANGES_TAB_ICON}
+        testID="changes-open-tab"
+        onSelect={onOpenDiff}
+      >
+        {t("workspace.git.diff.openDiffTab")}
+      </DropdownMenuItem>
+      {inlineDiff ? (
+        <>
+          <DropdownMenuSeparator />
+          <ChangesInlineDiffOption toggle={inlineDiff} />
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function ChangesInlineDiffOption({ toggle }: { toggle: ChangesToolbarInlineDiffToggle }) {
   const { t } = useTranslation();
   return (
     <DropdownMenuItem
-      leading={DIFF_OPTIONS_CHANGES_TAB_ICON}
-      testID="changes-open-tab"
-      onSelect={onOpenDiff}
+      selected={toggle.value}
+      testID="changes-toggle-inline-diff"
+      onSelect={toggle.onToggle}
     >
-      {t("workspace.git.diff.openChangesTab")}
+      {t("workspace.git.diff.inlineDiff")}
     </DropdownMenuItem>
   );
 }
@@ -1562,6 +1611,10 @@ export function ChangesSurface({
     void updatePreferences({ hideWhitespace: !preferences.hideWhitespace });
   }, [preferences.hideWhitespace, updatePreferences]);
 
+  const handleToggleInlineDiff = useCallback(() => {
+    void updatePreferences({ inlineDiff: !preferences.inlineDiff });
+  }, [preferences.inlineDiff, updatePreferences]);
+
   const handleToggleLayout = useCallback(() => {
     const layout = preferences.layout === "unified" ? "split" : "unified";
     void updatePreferences({ layout });
@@ -1903,6 +1956,9 @@ export function ChangesSurface({
         wrapLines,
         treeVisible: desktopTreeVisible,
         onOpenDiff: handleOpenDiff,
+        inlineDiff: !isMobile
+          ? { value: preferences.inlineDiff, onToggle: handleToggleInlineDiff }
+          : null,
         onRefresh: handleRefresh,
         onCollapseAll: handleCollapseAllFiles,
         onExpandAll: handleExpandAllFiles,
@@ -1919,6 +1975,7 @@ export function ChangesSurface({
       handleCollapseAllFiles,
       handleExpandAllFiles,
       handleOpenDiff,
+      handleToggleInlineDiff,
       handleRefresh,
       handleToggleDesktopTree,
       handleToggleHideWhitespace,
@@ -1926,6 +1983,7 @@ export function ChangesSurface({
       handleToggleWrapLines,
       hasChanges,
       preferences.hideWhitespace,
+      preferences.inlineDiff,
       preferences.layout,
       isMobile,
       isRefreshing,

@@ -1,15 +1,14 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import {
-  FileDiff,
-  Files,
-  GitPullRequest,
-  Globe,
-  SquarePen,
-  SquareTerminal,
-  type LucideIcon,
-} from "lucide-react-native";
+import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
@@ -20,6 +19,11 @@ import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
+import {
+  getPanelRegistration,
+  type PanelIconProps,
+  type PanelPresentation,
+} from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import {
   getTerminalProfileIcon,
@@ -44,7 +48,7 @@ export interface NewTabLauncher {
 export interface WorkspaceTabLaunchItem {
   id: string;
   label: string;
-  Icon?: LucideIcon;
+  Icon?: ComponentType<PanelIconProps>;
   terminalIconKey?: string;
   shortcutActionId?: string;
   disabled: boolean;
@@ -75,10 +79,17 @@ const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   agent: { kind: "agent" },
   terminal: { kind: "terminal" },
   changes: { kind: "target", target: { kind: "changes_tree" } },
+  diff: { kind: "target", target: { kind: "working_diff" } },
   files: { kind: "target", target: { kind: "files" } },
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
 };
+
+function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
+  const registration = getPanelRegistration(kind);
+  invariant(registration?.presentation, `Panel ${kind} has no launch presentation`);
+  return registration.presentation;
+}
 
 export function useWorkspaceTabLaunchCatalog(input: {
   serverId: string;
@@ -105,8 +116,10 @@ export function useWorkspaceTabLaunchCatalog(input: {
   }, [router, serverId]);
 
   return useMemo(() => {
-    const changesTarget: Extract<WorkspaceTabTarget, { kind: "changes_tree" | "working_diff" }> =
-      host === "explorer" ? { kind: "changes_tree" } : { kind: "working_diff" };
+    const changesPresentation = getLaunchPresentation("changes_tree");
+    const diffPresentation = getLaunchPresentation("working_diff");
+    const filesPresentation = getLaunchPresentation("files");
+    const pullRequestPresentation = getLaunchPresentation("pull_request");
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
       agent: {
         id: "agent",
@@ -128,18 +141,27 @@ export function useWorkspaceTabLaunchCatalog(input: {
       },
       changes: {
         id: "changes",
-        label: t("workspace.tabs.actions.changes"),
-        Icon: FileDiff,
+        label: changesPresentation.label(t),
+        Icon: changesPresentation.icon,
+        disabled: false,
+        panelKind: "changes_tree",
+        hidden: !launcher.showChanges,
+        launch: launchSelection(BUILT_IN_SELECTIONS.changes),
+      },
+      diff: {
+        id: "diff",
+        label: diffPresentation.label(t),
+        Icon: diffPresentation.icon,
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
-        panelKind: changesTarget.kind,
+        panelKind: "working_diff",
         hidden: !launcher.showChanges,
-        launch: launchSelection({ kind: "target", target: changesTarget }),
+        launch: launchSelection(BUILT_IN_SELECTIONS.diff),
       },
       files: {
         id: "files",
-        label: t("workspace.tabs.actions.files"),
-        Icon: Files,
+        label: filesPresentation.label(t),
+        Icon: filesPresentation.icon,
         shortcutActionId: "workspace-tab-target-files",
         disabled: false,
         panelKind: "files",
@@ -157,8 +179,8 @@ export function useWorkspaceTabLaunchCatalog(input: {
       },
       pullRequest: {
         id: "pull-request",
-        label: t("workspace.tabs.actions.pullRequest"),
-        Icon: GitPullRequest,
+        label: pullRequestPresentation.label(t),
+        Icon: pullRequestPresentation.icon,
         disabled: false,
         panelKind: "pull_request",
         hidden: !launcher.showPullRequest,

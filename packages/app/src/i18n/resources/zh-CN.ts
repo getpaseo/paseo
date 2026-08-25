@@ -583,6 +583,7 @@ export const zhCN: TranslationResources = {
         closeLeft: "关闭左侧标签",
         closeRight: "关闭右侧标签",
         closeOthers: "关闭其他标签",
+        moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
         close: "关闭",
@@ -846,6 +847,7 @@ export const zhCN: TranslationResources = {
       },
       diff: {
         openChangesTab: "打开“更改”标签页",
+        openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
@@ -856,6 +858,7 @@ export const zhCN: TranslationResources = {
         switchToUnified: "切换到统一差异视图",
         switchToSplit: "切换到并排差异视图",
         options: "Diff 选项",
+        inlineDiff: "内联 Diff",
         hideWhitespace: "隐藏空白差异",
         showWhitespace: "显示空白差异",
         scrollLongLines: "滚动长行",
@@ -1730,6 +1733,7 @@ export const zhCN: TranslationResources = {
     },
     diff: {
       changesLabel: "更改",
+      diffLabel: "Diff",
       changesSubtitle: "工作区差异",
       commitSubtitle: "提交差异",
       uncommittedSubtitle: "未提交的更改",

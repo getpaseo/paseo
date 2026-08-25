@@ -581,6 +581,7 @@ export const en = {
         closeLeft: "Close to the left",
         closeRight: "Close to the right",
         closeOthers: "Close other tabs",
+        moveToMain: "Move to main panel",
         reloadAgent: "Reload agent",
         reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
         close: "Close",
@@ -863,6 +864,7 @@ export const en = {
       },
       diff: {
         openChangesTab: "Open Changes tab",
+        openDiffTab: "Open Diff tab",
         closeChangesTab: "Close Changes tab",
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
@@ -873,6 +875,7 @@ export const en = {
         switchToUnified: "Switch to unified diff",
         switchToSplit: "Switch to side-by-side diff",
         options: "Diff options",
+        inlineDiff: "Inline diff",
         hideWhitespace: "Hide whitespace",
         showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",
@@ -1761,6 +1764,7 @@ export const en = {
     },
     diff: {
       changesLabel: "Changes",
+      diffLabel: "Diff",
       changesSubtitle: "Working tree diff",
       commitSubtitle: "Commit diff",
       uncommittedSubtitle: "Uncommitted changes",

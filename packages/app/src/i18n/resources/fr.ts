@@ -587,6 +587,7 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
           "Rechargez l'agent pour mettre à jour les compétences, les MCP ou le statut de connexion.",
@@ -884,6 +885,7 @@ export const fr: TranslationResources = {
       },
       diff: {
         openChangesTab: "Ouvrir l'onglet Modifications",
+        openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
@@ -894,6 +896,7 @@ export const fr: TranslationResources = {
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
         options: "Options du diff",
+        inlineDiff: "Diff intégré",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
@@ -1802,6 +1805,7 @@ export const fr: TranslationResources = {
     },
     diff: {
       changesLabel: "Modifications",
+      diffLabel: "Diff",
       changesSubtitle: "Différences de l'arbre de travail",
       commitSubtitle: "Différences du commit",
       uncommittedSubtitle: "Modifications non validées",
