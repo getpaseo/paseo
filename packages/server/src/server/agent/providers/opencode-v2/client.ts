@@ -25,6 +25,7 @@ import {
   type SessionInboxUser,
   type SessionInterruptInput,
   type SessionInterruptResponse,
+  type SessionListInput,
   type SessionMessagesResponse,
   type SessionPromptInput,
   type SessionRemoveInput,
@@ -34,6 +35,7 @@ import {
   type SessionRevertStageInput,
   type SessionSwitchAgentInput,
   type SessionSwitchModelInput,
+  type SessionsResponse,
 } from "@opencode-ai/client";
 
 /**
@@ -46,6 +48,7 @@ import {
 export interface OpenCodeV2ClientLike {
   session: {
     create(input: SessionCreateInput): Promise<SessionInfo>;
+    list(input: SessionListInput): Promise<SessionsResponse>;
     prompt(input: SessionPromptInput): Promise<SessionInboxUser>;
     command(input: SessionCommandInput): Promise<void>;
     compact(input: SessionCompactInput): Promise<SessionInboxCompaction>;
@@ -110,6 +113,7 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
   return {
     session: {
       create: (input) => client.session.create(input),
+      list: (input) => client.session.list(input),
       prompt: (input) => client.session.prompt(input),
       command: (input) => client.session.command(input),
       compact: (input) => client.session.compact(input),

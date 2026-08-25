@@ -357,7 +357,7 @@ describe("opencode-v2 permission session behavior", () => {
     expect(openCode.calls.permissionReply).toEqual([
       { sessionID: "session-1", requestID: "perm-1", reply: "reject", message: "Not allowed" },
     ]);
-    expect(openCode.calls.sessionInterrupt).toEqual([{ sessionID: "session-1" }]);
+    expect(openCode.calls.sessionInterrupt).toEqual([{ sessionID: "session-1", continue: true }]);
     expect(session.getPendingPermissions()).toHaveLength(0);
 
     openCode.emitEvent(

@@ -1,5 +1,6 @@
 import type { SessionMessageInfo } from "@opencode-ai/client";
-import { ClientError } from "@opencode-ai/client";
+import { ClientError, type SessionInfo, type V2Event } from "@opencode-ai/client";
+import { isDeepStrictEqual } from "node:util";
 import type { Logger } from "pino";
 
 import type {
@@ -84,6 +85,11 @@ import {
   translateOpenCodeV2Event,
   type OpenCodeV2EventTranslationState,
 } from "./opencode-v2/event-translator.js";
+import {
+  claimOpenCodeV2SubagentFallbackTitle,
+  foldOpenCodeV2SubagentPresentation,
+  type OpenCodeV2SubagentPresentationState,
+} from "./opencode-v2/subagent-presentation.js";
 import { mapOpenCodeV2ToolCall } from "./opencode-v2/tool-call-mapper.js";
 import {
   OpenCodeV2ProviderOptionsSchema,
@@ -134,6 +140,9 @@ const OPENCODE_V2_MODE_REFRESH_ATTEMPTS = 5;
 const OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS = 100;
 
 const OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+
+/** How often to poll for new child sessions while a foreground turn is active. */
+const OPENCODE_V2_CHILD_POLL_INTERVAL_MS = 5000;
 
 function delayOpenCodeV2ModeRefresh(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -465,6 +474,147 @@ function buildOpenCodeV2ToolReplayItem(
     ...(metadata ? { metadata } : {}),
   });
   return item ? build(item) : null;
+}
+
+interface OpenCodeV2ChildSessionInfo {
+  id: string;
+  parentSessionId: string;
+  title?: string;
+  directory?: string;
+  agent?: string;
+  model?: { id: string; variant?: string };
+  outcome?: "succeeded" | "failed" | "interrupted";
+}
+
+type OpenCodeV2ProviderSubagentUpsertEvent = Extract<
+  Extract<AgentStreamEvent, { type: "provider_subagent" }>["event"],
+  { type: "upsert" }
+>;
+
+function readOpenCodeV2ChildSessionInfo(info: SessionInfo): OpenCodeV2ChildSessionInfo | null {
+  const id = info.id;
+  const parentSessionId = info.parentID;
+  if (!id || !parentSessionId) {
+    return null;
+  }
+  const title = readOpenCodeV2NonEmptyString(info.title);
+  const directory = readOpenCodeV2NonEmptyString(info.location?.directory);
+  const agent = readOpenCodeV2NonEmptyString(info.agent);
+  const modelVariant = readOpenCodeV2NonEmptyString(info.model?.variant);
+  const model =
+    info.model && typeof info.model.id === "string" && info.model.id.trim().length > 0
+      ? {
+          id: info.model.id,
+          ...(modelVariant ? { variant: modelVariant } : {}),
+        }
+      : undefined;
+  return {
+    id,
+    parentSessionId,
+    ...(title ? { title } : {}),
+    ...(directory ? { directory } : {}),
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+    ...(info.outcome ? { outcome: info.outcome } : {}),
+  };
+}
+
+function readOpenCodeV2NonEmptyString(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function mapOpenCodeV2ChildOutcomeToStatus(
+  outcome: OpenCodeV2ChildSessionInfo["outcome"],
+): "completed" | "failed" | "canceled" | undefined {
+  switch (outcome) {
+    case "succeeded":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "canceled";
+    default:
+      return undefined;
+  }
+}
+
+function getOpenCodeV2KnownChildSessionIds(state: OpenCodeV2EventTranslationState): Set<string> {
+  state.knownChildSessionIds ??= new Set();
+  return state.knownChildSessionIds;
+}
+
+function getOpenCodeV2SubagentPresentationState(
+  childSessionId: string,
+  state: OpenCodeV2EventTranslationState,
+): OpenCodeV2SubagentPresentationState {
+  state.subagentPresentationByChildId ??= new Map();
+  const existing = state.subagentPresentationByChildId.get(childSessionId);
+  if (existing) {
+    return existing;
+  }
+  const created: OpenCodeV2SubagentPresentationState = { facts: {} };
+  state.subagentPresentationByChildId.set(childSessionId, created);
+  return created;
+}
+
+function isOpenCodeV2SessionTrackedByParent(
+  sessionId: string,
+  state: OpenCodeV2EventTranslationState,
+): boolean {
+  return sessionId === state.sessionId || state.knownChildSessionIds?.has(sessionId) === true;
+}
+
+/** Extract the sessionID an event talks about, if any. */
+function getOpenCodeV2EventSessionId(event: V2Event): string | undefined {
+  const data = event.data as { sessionID?: unknown } | undefined;
+  return typeof data?.sessionID === "string" ? data.sessionID : undefined;
+}
+
+/**
+ * Register a discovered child session and emit its `provider_subagent` upsert.
+ * Returns false when the child was already known (no duplicate upsert).
+ */
+function appendOpenCodeV2ChildSessionDetected(
+  child: OpenCodeV2ChildSessionInfo,
+  state: OpenCodeV2EventTranslationState,
+  events: AgentStreamEvent[],
+  status: "running" | "completed" | "failed" | "canceled" | null = "running",
+): boolean {
+  if (
+    child.id === state.sessionId ||
+    !isOpenCodeV2SessionTrackedByParent(child.parentSessionId, state)
+  ) {
+    return false;
+  }
+
+  const knownChildSessionIds = getOpenCodeV2KnownChildSessionIds(state);
+  if (knownChildSessionIds.has(child.id)) {
+    return false;
+  }
+
+  knownChildSessionIds.add(child.id);
+  const presentation = getOpenCodeV2SubagentPresentationState(child.id, state);
+  const subtitle = foldOpenCodeV2SubagentPresentation(presentation, {
+    ...(child.agent ? { agentName: child.agent } : {}),
+    ...(child.model?.id ? { modelId: child.model.id } : {}),
+    ...(child.model?.variant ? { variant: child.model.variant } : {}),
+  });
+  const title = claimOpenCodeV2SubagentFallbackTitle(presentation, child.agent);
+  events.push({
+    type: "provider_subagent",
+    provider: "opencode-v2",
+    event: {
+      type: "upsert",
+      id: child.id,
+      ...(title ? { title } : {}),
+      ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
+      ...(status ? { status } : {}),
+      ...(child.directory ? { cwd: child.directory } : {}),
+      ...(subtitle ? { subtitle } : {}),
+    },
+  });
+  return true;
 }
 
 export interface OpenCodeV2AgentClientDeps {
@@ -814,6 +964,27 @@ export class OpenCodeV2AgentSession implements AgentSession {
   private readonly mcpDiagnostics: string[];
   private mcpDiagnosticsEmitted = false;
 
+  /** Child (subagent) session ids discovered via session.list({parentID}). */
+  private readonly knownChildSessionIds = new Set<string>();
+  /** Per-child translation state for routing child events to provider_subagent events. */
+  private readonly childTranslationStates = new Map<string, OpenCodeV2EventTranslationState>();
+  /** Child session cwd, used for permission directory resolution. */
+  private readonly childSessionCwds = new Map<string, string>();
+  /** Last emitted provider_subagent upsert per child, for dedup. */
+  private readonly childStatuses = new Map<string, OpenCodeV2ProviderSubagentUpsertEvent>();
+  /** Per-child presentation tracking, shared across parent and child translation states. */
+  private readonly subagentPresentationByChildId = new Map<
+    string,
+    OpenCodeV2SubagentPresentationState
+  >();
+  /** Children with an active execution, interrupted when the parent is stopped. */
+  private readonly runningChildSessionIds = new Set<string>();
+  private childHydrationPromise: Promise<void> | null = null;
+  private childHydrationCompleted = false;
+  private childPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Sessions observed on the shared stream that are neither this session nor a child. */
+  private readonly unrelatedSessionIds = new Set<string>();
+
   constructor(
     config: OpenCodeV2AgentConfig,
     client: OpenCodeV2ClientLike,
@@ -840,6 +1011,8 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.autoAcceptEnabled = !config.toolPolicy && isOpenCodeV2AutoAcceptEnabled(config);
     this.translationState = createOpenCodeV2EventTranslationState(sessionId, {
       providerId: this.providerId,
+      knownChildSessionIds: this.knownChildSessionIds,
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
     });
     this.unsubscribeEvents = this.events.subscribe((input) => {
       this.ingress = this.ingress
@@ -906,6 +1079,8 @@ export class OpenCodeV2AgentSession implements AgentSession {
       pendingUserMessageText: text,
       pendingClientMessageId: options?.clientMessageId ?? null,
       providerId: this.providerId,
+      knownChildSessionIds: this.knownChildSessionIds,
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
     });
 
     const turnId = this.createTurnId();
@@ -913,6 +1088,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "opencode-v2" }, turnId);
 
     this.emitMcpDiagnostics();
+    this.startChildPolling();
 
     const parsedSlashCommand = parseOpenCodeV2SlashCommandInput(text);
     if (parsedSlashCommand) {
@@ -1085,7 +1261,15 @@ export class OpenCodeV2AgentSession implements AgentSession {
     const turnId = this.activeForegroundTurnId;
     this.abortController?.abort();
     try {
-      const response = await this.client.session.interrupt({ sessionID: this.sessionId });
+      // `continue: true` stops the current step but keeps the session on a
+      // continuation path: a queued steer (e.g. a follow-up `send`) is promoted
+      // once the interrupt settles, so the session continues cleanly after a
+      // stop (VAL-OC2-INT-005). A plain stop with no queued prompt behaves like
+      // a full interrupt.
+      const response = await this.client.session.interrupt({
+        sessionID: this.sessionId,
+        continue: true,
+      });
       if (!response.interrupted && !turnId) {
         // Idle interrupt is a clean no-op.
         return;
@@ -1096,6 +1280,21 @@ export class OpenCodeV2AgentSession implements AgentSession {
         return;
       }
       throw error;
+    }
+    // Interrupt running subagent children so both parent and child settle
+    // (VAL-OC2-INT-006). The parent's interrupt already propagates to a
+    // foreground child through the subagent tool; this belt-and-suspenders
+    // pass also reaches background children.
+    const runningChildren = Array.from(this.runningChildSessionIds);
+    for (const childId of runningChildren) {
+      try {
+        await this.client.session.interrupt({ sessionID: childId });
+      } catch (error) {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId, childId },
+          "OpenCode 2 child interrupt failed",
+        );
+      }
     }
   }
 
@@ -1124,6 +1323,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    this.startChildSessionHydration();
     return () => {
       this.subscribers.delete(callback);
     };
@@ -1398,6 +1598,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     try {
       this.closed = true;
       this.abortController?.abort();
+      this.stopChildPolling();
       this.unsubscribeEvents?.();
       this.unsubscribeEvents = null;
       await this.ingress.catch(() => undefined);
@@ -1428,11 +1629,42 @@ export class OpenCodeV2AgentSession implements AgentSession {
       return;
     }
     if (input.type === "reconnected") {
+      // The stream reconnected after a gap; re-discover children so child
+      // sessions created while disconnected are surfaced and their live events
+      // are routed again.
+      await this.hydrateChildSessions().catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "OpenCode 2 child hydration after reconnect failed",
+        );
+      });
       return;
     }
-    const translated = translateOpenCodeV2Event(input.event, this.translationState);
-    for (const event of translated) {
-      await this.handleTranslatedEvent(event);
+    const event = input.event;
+    const eventSessionId = getOpenCodeV2EventSessionId(event);
+    if (eventSessionId && eventSessionId !== this.sessionId) {
+      if (
+        !this.knownChildSessionIds.has(eventSessionId) &&
+        !this.unrelatedSessionIds.has(eventSessionId)
+      ) {
+        // A session we have not seen before on the shared stream. Re-discover
+        // children (cheap: detection dedups) and treat it as a child if found,
+        // otherwise remember it as unrelated so we don't re-hydrate on every
+        // one of its events.
+        await this.hydrateChildSessions().catch(() => undefined);
+        if (!this.knownChildSessionIds.has(eventSessionId)) {
+          this.unrelatedSessionIds.add(eventSessionId);
+          return;
+        }
+      }
+      if (this.knownChildSessionIds.has(eventSessionId)) {
+        await this.handleChildEvent(event, eventSessionId);
+      }
+      return;
+    }
+    const translated = translateOpenCodeV2Event(event, this.translationState);
+    for (const translatedEvent of translated) {
+      await this.handleTranslatedEvent(translatedEvent);
     }
   }
 
@@ -1443,6 +1675,12 @@ export class OpenCodeV2AgentSession implements AgentSession {
         // Auto-approved without surfacing: the tool proceeds on its own.
         return;
       }
+    }
+    // Provider-internal events (subagent upserts/timelines) surface regardless
+    // of an active foreground turn, mirroring v1.
+    if (event.type === "provider_subagent") {
+      this.notifySubscribers(event, null);
+      return;
     }
     const turnId = this.activeForegroundTurnId;
     if (!turnId) {
@@ -1463,6 +1701,229 @@ export class OpenCodeV2AgentSession implements AgentSession {
       this.pendingPermissions.set(event.request.id, event.request);
     }
     this.notifySubscribers(event, turnId);
+  }
+
+  /**
+   * Kick off a one-shot child session hydration. Idempotent: concurrent callers
+   * share the in-flight promise, and once hydrated the session does not re-run
+   * the initial pass (later discovery happens on demand or via polling).
+   */
+  private startChildSessionHydration(): void {
+    if (this.childHydrationPromise || this.childHydrationCompleted) {
+      return;
+    }
+    this.childHydrationPromise = this.hydrateChildSessions()
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "OpenCode 2 child hydration failed",
+        );
+      })
+      .finally(() => {
+        this.childHydrationPromise = null;
+        this.childHydrationCompleted = true;
+      });
+  }
+
+  /**
+   * Discover child sessions via session.list({ parentID }) (v2 has no children
+   * endpoint) and hydrate each, BFS over grandchildren so nested subagents are
+   * surfaced too. Detection dedups via knownChildSessionIds, so re-running
+   * (polling, reconnect, unknown-session events) only hydrates new children.
+   */
+  private async hydrateChildSessions(): Promise<void> {
+    const queue = await this.discoverChildSessions(this.sessionId);
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const child = queue.shift();
+      if (!child || visited.has(child.id)) {
+        continue;
+      }
+      visited.add(child.id);
+      await this.hydrateDiscoveredChild(child);
+      const grandchildren = await this.discoverChildSessions(child.id);
+      queue.push(...grandchildren);
+    }
+  }
+
+  private async discoverChildSessions(parentId: string): Promise<OpenCodeV2ChildSessionInfo[]> {
+    const response = await this.client.session.list({ parentID: parentId });
+    return response.data
+      .map((info) => readOpenCodeV2ChildSessionInfo(info))
+      .filter(
+        (child): child is OpenCodeV2ChildSessionInfo =>
+          child !== null && child.parentSessionId === parentId,
+      );
+  }
+
+  private async hydrateDiscoveredChild(child: OpenCodeV2ChildSessionInfo): Promise<void> {
+    const status = mapOpenCodeV2ChildOutcomeToStatus(child.outcome) ?? "running";
+    const detectionEvents: AgentStreamEvent[] = [];
+    const detected = appendOpenCodeV2ChildSessionDetected(
+      child,
+      this.translationState,
+      detectionEvents,
+      status,
+    );
+    for (const event of detectionEvents) {
+      this.recordProviderInternalEvent(event);
+      this.notifySubscribers(event, null);
+    }
+    if (detected) {
+      await this.hydrateChildSessionTimeline(child);
+    }
+  }
+
+  /**
+   * Hydrate a newly discovered child's message timeline into provider_subagent
+   * timeline events so the subagent row shows its history on first appearance.
+   */
+  private async hydrateChildSessionTimeline(child: OpenCodeV2ChildSessionInfo): Promise<void> {
+    const response = await this.client.message.list({ sessionID: child.id });
+    const events: AgentStreamEvent[] = [];
+    for (const message of response.data) {
+      for (const timelineEvent of buildOpenCodeV2ReplayTimelineEvents(message)) {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode-v2",
+          event: { type: "timeline", id: child.id, item: timelineEvent.item },
+        });
+      }
+    }
+    for (const event of events) {
+      this.recordProviderInternalEvent(event);
+      this.notifySubscribers(event, null);
+    }
+  }
+
+  /**
+   * Route a live child event into provider_subagent timeline rows and status
+   * upserts (running/completed/failed/canceled), mirroring v1's child event
+   * translation. Child terminal events settle the child's status.
+   */
+  private async handleChildEvent(event: V2Event, childSessionId: string): Promise<void> {
+    const state = this.getChildTranslationState(childSessionId);
+    const translated = translateOpenCodeV2Event(event, state);
+    const events: AgentStreamEvent[] = [];
+    let markedRunning = false;
+    const markRunning = () => {
+      if (markedRunning) {
+        return;
+      }
+      markedRunning = true;
+      events.push({
+        type: "provider_subagent",
+        provider: "opencode-v2",
+        event: { type: "upsert", id: childSessionId, status: "running" },
+      });
+    };
+    if (event.type === "session.status" && event.data.status.type === "busy") {
+      markRunning();
+    }
+    for (const childEvent of translated) {
+      if (childEvent.type === "timeline") {
+        markRunning();
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode-v2",
+          event: { type: "timeline", id: childSessionId, item: childEvent.item },
+        });
+      } else if (childEvent.type === "turn_started") {
+        markRunning();
+      } else if (childEvent.type === "turn_completed") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode-v2",
+          event: { type: "upsert", id: childSessionId, status: "completed" },
+        });
+      } else if (childEvent.type === "turn_failed") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode-v2",
+          event: { type: "upsert", id: childSessionId, status: "failed" },
+        });
+      } else if (childEvent.type === "turn_canceled") {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode-v2",
+          event: { type: "upsert", id: childSessionId, status: "canceled" },
+        });
+      }
+    }
+    for (const eventToEmit of events) {
+      this.recordProviderInternalEvent(eventToEmit);
+      this.notifySubscribers(eventToEmit, null);
+    }
+  }
+
+  private getChildTranslationState(childId: string): OpenCodeV2EventTranslationState {
+    const existing = this.childTranslationStates.get(childId);
+    if (existing) {
+      return existing;
+    }
+    const created = createOpenCodeV2EventTranslationState(childId, {
+      providerId: this.providerId,
+      knownChildSessionIds: this.knownChildSessionIds,
+      subagentPresentationByChildId: this.subagentPresentationByChildId,
+    });
+    this.childTranslationStates.set(childId, created);
+    return created;
+  }
+
+  /**
+   * Track child status/cwd from provider_subagent events and clean up per-child
+   * state on removal. Also keeps runningChildSessionIds current for interrupt.
+   */
+  private recordProviderInternalEvent(event: AgentStreamEvent): void {
+    if (event.type !== "provider_subagent") {
+      return;
+    }
+    if (event.event.type === "upsert") {
+      if (event.event.cwd) {
+        this.childSessionCwds.set(event.event.id, event.event.cwd);
+      }
+      if (event.event.status === "running") {
+        this.runningChildSessionIds.add(event.event.id);
+      } else if (
+        event.event.status === "completed" ||
+        event.event.status === "failed" ||
+        event.event.status === "canceled"
+      ) {
+        this.runningChildSessionIds.delete(event.event.id);
+      }
+    } else if (event.event.type === "remove") {
+      this.childTranslationStates.delete(event.event.id);
+      this.childSessionCwds.delete(event.event.id);
+      this.childStatuses.delete(event.event.id);
+      this.subagentPresentationByChildId.delete(event.event.id);
+      this.runningChildSessionIds.delete(event.event.id);
+    }
+  }
+
+  /**
+   * Poll for new child sessions while a foreground turn is active, so background
+   * subagents spawned without a visible event still surface. Stops when the
+   * turn ends; detection dedup keeps re-polling cheap.
+   */
+  private startChildPolling(): void {
+    if (this.childPollTimer) {
+      return;
+    }
+    this.childPollTimer = setInterval(() => {
+      void this.hydrateChildSessions().catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "OpenCode 2 child polling failed",
+        );
+      });
+    }, OPENCODE_V2_CHILD_POLL_INTERVAL_MS);
+  }
+
+  private stopChildPolling(): void {
+    if (this.childPollTimer) {
+      clearInterval(this.childPollTimer);
+      this.childPollTimer = null;
+    }
   }
 
   /**
@@ -1497,6 +1958,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     resetOpenCodeV2TurnTrackingState(this.translationState);
     this.turnState = { status: "idle" };
     this.abortController = null;
+    this.stopChildPolling();
     this.notifySubscribers(event, turnId);
   }
 
@@ -1526,6 +1988,12 @@ export class OpenCodeV2AgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string | null): void {
     if (this.closed) {
       return;
+    }
+    if (event.type === "provider_subagent" && event.event.type === "upsert" && event.event.status) {
+      if (isDeepStrictEqual(this.childStatuses.get(event.event.id), event.event)) {
+        return;
+      }
+      this.childStatuses.set(event.event.id, structuredClone(event.event));
     }
     const turnId = turnIdOverride === null ? null : (turnIdOverride ?? this.activeForegroundTurnId);
     const tagged = turnId ? { ...event, turnId } : event;

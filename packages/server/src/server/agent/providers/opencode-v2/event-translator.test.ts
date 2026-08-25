@@ -670,6 +670,128 @@ describe("translateOpenCodeV2Event", () => {
     ]);
   });
 
+  it("marks a subagent completed from a session.synthetic with subagent source", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.synthetic",
+        data: {
+          sessionID: "session-1",
+          text: '<subagent sessionID="child-1" state="completed" description="Compute 2+2">\n4\n</subagent>',
+          description: "Compute 2+2",
+          metadata: {
+            source: "subagent",
+            childID: "child-1",
+            agent: "general",
+            state: "completed",
+          },
+        },
+      }),
+      state,
+    );
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode-v2",
+      event: {
+        type: "upsert",
+        id: "child-1",
+        title: "general",
+        subtitle: "general",
+        status: "completed",
+      },
+    });
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "opencode-v2",
+      item: {
+        type: "assistant_message",
+        text: '<subagent sessionID="child-1" state="completed" description="Compute 2+2">\n4\n</subagent>',
+        messageId: "event-1",
+      },
+    });
+  });
+
+  it("marks a subagent failed from a session.synthetic with error state", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.synthetic",
+        data: {
+          sessionID: "session-1",
+          text: '<subagent sessionID="child-2" state="error" description="Boom">\nSubagent failed\n</subagent>',
+          description: "Boom",
+          metadata: { source: "subagent", childID: "child-2", agent: "general", state: "error" },
+        },
+      }),
+      state,
+    );
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode-v2",
+      event: {
+        type: "upsert",
+        id: "child-2",
+        title: "general",
+        subtitle: "general",
+        status: "failed",
+      },
+    });
+  });
+
+  it("marks a subagent canceled from a session.synthetic with cancelled state", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.synthetic",
+        data: {
+          sessionID: "session-1",
+          text: '<subagent sessionID="child-3" state="cancelled" description="Stop">\nSubagent cancelled\n</subagent>',
+          description: "Stop",
+          metadata: {
+            source: "subagent",
+            childID: "child-3",
+            agent: "general",
+            state: "cancelled",
+          },
+        },
+      }),
+      state,
+    );
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "opencode-v2",
+      event: {
+        type: "upsert",
+        id: "child-3",
+        title: "general",
+        subtitle: "general",
+        status: "canceled",
+      },
+    });
+  });
+
+  it("does not treat a synthetic without subagent source as a subagent completion", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.synthetic",
+        data: {
+          sessionID: "session-1",
+          text: "Plain synthetic note",
+          metadata: { source: "other" },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode-v2",
+        item: { type: "assistant_message", text: "Plain synthetic note", messageId: "event-1" },
+      },
+    ]);
+  });
+
   it("ignores events from other sessions", () => {
     const state = createState("session-1");
     const events = translateOpenCodeV2Event(

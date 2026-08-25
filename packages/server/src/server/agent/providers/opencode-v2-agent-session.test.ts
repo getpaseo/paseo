@@ -594,7 +594,7 @@ describe("OpenCodeV2AgentClient session core", () => {
     await session.startTurn("Run a long task");
 
     await session.interrupt();
-    expect(openCode.calls.sessionInterrupt).toEqual([{ sessionID: "session-1" }]);
+    expect(openCode.calls.sessionInterrupt).toEqual([{ sessionID: "session-1", continue: true }]);
 
     openCode.emitEvent(executionInterruptedEvent("session-1"));
     await waitFor(() => expect(hasTurnCanceled(events)).toBe(true));

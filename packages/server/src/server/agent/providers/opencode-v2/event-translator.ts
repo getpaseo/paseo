@@ -32,6 +32,11 @@ import type {
 } from "../../agent-sdk-types.js";
 import { toDiagnosticErrorMessage } from "../diagnostic-utils.js";
 import { mapOpenCodeV2ToolCall } from "./tool-call-mapper.js";
+import {
+  claimOpenCodeV2SubagentFallbackTitle,
+  foldOpenCodeV2SubagentPresentation,
+  type OpenCodeV2SubagentPresentationState,
+} from "./subagent-presentation.js";
 
 export interface OpenCodeV2EventTranslationState {
   sessionId: string;
@@ -57,6 +62,10 @@ export interface OpenCodeV2EventTranslationState {
   accumulatedUsage: AgentUsage;
   /** Session total cost in USD, monotonically increasing. */
   sessionTotalCostUsd?: number;
+  /** Child session ids already surfaced as subagents, shared with the owning session. */
+  knownChildSessionIds?: Set<string>;
+  /** Per-child presentation tracking, shared with the owning session. */
+  subagentPresentationByChildId?: Map<string, OpenCodeV2SubagentPresentationState>;
 }
 
 export function createOpenCodeV2EventTranslationState(
@@ -66,6 +75,8 @@ export function createOpenCodeV2EventTranslationState(
     pendingClientMessageId?: string | null;
     accumulatedUsage?: AgentUsage;
     providerId?: string | null;
+    knownChildSessionIds?: Set<string>;
+    subagentPresentationByChildId?: Map<string, OpenCodeV2SubagentPresentationState>;
   } = {},
 ): OpenCodeV2EventTranslationState {
   return {
@@ -80,6 +91,10 @@ export function createOpenCodeV2EventTranslationState(
     pendingUserMessageText: options.pendingUserMessageText ?? null,
     pendingClientMessageId: options.pendingClientMessageId ?? null,
     accumulatedUsage: options.accumulatedUsage ?? {},
+    ...(options.knownChildSessionIds ? { knownChildSessionIds: options.knownChildSessionIds } : {}),
+    ...(options.subagentPresentationByChildId
+      ? { subagentPresentationByChildId: options.subagentPresentationByChildId }
+      : {}),
   };
 }
 
@@ -811,6 +826,20 @@ function mergeOpenCodeV2UsageTokens(
   if (totalTokens > 0) state.accumulatedUsage.contextWindowUsedTokens = totalTokens;
 }
 
+function getOpenCodeV2SubagentPresentationState(
+  childSessionId: string,
+  state: OpenCodeV2EventTranslationState,
+): OpenCodeV2SubagentPresentationState {
+  state.subagentPresentationByChildId ??= new Map();
+  const existing = state.subagentPresentationByChildId.get(childSessionId);
+  if (existing) {
+    return existing;
+  }
+  const created: OpenCodeV2SubagentPresentationState = { facts: {} };
+  state.subagentPresentationByChildId.set(childSessionId, created);
+  return created;
+}
+
 function appendOpenCodeV2Synthetic(
   event: SessionSynthetic,
   state: OpenCodeV2EventTranslationState,
@@ -818,6 +847,39 @@ function appendOpenCodeV2Synthetic(
 ): void {
   if (event.data.sessionID !== state.sessionId) {
     return;
+  }
+  const metadata = event.data.metadata;
+  // Subagent completion marker (background subagents): metadata.source ===
+  // "subagent" with a childID and a terminal state. The child's own terminal
+  // events cover foreground subagents; this covers the background notification
+  // path and newer binaries that publish session.synthetic to the stream.
+  if (metadata && metadata.source === "subagent" && typeof metadata.childID === "string") {
+    const childId = metadata.childID;
+    const childState = typeof metadata.state === "string" ? metadata.state : "";
+    let status: "completed" | "failed" | "canceled" = "completed";
+    if (childState === "error") {
+      status = "failed";
+    } else if (childState === "cancelled") {
+      status = "canceled";
+    }
+    const agentName = typeof metadata.agent === "string" ? metadata.agent : undefined;
+    const presentation = getOpenCodeV2SubagentPresentationState(childId, state);
+    const subtitle = foldOpenCodeV2SubagentPresentation(
+      presentation,
+      agentName ? { agentName } : {},
+    );
+    const title = claimOpenCodeV2SubagentFallbackTitle(presentation, agentName);
+    events.push({
+      type: "provider_subagent",
+      provider: "opencode-v2",
+      event: {
+        type: "upsert",
+        id: childId,
+        status,
+        ...(title ? { title } : {}),
+        ...(subtitle ? { subtitle } : {}),
+      },
+    });
   }
   const text = event.data.text;
   if (!text || text.trim().length === 0) {

@@ -27,6 +27,7 @@ import type {
   SessionInboxUser,
   SessionInterruptInput,
   SessionInterruptResponse,
+  SessionListInput,
   SessionMessagesResponse,
   SessionPromptInput,
   SessionRemoveInput,
@@ -36,6 +37,7 @@ import type {
   SessionRevertStageInput,
   SessionSwitchAgentInput,
   SessionSwitchModelInput,
+  SessionsResponse,
 } from "@opencode-ai/client";
 
 import type { OpenCodeV2ClientFactory, OpenCodeV2ClientLike } from "../client.js";
@@ -142,6 +144,7 @@ export class TestOpenCodeV2Harness implements OpenCodeV2ServerManagerLike {
 export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   readonly calls = {
     sessionCreate: [] as unknown[],
+    sessionList: [] as unknown[],
     sessionPrompt: [] as unknown[],
     sessionCommand: [] as unknown[],
     sessionCompact: [] as unknown[],
@@ -177,6 +180,10 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   };
   sessionCreateImplementation: ((input: SessionCreateInput) => Promise<SessionInfo>) | null = null;
   sessionCreateError: unknown = null;
+
+  sessionListResponse: SessionsResponse = { data: [], cursor: {} };
+  sessionListImplementation: ((input: SessionListInput) => Promise<SessionsResponse>) | null = null;
+  sessionListError: unknown = null;
 
   sessionPromptResponse: SessionInboxUser = {
     id: "msg_1",
@@ -315,6 +322,17 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
       return await this.sessionCreateImplementation(input);
     }
     return this.sessionCreateResponse;
+  }
+
+  async sessionList(input: SessionListInput): Promise<SessionsResponse> {
+    this.calls.sessionList.push(input);
+    if (this.sessionListError) {
+      throw this.sessionListError;
+    }
+    if (this.sessionListImplementation) {
+      return await this.sessionListImplementation(input);
+    }
+    return this.sessionListResponse;
   }
 
   async sessionPrompt(input: SessionPromptInput): Promise<SessionInboxUser> {
@@ -526,6 +544,7 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
   // above so the `calls` recorder keeps working.
   session = {
     create: (input: SessionCreateInput) => this.sessionCreate(input),
+    list: (input: SessionListInput) => this.sessionList(input),
     prompt: (input: SessionPromptInput) => this.sessionPrompt(input),
     command: (input: SessionCommandInput) => this.sessionCommand(input),
     compact: (input: SessionCompactInput) => this.sessionCompact(input),
