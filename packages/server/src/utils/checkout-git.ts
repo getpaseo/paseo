@@ -1813,7 +1813,6 @@ function buildPullRequestLookupTargetFromMetadata(
 
 function buildInitialPullRequestLookupTarget(input: {
   currentBranch: string | null;
-  metadata: PaseoWorktreeMetadata | null;
   branchRemoteName: string | null;
   branchMergeRef: string | null;
   branchRemoteUrl: string | null;
@@ -1822,12 +1821,6 @@ function buildInitialPullRequestLookupTarget(input: {
 }): PullRequestStatusLookupTarget | null {
   if (!input.currentBranch) {
     return null;
-  }
-
-  // Paseo worktree metadata owns PR identity. A checkout drift must not fall
-  // through to branch config and silently retarget the workspace.
-  if (input.metadata) {
-    return buildPullRequestLookupTargetFromMetadata(input.metadata, input.currentBranch);
   }
 
   const hasConfiguredBranchTarget = Boolean(
@@ -1844,17 +1837,14 @@ function buildInitialPullRequestLookupTarget(input: {
     });
   }
 
-  return (
-    buildPullRequestLookupTargetFromMetadata(input.metadata, input.currentBranch) ??
-    buildPullRequestLookupTargetFromBranchConfig({
-      currentBranch: input.currentBranch,
-      branchRemoteName: input.branchRemoteName,
-      branchMergeRef: input.branchMergeRef,
-      branchRemoteUrl: input.branchRemoteUrl,
-      originRemoteUrl: input.originRemoteUrl,
-      resolvedBaseRef: input.resolvedBaseRef,
-    })
-  );
+  return buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch: input.currentBranch,
+    branchRemoteName: input.branchRemoteName,
+    branchMergeRef: input.branchMergeRef,
+    branchRemoteUrl: input.branchRemoteUrl,
+    originRemoteUrl: input.originRemoteUrl,
+    resolvedBaseRef: input.resolvedBaseRef,
+  });
 }
 
 async function resolvePullRequestLookupTargetFromPushConfig(
@@ -1900,13 +1890,15 @@ async function resolveFactsPullRequestLookupTarget(input: {
   context?: CheckoutContext;
 }): Promise<PullRequestStatusLookupTarget | null> {
   const { cwd, inspected, metadata, context } = input;
-  if (inspected.paseoWorktree.isPaseoOwnedWorktree) {
-    return buildPullRequestLookupTargetFromMetadata(metadata, inspected.currentBranch ?? "");
+  const metadataTarget = inspected.currentBranch
+    ? buildPullRequestLookupTargetFromMetadata(metadata, inspected.currentBranch)
+    : null;
+  if (metadataTarget) {
+    return metadataTarget;
   }
 
   let target = buildInitialPullRequestLookupTarget({
     currentBranch: inspected.currentBranch,
-    metadata,
     branchRemoteName: input.branchRemoteName,
     branchMergeRef: input.branchMergeRef,
     branchRemoteUrl: input.branchRemoteUrl,

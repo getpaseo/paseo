@@ -107,6 +107,10 @@ function getTopWebOverlay(): WebOverlayEntry | undefined {
   }, undefined);
 }
 
+export function hasActiveWebOverlay(): boolean {
+  return getTopWebOverlay() !== undefined;
+}
+
 function getFocusableElements(scope: HTMLElement): HTMLElement[] {
   const selector = [
     "a[href]",

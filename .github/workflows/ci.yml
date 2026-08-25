@@ -348,11 +348,11 @@ jobs:
         timeout-minutes: 10
         run: npx playwright install chromium
 
-      - name: Build app dependencies
-        run: npm run build:app-deps
-
       - name: Build server stack
         run: npm run build:server
+
+      - name: Build native app dependency
+        run: npm run build --workspace=@getpaseo/expo-two-way-audio
 
       - name: Install agent CLIs for provider tests
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai

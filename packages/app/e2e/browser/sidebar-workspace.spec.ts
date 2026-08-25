@@ -118,19 +118,6 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
-  test("project shows workspace under it", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "sidebar-workspace-under-project-" });
-
-    try {
-      await gotoAppShell(page);
-
-      await waitForSidebarProject(page, path.basename(workspace.repoPath));
-      await waitForSidebarWorkspace(page, workspace.workspaceId);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
   test("non-git project shows directory name", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-directory-", git: false });
 

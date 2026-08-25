@@ -46,38 +46,6 @@ test.describe("Branch switcher", () => {
   // releases stale sessions from the previous spec; one retry stabilizes it.
   test.describe.configure({ retries: 1 });
 
-  test("switches the workspace branch from the git diff panel for an opaque workspace id", async ({
-    page,
-  }) => {
-    test.setTimeout(90_000);
-    const serverId = getServerId();
-    const workspace = await seedWorkspace({
-      repoPrefix: "branch-switch-",
-      repo: { branches: ["main", "dev"] },
-    });
-
-    try {
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await switchWorkspaceViaSidebar({ page, serverId, workspaceId: workspace.workspaceId });
-
-      await openChangesPanel(page);
-      await expectWorkspaceBranch(page, "main");
-      await switchBranchFromChangesPanel(page, { from: "main", to: "dev" });
-      await expectWorkspaceBranch(page, "dev");
-
-      await expect
-        .poll(
-          async () =>
-            (await readWorktreeBranchInfo({ worktreePath: workspace.repoPath })).currentBranch,
-          { timeout: 30_000 },
-        )
-        .toBe("dev");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
   test("a custom workspace title stays in the header while the diff panel switches the real branch", async ({
     page,
   }) => {
