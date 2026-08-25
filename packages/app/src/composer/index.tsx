@@ -108,7 +108,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
-import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type { ActiveTurnBehavior, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -359,6 +359,36 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           labels,
         }),
       )}
+    </View>
+  );
+}
+
+interface RenderAuthoritativeInputQueueArgs {
+  queue: { steering: readonly string[]; followUp: readonly string[] };
+}
+
+function renderAuthoritativeInputQueue(
+  args: RenderAuthoritativeInputQueueArgs,
+): ReactElement | null {
+  const items = [
+    ...args.queue.steering.map((text, index) => ({ id: `steering-${index}`, mode: "Steer", text })),
+    ...args.queue.followUp.map((text, index) => ({
+      id: `follow-up-${index}`,
+      mode: "Follow-up",
+      text,
+    })),
+  ];
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.queueTrack} testID="composer-authoritative-input-queue">
+      {items.map((item) => (
+        <View key={item.id} style={styles.queueItem}>
+          <Text style={styles.queueMode}>{item.mode}</Text>
+          <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+            {item.text}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -978,6 +1008,7 @@ interface ComposerProps {
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
+const EMPTY_PENDING_INPUT_QUEUE = { steering: [] as string[], followUp: [] as string[] };
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -1200,6 +1231,11 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const pendingInputQueue = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.agents?.get(agentId)?.pendingInputQueue ??
+      EMPTY_PENDING_INPUT_QUEUE,
+  );
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -1234,6 +1270,10 @@ function ComposerContentImpl({
   const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
+  );
+  // COMPAT(piNativeFollowUp): added in v0.5.1-pie.1, remove after 2027-02-24.
+  const supportsPiNativeFollowUp = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.piNativeFollowUp === true,
   );
   const githubAutoAttach = useComposerGithubAutoAttach({
     text: userInput,
@@ -1356,7 +1396,7 @@ function ComposerContentImpl({
         agentId: string,
         text: string,
         attachments: ComposerAttachment[],
-        activeTurnBehavior: "interrupt" | "steer",
+        activeTurnBehavior: ActiveTurnBehavior,
       ) => Promise<void>)
     | null
   >(null);
@@ -1438,7 +1478,7 @@ function ComposerContentImpl({
       targetAgentId: string,
       text: string,
       sendAttachments: ComposerAttachment[],
-      activeTurnBehavior: "interrupt" | "steer",
+      activeTurnBehavior: ActiveTurnBehavior,
     ) => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -1502,14 +1542,23 @@ function ComposerContentImpl({
   );
 
   const queueMessage = useCallback(
-    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
-      const result = queueComposerMessage({
-        agentId,
-        text: queuedMessage,
-        attachments: queuedAttachments,
-        queue: queueWriter,
-      });
-      if (!result.queued) return;
+    async (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      if (
+        isAgentRunning &&
+        agentState.provider === "pi" &&
+        supportsPiNativeFollowUp &&
+        sendAgentMessageRef.current
+      ) {
+        await sendAgentMessageRef.current(agentId, queuedMessage, queuedAttachments, "follow_up");
+      } else {
+        const result = queueComposerMessage({
+          agentId,
+          text: queuedMessage,
+          attachments: queuedAttachments,
+          queue: queueWriter,
+        });
+        if (!result.queued) return;
+      }
 
       replaceUserInput("");
       setSelectedAttachments([]);
@@ -1518,11 +1567,14 @@ function ComposerContentImpl({
     },
     [
       agentId,
+      agentState.provider,
       clearSentAttachments,
+      isAgentRunning,
       queueWriter,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
+      supportsPiNativeFollowUp,
     ],
   );
 
@@ -1543,9 +1595,8 @@ function ComposerContentImpl({
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
-        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
-        },
+        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) =>
+          queueMessage(queuedText, queuedAttachments),
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
@@ -1860,9 +1911,11 @@ function ComposerContentImpl({
       if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
-      queueMessage(payload.text, outgoingAttachments);
+      void queueMessage(payload.text, outgoingAttachments).catch((error) => {
+        setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+      });
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand, t],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
@@ -2204,15 +2257,19 @@ function ComposerContentImpl({
   );
 
   const queueList = useMemo(
-    () =>
-      renderQueueTrack({
-        queuedMessages,
-        handleEditQueuedMessage,
-        handleSendQueuedNow,
-        editLabel: t("composer.attachments.editQueuedMessage"),
-        sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
-      }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    () => (
+      <>
+        {renderAuthoritativeInputQueue({ queue: pendingInputQueue })}
+        {renderQueueTrack({
+          queuedMessages,
+          handleEditQueuedMessage,
+          handleSendQueuedNow,
+          editLabel: t("composer.attachments.editQueuedMessage"),
+          sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+        })}
+      </>
+    ),
+    [pendingInputQueue, handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
   const messageInputContainerRef = useRef<View>(null);
@@ -2466,6 +2523,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     gap: theme.spacing[2],
+  },
+  queueMode: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   queueText: {
     flex: 1,

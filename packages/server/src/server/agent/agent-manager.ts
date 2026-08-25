@@ -366,6 +366,7 @@ interface ManagedAgentBase {
   features?: AgentFeature[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
+  pendingInputQueue?: { steering: string[]; followUp: string[] };
   bufferedPermissionResolutions: Map<
     string,
     Extract<AgentStreamEvent, { type: "permission_resolved" }>
@@ -1676,6 +1677,7 @@ export class AgentManager {
         features: record.features,
         currentModeId: record.lastModeId ?? null,
         pendingPermissions: new Map(),
+        pendingInputQueue: { steering: [], followUp: [] },
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
         pendingReplacement: false,
@@ -2420,7 +2422,12 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedActiveTurnInput(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+        );
       }
       return admission;
     });
@@ -2428,6 +2435,37 @@ export class AgentManager {
     // still owns the active turn. Never let an A admission replace a later B.
     if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
       throw new Error("Active turn changed before steering could be delivered");
+    }
+    return result;
+  }
+
+  async followUpAgentRun(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<SteerResult> {
+    const agent = this.requireSessionAgent(agentId);
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId || !agent.session.followUpActiveTurn) {
+      return { status: "unavailable" };
+    }
+    const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      const admission = await agent.session.followUpActiveTurn!(prompt, {
+        ...options,
+        expectedTurnId,
+      });
+      if (admission.status === "accepted") {
+        await this.recordAcceptedActiveTurnInput(
+          agent,
+          prompt,
+          options?.clientMessageId,
+          expectedTurnId,
+        );
+      }
+      return admission;
+    });
+    if (result.status === "unavailable" && agent.activeTurnId !== expectedTurnId) {
+      throw new Error("Active turn changed before follow-up could be delivered");
     }
     return result;
   }
@@ -2450,7 +2488,12 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedActiveTurnInput(
+              agent,
+              prompt,
+              options?.clientMessageId,
+              expectedTurnId,
+            );
           }
           return admission;
         })
@@ -2550,7 +2593,7 @@ export class AgentManager {
     }
   }
 
-  private async recordAcceptedSteer(
+  private async recordAcceptedActiveTurnInput(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string | undefined,
@@ -3309,6 +3352,7 @@ export class AgentManager {
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
+      pendingInputQueue: { steering: [], followUp: [] },
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
@@ -3371,6 +3415,7 @@ export class AgentManager {
       activeTurnId: null,
       activeTurnStartedAt: null,
       pendingPermissions: new Map(),
+      pendingInputQueue: { steering: [], followUp: [] },
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
@@ -3487,6 +3532,15 @@ export class AgentManager {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
+    if (event.type === "input_queue_updated") {
+      agent.pendingInputQueue = {
+        steering: [...event.steering],
+        followUp: [...event.followUp],
+      };
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);

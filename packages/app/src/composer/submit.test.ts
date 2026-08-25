@@ -136,9 +136,45 @@ describe("submitAgentInput", () => {
     expect(submitMessage).not.toHaveBeenCalled();
     expect(setUserInput).toHaveBeenCalledWith("");
     expect(setAttachments).toHaveBeenCalledWith([]);
-    expect(setSendError).not.toHaveBeenCalled();
-    expect(setIsProcessing).not.toHaveBeenCalled();
+    expect(setSendError).toHaveBeenCalledWith(null);
+    expect(setIsProcessing).toHaveBeenNthCalledWith(1, true);
+    expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
     expect(clearDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps the composer when an authoritative queue submission fails", async () => {
+    const error = new Error("Follow-up was rejected");
+    const setUserInput = vi.fn();
+    const setAttachments = vi.fn();
+    const setSendError = vi.fn();
+    const setIsProcessing = vi.fn();
+    const onSubmitError = vi.fn();
+
+    await expect(
+      submitAgentInput({
+        message: "  queued message  ",
+        attachments: [{ id: "img-1" }],
+        isAgentRunning: true,
+        canSubmit: true,
+        queueMessage: async () => {
+          throw error;
+        },
+        submitMessage: vi.fn(),
+        clearDraft: vi.fn(),
+        setUserInput,
+        setAttachments,
+        setSendError,
+        setIsProcessing,
+        onSubmitError,
+      }),
+    ).resolves.toBe("failed");
+
+    expect(onSubmitError).toHaveBeenCalledWith(error);
+    expect(setUserInput).not.toHaveBeenCalled();
+    expect(setAttachments).not.toHaveBeenCalled();
+    expect(setSendError).toHaveBeenLastCalledWith("Follow-up was rejected");
+    expect(setIsProcessing).toHaveBeenNthCalledWith(1, true);
+    expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
   });
 
   it("restores the composer when submit fails", async () => {

@@ -132,6 +132,10 @@ export function toAgentPayload(
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
+    pendingInputQueue: {
+      steering: [...(agent.pendingInputQueue?.steering ?? [])],
+      followUp: [...(agent.pendingInputQueue?.followUp ?? [])],
+    },
     persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
@@ -237,6 +241,7 @@ export function buildStoredAgentPayload(
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
     pendingPermissions: [],
+    pendingInputQueue: { steering: [], followUp: [] },
     persistence,
     title: record.title ?? null,
     requiresAttention: record.requiresAttention ?? false,

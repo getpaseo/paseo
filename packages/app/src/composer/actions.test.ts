@@ -179,7 +179,7 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
-    activeTurnBehavior?: "interrupt" | "steer";
+    activeTurnBehavior?: "interrupt" | "steer" | "follow_up";
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };

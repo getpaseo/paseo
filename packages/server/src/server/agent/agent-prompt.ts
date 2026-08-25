@@ -21,7 +21,8 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
->;
+> &
+  Partial<Pick<AgentManager, "followUpAgentRun">>;
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
@@ -31,7 +32,29 @@ export interface StartAgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "followed_up" | "turn_started";
+
+async function followUpActiveRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  options: StartAgentRunOptions | undefined,
+): Promise<{ disposition: "followed_up" } | null> {
+  if (options?.activeTurnBehavior !== "follow_up") {
+    return null;
+  }
+  if (!agentManager.hasInFlightRun(agentId)) {
+    return null;
+  }
+  if (!agentManager.followUpAgentRun) {
+    throw new Error("The active provider does not support queued follow-up input");
+  }
+  const result = await agentManager.followUpAgentRun(agentId, prompt, options.runOptions);
+  if (result.status === "accepted") {
+    return { disposition: "followed_up" };
+  }
+  throw new Error("The active provider does not support queued follow-up input");
+}
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -103,6 +126,10 @@ export async function startAgentRun(
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
+  }
+  const followedUp = await followUpActiveRun(agentManager, agentId, prompt, options);
+  if (followedUp) {
+    return followedUp;
   }
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {

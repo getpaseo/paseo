@@ -229,6 +229,13 @@ class SessionEvents {
     });
   }
 
+  inputQueueEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "input_queue_updated" }> =>
+        event.type === "input_queue_updated",
+    );
+  }
+
   turnCompletedEvents() {
     return this.events.filter(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -302,6 +309,120 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("steers the active Pi turn without replacing it", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((fakeSession) => {
+      fakeSession.state = {
+        ...fakeSession.state,
+        model: {
+          provider: "test",
+          id: "vision-model",
+          input: ["text", "image"],
+        },
+      };
+    });
+    const { session } = await createSession(pi);
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(
+      session.steerActiveTurn?.(
+        [
+          { type: "text", text: "redirect" },
+          { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+        ],
+        { expectedTurnId: turnId, clientMessageId: "steer-1" },
+      ),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(fakeSession.steerRequests).toEqual([{ message: "redirect", imageCount: 1 }]);
+    expect(fakeSession.abortRequested).toBe(false);
+
+    await expect(
+      session.steerActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
+    ).rejects.toThrow("Pi steer input is unavailable: the active turn changed");
+    expect(fakeSession.steerRequests).toHaveLength(1);
+  });
+
+  test("projects Pi queue updates as authoritative input queue state", async () => {
+    const { pi, events } = await createSession();
+    pi.latestSession().emit({
+      type: "queue_update",
+      steering: ["redirect"],
+      followUp: ["afterwards"],
+    });
+
+    expect(events.inputQueueEvents()).toEqual([
+      {
+        type: "input_queue_updated",
+        provider: "pi",
+        steering: ["redirect"],
+        followUp: ["afterwards"],
+      },
+    ]);
+  });
+
+  test("queues native Pi follow-up without replacing the active turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(
+      session.followUpActiveTurn?.("afterwards", {
+        expectedTurnId: turnId,
+        clientMessageId: "follow-up-1",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    expect(fakeSession.followUpRequests).toEqual([{ message: "afterwards", imageCount: 0 }]);
+    expect(fakeSession.abortRequested).toBe(false);
+    fakeSession.finishSubmittedUserMessage({
+      id: "follow-up-entry",
+      parentId: null,
+      text: "afterwards",
+    });
+    expect(events.timelineItems()).not.toContainEqual(
+      expect.objectContaining({ type: "user_message", text: "afterwards" }),
+    );
+
+    await expect(
+      session.followUpActiveTurn?.("stale", { expectedTurnId: "different-turn" }),
+    ).rejects.toThrow("Pi follow-up input is unavailable: the active turn changed");
+  });
+
+  test("does not suppress identical ordinary input after an accepted continuation expires", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+    await session.followUpActiveTurn?.("same text", {
+      expectedTurnId: turnId,
+      clientMessageId: "follow-up-expiring",
+    });
+
+    fakeSession.finishTurn();
+    await session.startTurn("next turn");
+    fakeSession.finishSubmittedUserMessage({
+      id: "ordinary-identical-entry",
+      parentId: null,
+      text: "same text",
+    });
+
+    expect(events.timelineItems()).toContainEqual(
+      expect.objectContaining({ type: "user_message", text: "same text" }),
+    );
+  });
+
+  test("does not submit extension slash commands through native Pi steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+
+    await expect(session.steerActiveTurn?.("/compact", { expectedTurnId: turnId })).rejects.toThrow(
+      "Pi steer input is unavailable: slash commands cannot be submitted during an active turn",
+    );
+    expect(fakeSession.steerRequests).toEqual([]);
+    expect(fakeSession.abortRequested).toBe(false);
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
