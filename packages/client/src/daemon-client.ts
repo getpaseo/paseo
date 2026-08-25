@@ -108,6 +108,8 @@ import type {
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
+  SpeechModelItem,
+  SpeechModelPreferences,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -5001,6 +5003,114 @@ export class DaemonClient {
       responseType: "plugin.rpc.invoke.response",
     });
     return payload.output;
+  }
+
+  async listSpeechModels(): Promise<{
+    models: SpeechModelItem[];
+    storageDir: string;
+    preferences: SpeechModelPreferences;
+  }> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.models.list.request", requestId },
+      responseType: "speech.models.list.response",
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return {
+      models: payload.models,
+      storageDir: payload.storageDir,
+      preferences: payload.preferences,
+    };
+  }
+
+  async downloadSpeechModel(modelId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.model.download.request", requestId, modelId },
+      responseType: "speech.model.download.response",
+      timeout: 10 * 60 * 1000, // 10 min — large model downloads (100-800 MB)
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to download model ${modelId}`);
+    }
+  }
+
+  onSpeechModelDownloadProgress(
+    handler: (progress: {
+      modelId: string;
+      receivedBytes: number;
+      totalBytes?: number | null;
+      percent?: number | null;
+      stage: "downloading" | "extracting" | "verifying" | "complete";
+    }) => void,
+  ): () => void {
+    return this.on("speech.model.download.progress", (message) => {
+      handler(message.payload);
+    });
+  }
+
+  async setActiveSpeechModel(modelId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.model.set_active.request", requestId, modelId },
+      responseType: "speech.model.set_active.response",
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to activate model ${modelId}`);
+    }
+  }
+
+  async setSpeechModelLanguage(modelId: string, language: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.model.set_language.request", requestId, modelId, language },
+      responseType: "speech.model.set_language.response",
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to set language for model ${modelId}`);
+    }
+  }
+
+  async setSpeechModelSpeaker(modelId: string, speakerId: number): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.model.set_speaker.request", requestId, modelId, speakerId },
+      responseType: "speech.model.set_speaker.response",
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to set speaker for model ${modelId}`);
+    }
+  }
+
+  async setSpeechFeatureEnabled(feature: "dictation" | "voiceMode", enabled: boolean): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.feature.set_enabled.request", requestId, feature, enabled },
+      responseType: "speech.feature.set_enabled.response",
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to update speech feature ${feature}`);
+    }
+  }
+
+  async deleteSpeechModel(modelId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.model.delete.request", requestId, modelId },
+      responseType: "speech.model.delete.response",
+    });
+    if (!payload.ok || payload.error) {
+      throw new Error(payload.error ?? `Failed to delete model ${modelId}`);
+    }
   }
 
   async respondToPermissionAndWait(

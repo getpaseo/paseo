@@ -349,6 +349,7 @@ export interface SpeechService {
   resolveDictationSttLanguage: () => string;
   getReadiness: () => SpeechReadinessSnapshot;
   onReadinessChange: (listener: (snapshot: SpeechReadinessSnapshot) => void) => () => void;
+  updateConfig: (next: PaseoSpeechConfig | undefined) => void;
   start: () => void;
   stop: () => Promise<void>;
   ready: Promise<void>;
@@ -360,10 +361,10 @@ export function createSpeechService(params: {
   speechConfig?: PaseoSpeechConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
-  const speechConfig = params.speechConfig ?? null;
+  let speechConfig = params.speechConfig ?? null;
   const openaiConfig = params.openaiConfig;
-  const providers = resolveRequestedSpeechProviders(speechConfig);
-  const requestedProviders = describeRequestedProviders(providers);
+  let providers = resolveRequestedSpeechProviders(speechConfig);
+  let requestedProviders = describeRequestedProviders(providers);
 
   validateOpenAiCredentialRequirements({
     providers,
@@ -717,6 +718,28 @@ export function createSpeechService(params: {
     backgroundDownloadPromise = null;
   };
 
+  const updateConfig = (next: PaseoSpeechConfig | undefined): void => {
+    if (stopped) {
+      return;
+    }
+    speechConfig = next ?? null;
+    providers = resolveRequestedSpeechProviders(speechConfig);
+    requestedProviders = describeRequestedProviders(providers);
+    backgroundDownloadError = null;
+    logger.info({ requestedProviders }, "Speech config updated, re-reconciling speech services");
+    void (async () => {
+      try {
+        await runReconcile();
+        if (missingLocalModelIds.length > 0 && !backgroundDownloadInProgress) {
+          startBackgroundDownload();
+        }
+        scheduleMonitor();
+      } catch (error) {
+        logger.error({ err: error }, "Speech config update reconciliation failed");
+      }
+    })();
+  };
+
   return {
     resolveTurnDetection: () => turnDetectionService,
     resolveStt: () => sttService,
@@ -726,6 +749,7 @@ export function createSpeechService(params: {
     resolveDictationSttLanguage: () => speechConfig?.sttLanguages?.dictation ?? "en",
     getReadiness: () => lastPublishedReadinessSnapshot ?? computeReadinessSnapshot(),
     onReadinessChange: subscribeSpeechReadiness,
+    updateConfig,
     start,
     stop,
     ready,

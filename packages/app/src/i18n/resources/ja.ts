@@ -1922,6 +1922,7 @@ export const ja: TranslationResources = {
       metadata: "メタデータ",
       workspaces: "ワークスペース",
       providers: "プロバイダー",
+      speech: "音声",
       usage: "使用状況",
       terminals: "ターミナル",
       plugins: "プラグイン",

@@ -155,6 +155,8 @@ import {
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
+import { SpeechModelManager } from "./speech/speech-model-manager.js";
+import { resolveDefaultSpeechModelsDir } from "./speech/providers/local/model-directory.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
   createWorkspaceGitObserverService,
@@ -508,6 +510,7 @@ export interface SessionOptions {
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
+  onSpeechPreferencesChanged?: () => void;
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -727,6 +730,8 @@ export class Session {
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
+  private readonly speechModelManager: SpeechModelManager;
+  private readonly onSpeechPreferencesChanged: (() => void) | undefined;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -789,6 +794,7 @@ export class Session {
       resolveScriptHealth,
       voice,
       voiceBridge,
+      onSpeechPreferencesChanged,
       dictation,
       serverId,
       daemonVersion,
@@ -829,6 +835,12 @@ export class Session {
       paseoHome,
       logger: this.sessionLogger,
     });
+    this.speechModelManager = new SpeechModelManager(
+      resolveDefaultSpeechModelsDir(this.paseoHome),
+      this.sessionLogger,
+      this.paseoHome,
+    );
+    this.onSpeechPreferencesChanged = onSpeechPreferencesChanged;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
@@ -2111,6 +2123,20 @@ export class Session {
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "speech.models.list.request":
+        return this.handleSpeechModelsListRequest(msg);
+      case "speech.model.download.request":
+        return this.handleSpeechModelDownloadRequest(msg);
+      case "speech.model.delete.request":
+        return this.handleSpeechModelDeleteRequest(msg);
+      case "speech.model.set_active.request":
+        return this.handleSpeechModelSetActiveRequest(msg);
+      case "speech.model.set_language.request":
+        return this.handleSpeechModelSetLanguageRequest(msg);
+      case "speech.model.set_speaker.request":
+        return this.handleSpeechModelSetSpeakerRequest(msg);
+      case "speech.feature.set_enabled.request":
+        return this.handleSpeechFeatureSetEnabledRequest(msg);
       case "voice_audio_chunk":
         return this.voiceSession.handleAudioChunk(msg);
       case "abort_request":
@@ -2156,6 +2182,217 @@ export class Session {
       }
       default:
         return undefined;
+    }
+  }
+
+  private async handleSpeechModelsListRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.models.list.request" }>,
+  ): Promise<void> {
+    try {
+      const models = await this.speechModelManager.listModels();
+      this.emit({
+        type: "speech.models.list.response",
+        payload: {
+          requestId: msg.requestId,
+          models,
+          storageDir: this.speechModelManager.getModelsDir(),
+          preferences: this.speechModelManager.getPreferences(),
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.models.list.response",
+        payload: {
+          requestId: msg.requestId,
+          models: [],
+          storageDir: this.speechModelManager.getModelsDir(),
+          preferences: {
+            activeSttModelId: null,
+            activeTtsModelId: null,
+            modelLanguages: {},
+          },
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechModelDownloadRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.model.download.request" }>,
+  ): Promise<void> {
+    try {
+      await this.speechModelManager.downloadModel(msg.modelId, {
+        onProgress: (progress) => {
+          this.emit({
+            type: "speech.model.download.progress",
+            payload: {
+              modelId: progress.modelId,
+              receivedBytes: progress.receivedBytes,
+              totalBytes: progress.totalBytes,
+              percent: progress.percent,
+              stage: progress.stage,
+            },
+          });
+        },
+      });
+      this.emit({
+        type: "speech.model.download.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.model.download.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechModelSetActiveRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.model.set_active.request" }>,
+  ): Promise<void> {
+    try {
+      await this.speechModelManager.setActiveModel(msg.modelId);
+      this.onSpeechPreferencesChanged?.();
+      this.emit({
+        type: "speech.model.set_active.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.model.set_active.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechModelSetLanguageRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.model.set_language.request" }>,
+  ): Promise<void> {
+    try {
+      this.speechModelManager.setModelLanguage(msg.modelId, msg.language);
+      this.onSpeechPreferencesChanged?.();
+      this.emit({
+        type: "speech.model.set_language.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          language: msg.language,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.model.set_language.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          language: msg.language,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechModelSetSpeakerRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.model.set_speaker.request" }>,
+  ): Promise<void> {
+    try {
+      this.speechModelManager.setSpeaker(msg.modelId, msg.speakerId);
+      this.onSpeechPreferencesChanged?.();
+      this.emit({
+        type: "speech.model.set_speaker.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          speakerId: msg.speakerId,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.model.set_speaker.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          speakerId: msg.speakerId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechFeatureSetEnabledRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.feature.set_enabled.request" }>,
+  ): Promise<void> {
+    try {
+      this.speechModelManager.setFeatureEnabled(msg.feature, msg.enabled);
+      this.onSpeechPreferencesChanged?.();
+      this.emit({
+        type: "speech.feature.set_enabled.response",
+        payload: {
+          requestId: msg.requestId,
+          feature: msg.feature,
+          enabled: msg.enabled,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.feature.set_enabled.response",
+        payload: {
+          requestId: msg.requestId,
+          feature: msg.feature,
+          enabled: msg.enabled,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleSpeechModelDeleteRequest(
+    msg: Extract<SessionInboundMessage, { type: "speech.model.delete.request" }>,
+  ): Promise<void> {
+    try {
+      await this.speechModelManager.deleteModel(msg.modelId);
+      this.emit({
+        type: "speech.model.delete.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: true,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "speech.model.delete.response",
+        payload: {
+          requestId: msg.requestId,
+          modelId: msg.modelId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   }
 

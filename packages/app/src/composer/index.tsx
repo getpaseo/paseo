@@ -126,6 +126,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { getVoiceReadinessState } from "@/utils/server-info-capabilities";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -1058,6 +1059,7 @@ interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
   hasSendableContent: boolean;
   isCompact: boolean;
   showVoice: boolean;
+  isVoiceModeFeatureEnabled?: boolean;
 }
 
 function ComposerRightControlsSlot({
@@ -1067,11 +1069,17 @@ function ComposerRightControlsSlot({
   hasSendableContent,
   isCompact,
   showVoice,
+  isVoiceModeFeatureEnabled = true,
   ...voiceProps
 }: ComposerRightControlsSlotProps) {
   const hideVoiceForCompactInput = isCompact && hasSendableContent;
   const showVoiceModeButton =
-    showVoice && !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
+    showVoice &&
+    isVoiceModeFeatureEnabled &&
+    !isVoiceModeForAgent &&
+    hasAgent &&
+    !isAgentRunning &&
+    !hideVoiceForCompactInput;
   if (!showVoiceModeButton) return null;
   return (
     <View style={styles.rightControls}>
@@ -1805,6 +1813,11 @@ function ComposerContentImpl({
   });
 
   const isVoiceModeForAgent = resolveIsVoiceModeForAgent(voice, serverId, agentId);
+  const composerServerInfo = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo,
+  );
+  const isVoiceModeFeatureEnabled =
+    getVoiceReadinessState({ serverInfo: composerServerInfo, mode: "voice" })?.enabled !== false;
 
   const handleToggleRealtimeVoice = useCallback(() => {
     attemptStartRealtimeVoice({
@@ -1918,6 +1931,7 @@ function ComposerContentImpl({
         hasSendableContent={hasSendableContent}
         isCompact={isCompactLayout}
         showVoice={mode.showVoice}
+        isVoiceModeFeatureEnabled={isVoiceModeFeatureEnabled}
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
         isConnected={isConnected}
@@ -1936,6 +1950,7 @@ function ComposerContentImpl({
       isConnected,
       isCompactLayout,
       isVoiceModeForAgent,
+      isVoiceModeFeatureEnabled,
       isVoiceSwitching,
       mode.showVoice,
       realtimeVoiceButtonStyle,

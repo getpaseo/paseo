@@ -1883,6 +1883,7 @@ export const zhCN: TranslationResources = {
       metadata: "元数据",
       workspaces: "Workspaces",
       providers: "Providers",
+      speech: "语音",
       usage: "使用情况",
       terminals: "Terminals",
       plugins: "插件",

@@ -162,6 +162,8 @@ export async function initializeLocalSpeechServices(params: {
           voiceSttModel: localModels.voiceLocalSttModel,
           dictationSttModel: localModels.dictationLocalSttModel,
           voiceTtsModel: localModels.voiceLocalTtsModel,
+          voiceSttLanguage: speechConfig?.sttLanguages?.voice,
+          dictationSttLanguage: speechConfig?.sttLanguages?.dictation,
           voiceTtsSpeakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
           voiceTtsSpeed: speechConfig?.local?.models.voiceTtsSpeed,
         },

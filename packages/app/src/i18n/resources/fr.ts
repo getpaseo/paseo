@@ -1955,6 +1955,7 @@ export const fr: TranslationResources = {
       metadata: "Métadonnées",
       workspaces: "Workspaces",
       providers: "Fournisseurs",
+      speech: "Voix",
       usage: "Utilisation",
       terminals: "Terminals",
       plugins: "Plugins",

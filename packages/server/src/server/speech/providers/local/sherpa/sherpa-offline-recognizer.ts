@@ -9,13 +9,23 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
-export interface SherpaOfflineRecognizerModel {
-  kind: "nemo_transducer";
-  encoder: string;
-  decoder: string;
-  joiner: string;
-  tokens: string;
-}
+export type SherpaOfflineRecognizerModel =
+  | {
+      kind: "nemo_transducer";
+      encoder: string;
+      decoder: string;
+      joiner: string;
+      tokens: string;
+    }
+  | {
+      kind: "whisper";
+      encoder: string;
+      decoder: string;
+      tokens: string;
+      language?: string;
+      task?: string;
+      tailPaddings?: number;
+    };
 
 export interface SherpaOfflineRecognizerConfig {
   model: SherpaOfflineRecognizerModel;
@@ -42,6 +52,60 @@ interface SherpaOfflineStreamNative {
   free?: () => void;
 }
 
+function assertModelFiles(model: SherpaOfflineRecognizerModel): void {
+  switch (model.kind) {
+    case "nemo_transducer":
+      assertFileExists(model.encoder, "offline encoder");
+      assertFileExists(model.decoder, "offline decoder");
+      assertFileExists(model.joiner, "offline joiner");
+      assertFileExists(model.tokens, "tokens");
+      return;
+    case "whisper":
+      assertFileExists(model.encoder, "offline encoder");
+      assertFileExists(model.decoder, "offline decoder");
+      assertFileExists(model.tokens, "tokens");
+      return;
+  }
+}
+
+function buildModelConfig(
+  model: SherpaOfflineRecognizerModel,
+  shared: { numThreads: number; provider: "cpu"; debug: 0 | 1 },
+): Record<string, unknown> {
+  switch (model.kind) {
+    case "nemo_transducer":
+      return {
+        transducer: {
+          encoder: model.encoder,
+          decoder: model.decoder,
+          joiner: model.joiner,
+        },
+        tokens: model.tokens,
+        modelType: "nemo_transducer",
+        numThreads: shared.numThreads,
+        provider: shared.provider,
+        debug: shared.debug,
+      };
+    case "whisper":
+      return {
+        whisper: {
+          encoder: model.encoder,
+          decoder: model.decoder,
+          ...(model.language !== undefined && model.language !== ""
+            ? { language: model.language }
+            : {}),
+          task: model.task ?? "transcribe",
+          ...(model.tailPaddings !== undefined ? { tailPaddings: model.tailPaddings } : {}),
+        },
+        tokens: model.tokens,
+        modelType: "whisper",
+        numThreads: shared.numThreads,
+        provider: shared.provider,
+        debug: shared.debug,
+      };
+  }
+}
+
 export class SherpaOfflineRecognizerEngine {
   public readonly recognizer: SherpaOfflineRecognizerNative;
   public readonly sampleRate: number;
@@ -52,12 +116,10 @@ export class SherpaOfflineRecognizerEngine {
       module: "speech",
       provider: "local",
       component: "offline-recognizer",
+      modelKind: config.model.kind,
     });
 
-    assertFileExists(config.model.encoder, "offline encoder");
-    assertFileExists(config.model.decoder, "offline decoder");
-    assertFileExists(config.model.joiner, "offline joiner");
-    assertFileExists(config.model.tokens, "tokens");
+    assertModelFiles(config.model);
 
     const sherpa = loadSherpaOnnxNode();
 
@@ -66,18 +128,11 @@ export class SherpaOfflineRecognizerEngine {
         sampleRate: config.sampleRate ?? 16000,
         featureDim: config.featureDim ?? 80,
       },
-      modelConfig: {
-        transducer: {
-          encoder: config.model.encoder,
-          decoder: config.model.decoder,
-          joiner: config.model.joiner,
-        },
-        tokens: config.model.tokens,
-        modelType: "nemo_transducer",
+      modelConfig: buildModelConfig(config.model, {
         numThreads: config.numThreads ?? 1,
         provider: config.provider ?? "cpu",
         debug: config.debug ?? 0,
-      },
+      }),
       decodingMethod: config.decodingMethod ?? "greedy_search",
       maxActivePaths: config.maxActivePaths ?? 4,
     };

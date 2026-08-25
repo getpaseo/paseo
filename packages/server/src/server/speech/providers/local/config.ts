@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import { z } from "zod";
 
 import type { PersistedConfig } from "../../../persisted-config.js";
@@ -13,6 +11,7 @@ import {
   type LocalSttModelId,
   type LocalTtsModelId,
 } from "./models.js";
+import { resolveDefaultSpeechModelsDir } from "./model-directory.js";
 
 export interface LocalSpeechModelConfig {
   dictationStt: LocalSttModelId;
@@ -34,7 +33,6 @@ export interface ResolvedLocalSpeechConfig {
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 
-const DEFAULT_LOCAL_MODELS_SUBDIR = path.join("models", "local-speech");
 const DEFAULT_STT_LANGUAGE = "en";
 
 export interface LocalSpeechSttLanguageConfig {
@@ -148,7 +146,7 @@ function buildLocalSpeechResolutionInput(params: {
     modelsDir: firstDefinedValue<string>([
       env.PASEO_LOCAL_MODELS_DIR,
       persisted.providers?.local?.modelsDir,
-      path.join(paseoHome, DEFAULT_LOCAL_MODELS_SUBDIR),
+      resolveDefaultSpeechModelsDir(paseoHome),
     ]),
     dictationLocalSttModel: firstDefinedValue<string>([
       env.PASEO_DICTATION_LOCAL_STT_MODEL,
@@ -200,9 +198,7 @@ export function resolveLocalSpeechConfig(params: {
     buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
   );
 
-  const resolvedVoiceTtsSpeakerId =
-    parsed.voiceLocalTtsSpeakerId ??
-    (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
+  const resolvedVoiceTtsSpeakerId = parsed.voiceLocalTtsSpeakerId ?? 0;
 
   return {
     sttLanguages: {

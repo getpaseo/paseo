@@ -1950,6 +1950,7 @@ export const es: TranslationResources = {
       metadata: "Metadatos",
       workspaces: "Workspaces",
       providers: "Proveedores",
+      speech: "Voz",
       usage: "Uso",
       terminals: "Terminals",
       plugins: "Plugins",

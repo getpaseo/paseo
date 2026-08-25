@@ -1904,6 +1904,7 @@ export const ar: TranslationResources = {
       metadata: "البيانات الوصفية",
       workspaces: "Workspaces",
       providers: "مقدمي الخدمات",
+      speech: "الكلام",
       usage: "الاستخدام",
       terminals: "Terminals",
       plugins: "Plugins",

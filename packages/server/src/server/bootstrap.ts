@@ -183,6 +183,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -1507,6 +1508,20 @@ export async function createPaseoDaemon(
   });
   logger.info({ elapsed: elapsed() }, "Speech service created");
 
+  const applySpeechPreferencesChange = (): void => {
+    try {
+      const persisted = loadPersistedConfig(config.paseoHome, logger);
+      const resolved = resolveSpeechConfig({
+        paseoHome: config.paseoHome,
+        env: process.env,
+        persisted,
+      });
+      speechService.updateConfig(resolved.speech);
+    } catch (error) {
+      logger.error({ err: error }, "Failed to apply speech model preferences change");
+    }
+  };
+
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
   const start = async () => {
@@ -1654,6 +1669,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              applySpeechPreferencesChange,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

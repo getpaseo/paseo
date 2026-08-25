@@ -605,6 +605,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly directorySync = new DirectorySyncService();
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
+  private readonly onSpeechPreferencesChanged: (() => void) | undefined;
 
   constructor(
     server: HTTPServer,
@@ -652,6 +653,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    onSpeechPreferencesChanged?: () => void,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -668,6 +670,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.onSpeechPreferencesChanged = onSpeechPreferencesChanged;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1463,6 +1466,7 @@ export class VoiceAssistantWebSocketServer {
       voice: {
         turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
       },
+      onSpeechPreferencesChanged: this.onSpeechPreferencesChanged,
       voiceBridge: {
         registerVoiceSpeakHandler: (agentId, handler) => {
           this.voiceSpeakHandlers.set(agentId, handler);

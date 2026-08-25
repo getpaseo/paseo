@@ -1,9 +1,13 @@
 import pino from "pino";
+import { existsSync } from "node:fs";
 
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 import type { TurnDetectionSession } from "../../turn-detection-provider.js";
 import { getLocalSpeechModelDir, type LocalSttModelId, type LocalTtsModelId } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
+import {
+  SherpaOfflineRecognizerEngine,
+  type SherpaOfflineRecognizerConfig,
+} from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
@@ -55,12 +59,35 @@ function sttModelId(
   return (model === "voice" ? config.voiceSttModel : config.dictationSttModel) as LocalSttModelId;
 }
 
+function sttLanguage(config: LocalSpeechWorkerConfig, model: "voice" | "dictation"): string {
+  return (model === "voice" ? config.voiceSttLanguage : config.dictationSttLanguage) ?? "auto";
+}
+
 function ttsModelId(config: LocalSpeechWorkerConfig): LocalTtsModelId {
   return config.voiceTtsModel as LocalTtsModelId;
 }
 
-function sttEngineKey(config: LocalSpeechWorkerConfig, modelId: LocalSttModelId): string {
-  return `${config.modelsDir}:${modelId}`;
+function resolveModelFile(modelDir: string, candidates: string[], label: string): string {
+  for (const candidate of candidates) {
+    const filePath = `${modelDir}/${candidate}`;
+    if (existsSync(filePath)) {
+      return filePath;
+    }
+  }
+  throw new Error(`Missing ${label} in ${modelDir} (tried: ${candidates.join(", ")})`);
+}
+
+function sttModelSupportsLanguage(modelId: LocalSttModelId): boolean {
+  return modelId.startsWith("whisper-");
+}
+
+function sttEngineKey(
+  config: LocalSpeechWorkerConfig,
+  modelId: LocalSttModelId,
+  language: string,
+): string {
+  const languageSuffix = sttModelSupportsLanguage(modelId) ? `:${language}` : "";
+  return `${config.modelsDir}:${modelId}${languageSuffix}`;
 }
 
 function ttsKey(config: LocalSpeechWorkerConfig): string {
@@ -72,29 +99,70 @@ function ttsKey(config: LocalSpeechWorkerConfig): string {
   ].join(":");
 }
 
+function buildSttEngineConfig(
+  modelDir: string,
+  modelId: LocalSttModelId,
+  language: string,
+): SherpaOfflineRecognizerConfig {
+  const tokens = resolveModelFile(modelDir, ["tokens.txt"], "tokens");
+  const resolvedLanguage = language && language !== "auto" ? language : undefined;
+
+  switch (modelId) {
+    case "parakeet-tdt-0.6b-v3-int8":
+      return {
+        model: {
+          kind: "nemo_transducer",
+          encoder: resolveModelFile(modelDir, ["encoder.int8.onnx", "encoder.onnx"], "encoder"),
+          decoder: resolveModelFile(modelDir, ["decoder.int8.onnx", "decoder.onnx"], "decoder"),
+          joiner: resolveModelFile(modelDir, ["joiner.int8.onnx", "joiner.onnx"], "joiner"),
+          tokens,
+        },
+        numThreads: 2,
+        debug: 0,
+      };
+    case "whisper-large-v3-turbo-int8":
+      return {
+        model: {
+          kind: "whisper",
+          encoder: resolveModelFile(
+            modelDir,
+            ["turbo-encoder.int8.onnx", "turbo-encoder.onnx", "encoder.int8.onnx", "encoder.onnx"],
+            "encoder",
+          ),
+          decoder: resolveModelFile(
+            modelDir,
+            ["turbo-decoder.int8.onnx", "turbo-decoder.onnx", "decoder.int8.onnx", "decoder.onnx"],
+            "decoder",
+          ),
+          tokens: resolveModelFile(
+            modelDir,
+            ["turbo-tokens.txt", "tokens.txt", "large-v3-turbo-tokens.txt"],
+            "tokens",
+          ),
+          ...(resolvedLanguage ? { language: resolvedLanguage } : {}),
+        },
+        numThreads: 2,
+        debug: 0,
+      };
+    default:
+      throw new Error(`Unsupported local STT model: ${modelId}`);
+  }
+}
+
 function getSttEngine(
   config: LocalSpeechWorkerConfig,
   model: "voice" | "dictation",
 ): LocalSttEngine {
   const modelId = sttModelId(config, model);
-  const key = sttEngineKey(config, modelId);
+  const language = sttLanguage(config, model);
+  const key = sttEngineKey(config, modelId, language);
   const existing = sttEngines.get(key);
   if (existing) {
     return existing;
   }
   const modelDir = getLocalSpeechModelDir(config.modelsDir, modelId);
   const created = new SherpaOfflineRecognizerEngine(
-    {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
-      numThreads: 2,
-      debug: 0,
-    },
+    buildSttEngineConfig(modelDir, modelId, language),
     logger,
   );
   sttEngines.set(key, created);
@@ -106,7 +174,8 @@ function getSttProvider(
   model: "voice" | "dictation",
 ): SherpaOnnxParakeetSTT {
   const modelId = sttModelId(config, model);
-  const key = sttEngineKey(config, modelId);
+  const language = sttLanguage(config, model);
+  const key = sttEngineKey(config, modelId, language);
   const existing = sttProviders.get(key);
   if (existing) {
     return existing;
