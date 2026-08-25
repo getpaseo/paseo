@@ -30,10 +30,13 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../../agent-sdk-types.js";
+import { toDiagnosticErrorMessage } from "../diagnostic-utils.js";
 import { mapOpenCodeV2ToolCall } from "./tool-call-mapper.js";
 
 export interface OpenCodeV2EventTranslationState {
   sessionId: string;
+  /** Provider id of the session's model (e.g. "openai"), used in auth error messages. */
+  providerId?: string | null;
   /** assistantMessageID -> ordinal -> text emitted so far. */
   textByMessage: Map<string, Map<number, string>>;
   /** assistantMessageID -> ordinal -> reasoning text emitted so far. */
@@ -62,10 +65,12 @@ export function createOpenCodeV2EventTranslationState(
     pendingUserMessageText?: string | null;
     pendingClientMessageId?: string | null;
     accumulatedUsage?: AgentUsage;
+    providerId?: string | null;
   } = {},
 ): OpenCodeV2EventTranslationState {
   return {
     sessionId,
+    providerId: options.providerId ?? null,
     textByMessage: new Map(),
     reasoningByMessage: new Map(),
     toolNameByCallId: new Map(),
@@ -560,6 +565,73 @@ function appendOpenCodeV2ExecutionSucceeded(
   });
 }
 
+/**
+ * Detect an opencode2 auth/credentials failure from its structured error type.
+ * The v2 server reports expired/invalid credentials as `provider.auth` with an
+ * often-empty message; the structured type is the only signal that survives.
+ */
+function isOpenCodeV2AuthErrorType(type: string | undefined): boolean {
+  if (!type) {
+    return false;
+  }
+  return /(^|[.\s])(auth|authorization|unauthorized)([.\s]|$)/i.test(type) || /\b401\b/.test(type);
+}
+
+/** Detect auth/credentials failure markers inside a free-form error message. */
+function isOpenCodeV2AuthErrorText(text: string | undefined): boolean {
+  if (!text) {
+    return false;
+  }
+  return (
+    /\bauthentication failed\b/i.test(text) ||
+    /\bunauthorized\b/i.test(text) ||
+    /\b401\b/.test(text) ||
+    /Integration\.Authorization/i.test(text)
+  );
+}
+
+function buildOpenCodeV2AuthErrorMessage(providerId?: string | null, detail?: string): string {
+  const providerClause = providerId ? ` for ${providerId}` : "";
+  const base = `Authentication failed${providerClause} — check your opencode2 credentials`;
+  const trimmedDetail = detail?.trim();
+  return trimmedDetail ? `${base}: ${trimmedDetail}` : base;
+}
+
+/**
+ * Map a structured `session.execution.failed` error to a user-facing message.
+ * Auth failures (expired/invalid credentials) get a clear credentials message
+ * instead of the generic "Unknown error" that an empty message would produce.
+ */
+export function toOpenCodeV2ExecutionErrorMessage(
+  error: { type?: string; message?: string } | undefined,
+  providerId?: string | null,
+): string {
+  const type = error?.type;
+  const message = error?.message?.trim();
+  if (isOpenCodeV2AuthErrorType(type) || isOpenCodeV2AuthErrorText(message)) {
+    return buildOpenCodeV2AuthErrorMessage(providerId, message || undefined);
+  }
+  if (message) {
+    return message;
+  }
+  if (type) {
+    return `OpenCode 2 turn failed (${type})`;
+  }
+  return "OpenCode 2 turn failed";
+}
+
+/**
+ * Map an arbitrary thrown error (e.g. a rejected `session.prompt`) to a
+ * user-facing message, preserving auth/credentials failures as a clear message.
+ */
+export function toOpenCodeV2TurnErrorMessage(error: unknown, providerId?: string | null): string {
+  const message = toDiagnosticErrorMessage(error);
+  if (isOpenCodeV2AuthErrorText(message)) {
+    return buildOpenCodeV2AuthErrorMessage(providerId, message);
+  }
+  return message;
+}
+
 function appendOpenCodeV2ExecutionFailed(
   event: SessionExecutionFailed,
   state: OpenCodeV2EventTranslationState,
@@ -572,7 +644,7 @@ function appendOpenCodeV2ExecutionFailed(
   events.push({
     type: "turn_failed",
     provider: "opencode-v2",
-    error: error?.message ?? "OpenCode 2 turn failed",
+    error: toOpenCodeV2ExecutionErrorMessage(error, state.providerId),
     ...(error?.type ? { code: error.type } : {}),
   });
 }

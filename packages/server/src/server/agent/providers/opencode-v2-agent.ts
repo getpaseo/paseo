@@ -65,6 +65,7 @@ import {
   createOpenCodeV2EventTranslationState,
   resetOpenCodeV2TurnTrackingState,
   resolveOpenCodeV2PermissionReply,
+  toOpenCodeV2TurnErrorMessage,
   translateOpenCodeV2Event,
   type OpenCodeV2EventTranslationState,
 } from "./opencode-v2/event-translator.js";
@@ -622,6 +623,8 @@ export class OpenCodeV2AgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly sessionId: string;
   private readonly events: OpenCodeV2EventSource;
+  /** Provider id of the session's model (e.g. "openai"), for auth error messages. */
+  private readonly providerId: string | null;
   private releaseServer: (() => Promise<void>) | null;
   private readonly persistSession: boolean;
 
@@ -653,8 +656,11 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.events = events;
     this.releaseServer = releaseServer ?? null;
     this.persistSession = persistSession;
+    this.providerId = parseOpenCodeV2ModelRef(config.model)?.providerID ?? null;
     this.currentMode = normalizeOpenCodeV2ModeId(config.modeId);
-    this.translationState = createOpenCodeV2EventTranslationState(sessionId);
+    this.translationState = createOpenCodeV2EventTranslationState(sessionId, {
+      providerId: this.providerId,
+    });
     this.unsubscribeEvents = this.events.subscribe((input) => {
       this.ingress = this.ingress
         .then(() => this.consumeEventSourceInput(input))
@@ -719,6 +725,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     this.translationState = createOpenCodeV2EventTranslationState(this.sessionId, {
       pendingUserMessageText: text,
       pendingClientMessageId: options?.clientMessageId ?? null,
+      providerId: this.providerId,
     });
 
     const turnId = this.createTurnId();
@@ -740,7 +747,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
           {
             type: "turn_failed",
             provider: "opencode-v2",
-            error: toDiagnosticErrorMessage(error),
+            error: toOpenCodeV2TurnErrorMessage(error, this.providerId),
           },
           turnId,
         );

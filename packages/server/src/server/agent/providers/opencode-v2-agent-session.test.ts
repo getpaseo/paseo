@@ -558,7 +558,34 @@ describe("OpenCodeV2AgentClient session core", () => {
 
     await session.close();
   });
-
+  test("an auth failure with an empty server message surfaces a clear credentials error", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode-v2",
+      cwd: "/workspace/repo",
+      model: "openai/gpt-5.5",
+    });
+    const runPromise = session.run("Use the model");
+    openCode.emitEvent(
+      v2Event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: { type: "provider.auth", message: "" },
+        },
+      }),
+    );
+    await expect(runPromise).rejects.toThrow(
+      "Authentication failed for openai — check your opencode2 credentials",
+    );
+    await session.close();
+  });
   test("interrupt calls session.interrupt while a turn is running", async () => {
     const { session, openCode } = await createSession();
 

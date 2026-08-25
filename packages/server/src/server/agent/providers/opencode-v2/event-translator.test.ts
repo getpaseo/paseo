@@ -202,6 +202,116 @@ describe("translateOpenCodeV2Event", () => {
     ]);
   });
 
+  it("maps a provider.auth failure with an empty message to a clear credentials message", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: { type: "provider.auth", message: "" },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode-v2",
+        error: "Authentication failed — check your opencode2 credentials",
+        code: "provider.auth",
+      },
+    ]);
+  });
+  it("names the session's provider in the auth credentials message", () => {
+    const state = createOpenCodeV2EventTranslationState("session-1", { providerId: "openai" });
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: { type: "provider.auth", message: "" },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode-v2",
+        error: "Authentication failed for openai — check your opencode2 credentials",
+        code: "provider.auth",
+      },
+    ]);
+  });
+  it("keeps a provider detail message on an auth failure", () => {
+    const state = createOpenCodeV2EventTranslationState("session-1", { providerId: "openai" });
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: { type: "provider.auth", message: "Request failed: 401" },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode-v2",
+        error:
+          "Authentication failed for openai — check your opencode2 credentials: Request failed: 401",
+        code: "provider.auth",
+      },
+    ]);
+  });
+  it("maps a message-level 401/unauthorized failure to a credentials message", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: {
+            type: "provider.error",
+            message: "Integration.Authorization Request failed: 401",
+          },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode-v2",
+        error:
+          "Authentication failed — check your opencode2 credentials: Integration.Authorization Request failed: 401",
+        code: "provider.error",
+      },
+    ]);
+  });
+  it("falls back to the error type when the failure message is empty", () => {
+    const state = createState();
+    const events = translateOpenCodeV2Event(
+      event({
+        type: "session.execution.failed",
+        data: {
+          sessionID: "session-1",
+          error: { type: "provider.no-route", message: "" },
+        },
+      }),
+      state,
+    );
+    expect(events).toEqual([
+      {
+        type: "turn_failed",
+        provider: "opencode-v2",
+        error: "OpenCode 2 turn failed (provider.no-route)",
+        code: "provider.no-route",
+      },
+    ]);
+  });
   it("emits turn_canceled on session.execution.interrupted", () => {
     const state = createState();
     const events = translateOpenCodeV2Event(
