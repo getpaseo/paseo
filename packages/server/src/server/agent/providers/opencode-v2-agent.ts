@@ -26,6 +26,11 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   FetchCatalogOptions,
+  ImportableProviderSession,
+  ImportedProviderSession,
+  ImportProviderSessionContext,
+  ImportProviderSessionInput,
+  ListImportableSessionsOptions,
   ProviderCatalog,
   ProviderRefreshContext,
   ResolveAgentCreateConfigInput,
@@ -33,6 +38,8 @@ import type {
   SteerActiveTurnOptions,
   SteerResult,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
+import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
@@ -476,6 +483,99 @@ function buildOpenCodeV2ToolReplayItem(
   return item ? build(item) : null;
 }
 
+const OPENCODE_V2_PERSISTED_SESSION_LIMIT = 200;
+
+function normalizeOpenCodeV2SessionTitle(title: string | null | undefined): string | null {
+  const normalized = title?.trim();
+  return normalized ? normalized : null;
+}
+
+function getOpenCodeV2SessionTimestamp(session: SessionInfo): number {
+  return session.time?.updated ?? session.time?.created ?? 0;
+}
+
+function buildOpenCodeV2ModelLookupKey(providerId: string, modelId: string): string {
+  return `${providerId}/${modelId}`;
+}
+
+/**
+ * List durable opencode2 sessions as importable paseo sessions. v2 `session.list`
+ * returns every session (there is no archive filter); cwd filtering is done
+ * here so a workspace-scoped import list only shows that workspace's sessions.
+ */
+async function collectOpenCodeV2ImportableSessions(
+  client: OpenCodeV2ClientLike,
+  options?: ListImportableSessionsOptions,
+): Promise<ImportableProviderSession[]> {
+  const limit = options?.limit ?? OPENCODE_V2_PERSISTED_SESSION_LIMIT;
+  const sessionListLimit = options?.cwd
+    ? Math.max(limit, OPENCODE_V2_PERSISTED_SESSION_LIMIT)
+    : limit;
+  const response = await client.session.list({
+    limit: sessionListLimit,
+    ...(options?.cwd ? { directory: options.cwd } : {}),
+  });
+  const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
+  return (response.data ?? [])
+    .filter((session) => !matchesCwd || matchesCwd(session.location.directory))
+    .sort(
+      (left, right) => getOpenCodeV2SessionTimestamp(right) - getOpenCodeV2SessionTimestamp(left),
+    )
+    .slice(0, limit)
+    .map((session) => ({
+      providerHandleId: session.id,
+      cwd: session.location.directory,
+      title: normalizeOpenCodeV2SessionTitle(session.title),
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date(getOpenCodeV2SessionTimestamp(session)),
+    }));
+}
+
+async function readOpenCodeV2SessionMessages(
+  client: OpenCodeV2ClientLike,
+  session: SessionInfo,
+): Promise<SessionMessageInfo[]> {
+  const response = await client.message.list({ sessionID: session.id });
+  return response.data ?? [];
+}
+
+function resolveOpenCodeV2PersistedSessionModeId(
+  session: SessionInfo,
+  messages: ReadonlyArray<SessionMessageInfo>,
+): string | undefined {
+  const agent = session.agent ?? messages.map(readOpenCodeV2MessageAgent).find(Boolean);
+  return agent ? (normalizeOpenCodeV2ModeId(agent) ?? undefined) : undefined;
+}
+
+function readOpenCodeV2MessageAgent(message: SessionMessageInfo): string | undefined {
+  if (message.type !== "assistant") {
+    return undefined;
+  }
+  const agent = message.agent;
+  return typeof agent === "string" && agent.trim() ? agent : undefined;
+}
+
+function resolveOpenCodeV2PersistedSessionModel(
+  session: SessionInfo,
+  messages: ReadonlyArray<SessionMessageInfo>,
+): string | undefined {
+  if (session.model) {
+    return buildOpenCodeV2ModelLookupKey(session.model.providerID, session.model.id);
+  }
+  const model = messages.map(readOpenCodeV2MessageModel).find(Boolean);
+  return model ? buildOpenCodeV2ModelLookupKey(model.providerID, model.modelID) : undefined;
+}
+
+function readOpenCodeV2MessageModel(
+  message: SessionMessageInfo,
+): { providerID: string; modelID: string } | undefined {
+  if (message.type !== "assistant") {
+    return undefined;
+  }
+  return { providerID: message.model.providerID, modelID: message.model.id };
+}
+
 interface OpenCodeV2ChildSessionInfo {
   id: string;
   parentSessionId: string;
@@ -916,6 +1016,65 @@ export class OpenCodeV2AgentClient implements AgentClient {
       await acquisition.release();
     }
   }
+
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
+    const acquisition = await this.serverManager.acquireCurrent();
+    const { url, authorization } = acquisition.server;
+    const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+
+    try {
+      return await collectOpenCodeV2ImportableSessions(client, options);
+    } finally {
+      await acquisition.release();
+    }
+  }
+
+  async importSession(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession> {
+    const acquisition = await this.serverManager.acquireCurrent();
+    const { url, authorization } = acquisition.server;
+    const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+
+    try {
+      const session = await client.session.get({ sessionID: input.providerHandleId });
+      const messages = await readOpenCodeV2SessionMessages(client, session);
+      const modeId = resolveOpenCodeV2PersistedSessionModeId(session, messages);
+      const model = resolveOpenCodeV2PersistedSessionModel(session, messages);
+      return await importSessionFromPersistence({
+        provider: "opencode-v2",
+        request: input,
+        context,
+        resumeSession: this.resumeSession.bind(this),
+        config: {
+          title: normalizeOpenCodeV2SessionTitle(session.title) ?? undefined,
+          ...(modeId ? { modeId } : {}),
+          ...(model ? { model } : {}),
+        },
+      });
+    } finally {
+      await acquisition.release();
+    }
+  }
+
+  /**
+   * Archive a durable native session (best-effort). v2 has no session archive
+   * API — there is no `session.update`/archive endpoint and the `archived`
+   * timestamp on SessionInfo is never writable through the client (the
+   * opencode2 app itself has a "TODO: Need a session archive API"). Paseo's own
+   * archive (the stored agent record) already hides the session from listings
+   * and preserves it; this hook has nothing to do on the provider side.
+   */
+  async archiveNativeSession(_handle: AgentPersistenceHandle): Promise<void> {}
+
+  /**
+   * Unarchive a durable native session. v2 has no native archive state to
+   * clear (see archiveNativeSession), so this is a no-op.
+   */
+  async unarchiveNativeSession(_handle: AgentPersistenceHandle): Promise<void> {}
 
   /**
    * Map the agent's `permission` provider option and exact-MCP preapproval
@@ -1590,6 +1749,11 @@ export class OpenCodeV2AgentSession implements AgentSession {
         cwd: this.config.cwd,
         ...(this.config.modeId ? { modeId: this.config.modeId } : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
+        // Persist the thinking variant so a resumed session restores the
+        // paseo-side thinking config (VAL-CROSS-008): resumeSession spreads
+        // this metadata into the session config, so getRuntimeInfo reports the
+        // same thinkingOptionId after a daemon restart.
+        ...(this.config.thinkingOptionId ? { thinkingOptionId: this.config.thinkingOptionId } : {}),
       },
     };
   }

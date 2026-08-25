@@ -164,6 +164,123 @@ describe.sequential("OpenCode 2 real e2e", () => {
     },
     TIMEOUT_MS * 2,
   );
+
+  test(
+    "resumes a closed session, reconstructs history, lists/imports it, and archives as a no-op",
+    async () => {
+      const { client, rawClient, workspace } = harness;
+      const sessionConfig = {
+        provider: "opencode-v2" as const,
+        cwd: workspace,
+        model: MODEL,
+        modeId: "build",
+      };
+      const session = await client.createSession(sessionConfig);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe(recordAndAutoApprove(session, events));
+
+      const terminalCount = () =>
+        events.filter(
+          (event) =>
+            event.type === "turn_completed" ||
+            event.type === "turn_failed" ||
+            event.type === "turn_canceled",
+        ).length;
+      const runTurn = async (prompt: string) => {
+        const before = terminalCount();
+        await session.startTurn(prompt);
+        const started = Date.now();
+        while (Date.now() - started < TIMEOUT_MS - 10_000) {
+          if (terminalCount() > before) return;
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error(`Timed out waiting for terminal event after: ${prompt}`);
+      };
+
+      try {
+        await runTurn("Reply with exactly: RESUME_ONE");
+        await runTurn("Reply with exactly: RESUME_TWO");
+
+        const handle = session.describePersistence();
+        expect(handle).not.toBeNull();
+        expect(handle?.provider).toBe("opencode-v2");
+        expect(handle?.sessionId).toBeTruthy();
+        expect(handle?.nativeHandle).toBe(handle?.sessionId);
+
+        await session.close().catch(() => undefined);
+
+        // The durable session is discoverable for import from the workspace.
+        const importable = await client.listImportableSessions({ cwd: workspace });
+        expect(importable.some((entry) => entry.providerHandleId === handle?.sessionId)).toBe(true);
+
+        // Resume restores the conversation: streamHistory reconstructs the
+        // prior user turns from message.list.
+        const resumed = await client.resumeSession(handle!, sessionConfig);
+        const history: AgentStreamEvent[] = [];
+        for await (const event of resumed.streamHistory()) {
+          history.push(event);
+        }
+        const userTexts = history
+          .filter((event) => event.type === "timeline" && event.item.type === "user_message")
+          .map((event) =>
+            event.type === "timeline" && event.item.type === "user_message" ? event.item.text : "",
+          );
+        expect(userTexts).toContain("Reply with exactly: RESUME_ONE");
+        expect(userTexts).toContain("Reply with exactly: RESUME_TWO");
+
+        // The resumed session continues on the same opencode2 session.
+        const resumedEvents: AgentStreamEvent[] = [];
+        resumed.subscribe(recordAndAutoApprove(resumed, resumedEvents));
+        await resumed.startTurn("Reply with exactly: RESUME_THREE");
+        const started = Date.now();
+        while (Date.now() - started < TIMEOUT_MS - 10_000) {
+          if (
+            resumedEvents.some(
+              (event) =>
+                event.type === "turn_completed" ||
+                event.type === "turn_failed" ||
+                event.type === "turn_canceled",
+            )
+          ) {
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+        expect(
+          resumedEvents.some(
+            (event) => event.type === "turn_completed" || event.type === "turn_canceled",
+          ),
+        ).toBe(true);
+
+        // Import brings the real session into paseo with its history intact.
+        const imported = await client.importSession(
+          { providerHandleId: handle!.sessionId, cwd: workspace },
+          {
+            config: sessionConfig,
+            storedConfig: sessionConfig,
+          },
+        );
+        expect(imported.persistence.sessionId).toBe(handle?.sessionId);
+        const importedUserTexts = imported.timeline
+          .filter((entry) => entry.item.type === "user_message")
+          .map((entry) => (entry.item.type === "user_message" ? entry.item.text : ""));
+        expect(importedUserTexts).toContain("Reply with exactly: RESUME_ONE");
+
+        // archive/unarchive are best-effort no-ops: the durable session is
+        // preserved (v2 has no native archive API).
+        await client.archiveNativeSession(handle!);
+        await client.unarchiveNativeSession(handle!);
+        const stillThere = await rawClient.session.get({ sessionID: handle!.sessionId });
+        expect(stillThere.id).toBe(handle?.sessionId);
+
+        await imported.session.close().catch(() => undefined);
+        await resumed.close().catch(() => undefined);
+      } finally {
+        await session.close().catch(() => undefined);
+      }
+    },
+    TIMEOUT_MS * 2,
+  );
 });
 
 async function createRealHarness() {
