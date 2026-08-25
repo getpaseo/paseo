@@ -7,6 +7,7 @@ import type {
   AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
+  AgentModelDefinition,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -32,6 +33,10 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
+import {
+  raceProviderRefreshAbort,
+  runProviderRefreshActivity,
+} from "../provider-refresh-deadline.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
@@ -47,6 +52,14 @@ import {
   type OpenCodeV2ClientFactory,
   type OpenCodeV2ClientLike,
 } from "./opencode-v2/client.js";
+import {
+  filterOpenCodeV2ModelInfosByCredentials,
+  isSelectableOpenCodeV2Agent,
+  mapOpenCodeV2AgentToMode,
+  mapOpenCodeV2ModelToDefinition,
+  readOpenCodeV2CredentialedProviderIds,
+  sortOpenCodeV2Modes,
+} from "./opencode-v2/catalog.js";
 import { OpenCodeV2EventConsumer } from "./opencode-v2/event-consumer.js";
 import {
   createOpenCodeV2EventTranslationState,
@@ -64,8 +77,10 @@ import {
   OpenCodeV2ServerManager,
   type OpenCodeV2EventSource,
   type OpenCodeV2EventSourceInput,
+  type OpenCodeV2ServerAcquisition,
   type OpenCodeV2ServerManagerLike,
 } from "./opencode-v2/server-manager.js";
+import { resolveOpenCodeV2HomeDir } from "./opencode-v2/paths.js";
 import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_V2_CAPABILITIES: AgentCapabilityFlags = {
@@ -117,6 +132,14 @@ function toOpenCodeV2TerminalTurnEvent(
 
 function normalizeOpenCodeV2ModeId(modeId: string | null | undefined): string | null {
   const trimmed = typeof modeId === "string" ? modeId.trim() : "";
+  if (!trimmed || trimmed === "default") {
+    return null;
+  }
+  return trimmed;
+}
+
+function normalizeOpenCodeV2VariantId(variantId: string | null | undefined): string | null {
+  const trimmed = typeof variantId === "string" ? variantId.trim() : "";
   if (!trimmed || trimmed === "default") {
     return null;
   }
@@ -319,6 +342,7 @@ export interface OpenCodeV2AgentClientDeps {
   serverManager?: OpenCodeV2ServerManagerLike;
   createClient?: OpenCodeV2ClientFactory;
   managedProcesses?: ManagedProcessRegistry;
+  readCredentialedProviderIds?: () => Promise<Set<string>>;
 }
 
 export class OpenCodeV2AgentClient implements AgentClient {
@@ -329,6 +353,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
   private readonly createOpenCodeV2Client: OpenCodeV2ClientFactory;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
+  private readonly readCredentialedProviderIds: () => Promise<Set<string>>;
 
   constructor(
     logger: Logger,
@@ -338,6 +363,9 @@ export class OpenCodeV2AgentClient implements AgentClient {
     this.logger = logger.child({ module: "agent", provider: "opencode-v2" });
     this.runtimeSettings = runtimeSettings;
     this.createOpenCodeV2Client = deps.createClient ?? createOpenCodeV2Client;
+    this.readCredentialedProviderIds =
+      deps.readCredentialedProviderIds ??
+      (() => readOpenCodeV2CredentialedProviderIds(this.runtimeSettings));
     this.serverManager =
       deps.serverManager ??
       OpenCodeV2ServerManager.getInstance(this.logger, runtimeSettings, {
@@ -445,12 +473,61 @@ export class OpenCodeV2AgentClient implements AgentClient {
   }
 
   async fetchCatalog(
-    _options: FetchCatalogOptions,
-    _context?: ProviderRefreshContext,
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    // The catalog/modes feature owns runtime model + agent discovery. Returning
-    // an empty catalog keeps the provider "ready" in snapshots until then.
-    return { models: [], modes: [] };
+    let acquisition: OpenCodeV2ServerAcquisition | undefined;
+    try {
+      acquisition = options.force
+        ? await this.serverManager.acquireNew(context?.signal)
+        : await this.serverManager.acquireCurrent(context?.signal);
+      context?.signal.throwIfAborted();
+      const { url, authorization } = acquisition.server;
+      const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+      const isGlobalCatalog = options.scope === "global";
+      const directory = isGlobalCatalog ? resolveOpenCodeV2HomeDir() : options.cwd;
+      const location = { directory };
+      const credentialedProviderIds = await this.readCredentialedProviderIds();
+      context?.signal.throwIfAborted();
+
+      const [models, modes] = await Promise.all([
+        this.fetchModelsFromClient(client, location, credentialedProviderIds, context),
+        this.fetchModesFromClient(client, location, context),
+      ]);
+      return { models, modes };
+    } finally {
+      await acquisition?.release();
+    }
+  }
+
+  private async fetchModelsFromClient(
+    client: OpenCodeV2ClientLike,
+    location: { directory: string },
+    credentialedProviderIds: ReadonlySet<string>,
+    context?: ProviderRefreshContext,
+  ): Promise<AgentModelDefinition[]> {
+    const response = await runProviderRefreshActivity(context, "model.list", () =>
+      raceProviderRefreshAbort(context?.signal, client.model.list({ location })),
+    );
+    const filtered = filterOpenCodeV2ModelInfosByCredentials(
+      response.data,
+      credentialedProviderIds,
+    );
+    return filtered.map(mapOpenCodeV2ModelToDefinition);
+  }
+
+  private async fetchModesFromClient(
+    client: OpenCodeV2ClientLike,
+    location: { directory: string },
+    context?: ProviderRefreshContext,
+  ): Promise<AgentMode[]> {
+    const response = await runProviderRefreshActivity(context, "agent.list", () =>
+      raceProviderRefreshAbort(context?.signal, client.agent.list({ location })),
+    );
+    const discovered = response.data
+      .filter(isSelectableOpenCodeV2Agent)
+      .map(mapOpenCodeV2AgentToMode);
+    return sortOpenCodeV2Modes(discovered);
   }
 
   async isAvailable(_signal?: AbortSignal): Promise<boolean> {
@@ -587,6 +664,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
       provider: "opencode-v2",
       sessionId: this.sessionId,
       model: this.config.model ?? null,
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
       modeId: this.currentMode,
     };
   }
@@ -728,9 +806,13 @@ export class OpenCodeV2AgentSession implements AgentSession {
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
-    // The catalog/modes feature owns runtime agent discovery. Until then the
-    // provider manifest's static build/plan scaffolding covers mode listing.
-    return [];
+    const response = await this.client.agent.list({
+      location: { directory: this.config.cwd },
+    });
+    const discovered = response.data
+      .filter(isSelectableOpenCodeV2Agent)
+      .map(mapOpenCodeV2AgentToMode);
+    return sortOpenCodeV2Modes(discovered);
   }
 
   async getCurrentMode(): Promise<string | null> {
@@ -739,7 +821,100 @@ export class OpenCodeV2AgentSession implements AgentSession {
 
   async setMode(modeId: string): Promise<void> {
     const normalizedModeId = normalizeOpenCodeV2ModeId(modeId);
+    if (normalizedModeId === null) {
+      this.currentMode = null;
+      this.config.modeId = undefined;
+      return;
+    }
+    const availableModes = await this.getAvailableModes();
+    if (!availableModes.some((mode) => mode.id === normalizedModeId)) {
+      const available = availableModes.map((mode) => mode.id).join(", ") || "(none)";
+      throw new Error(
+        `Unknown mode '${normalizedModeId}' for OpenCode 2. Available modes: ${available}`,
+      );
+    }
+    await this.client.session.switchAgent({
+      sessionID: this.sessionId,
+      agent: normalizedModeId,
+    });
     this.currentMode = normalizedModeId;
+    this.config.modeId = normalizedModeId;
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    if (normalizedModelId === null) {
+      this.config.model = undefined;
+      return;
+    }
+    const modelRef = parseOpenCodeV2ModelRef(normalizedModelId);
+    if (!modelRef) {
+      throw new Error(
+        `Invalid model id '${normalizedModelId}' for OpenCode 2. Expected providerID/modelID.`,
+      );
+    }
+    const models = await this.fetchSessionModels();
+    if (!models.some((model) => model.id === normalizedModelId)) {
+      throw new Error(`Unknown model '${normalizedModelId}' for OpenCode 2.`);
+    }
+    await this.client.session.switchModel({
+      sessionID: this.sessionId,
+      model: { id: modelRef.id, providerID: modelRef.providerID },
+    });
+    this.config.model = normalizedModelId;
+    this.notifySubscribers(
+      {
+        type: "model_changed",
+        provider: "opencode-v2",
+        runtimeInfo: await this.getRuntimeInfo(),
+      },
+      null,
+    );
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const normalizedThinkingOptionId = normalizeOpenCodeV2VariantId(thinkingOptionId);
+    if (this.config.model) {
+      const modelRef = parseOpenCodeV2ModelRef(this.config.model);
+      if (modelRef) {
+        const models = await this.fetchSessionModels();
+        const currentModel = models.find((model) => model.id === this.config.model);
+        const thinkingOptions = currentModel?.thinkingOptions ?? [];
+        if (
+          normalizedThinkingOptionId !== null &&
+          !thinkingOptions.some((option) => option.id === normalizedThinkingOptionId)
+        ) {
+          throw new Error(
+            `Unknown thinking option '${normalizedThinkingOptionId}' for model '${this.config.model}'.`,
+          );
+        }
+        await this.client.session.switchModel({
+          sessionID: this.sessionId,
+          model: {
+            id: modelRef.id,
+            providerID: modelRef.providerID,
+            ...(normalizedThinkingOptionId ? { variant: normalizedThinkingOptionId } : {}),
+          },
+        });
+      }
+    }
+    this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    this.notifySubscribers(
+      {
+        type: "thinking_option_changed",
+        provider: "opencode-v2",
+        thinkingOptionId: this.config.thinkingOptionId ?? null,
+      },
+      null,
+    );
+  }
+
+  private async fetchSessionModels(): Promise<AgentModelDefinition[]> {
+    const response = await this.client.model.list({
+      location: { directory: this.config.cwd },
+    });
+    return response.data.map(mapOpenCodeV2ModelToDefinition);
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {

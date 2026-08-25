@@ -1,8 +1,12 @@
 import type {
+  AgentListInput,
+  AgentListOutput,
   EventSubscribeOutput,
   FormCancelInput,
   FormReplyInput,
   MessageListInput,
+  ModelListInput,
+  ModelListOutput,
   PermissionReplyInput,
   SessionCreateInput,
   SessionGetInput,
@@ -13,6 +17,8 @@ import type {
   SessionMessagesResponse,
   SessionPromptInput,
   SessionRemoveInput,
+  SessionSwitchAgentInput,
+  SessionSwitchModelInput,
 } from "@opencode-ai/client";
 
 import type { OpenCodeV2ClientFactory, OpenCodeV2ClientLike } from "../client.js";
@@ -108,7 +114,11 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     sessionInterrupt: [] as unknown[],
     sessionGet: [] as unknown[],
     sessionRemove: [] as unknown[],
+    sessionSwitchAgent: [] as unknown[],
+    sessionSwitchModel: [] as unknown[],
     messageList: [] as unknown[],
+    modelList: [] as unknown[],
+    agentList: [] as unknown[],
     permissionReply: [] as unknown[],
     formReply: [] as unknown[],
     formCancel: [] as unknown[],
@@ -157,11 +167,34 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
 
   sessionRemoveError: unknown = null;
 
+  sessionSwitchAgentError: unknown = null;
+  sessionSwitchModelError: unknown = null;
+
   messageListResponse: SessionMessagesResponse = { data: [], cursor: {} };
   messageListImplementation:
     | ((input: MessageListInput) => Promise<SessionMessagesResponse>)
     | null = null;
   messageListError: unknown = null;
+
+  modelListResponse: ModelListOutput = {
+    location: {
+      directory: "/workspace/repo",
+      project: { id: "project-1", directory: "/workspace/repo", canonical: "/workspace/repo" },
+    },
+    data: [],
+  };
+  modelListImplementation: ((input: ModelListInput) => Promise<ModelListOutput>) | null = null;
+  modelListError: unknown = null;
+
+  agentListResponse: AgentListOutput = {
+    location: {
+      directory: "/workspace/repo",
+      project: { id: "project-1", directory: "/workspace/repo", canonical: "/workspace/repo" },
+    },
+    data: [],
+  };
+  agentListImplementation: ((input: AgentListInput) => Promise<AgentListOutput>) | null = null;
+  agentListError: unknown = null;
 
   permissionReplyError: unknown = null;
   formReplyError: unknown = null;
@@ -230,6 +263,42 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     }
   }
 
+  async sessionSwitchAgent(input: SessionSwitchAgentInput): Promise<void> {
+    this.calls.sessionSwitchAgent.push(input);
+    if (this.sessionSwitchAgentError) {
+      throw this.sessionSwitchAgentError;
+    }
+  }
+
+  async sessionSwitchModel(input: SessionSwitchModelInput): Promise<void> {
+    this.calls.sessionSwitchModel.push(input);
+    if (this.sessionSwitchModelError) {
+      throw this.sessionSwitchModelError;
+    }
+  }
+
+  async modelList(input: ModelListInput): Promise<ModelListOutput> {
+    this.calls.modelList.push(input);
+    if (this.modelListError) {
+      throw this.modelListError;
+    }
+    if (this.modelListImplementation) {
+      return await this.modelListImplementation(input);
+    }
+    return this.modelListResponse;
+  }
+
+  async agentList(input: AgentListInput): Promise<AgentListOutput> {
+    this.calls.agentList.push(input);
+    if (this.agentListError) {
+      throw this.agentListError;
+    }
+    if (this.agentListImplementation) {
+      return await this.agentListImplementation(input);
+    }
+    return this.agentListResponse;
+  }
+
   async messageList(input: MessageListInput): Promise<SessionMessagesResponse> {
     this.calls.messageList.push(input);
     if (this.messageListError) {
@@ -278,10 +347,20 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     interrupt: (input: SessionInterruptInput) => this.sessionInterrupt(input),
     get: (input: SessionGetInput) => this.sessionGet(input),
     remove: (input: SessionRemoveInput) => this.sessionRemove(input),
+    switchAgent: (input: SessionSwitchAgentInput) => this.sessionSwitchAgent(input),
+    switchModel: (input: SessionSwitchModelInput) => this.sessionSwitchModel(input),
   };
 
   message = {
     list: (input: MessageListInput) => this.messageList(input),
+  };
+
+  model = {
+    list: (input: ModelListInput) => this.modelList(input),
+  };
+
+  agent = {
+    list: (input: AgentListInput) => this.agentList(input),
   };
 
   permission = {

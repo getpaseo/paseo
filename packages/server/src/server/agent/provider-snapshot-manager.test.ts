@@ -717,13 +717,22 @@ describe("ProviderSnapshotManager public surface", () => {
         codex: { enabled: false },
         copilot: { enabled: false },
         opencode: { enabled: false },
+        "opencode-v2": { enabled: false },
         pi: { enabled: false },
       },
     });
     try {
       const entries = await manager.listProviders({ cwd: "/tmp/project", wait: true });
       const providers = entries.map((entry) => entry.provider).sort();
-      expect(providers).toEqual(["claude", "codex", "copilot", "omp", "opencode", "pi"]);
+      expect(providers).toEqual([
+        "claude",
+        "codex",
+        "copilot",
+        "omp",
+        "opencode",
+        "opencode-v2",
+        "pi",
+      ]);
       for (const entry of entries) {
         expect(entry.enabled).toBe(false);
         expect(entry.status).toBe("unavailable");

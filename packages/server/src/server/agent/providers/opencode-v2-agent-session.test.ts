@@ -806,4 +806,279 @@ describe("OpenCodeV2AgentClient session core", () => {
     });
     await session.close();
   });
+
+  test("fetchCatalog returns filtered models and modes from the live server", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    openCode.modelListResponse = {
+      ...openCode.modelListResponse,
+      data: [
+        buildModelInfo({
+          providerID: "baseten",
+          modelID: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          variants: [{ id: "low" }, { id: "high" }],
+        }),
+        buildModelInfo({ providerID: "meta", modelID: "muse-spark-1.2", name: "Muse Spark" }),
+        buildModelInfo({ providerID: "opencode", modelID: "x-preview-f-free", name: "Ox Free" }),
+      ],
+    };
+    openCode.agentListResponse = {
+      ...openCode.agentListResponse,
+      data: [
+        buildAgentInfo({ name: "general", mode: "subagent" }),
+        buildAgentInfo({ name: "plan" }),
+        buildAgentInfo({ name: "build" }),
+        buildAgentInfo({ name: "compaction", hidden: true }),
+      ],
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      readCredentialedProviderIds: async () => new Set(["baseten"]),
+    });
+
+    const catalog = await client.fetchCatalog({ scope: "global", force: false });
+
+    expect(catalog.models.map((model) => model.id)).toEqual([
+      "baseten/deepseek-ai/DeepSeek-V4-Flash-0731",
+      "opencode/x-preview-f-free",
+    ]);
+    expect(catalog.models[0]?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "default",
+      "low",
+      "high",
+    ]);
+    expect(catalog.modes.map((mode) => mode.id)).toEqual(["build", "plan", "general"]);
+    expect(runtime.acquisitions[0]?.kind).toBe("current");
+    expect(runtime.acquisitions[0]?.releaseCount).toBe(1);
+  });
+
+  test("fetchCatalog acquires a new server when force is set", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      readCredentialedProviderIds: async () => new Set(),
+    });
+
+    await client.fetchCatalog({ scope: "workspace", cwd: "/workspace/repo", force: true });
+
+    expect(runtime.acquisitions[0]?.kind).toBe("new");
+    expect(openCode.calls.modelList).toEqual([{ location: { directory: "/workspace/repo" } }]);
+    expect(openCode.calls.agentList).toEqual([{ location: { directory: "/workspace/repo" } }]);
+  });
+
+  test("getAvailableModes lists selectable agents from agent.list sorted build/plan first", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.agentListResponse = {
+        ...client.agentListResponse,
+        data: [
+          buildAgentInfo({ name: "general", mode: "subagent" }),
+          buildAgentInfo({ name: "plan" }),
+          buildAgentInfo({ name: "build" }),
+          buildAgentInfo({ name: "title", hidden: true }),
+        ],
+      };
+    });
+
+    const modes = await session.getAvailableModes();
+    expect(modes.map((mode) => mode.id)).toEqual(["build", "plan", "general"]);
+    expect(openCode.calls.agentList).toEqual([{ location: { directory: "/workspace/repo" } }]);
+    await session.close();
+  });
+
+  test("setMode switches the session agent and persists the mode", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.agentListResponse = {
+        ...client.agentListResponse,
+        data: [buildAgentInfo({ name: "plan" }), buildAgentInfo({ name: "build" })],
+      };
+    });
+
+    await session.setMode("plan");
+
+    expect(openCode.calls.sessionSwitchAgent).toEqual([{ sessionID: "session-1", agent: "plan" }]);
+    expect(await session.getCurrentMode()).toBe("plan");
+    expect(await session.getRuntimeInfo()).toMatchObject({ modeId: "plan" });
+    await session.close();
+  });
+
+  test("setMode rejects an unknown mode with a clear error and leaves the session usable", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.agentListResponse = {
+        ...client.agentListResponse,
+        data: [buildAgentInfo({ name: "build" })],
+      };
+    });
+
+    await expect(session.setMode("not-a-real-mode")).rejects.toThrow(
+      "Unknown mode 'not-a-real-mode' for OpenCode 2",
+    );
+    expect(openCode.calls.sessionSwitchAgent).toEqual([]);
+    expect(await session.getCurrentMode()).toBeNull();
+    await session.close();
+  });
+
+  test("setModel switches the session model via session.switchModel", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.modelListResponse = {
+        ...client.modelListResponse,
+        data: [
+          buildModelInfo({
+            providerID: "openai",
+            modelID: "gpt-5.5",
+            name: "GPT 5.5",
+          }),
+        ],
+      };
+    });
+
+    await session.setModel("openai/gpt-5.5");
+
+    expect(openCode.calls.sessionSwitchModel).toEqual([
+      {
+        sessionID: "session-1",
+        model: { id: "gpt-5.5", providerID: "openai" },
+      },
+    ]);
+    expect(await session.getRuntimeInfo()).toMatchObject({ model: "openai/gpt-5.5" });
+    await session.close();
+  });
+
+  test("setModel rejects an invalid model id format", async () => {
+    const { session } = await createSession();
+
+    await expect(session.setModel("no-slash-here")).rejects.toThrow(
+      "Invalid model id 'no-slash-here' for OpenCode 2",
+    );
+    await session.close();
+  });
+
+  test("setModel rejects an unknown model with a clear error", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.modelListResponse = {
+        ...client.modelListResponse,
+        data: [buildModelInfo()],
+      };
+    });
+
+    await expect(session.setModel("baseten/does-not-exist-xyz")).rejects.toThrow(
+      "Unknown model 'baseten/does-not-exist-xyz' for OpenCode 2",
+    );
+    expect(openCode.calls.sessionSwitchModel).toEqual([]);
+    await session.close();
+  });
+
+  test("setThinkingOption switches the model with the selected variant", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.modelListResponse = {
+        ...client.modelListResponse,
+        data: [
+          buildModelInfo({
+            providerID: "baseten",
+            modelID: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            name: "DeepSeek V4 Flash 0731",
+            variants: [{ id: "none" }, { id: "low" }, { id: "high" }, { id: "max" }],
+          }),
+        ],
+      };
+    });
+
+    await session.setThinkingOption("high");
+
+    expect(openCode.calls.sessionSwitchModel).toEqual([
+      {
+        sessionID: "session-1",
+        model: {
+          id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          providerID: "baseten",
+          variant: "high",
+        },
+      },
+    ]);
+    expect(await session.getRuntimeInfo()).toMatchObject({ thinkingOptionId: "high" });
+    await session.close();
+  });
+
+  test("setThinkingOption with default clears the variant", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.modelListResponse = {
+        ...client.modelListResponse,
+        data: [
+          buildModelInfo({
+            providerID: "baseten",
+            modelID: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            name: "DeepSeek V4 Flash 0731",
+            variants: [{ id: "high" }],
+          }),
+        ],
+      };
+    });
+
+    await session.setThinkingOption("default");
+
+    expect(openCode.calls.sessionSwitchModel).toEqual([
+      {
+        sessionID: "session-1",
+        model: { id: "deepseek-ai/DeepSeek-V4-Flash-0731", providerID: "baseten" },
+      },
+    ]);
+    expect(await session.getRuntimeInfo()).toMatchObject({ thinkingOptionId: null });
+    await session.close();
+  });
+
+  test("setThinkingOption rejects an unknown variant for the current model", async () => {
+    const { session, openCode } = await createSession("session-1", (client) => {
+      client.modelListResponse = {
+        ...client.modelListResponse,
+        data: [
+          buildModelInfo({
+            providerID: "baseten",
+            modelID: "deepseek-ai/DeepSeek-V4-Flash-0731",
+            name: "DeepSeek V4 Flash 0731",
+            variants: [{ id: "high" }],
+          }),
+        ],
+      };
+    });
+
+    await expect(session.setThinkingOption("ultra")).rejects.toThrow(
+      "Unknown thinking option 'ultra' for model 'baseten/deepseek-ai/DeepSeek-V4-Flash-0731'",
+    );
+    expect(openCode.calls.sessionSwitchModel).toEqual([]);
+    await session.close();
+  });
 });
+
+function buildModelInfo(overrides: Partial<ModelInfo> = {}): ModelInfo {
+  return {
+    id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+    modelID: "deepseek-ai/DeepSeek-V4-Flash-0731",
+    providerID: "baseten",
+    name: "DeepSeek V4 Flash 0731",
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    time: { released: 0 },
+    cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+    status: "active",
+    enabled: true,
+    limit: { context: 1_000_000, output: 131_072 },
+    ...overrides,
+  };
+}
+
+function buildAgentInfo(overrides: Partial<AgentInfo> = {}): AgentInfo {
+  return {
+    id: "build",
+    name: "build",
+    mode: "primary",
+    hidden: false,
+    request: { settings: {}, headers: {}, body: {} },
+    permissions: [],
+    ...overrides,
+  };
+}

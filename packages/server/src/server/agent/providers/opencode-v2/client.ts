@@ -1,9 +1,13 @@
 import {
   OpenCode,
+  type AgentListInput,
+  type AgentListOutput,
   type EventSubscribeOutput,
   type FormCancelInput,
   type FormReplyInput,
   type MessageListInput,
+  type ModelListInput,
+  type ModelListOutput,
   type PermissionReplyInput,
   type SessionCreateInput,
   type SessionGetInput,
@@ -14,6 +18,8 @@ import {
   type SessionMessagesResponse,
   type SessionPromptInput,
   type SessionRemoveInput,
+  type SessionSwitchAgentInput,
+  type SessionSwitchModelInput,
 } from "@opencode-ai/client";
 
 /**
@@ -30,9 +36,17 @@ export interface OpenCodeV2ClientLike {
     interrupt(input: SessionInterruptInput): Promise<SessionInterruptResponse>;
     get(input: SessionGetInput): Promise<SessionInfo>;
     remove(input: SessionRemoveInput): Promise<void>;
+    switchAgent(input: SessionSwitchAgentInput): Promise<void>;
+    switchModel(input: SessionSwitchModelInput): Promise<void>;
   };
   message: {
     list(input: MessageListInput): Promise<SessionMessagesResponse>;
+  };
+  model: {
+    list(input: ModelListInput): Promise<ModelListOutput>;
+  };
+  agent: {
+    list(input: AgentListInput): Promise<AgentListOutput>;
   };
   permission: {
     reply(input: PermissionReplyInput): Promise<void>;
@@ -70,9 +84,17 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
       interrupt: (input) => client.session.interrupt(input),
       get: (input) => client.session.get(input),
       remove: (input) => client.session.remove(input),
+      switchAgent: (input) => client.session.switchAgent(input),
+      switchModel: (input) => client.session.switchModel(input),
     },
     message: {
       list: (input) => client.message.list(input),
+    },
+    model: {
+      list: (input) => client.model.list(input),
+    },
+    agent: {
+      list: (input) => client.agent.list(input),
     },
     permission: {
       reply: (input) => client.permission.reply(input),
