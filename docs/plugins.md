@@ -165,6 +165,10 @@ RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cann
 app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
+Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
+workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
+when moved between hosts. Explorer configuration can create workspace-context panels and remove
+existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the

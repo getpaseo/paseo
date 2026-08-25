@@ -59,7 +59,7 @@ import {
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
-import { panelSupportsHost } from "@/panels/panel-manifest";
+import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
 
 export {
   AMBIENT_PLACEMENT,
@@ -424,13 +424,18 @@ export function resolveExplorerSidebarPaneId(
 }
 
 function ensurePersistedExplorerSidebarPane(input: {
+  workspaceKey: string;
   layout: WorkspaceLayout;
   registeredPaneId: string | null | undefined;
   ids: WorkspaceLayoutIdSource;
 }): { layout: WorkspaceLayout; paneId: string } | null {
   const existingPaneId = resolveExplorerSidebarPaneId(input.layout, input.registeredPaneId);
   if (existingPaneId) {
-    const migratedLayout = migrateExplorerSidebarTabs(input.layout, existingPaneId);
+    const migratedLayout = migrateExplorerSidebarTabs(
+      input.workspaceKey,
+      input.layout,
+      existingPaneId,
+    );
     return {
       layout: keepWorkspaceFocusOutOfExplorerSidebar(
         migratedLayout,
@@ -465,7 +470,11 @@ function ensurePersistedExplorerSidebarPane(input: {
 }
 
 /** Keeps hydration compatible while enforcing the Explorer's navigation-only contract. */
-function migrateExplorerSidebarTabs(layout: WorkspaceLayout, paneId: string): WorkspaceLayout {
+function migrateExplorerSidebarTabs(
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+  paneId: string,
+): WorkspaceLayout {
   const changesMigrated = migrateLegacyExplorerSidebarChanges(layout, paneId);
   const pane = findPaneById(changesMigrated.root, paneId);
   if (!pane) return changesMigrated;
@@ -477,7 +486,11 @@ function migrateExplorerSidebarTabs(layout: WorkspaceLayout, paneId: string): Wo
   let nextLayout = changesMigrated;
   for (const tabId of pane.tabIds) {
     const tab = tabsById.get(tabId);
-    if (!tab || tab.target.kind === "new_tab" || panelSupportsHost(tab.target.kind, "explorer")) {
+    if (
+      !tab ||
+      tab.target.kind === "new_tab" ||
+      panelTargetSupportsHostForWorkspaceKey(workspaceKey, tab.target, "explorer")
+    ) {
       continue;
     }
     nextLayout =
@@ -530,6 +543,7 @@ function migrateLegacyExplorerSidebarChanges(
 function getOpenTabPlacement(
   state: WorkspaceLayoutStore,
   workspaceKey: string,
+  target: WorkspaceTabTarget,
   placement: WorkspaceTabPlacement | undefined,
 ): {
   layout: WorkspaceLayout;
@@ -537,13 +551,36 @@ function getOpenTabPlacement(
   explorerSidebarPaneId: string | null;
 } {
   const layout = getWorkspaceLayout(state.layoutByWorkspace, workspaceKey);
+  const explorerSidebarPaneId = resolveExplorerSidebarPaneId(
+    layout,
+    state.explorerSidebarPaneIdByWorkspace[workspaceKey],
+  );
+  const requestedPlacement = placement ?? AMBIENT_PLACEMENT;
+  const supportsPane = (pane: SplitPane) =>
+    panelTargetSupportsHostForWorkspaceKey(
+      workspaceKey,
+      target,
+      pane.id === explorerSidebarPaneId ? "explorer" : "main",
+    );
+  const requestedPaneId =
+    requestedPlacement.mode === "pane" || requestedPlacement.mode === "prefer"
+      ? requestedPlacement.paneId
+      : layout.focusedPaneId;
+  const requestedPane = findPaneById(layout.root, requestedPaneId);
+  const fallbackPane = collectAllPanes(layout.root).find(
+    (pane) => pane.hidden !== true && supportsPane(pane),
+  );
+  let resolvedPlacement = requestedPlacement;
+  if ((!requestedPane || !supportsPane(requestedPane)) && fallbackPane) {
+    resolvedPlacement = {
+      mode: requestedPlacement.mode === "pane" ? "pane" : "prefer",
+      paneId: fallbackPane.id,
+    };
+  }
   return {
     layout,
-    placement: placement ?? AMBIENT_PLACEMENT,
-    explorerSidebarPaneId: resolveExplorerSidebarPaneId(
-      layout,
-      state.explorerSidebarPaneIdByWorkspace[workspaceKey],
-    ),
+    placement: resolvedPlacement,
+    explorerSidebarPaneId,
   };
 }
 
@@ -633,7 +670,12 @@ export function createWorkspaceLayoutStore(
           if (!normalizedWorkspaceKey || !normalizedTarget) {
             return null;
           }
-          const placement = getOpenTabPlacement(get(), normalizedWorkspaceKey, input.placement);
+          const placement = getOpenTabPlacement(
+            get(),
+            normalizedWorkspaceKey,
+            normalizedTarget,
+            input.placement,
+          );
           let result;
           if (input.intent === "new") {
             result = createTabInLayout({
@@ -1135,7 +1177,14 @@ export function createWorkspaceLayoutStore(
           const movingTab = collectAllTabs(currentLayout.root).find(
             (tab) => tab.tabId === normalizedTabId,
           );
-          if (!movingTab || !panelSupportsHost(movingTab.target.kind, "main")) {
+          if (
+            !movingTab ||
+            !panelTargetSupportsHostForWorkspaceKey(
+              normalizedWorkspaceKey,
+              movingTab.target,
+              "main",
+            )
+          ) {
             return null;
           }
 
@@ -1217,7 +1266,14 @@ export function createWorkspaceLayoutStore(
             );
             const destinationHost =
               normalizedToPaneId === explorerSidebarPaneId ? "explorer" : "main";
-            if (!movingTab || !panelSupportsHost(movingTab.target.kind, destinationHost)) {
+            if (
+              !movingTab ||
+              !panelTargetSupportsHostForWorkspaceKey(
+                normalizedWorkspaceKey,
+                movingTab.target,
+                destinationHost,
+              )
+            ) {
               return state;
             }
             const nextLayout = moveTabToPaneInLayout({
@@ -1688,6 +1744,7 @@ export function createWorkspaceLayoutStore(
               stripEphemeralTabsFromLayout(persistedLayout),
             );
             const explorerSidebar = ensurePersistedExplorerSidebarPane({
+              workspaceKey,
               layout: restoredLayout,
               registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
               ids,

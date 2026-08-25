@@ -12,6 +12,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -36,6 +37,9 @@ import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
+import { resolvePluginIcon } from "@/plugins/icons";
+import { useInstalledPlugins } from "@/plugins/registry";
+import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 
 const TAB_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
@@ -218,10 +222,47 @@ export function ExplorerSidebarTabRail({
     purpose: "supporting",
     host: "explorer",
   });
-  const configurationItems = useMemo(
+  const installedPlugins = useInstalledPlugins();
+  const builtInConfigurationItems = useMemo(
     () => groups.find((group) => group.id === "tabs")?.items ?? [],
     [groups],
   );
+  const pluginConfigurationItems = useMemo(() => {
+    const genericItems = groups.find((group) => group.id === "plugin-panels")?.items ?? [];
+    const agentItems = tabs.flatMap(({ tab }) => {
+      if (tab.target.kind !== "plugin" || tab.target.context !== "agent") return [];
+      const target = tab.target;
+      const plugin = installedPlugins.find(
+        (candidate) =>
+          candidate.serverId === normalizedServerId && candidate.id === target.pluginId,
+      );
+      const panel = plugin?.workspacePanels.find(
+        (candidate) =>
+          candidate.id === target.panelId &&
+          candidate.context === "agent" &&
+          pluginPanelSupportsLocation(candidate, "explorer"),
+      );
+      if (!plugin || !panel) return [];
+      return [
+        {
+          id: `plugin:${plugin.id}:${panel.id}:agent:${target.agentId}`,
+          label: panel.title,
+          Icon: resolvePluginIcon(panel.icon),
+          disabled: false,
+          panelKind: "plugin" as const,
+          launch() {},
+          tab,
+        },
+      ];
+    });
+    return [
+      ...genericItems.map((item) => ({
+        item,
+        tab: tabs.find(({ tab }) => catalogItemMatchesTab(item, tab))?.tab ?? null,
+      })),
+      ...agentItems.map(({ tab, ...item }) => ({ item, tab })),
+    ];
+  }, [groups, installedPlugins, normalizedServerId, tabs]);
   const handleDragEnd = useCallback(
     (nextTabs: WorkspaceDesktopTabRowItem[]) => onReorderTabs(nextTabs.map((item) => item.tab)),
     [onReorderTabs],
@@ -312,12 +353,22 @@ export function ExplorerSidebarTabRail({
         ) : null}
       </ContextMenuTrigger>
       <ContextMenuContent align="start" minWidth={200} testID="explorer-sidebar-tab-configuration">
-        {configurationItems.map((item) => (
+        {builtInConfigurationItems.map((item) => (
           <ExplorerSidebarConfigurationItem
             key={item.id}
             item={item}
             paneId={paneId}
             tab={tabs.find(({ tab }) => catalogItemMatchesTab(item, tab))?.tab ?? null}
+            onCloseTab={onCloseTab}
+          />
+        ))}
+        {pluginConfigurationItems.length > 0 ? <ContextMenuSeparator /> : null}
+        {pluginConfigurationItems.map(({ item, tab }) => (
+          <ExplorerSidebarConfigurationItem
+            key={item.id}
+            item={item}
+            paneId={paneId}
+            tab={tab}
             onCloseTab={onCloseTab}
           />
         ))}

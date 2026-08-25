@@ -14,6 +14,7 @@ import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
+import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -52,7 +53,7 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "terminal-profiles";
+  id: "tabs" | "plugin-panels" | "terminal-profiles";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
@@ -169,15 +170,18 @@ export function useWorkspaceTabLaunchCatalog(input: {
       return item.hidden || !panelSupportsHost(item.panelKind, host) ? [] : [item];
     });
 
+    const pluginItems: WorkspaceTabLaunchItem[] = [];
     for (const plugin of plugins) {
       if (plugin.serverId !== serverId) continue;
       for (const panel of plugin.workspacePanels) {
         if (panel.context !== "workspace") continue;
+        const location = host === "explorer" ? "explorer" : "workspace";
+        if (!pluginPanelSupportsLocation(panel, location)) continue;
         const selection: NewTabSelection = {
           kind: "target",
           target: { kind: "plugin", pluginId: plugin.id, panelId: panel.id, context: "workspace" },
         };
-        tabItems.push({
+        pluginItems.push({
           id: `plugin:${plugin.id}:${panel.id}`,
           label: panel.title,
           Icon: resolvePluginIcon(panel.icon),
@@ -190,6 +194,9 @@ export function useWorkspaceTabLaunchCatalog(input: {
 
     const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
+    if (pluginItems.length > 0) {
+      groups.push({ id: "plugin-panels", label: null, items: pluginItems });
+    }
     if (profiles.length > 0) {
       groups.push({
         id: "terminal-profiles",
