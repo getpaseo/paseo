@@ -82,8 +82,30 @@ export class OmpHarness {
     });
   }
 
+  failNextRuntimeStart(error: Error): void {
+    const runtime = this.omp;
+    const startSession = runtime.startSession.bind(runtime);
+    runtime.startSession = async () => {
+      runtime.startSession = startSession;
+      throw error;
+    };
+  }
+
+  runtimeSessionCount(): number {
+    return this.omp.recordedLaunches.length;
+  }
+
+  async waitForRuntimeSessionCount(count: number): Promise<void> {
+    while (this.runtimeSessionCount() < count) {
+      await waitForImmediate();
+    }
+  }
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.omp.queueCommands(commands);
+  }
+
+  runtimeLaunchSessions(): Array<string | undefined> {
+    return this.omp.recordedLaunches.map((launch) => launch.session);
   }
 
   failEventSubscription(error: Error): void {
@@ -186,6 +208,24 @@ export class OmpHarness {
     runtime.streamAssistantText(output);
     runtime.finishTurn();
     return await run;
+  }
+
+  async runPromptAfterRuntimeExit(input: string, output: string): Promise<unknown> {
+    const session = this.requireSession();
+    const run = session.run(input);
+    await this.waitForRuntimeSessionCount(2);
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+  async startTurnAfterRuntimeExit(input: string): Promise<void> {
+    await this.requireSession().startTurn(input);
+    await waitForImmediate();
   }
 
   async startPromptWithEmptyAgentEnd(
@@ -502,6 +542,10 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  turnFailures(): string[] {
+    return this.events.flatMap((event) => (event.type === "turn_failed" ? [event.error] : []));
   }
 
   async close(): Promise<void> {

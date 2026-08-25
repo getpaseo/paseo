@@ -442,6 +442,63 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(0);
   });
 
+  test("reports a turn_failed notice when the OMP process dies while idle", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({ type: "process_exit", error: "OMP process exited with code 1" });
+
+    expect(omp.turnFailures()).toEqual(["OMP process exited with code 1"]);
+  });
+
+  test("ignores a process_exit that races an intentional close", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.close();
+    omp.runtime().emit({ type: "process_exit", error: "OMP process exited with code 0" });
+
+    expect(omp.turnFailures()).toEqual([]);
+  });
+  test("recovers on the next prompt after an idle process exit", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({ type: "process_exit", error: "OMP process exited with code 1" });
+    await omp.runPromptAfterRuntimeExit("continue", "recovered response");
+
+    expect(omp.runtimeSessionCount()).toBe(2);
+    expect(omp.turnFailures()).toEqual(["OMP process exited with code 1"]);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("relaunches against the dead session file", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const sessionFile = omp.runtime().state.sessionFile;
+
+    omp.runtime().emit({ type: "process_exit", error: "OMP process exited with code 1" });
+    await omp.runPromptAfterRuntimeExit("continue", "recovered response");
+
+    expect(sessionFile).toBe("/tmp/omp-session");
+    expect(omp.runtimeLaunchSessions()).toEqual([undefined, sessionFile]);
+  });
+
+  test("reports relaunch failure and retries recovery on a later prompt", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const recoveryError = new Error("relaunch failed");
+    omp.runtime().emit({ type: "process_exit", error: "OMP process exited with code 1" });
+    omp.failNextRuntimeStart(recoveryError);
+
+    await omp.startTurnAfterRuntimeExit("first retry");
+    expect(omp.turnFailures()).toEqual(["OMP process exited with code 1", "relaunch failed"]);
+
+    await omp.runPromptAfterRuntimeExit("second retry", "recovered response");
+    expect(omp.runtimeSessionCount()).toBe(2);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("preserves a correlated invoked result over a local-only prompt ack", async () => {
     const omp = new OmpHarness();
     await omp.start();
