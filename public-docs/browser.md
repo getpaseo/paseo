@@ -42,9 +42,30 @@ The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tool
 
 > Browser tools let agents access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.
 
-## Desktop only, for now
+## Where the browser runs
 
-Browser tabs are hosted by the Paseo desktop app. The daemon itself doesn't run a browser — it routes tool calls to a connected desktop app, and returns an error when none is connected. The wire contract is host-neutral, so other hosts can carry the same tools later.
+Browser tabs live in a **host** the daemon routes commands to. There are two, and both can be connected at once — `browser_list_tabs` aggregates them.
+
+**The Paseo desktop app** hosts tabs in its own window, in the browser profile you use yourself. This is the full toolset: snapshots, refs, dialogs, console and network logs.
+
+**A CDP endpoint you already run** gives a headless daemon a browser of its own, so mirroring works on a server with no desktop app connected. Point the daemon at it:
+
+```json
+{
+  "daemon": {
+    "browserTools": {
+      "enabled": true,
+      "cdpEndpoint": "http://127.0.0.1:9222"
+    }
+  }
+}
+```
+
+Without `cdpEndpoint` the daemon runs no browser, exactly as before. Paseo attaches to the endpoint but never launches or bundles a browser, so run your own: headless Chrome with `--remote-debugging-port=9222`, Lightpanda, Browserless, or a hosted browser. An `http(s)` endpoint is resolved through `/json/version`; give a `ws(s)` URL to connect straight to it. The daemon retries until the browser is up, so start order doesn't matter.
+
+A browser on the daemon reaches your dev server at `localhost` directly, with no tunnel back to a client.
+
+This host serves the viewer and mirror commands — `list_tabs`, `new_tab`, `navigate`, `back`, `forward`, `reload`, `close_tab`, `resize`, `screenshot`, `input_at`, `screencast_start`, `screencast_stop`. The ref-based tools (`browser_snapshot`, `browser_click`, `browser_fill`, and friends) need the snapshot engine the desktop app injects into its guests, so agents get those only from a connected desktop app.
 
 ## How an agent sees a page
 
@@ -65,10 +86,10 @@ For anything the tree can't capture, agents fall back to `browser_screenshot`, a
 ## Architecture
 
 ```
-agent ──MCP──▶ daemon (broker) ──▶ browser host (desktop app) ──▶ webview
+agent ──MCP──▶ daemon (broker) ──▶ browser host ──▶ desktop webview or CDP endpoint
 ```
 
-- **Workspace-scoped tabs.** An agent only sees and controls tabs in its own workspace. New tabs open in the background without stealing your focus.
+- **Workspace-scoped tabs.** An agent only sees and controls tabs in its own workspace. Tabs the daemon's own browser opened belong to the workspace that opened them; ones already open at the endpoint belong to none. New tabs open in the background without stealing your focus.
 - **Tab-to-host routing.** The daemon remembers which host owns each tab and routes tab commands there. `browser_list_tabs` aggregates all connected hosts.
 - **Trusted input.** Clicks, keys, hovers, and drags are dispatched as real browser input events — CSS `:hover` triggers, and pages can't tell an agent's click from a user's. Every action first waits for its target to be visible, enabled, and stable.
 - **Dialogs never block.** `alert` is accepted; `confirm`, `prompt`, and `beforeunload` are dismissed. Every handled dialog is reported in the tool result so the agent knows the page flow changed.

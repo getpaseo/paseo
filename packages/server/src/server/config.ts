@@ -508,6 +508,17 @@ function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedCo
 }
 
 /**
+ * A CDP endpoint the operator already runs. Absent, the daemon owns no browser
+ * of its own and mirroring stays client-driven exactly as before.
+ */
+function resolveBrowserToolsCdpEndpoint(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string | undefined {
+  const endpoint = persisted.daemon?.browserTools?.cdpEndpoint?.trim();
+  return endpoint ? endpoint : undefined;
+}
+
+/**
  * Both profile lists stay `undefined` when absent rather than defaulting to an
  * empty array: for terminal profiles that is what selects the built-in
  * defaults, so an empty array has to keep meaning "the user removed them all".
@@ -529,6 +540,7 @@ function resolveStaticLoadConfigSettings(
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    browserToolsCdpEndpoint: resolveBrowserToolsCdpEndpoint(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
@@ -564,6 +576,7 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    browserToolsCdpEndpoint,
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
@@ -607,6 +620,7 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    browserToolsCdpEndpoint,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,

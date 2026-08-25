@@ -35,4 +35,31 @@ describe("daemon browser tools config", () => {
 
     expect(loadConfig(home, { env: {} }).browserToolsEnabled).toBe(true);
   });
+
+  test("leaves the daemon without a browser of its own when no CDP endpoint is set", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { browserTools: { enabled: true } },
+    });
+
+    expect(loadConfig(home, { env: {} }).browserToolsCdpEndpoint).toBeUndefined();
+  });
+
+  test("loads the CDP endpoint the daemon attaches its own browser host to", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { browserTools: { enabled: true, cdpEndpoint: " http://127.0.0.1:9222 " } },
+    });
+
+    expect(loadConfig(home, { env: {} }).browserToolsCdpEndpoint).toBe("http://127.0.0.1:9222");
+  });
+
+  test("treats a blank CDP endpoint as unset", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: { browserTools: { cdpEndpoint: "   " } },
+    });
+
+    expect(loadConfig(home, { env: {} }).browserToolsCdpEndpoint).toBeUndefined();
+  });
 });

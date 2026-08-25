@@ -10,6 +10,9 @@ import {
 import { supportsBrowserMirror } from "@getpaseo/protocol/browser-automation/capabilities";
 import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
 
+/** The {@link BrowserHostClient.hostKind} of the daemon's own CDP fallback. */
+export const HEADLESS_BROWSER_HOST_KIND = "headless browser";
+
 export interface BrowserHostClient {
   id: string;
   hostKind: string;
@@ -497,14 +500,24 @@ export class BrowserToolsBroker {
   }
 }
 
+/**
+ * A daemon with no desktop app can still own a browser through a configured CDP
+ * endpoint, but that host is a fallback: where a real head is attached it has
+ * the operator's profile and cookies, so it takes the tab even if the headless
+ * one registered later.
+ */
 function selectDaemonLocalHost(
   hosts: readonly RegisteredBrowserHost[],
 ): RegisteredBrowserHost | null {
   let selected: RegisteredBrowserHost | null = null;
   for (const host of hosts) {
-    if (host.client.isDaemonLocal) {
-      selected = host;
+    if (!host.client.isDaemonLocal) {
+      continue;
     }
+    if (selected && host.client.hostKind === HEADLESS_BROWSER_HOST_KIND) {
+      continue;
+    }
+    selected = host;
   }
   return selected;
 }
