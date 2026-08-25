@@ -131,6 +131,17 @@ const MODELS: AgentModelDefinition[] = [
       intervalMs: 5,
     },
   },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "e2e-fast-stream",
+    label: "E2E fast stream",
+    description: "Short deterministic stream for browser tests.",
+    isSelectable: false,
+    metadata: {
+      durationMs: 2_000,
+      intervalMs: 20,
+    },
+  },
 ];
 
 interface ActiveTurn {
