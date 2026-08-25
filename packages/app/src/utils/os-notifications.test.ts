@@ -30,6 +30,8 @@ const originalGlobals: GlobalSnapshot = {
   location: (globalThis as { location?: unknown }).location,
 };
 
+type PlayNotificationSoundMock = ReturnType<typeof vi.fn>;
+
 async function loadModuleForPlatform(
   platform: "web" | "ios" | "android",
   options?: {
@@ -42,6 +44,7 @@ async function loadModuleForPlatform(
         }) => Promise<boolean>;
       };
     } | null;
+    playNotificationSound?: PlayNotificationSoundMock;
   },
 ) {
   vi.resetModules();
@@ -56,7 +59,11 @@ async function loadModuleForPlatform(
       })),
     },
   }));
-  return import("./os-notifications");
+  const playNotificationSound =
+    options?.playNotificationSound ?? (vi.fn(async () => true) satisfies PlayNotificationSoundMock);
+  vi.doMock("./notification-sound", () => ({ playNotificationSound }));
+  const module = await import("./os-notifications");
+  return { ...module, playNotificationSoundMock: playNotificationSound };
 }
 
 function restoreGlobals(): void {
@@ -132,7 +139,8 @@ describe("sendOsNotification", () => {
     (globalThis as { dispatchEvent?: unknown }).dispatchEvent = dispatchEvent;
     (globalThis as { location?: unknown }).location = { assign };
 
-    const { sendOsNotification, WEB_NOTIFICATION_CLICK_EVENT } = await loadModuleForPlatform("web");
+    const { sendOsNotification, playNotificationSoundMock, WEB_NOTIFICATION_CLICK_EVENT } =
+      await loadModuleForPlatform("web");
 
     const sent = await sendOsNotification({
       title: "Agent finished",
@@ -141,6 +149,7 @@ describe("sendOsNotification", () => {
     });
 
     expect(sent).toBe(true);
+    expect(playNotificationSoundMock).toHaveBeenCalledTimes(1);
     expect(created).toHaveLength(1);
 
     const clicked = created[0];
@@ -266,7 +275,7 @@ describe("sendOsNotification", () => {
   it("uses the desktop notification bridge when available", async () => {
     const sendNotification = vi.fn(async () => true);
 
-    const { sendOsNotification } = await loadModuleForPlatform("web", {
+    const { sendOsNotification, playNotificationSoundMock } = await loadModuleForPlatform("web", {
       desktopHost: {
         notification: {
           sendNotification,
@@ -281,10 +290,31 @@ describe("sendOsNotification", () => {
     });
 
     expect(sent).toBe(true);
+    expect(playNotificationSoundMock).toHaveBeenCalledTimes(1);
     expect(sendNotification).toHaveBeenCalledWith({
       title: "Paseo notification test",
       body: "If you can see this, desktop notifications work.",
       data: { serverId: "srv-1" },
     });
+  });
+
+  it("does not play a sound when the desktop bridge fails to send", async () => {
+    const sendNotification = vi.fn(async () => false);
+
+    const { sendOsNotification, playNotificationSoundMock } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification,
+        },
+      },
+    });
+
+    const sent = await sendOsNotification({
+      title: "Paseo notification test",
+      body: "If you can see this, desktop notifications work.",
+    });
+
+    expect(sent).toBe(false);
+    expect(playNotificationSoundMock).not.toHaveBeenCalled();
   });
 });

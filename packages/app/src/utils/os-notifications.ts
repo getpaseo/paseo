@@ -1,6 +1,8 @@
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
+import { playNotificationSound } from "./notification-sound";
+import { inAppNotificationStore } from "@/components/in-app-notifications/in-app-notification-store";
 import { isNative } from "@/constants/platform";
 
 interface OsNotificationPayload {
@@ -169,9 +171,30 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
     return false;
   }
 
+  // Push to the in-app notification toast system (Zed style) only if the app window is currently focused.
+  // When minimized or in the background, the user receives the floating screen popup instead.
+  const isAppFocused =
+    typeof document !== "undefined" &&
+    !document.hidden &&
+    (typeof document.hasFocus === "function" ? document.hasFocus() : true);
+
+  if (isAppFocused) {
+    inAppNotificationStore.push({
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+  }
+
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    return await desktopNotificationSender(payload);
+    const sent = await desktopNotificationSender(payload);
+    if (sent) {
+      // Played here rather than by the OS notification so audio still fires
+      // when the OS suppresses the notification entirely.
+      await playNotificationSound();
+    }
+    return sent;
   }
 
   const NotificationConstructor = getWebNotificationConstructor();
@@ -186,6 +209,7 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
       if (hasNotificationClickTarget(payload.data)) {
         attachWebClickHandler(notification, payload.data);
       }
+      await playNotificationSound();
       return true;
     }
   }

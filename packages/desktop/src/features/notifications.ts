@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
-import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { showScreenFloatingNotification } from "./screen-notification.js";
 
 interface NotificationInput {
   title?: unknown;
@@ -49,16 +49,24 @@ function getNotificationIcon(): Electron.NativeImage | null {
   return null;
 }
 
-function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(sender) ?? BrowserWindow.getAllWindows()[0] ?? null;
+function focusSenderWindow(sender?: Electron.WebContents): BrowserWindow | null {
+  const targetWin = sender ? BrowserWindow.fromWebContents(sender) : null;
+  const win =
+    targetWin ??
+    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable()) ??
+    null;
+
   if (!win || win.isDestroyed()) {
     return null;
   }
-  win.show();
   if (win.isMinimized()) {
     win.restore();
   }
+  win.show();
+  // Force foreground bypass on Windows when restored from minimized
+  win.setAlwaysOnTop(true);
   win.focus();
+  win.setAlwaysOnTop(false);
   return win;
 }
 
@@ -96,12 +104,15 @@ export function registerNotificationHandlers(): void {
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();
-    const settings = await getDesktopSettingsStore().get();
+    // Always silent here: the renderer plays the notification sound itself
+    // (app/src/utils/notification-sound) so audio still fires when the OS
+    // suppresses the notification entirely (e.g. Windows with notifications
+    // disabled), and so the playSound setting has a single sound source.
     const notification = new Notification({
       title,
       ...(body ? { body } : {}),
       ...(icon ? { icon } : {}),
-      silent: !settings.notifications.playSound,
+      silent: true,
     });
 
     activeNotifications.add(notification);
@@ -115,11 +126,31 @@ export function registerNotificationHandlers(): void {
       activeNotifications.delete(notification);
     });
 
-    notification.on("close", () => {
-      activeNotifications.delete(notification);
-    });
+    // Determine if the app window is currently focused.
+    // If the app is in focus, the user sees the in-app toast notification.
+    // If the app is minimized / in background / out of focus, show the floating screen popup on the display.
+    const senderWin =
+      BrowserWindow.fromWebContents(event.sender) ??
+      BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
+    const isAppFocused = senderWin
+      ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
+      : false;
 
-    notification.show();
+    if (!isAppFocused) {
+      showScreenFloatingNotification({
+        title,
+        body,
+        data,
+        onOpenTarget: (clickData) => {
+          const win = focusSenderWindow(event.sender);
+          if (win && clickData && Object.keys(clickData).length > 0) {
+            const payload: NotificationClickPayload = { data: clickData };
+            win.webContents.send("paseo:event:notification-click", payload);
+          }
+        },
+      });
+    }
+
     return true;
   });
 }

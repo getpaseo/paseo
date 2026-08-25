@@ -62,6 +62,7 @@ import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
+import { InAppNotificationHost } from "@/components/in-app-notifications/in-app-notification-host";
 import { VoiceProvider } from "@/contexts/voice-context";
 import {
   resolveStartupBlocker,
@@ -950,6 +951,7 @@ function RootProviders({ children }: { children: ReactNode }) {
         <KeyboardProvider>
           <KeyboardShiftProvider>
             <ToastProvider>
+              <InAppNotificationHost />
               <PortalProvider>
                 <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
               </PortalProvider>
