@@ -560,9 +560,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
-    ...(config.notifications !== undefined
-      ? { notifications: config.notifications }
-      : {}),
+    notifications: config.notifications,
   };
 
   if (config.terminalProfiles !== undefined) {

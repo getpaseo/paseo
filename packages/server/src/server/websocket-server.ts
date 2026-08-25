@@ -2507,7 +2507,8 @@ export class VoiceAssistantWebSocketServer {
     this.logger.info(loggedMetrics, "ws_runtime_metrics");
   }
 
-  private getClientActivityState(session: Session): ClientPresenceState {    const activity = session.getClientActivity();
+  private getClientActivityState(session: Session): ClientPresenceState {
+    const activity = session.getClientActivity();
     if (!activity) {
       return {
         appVisible: false,
