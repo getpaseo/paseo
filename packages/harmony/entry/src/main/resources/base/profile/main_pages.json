@@ -1,0 +1,7 @@
+{
+  "src": [
+    "pages/connect-page",
+    "pages/agent-page",
+    "pages/terminal-page"
+  ]
+}

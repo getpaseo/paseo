@@ -1,0 +1,11 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "@getpaseo/harmony",
+  "version": "0.1.0",
+  "description": "Paseo HarmonyOS native client",
+  "main": "",
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {}
+}

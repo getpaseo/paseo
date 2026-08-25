@@ -1,0 +1,17 @@
+{
+  "name": "@getpaseo/protocol",
+  "version": "0.1.104-beta.3",
+  "description": "Paseo shared protocol schemas and wire types",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./messages": "./dist/messages.d.ts",
+    "./client-capabilities": "./dist/client-capabilities.d.ts",
+    "./agent-types": "./dist/agent-types.d.ts",
+    "./binary-frames/index": "./dist/binary-frames/index.d.ts",
+    "./terminal-subscription-key": "./dist/terminal-subscription-key.d.ts",
+    "./daemon-endpoints": "./dist/daemon-endpoints.d.ts",
+    "./browser-automation/rpc-schemas": "./dist/browser-automation/rpc-schemas.d.ts"
+  }
+}

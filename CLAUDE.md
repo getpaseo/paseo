@@ -59,6 +59,9 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/docker.md](docs/docker.md)                                   | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/release.md](docs/release.md)                                 | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)             | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
+| [docs/i18n.md](docs/i18n.md)                                       | Client UI translation (8 locales), resource keys, migration batches, parity tests                                               |
+| [docs/timeline-sync.md](docs/timeline-sync.md)                     | Live stream vs authoritative history, catch-up paging, resume behavior, presence vs delivery                                    |
+| [docs/opencode-global-event-baseline.md](docs/opencode-global-event-baseline.md) | OpenCode global event verification baseline and test matrix results                                         |
 | [SECURITY.md](SECURITY.md)                                         | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)         | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
 
@@ -89,20 +92,113 @@ Do not:
 ## Quick start
 
 ```bash
-npm run dev                          # Start the dev daemon
-npm run dev:app                      # Start Expo against the dev daemon
-npm run dev:desktop                  # Start Electron desktop dev
+# Dev servers
+npm run dev                          # Start the dev daemon (127.0.0.1:6768)
+npm run dev:app                      # Start Expo (port 8081) against the dev daemon
+npm run dev:desktop                  # Start Electron desktop dev (auto-picks port 8082–8089)
+npm run dev:website                  # Start marketing site dev server
+
+# CLI (targets checkout-local .dev/paseo-home automatically)
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
-npm run typecheck                    # Always run after changes
-npm run lint                         # Always run after changes
-npm run format                       # Auto-format with Biome
+
+# Platform run targets (from root)
+npm run android                      # Android (debug)
+npm run ios                          # iOS (debug)
+npm run web                          # Web browser
+
+# Code quality
+npm run typecheck                    # Type-check all workspaces
+npm run lint                         # Lint all files
+npm run lint -- packages/app/src/components/message.tsx  # Lint specific file
+npm run format                       # Auto-format all files
 npm run format:check                 # Check formatting without writing
+npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx  # Format specific files
+npm run knip                         # Check for unused code
+
+# Building (see "Build dependency order" above for the full chain)
+npm run build:protocol               # Rebuild wire schemas
+npm run build:client                  # Rebuild daemon client library
+npm run build:server                  # Rebuild full server + CLI stack
 ```
 
 Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
 
+## Testing
+
+**NEVER run the full test suite locally.** The test suites are heavy and will freeze the machine. Rules:
+
+- Run only the specific test file you changed: `npx vitest run <file> --bail=1`
+- Never run `npm run test` for an entire workspace unless explicitly asked.
+- If you must run a broad suite, pipe output to a file and read it afterward.
+- Never re-run a test suite that another agent already ran and reported green — trust the result.
+- For full suite verification, push to CI and check GitHub Actions instead.
+
+Package-level test commands:
+
+| Command | Scope |
+|---------|-------|
+| `npm run test --workspace=@getpaseo/protocol` | Protocol unit tests |
+| `npm run test --workspace=@getpaseo/client` | Client unit tests |
+| `npm run test:unit --workspace=@getpaseo/server` | Server unit tests (excludes e2e) |
+| `npm run test:integration --workspace=@getpaseo/server` | Server integration tests (selected e2e) |
+| `npm run test:e2e --workspace=@getpaseo/server` | Server e2e suite (excludes real/local) |
+| `npm run test:integration:all --workspace=@getpaseo/server` | All server e2e tests |
+| `npm run test --workspace=@getpaseo/cli` | CLI tests |
+| `npm run test --workspace=@getpaseo/app` | App tests |
+| `npm run test --workspace=@getpaseo/relay` | Relay tests |
+| `npm run test --workspace=@getpaseo/highlight` | Highlight tests |
+
+The root `vitest.config.ts` resolves workspace source files directly (no `dist/` rebuild needed for tests). Always use `npx vitest run` (not `npm run test`) when running a single file so it picks up the root config.
+
+Test philosophy: TDD in vertical slices (one test → one impl → repeat), real dependencies over mocks, flaky tests treated as bugs, and deterministic assertions only. See [docs/testing.md](docs/testing.md) for full guidance.
+
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
+
+## Build dependency order
+
+Packages form a layered dependency chain. When modifying a lower layer, rebuild everything above it:
+
+```
+highlight → relay → protocol → client → server → CLI
+                                  ↓
+                               app (Expo, depends on client + highlight)
+                                  ↓
+                              desktop (Electron, depends on app's web export)
+```
+
+Key build commands:
+
+| Command | What it builds |
+|---------|---------------|
+| `npm run build:protocol` | Protocol only (wire schemas) |
+| `npm run build:client` | Protocol + client (daemon client library) |
+| `npm run build:server-deps` | Highlight + relay + client (everything server/CLI depend on) |
+| `npm run build:server` | Full server + CLI stack |
+| `npm run build:app-deps` | Highlight + client + expo-two-way-audio (everything app depends on) |
+
+**`build:clean` variants** (e.g. `build:client:clean`) run `clean` before `build` — use these in CI or when stale `dist/` artifacts cause issues. Local iterative work uses plain `build` for speed.
+
+**Type checking uses `tsgo`**, a faster drop-in for `tsc`. Builds still use `tsc` for declaration emit. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first (e.g. `npm run build:client`) so generated declarations are current.
+
+## Tooling
+
+- **Formatter:** `oxfmt` (invoked via `npm run format` or `npm run format:files -- <paths>`)
+- **Linter:** `oxlint` (invoked via `npm run lint` or `npm run lint -- <paths>`)
+- **Type checker:** `tsgo --noEmit` (via `npm run typecheck`)
+- **Test runner:** `vitest` (per-package or at root)
+- **Unused-code detector:** `knip` (via `npm run knip`)
+- **Git hooks:** `lefthook` — on commit, runs format check, lint, and typecheck in parallel. Auto-installed via `postinstall`.
+
+## i18n
+
+Client UI supports 8 locales (`en`, `ar`, `es`, `fr`, `ja`, `pt-BR`, `ru`, `zh-CN`). English source strings live in `packages/app/src/i18n/resources/en.ts`. When adding client-owned UI copy, add the key to `en.ts`. Run the parity test to catch missing keys:
+
+```bash
+npx vitest run packages/app/src/i18n/resources.test.ts --bail=1
+```
+
+Translate client-owned UI copy only — never translate agent output, daemon logs, terminal contents, file paths, provider/model names, or raw protocol errors. See [docs/i18n.md](docs/i18n.md) for the full scope and migration history.
 
 ## Critical rules
 
@@ -110,18 +206,10 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Before changing app routes, startup routing, remembered workspace restore, or active workspace selection, read [docs/expo-router.md](docs/expo-router.md).**
-- **NEVER run the full test suite locally.** The test suites are heavy and will freeze the machine, especially if multiple agents run them in parallel. Rules:
-  - Run only the specific test file you changed: `npx vitest run <file> --bail=1`
-  - Never run `npm run test` for an entire workspace unless explicitly asked.
-  - If you must run a broad suite, pipe output to a file and read it afterward: `npx vitest run <file> --bail=1 > /tmp/test-output.txt 2>&1` then read the file.
-  - Never re-run a test suite that another agent already ran and reported green — trust the result.
-  - For full suite verification, push to CI and check GitHub Actions instead.
+- **NEVER run the full test suite locally.** See [Testing](#testing) section above for the rules and per-package commands.
 - **Always run typecheck and lint after every change.**
-- **Build workspace packages before diagnosing cross-package type errors.** This repo consumes generated declarations across workspaces. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first so `dist` declarations are current:
-  - `npm run build:client` — rebuild protocol and client declarations.
-  - `npm run build:server` — rebuild highlight, relay, protocol, client, server, and CLI when server/CLI types may be stale.
-  - Do not patch inferred callback parameters or add local duplicate types just to silence stale declaration errors.
-- **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
+- **Build workspace packages before diagnosing cross-package type errors.** This repo consumes generated declarations across workspaces. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first so `dist` declarations are current. See [Build dependency order](#build-dependency-order) above. Do not patch inferred callback parameters or add local duplicate types just to silence stale declaration errors.
+- **Run `npm run format` before committing.** This repo uses oxfmt for formatting. Do not manually fix formatting — let the formatter handle it.
 - **Always use npm scripts for linting and formatting.** Do not run tools directly with `npx eslint`, `npx oxfmt`, `npx oxlint`, or package-local binaries. For targeted checks, pass file paths through the npm script:
   - `npm run lint -- packages/app/src/components/message.tsx`
   - `npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx`

@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "Paseo"
+    },
+    {
+      "name": "internet_permission_reason",
+      "value": "Paseo needs network access to connect to your local AI coding agent daemon."
+    }
+  ]
+}

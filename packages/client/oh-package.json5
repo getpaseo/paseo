@@ -1,0 +1,11 @@
+{
+  "name": "@getpaseo/client",
+  "version": "0.1.104-beta.3",
+  "description": "Paseo client SDK package",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./internal/daemon-client-transport-types": "./dist/daemon-client-transport-types.d.ts"
+  }
+}

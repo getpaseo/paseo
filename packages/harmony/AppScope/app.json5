@@ -1,0 +1,14 @@
+{
+  app: {
+    // "bundleName": "com.getpaseo.paseo",
+    bundleName: "com.yixuanju.paseo",
+    vendor: "getpaseo",
+    versionCode: 1,
+    versionName: "0.1.0",
+    icon: "$media:app_icon",
+    label: "$string:app_name",
+    targetAPIVersion: 24,
+    minAPIVersion: 12,
+    apiReleaseType: "Release1",
+  },
+}

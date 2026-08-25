@@ -1,0 +1,12 @@
+# Hvigor build cache
+.hvigor/
+
+# Ohpm / npm generated modules
+oh_modules/
+entry/oh_modules/
+
+# Build output
+entry/build/
+
+# Signing materials (contains SDK keys — use DevEco Studio auto-signing)
+signing/

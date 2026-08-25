@@ -1,0 +1,7 @@
+{
+  "name": "@getpaseo/relay",
+  "version": "0.1.104-beta.3",
+  "description": "Paseo E2E encrypted relay package",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
+}
