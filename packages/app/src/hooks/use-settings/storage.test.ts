@@ -402,7 +402,7 @@ describe("loadSettingsFromStorage", () => {
       isElectron: true,
       settings: {
         releaseChannel: "beta",
-        notifications: { playSound: true },
+        notifications: { playSound: true, customSoundPath: null },
         daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
       },
     });

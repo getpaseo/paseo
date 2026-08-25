@@ -53,11 +53,22 @@ export interface DesktopDialogBridge {
   open?: (options?: DesktopDialogOpenOptions) => Promise<string | string[] | null>;
 }
 
+export interface DesktopNotificationSound {
+  dataUrl: string;
+}
+
+export interface DesktopNotificationSendResult {
+  shown: boolean;
+  playsCustomSound: boolean;
+}
+
 export interface DesktopNotificationBridge {
   isSupported?: () => Promise<boolean>;
+  // COMPAT(notificationSendResult): older preloads return a plain boolean; added in v0.6.1, remove after 2027-02-26.
   sendNotification?: (
     payload: string | { title: string; body?: string; data?: Record<string, unknown> },
-  ) => Promise<boolean>;
+  ) => Promise<boolean | DesktopNotificationSendResult>;
+  getCustomSound?: () => Promise<DesktopNotificationSound | null>;
 }
 
 export interface DesktopOpenerBridge {

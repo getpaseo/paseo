@@ -81,7 +81,7 @@ describe("desktop-settings", () => {
 
     expect(settings).toEqual({
       releaseChannel: "stable",
-      notifications: { playSound: true },
+      notifications: { playSound: true, customSoundPath: null },
       daemon: {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
@@ -103,7 +103,7 @@ describe("desktop-settings", () => {
 
     expect(next).toEqual({
       releaseChannel: "beta",
-      notifications: { playSound: true },
+      notifications: { playSound: true, customSoundPath: null },
       daemon: {
         manageBuiltInDaemon: true,
         keepRunningAfterQuit: false,
@@ -149,6 +149,102 @@ describe("desktop-settings", () => {
     const settings = await createDesktopSettingsStore({ userDataPath }).get();
 
     expect(settings.notifications.playSound).toBe(false);
+  });
+
+  it("keeps a custom notification sound path across restarts", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+
+    await createDesktopSettingsStore({ userDataPath }).patch({
+      notifications: { customSoundPath: "/Users/paseo/Sounds/chime.mp3" },
+    });
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.notifications).toEqual({
+      playSound: true,
+      customSoundPath: "/Users/paseo/Sounds/chime.mp3",
+    });
+  });
+
+  it("clears the custom notification sound when patched with null", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    await store.patch({ notifications: { customSoundPath: "/Users/paseo/Sounds/chime.mp3" } });
+    const cleared = await store.patch({ notifications: { customSoundPath: null } });
+
+    expect(cleared.notifications.customSoundPath).toBeNull();
+  });
+
+  it("rejects a non-string custom notification sound path", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: {
+          releaseChannel: "stable",
+          notifications: { playSound: true, customSoundPath: 42 },
+          daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: false },
+        },
+        migrations: {
+          legacyRendererSettingsImported: true,
+          daemonStopOnQuitDefaultApplied: true,
+        },
+      }),
+    );
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    const loaded = await store.get();
+    const chosen = await store.patch({
+      notifications: { customSoundPath: "/Users/paseo/Sounds/chime.mp3" },
+    });
+    const patched = await store.patch({ notifications: { customSoundPath: 42 } });
+
+    expect(loaded.notifications.customSoundPath).toBeNull();
+    expect(chosen.notifications.customSoundPath).toBe("/Users/paseo/Sounds/chime.mp3");
+    expect(patched.notifications.customSoundPath).toBe("/Users/paseo/Sounds/chime.mp3");
+  });
+
+  it("keeps a custom notification sound path byte-for-byte", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const soundPath = " /Users/paseo/Sounds/ chime .mp3 ";
+
+    await createDesktopSettingsStore({ userDataPath }).patch({
+      notifications: { customSoundPath: soundPath },
+    });
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.notifications.customSoundPath).toBe(soundPath);
+  });
+
+  it("defaults the custom notification sound for settings documents written before it existed", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: {
+          releaseChannel: "stable",
+          notifications: { playSound: false },
+          daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: false },
+        },
+        migrations: {
+          legacyRendererSettingsImported: true,
+          daemonStopOnQuitDefaultApplied: true,
+        },
+      }),
+    );
+
+    const settings = await createDesktopSettingsStore({ userDataPath }).get();
+
+    expect(settings.notifications).toEqual({ playSound: false, customSoundPath: null });
   });
 
   it("does not let stale legacy renderer settings override an explicit desktop patch", async () => {
@@ -270,7 +366,7 @@ describe("desktop-settings", () => {
 
     expect(migrated).toEqual({
       releaseChannel: "beta",
-      notifications: { playSound: true },
+      notifications: { playSound: true, customSoundPath: null },
       daemon: {
         manageBuiltInDaemon: false,
         keepRunningAfterQuit: false,

@@ -88,8 +88,13 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
   },
   notification: {
     isSupported: () => ipcRenderer.invoke("paseo:notification:isSupported"),
-    sendNotification: (payload: { title: string; body?: string; data?: Record<string, unknown> }) =>
+    sendNotification: (payload: {
+      title: string;
+      body?: string;
+      data?: Record<string, unknown>;
+    }): Promise<{ shown: boolean; playsCustomSound: boolean }> =>
       ipcRenderer.invoke("paseo:notification:send", payload),
+    getCustomSound: () => ipcRenderer.invoke("paseo:notification:getCustomSound"),
   },
   opener: {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),

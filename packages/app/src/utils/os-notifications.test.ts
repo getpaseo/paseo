@@ -20,6 +20,7 @@ interface GlobalSnapshot {
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
+  Audio: unknown;
 }
 
 const originalGlobals: GlobalSnapshot = {
@@ -28,7 +29,10 @@ const originalGlobals: GlobalSnapshot = {
   dispatchEvent: (globalThis as { dispatchEvent?: unknown }).dispatchEvent,
   focus: (globalThis as { focus?: unknown }).focus,
   location: (globalThis as { location?: unknown }).location,
+  Audio: (globalThis as { Audio?: unknown }).Audio,
 };
+
+type MockSendResult = boolean | { shown: boolean; playsCustomSound: boolean };
 
 async function loadModuleForPlatform(
   platform: "web" | "ios" | "android",
@@ -39,7 +43,8 @@ async function loadModuleForPlatform(
           title: string;
           body?: string;
           data?: Record<string, unknown>;
-        }) => Promise<boolean>;
+        }) => Promise<MockSendResult>;
+        getCustomSound?: () => Promise<{ dataUrl: string } | null>;
       };
     } | null;
   },
@@ -65,6 +70,21 @@ function restoreGlobals(): void {
   (globalThis as { dispatchEvent?: unknown }).dispatchEvent = originalGlobals.dispatchEvent;
   (globalThis as { focus?: unknown }).focus = originalGlobals.focus;
   (globalThis as { location?: unknown }).location = originalGlobals.location;
+  (globalThis as { Audio?: unknown }).Audio = originalGlobals.Audio;
+}
+
+class MockAudio {
+  static played: string[] = [];
+  static playRejection: Error | null = null;
+
+  constructor(public src: string) {}
+
+  async play(): Promise<void> {
+    if (MockAudio.playRejection) {
+      throw MockAudio.playRejection;
+    }
+    MockAudio.played.push(this.src);
+  }
 }
 
 describe("sendOsNotification", () => {
@@ -90,6 +110,9 @@ describe("sendOsNotification", () => {
 
     (globalThis as { CustomEvent?: unknown }).CustomEvent = MockCustomEvent;
     (globalThis as { focus?: unknown }).focus = vi.fn();
+    (globalThis as { Audio?: unknown }).Audio = MockAudio;
+    MockAudio.played = [];
+    MockAudio.playRejection = null;
   });
 
   afterEach(() => {
@@ -264,7 +287,7 @@ describe("sendOsNotification", () => {
   });
 
   it("uses the desktop notification bridge when available", async () => {
-    const sendNotification = vi.fn(async () => true);
+    const sendNotification = vi.fn(async () => ({ shown: true, playsCustomSound: false }));
 
     const { sendOsNotification } = await loadModuleForPlatform("web", {
       desktopHost: {
@@ -286,5 +309,174 @@ describe("sendOsNotification", () => {
       body: "If you can see this, desktop notifications work.",
       data: { serverId: "srv-1" },
     });
+  });
+
+  it("plays the configured desktop sound on every send and only fetches it once", async () => {
+    const getCustomSound = vi.fn(async () => ({ dataUrl: "data:audio/mpeg;base64,Y2hpbWU=" }));
+
+    const { sendOsNotification, resetCustomNotificationSound } = await loadModuleForPlatform(
+      "web",
+      {
+        desktopHost: {
+          notification: {
+            sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: true })),
+            getCustomSound,
+          },
+        },
+      },
+    );
+
+    await sendOsNotification({ title: "Agent finished" });
+    await sendOsNotification({ title: "Agent finished" });
+
+    expect(getCustomSound).toHaveBeenCalledTimes(1);
+    expect(MockAudio.played).toEqual([
+      "data:audio/mpeg;base64,Y2hpbWU=",
+      "data:audio/mpeg;base64,Y2hpbWU=",
+    ]);
+
+    resetCustomNotificationSound();
+    await sendOsNotification({ title: "Agent finished" });
+
+    expect(getCustomSound).toHaveBeenCalledTimes(2);
+    expect(MockAudio.played).toHaveLength(3);
+  });
+
+  it("plays nothing when the desktop host reports no custom sound", async () => {
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: true })),
+          getCustomSound: vi.fn(async () => null),
+        },
+      },
+    });
+
+    const sent = await sendOsNotification({ title: "Agent finished" });
+
+    expect(sent).toBe(true);
+    expect(MockAudio.played).toEqual([]);
+  });
+
+  it("retries the fetch on the next send when the sound resolves to nothing", async () => {
+    const getCustomSound = vi
+      .fn<() => Promise<{ dataUrl: string } | null>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ dataUrl: "data:audio/wav;base64,Y2hpbWU=" });
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: true })),
+          getCustomSound,
+        },
+      },
+    });
+
+    await sendOsNotification({ title: "Agent finished" });
+    await sendOsNotification({ title: "Agent finished" });
+
+    expect(getCustomSound).toHaveBeenCalledTimes(2);
+    expect(MockAudio.played).toEqual(["data:audio/wav;base64,Y2hpbWU="]);
+  });
+
+  it("does not fetch a custom sound when the desktop notification plays none", async () => {
+    const getCustomSound = vi.fn(async () => ({ dataUrl: "data:audio/mpeg;base64,Y2hpbWU=" }));
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: false })),
+          getCustomSound,
+        },
+      },
+    });
+
+    const sent = await sendOsNotification({ title: "Agent finished" });
+
+    expect(sent).toBe(true);
+    expect(getCustomSound).not.toHaveBeenCalled();
+    expect(MockAudio.played).toEqual([]);
+  });
+
+  it("does not fetch a custom sound when the desktop notification was not shown", async () => {
+    const getCustomSound = vi.fn(async () => ({ dataUrl: "data:audio/mpeg;base64,Y2hpbWU=" }));
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: false, playsCustomSound: false })),
+          getCustomSound,
+        },
+      },
+    });
+
+    const sent = await sendOsNotification({ title: "Agent finished" });
+
+    expect(sent).toBe(false);
+    expect(getCustomSound).not.toHaveBeenCalled();
+    expect(MockAudio.played).toEqual([]);
+  });
+
+  it("treats a plain boolean result from an older preload as a custom-sound send", async () => {
+    const getCustomSound = vi.fn(async () => ({ dataUrl: "data:audio/mpeg;base64,Y2hpbWU=" }));
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: { sendNotification: vi.fn(async () => true), getCustomSound },
+      },
+    });
+
+    const sent = await sendOsNotification({ title: "Agent finished" });
+
+    expect(sent).toBe(true);
+    expect(getCustomSound).toHaveBeenCalledTimes(1);
+    expect(MockAudio.played).toEqual(["data:audio/mpeg;base64,Y2hpbWU="]);
+  });
+
+  it("stays silent and retries the next send when sound playback throws", async () => {
+    const getCustomSound = vi
+      .fn<() => Promise<{ dataUrl: string } | null>>()
+      .mockRejectedValueOnce(new Error("bridge unavailable"))
+      .mockResolvedValue({ dataUrl: "data:audio/wav;base64,Y2hpbWU=" });
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: true })),
+          getCustomSound,
+        },
+      },
+    });
+
+    const firstSend = await sendOsNotification({ title: "Agent finished" });
+    const secondSend = await sendOsNotification({ title: "Agent finished" });
+
+    expect(firstSend).toBe(true);
+    expect(secondSend).toBe(true);
+    expect(MockAudio.played).toEqual(["data:audio/wav;base64,Y2hpbWU="]);
+  });
+
+  it("swallows a rejected playback and refetches the sound on the next send", async () => {
+    const getCustomSound = vi.fn(async () => ({ dataUrl: "data:audio/wav;base64,Y2hpbWU=" }));
+
+    const { sendOsNotification } = await loadModuleForPlatform("web", {
+      desktopHost: {
+        notification: {
+          sendNotification: vi.fn(async () => ({ shown: true, playsCustomSound: true })),
+          getCustomSound,
+        },
+      },
+    });
+
+    MockAudio.playRejection = new Error("play blocked");
+    const firstSend = await sendOsNotification({ title: "Agent finished" });
+    MockAudio.playRejection = null;
+    const secondSend = await sendOsNotification({ title: "Agent finished" });
+
+    expect(firstSend).toBe(true);
+    expect(secondSend).toBe(true);
+    expect(getCustomSound).toHaveBeenCalledTimes(2);
+    expect(MockAudio.played).toEqual(["data:audio/wav;base64,Y2hpbWU="]);
   });
 });

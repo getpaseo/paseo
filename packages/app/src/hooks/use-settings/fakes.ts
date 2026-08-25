@@ -34,6 +34,7 @@ const DEFAULT_DESKTOP: DesktopSettings = {
   releaseChannel: "stable",
   notifications: {
     playSound: true,
+    customSoundPath: null,
   },
   daemon: {
     manageBuiltInDaemon: true,
