@@ -269,6 +269,7 @@ export default function contribute(plugin: PluginContext) {
     title: "Review",
     icon: "Scan",
     context: "agent",
+    locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
   return () => {};
@@ -283,6 +284,7 @@ export default function contribute(plugin: PluginContext) {
 | `title`     | Yes      | Workspace-tab title.                                          |
 | `icon`      | Yes      | Lucide icon name.                                             |
 | `context`   | Yes      | `workspace` or `agent`.                                       |
+| `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
 
 A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
@@ -377,15 +379,15 @@ Global items appear on the installation's selected host. Workspace items appear 
 
 Every callback receives:
 
-| Field                  | Context             | Meaning                                                       |
-| ---------------------- | ------------------- | ------------------------------------------------------------- |
-| `context`              | All                 | Matching discriminator.                                       |
-| `paseo`                | All                 | Selected host's existing `PaseoApi`.                          |
-| `rpc(contract, input)` | All                 | Typed call to this installation's daemon-side plugin handler. |
-| `openSurface(id)`      | All                 | Opens one of this plugin's registered global surfaces.        |
-| `workspace`            | Workspace and agent | Synchronous workspace snapshot.                               |
-| `agent`                | Agent               | Synchronous matching agent snapshot.                          |
-| `openPanel(id)`        | Workspace and agent | Opens a registered panel in the callback's current context.   |
+| Field                     | Context             | Meaning                                                                                                         |
+| ------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `context`                 | All                 | Matching discriminator.                                                                                         |
+| `paseo`                   | All                 | Selected host's existing `PaseoApi`.                                                                            |
+| `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
+| `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
+| `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
+| `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
+| `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 

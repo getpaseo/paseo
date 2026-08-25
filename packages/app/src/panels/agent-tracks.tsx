@@ -17,7 +17,7 @@ import { SubagentsTrack } from "@/subagents/track";
 import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openSupportingTab, toggleSupportingTab } from "@/workspace-tabs/side-panel";
+import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
 
 /**
  * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
@@ -29,7 +29,6 @@ import { openSupportingTab, toggleSupportingTab } from "@/workspace-tabs/side-pa
 export const AgentTracks = memo(function AgentTracks({
   serverId,
   workspaceId,
-  cwd,
   subagentRows,
   tasks,
   archiveFinishedStatus,
@@ -37,7 +36,6 @@ export const AgentTracks = memo(function AgentTracks({
 }: {
   serverId: string;
   workspaceId: string;
-  cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
@@ -47,9 +45,7 @@ export const AgentTracks = memo(function AgentTracks({
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const isCompact = useIsCompactFormFactor();
   const canSplit = supportsDesktopPaneSplits() && !isCompact;
-  const openInSidePanelByDefault = useSettings(
-    (settings) => settings.openSupportingTabsInSidePanel,
-  );
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
@@ -65,47 +61,49 @@ export const AgentTracks = memo(function AgentTracks({
         return;
       }
       if (canSplit && workspaceKey) {
-        openSupportingTab({
+        openPreferredWorkspaceTarget({
           isCompact,
           workspaceKey,
           target: { kind: "agent", agentId: subagentId },
-          openInSidePanelByDefault,
+          source: "subagents",
+          preferences: openInSidePane,
           parentTabId: tabId,
         });
         return;
       }
       navigateToAgent({ serverId, agentId: subagentId });
     },
-    [canSplit, isCompact, openInSidePanelByDefault, serverId, tabId, workspaceId, workspaceKey],
+    [canSplit, isCompact, openInSidePane, serverId, tabId, workspaceId, workspaceKey],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {
       if (canSplit && workspaceKey) {
-        openSupportingTab({
+        openPreferredWorkspaceTarget({
           isCompact,
           workspaceKey,
           target: { kind: "provider_subagent", parentAgentId, subagentId },
-          openInSidePanelByDefault,
+          source: "subagents",
+          preferences: openInSidePane,
           parentTabId: tabId,
         });
         return;
       }
       openTab({ kind: "provider_subagent", parentAgentId, subagentId });
     },
-    [canSplit, isCompact, openInSidePanelByDefault, openTab, tabId, workspaceKey],
+    [canSplit, isCompact, openInSidePane, openTab, tabId, workspaceKey],
   );
   const handleOpenChanges = useCallback(() => {
     if (!workspaceKey) {
       return;
     }
-    toggleSupportingTab({
+    openPreferredWorkspaceTarget({
       isCompact,
       workspaceKey,
-      checkout: { serverId, cwd, isGit: true },
       target: { kind: "working_diff" },
-      openInSidePanelByDefault,
+      source: "changesLinks",
+      preferences: openInSidePane,
     });
-  }, [cwd, isCompact, openInSidePanelByDefault, serverId, workspaceKey]);
+  }, [isCompact, openInSidePane, workspaceKey]);
 
   if (!hasWorkspaceDiffStat && !hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
     return null;

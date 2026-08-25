@@ -85,9 +85,29 @@ export interface AppSettings {
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
-  /** Route implicitly opened supporting tabs into the Side panel. Desktop only. */
-  openSupportingTabsInSidePanel: boolean;
+  /** Desktop-only preferences for implicit opens into the ordinary side pane. */
+  openInSidePane: OpenInSidePanePreferences;
 }
+
+export interface OpenInSidePanePreferences {
+  explorerFiles: boolean;
+  explorerChanges: boolean;
+  chatFiles: boolean;
+  diffFiles: boolean;
+  subagents: boolean;
+  pullRequests: boolean;
+  changesLinks: boolean;
+}
+
+export const DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES: OpenInSidePanePreferences = {
+  explorerFiles: false,
+  explorerChanges: false,
+  chatFiles: false,
+  diffFiles: false,
+  subagents: false,
+  pullRequests: false,
+  changesLinks: false,
+};
 
 export interface Settings extends AppSettings {
   manageBuiltInDaemon: boolean;
@@ -116,7 +136,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
-  openSupportingTabsInSidePanel: true,
+  openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -209,7 +229,19 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
-    openSupportingTabsInSidePanel: z.boolean().catch(true),
+    openInSidePane: z
+      .object({
+        explorerFiles: z.boolean().catch(false),
+        explorerChanges: z.boolean().catch(false),
+        chatFiles: z.boolean().catch(false),
+        diffFiles: z.boolean().catch(false),
+        subagents: z.boolean().catch(false),
+        pullRequests: z.boolean().catch(false),
+        changesLinks: z.boolean().catch(false),
+      })
+      .catch(DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES),
+    // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
+    openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
     manageBuiltInDaemon: z.boolean().optional().catch(undefined),
     releaseChannel: z.enum(["stable", "beta"]).optional().catch(undefined),

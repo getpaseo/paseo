@@ -11,7 +11,6 @@ import {
   GitCompareArrows,
   GitPullRequest,
   Globe,
-  Maximize2,
   Move,
   PanelRight,
   Pencil,
@@ -64,14 +63,13 @@ const WORKSPACE_COMMAND_CENTER_ICONS = {
   copy: getCommandCenterIcon(Copy),
   focusPane: getCommandCenterIcon(Focus),
   moveTab: getCommandCenterIcon(Move),
-  maximize: getCommandCenterIcon(Maximize2),
   focusMode: getCommandCenterIcon(ArrowDownToLine),
-  sidePanel: getCommandCenterIcon(PanelRight),
+  explorerSidebar: getCommandCenterIcon(PanelRight),
 };
 
 const OPEN_PANEL_LABEL_KEYS = {
   supporting: "shell.commandCenter.open",
-  "side-panel": "shell.commandCenter.openInSidePanel",
+  "side-pane": "shell.commandCenter.openInSidePane",
   "focused-pane": "shell.commandCenter.openInFocusedPane",
 } as const;
 
@@ -152,9 +150,8 @@ export function useWorkspaceCommandCenterActions(): void {
           moveTabUp: t("settings.shortcuts.help.moveTabUp"),
           moveTabDown: t("settings.shortcuts.help.moveTabDown"),
           closePane: t("settings.shortcuts.help.closePane"),
-          togglePaneMaximization: t("settings.shortcuts.help.toggleExplorerPaneMaximization"),
           toggleFocusMode: t("settings.shortcuts.help.toggleFocusMode"),
-          toggleSidePanel: t("workspace.tabs.sidePanel.toggle"),
+          toggleExplorerSidebar: t("workspace.tabs.explorerSidebar.toggle"),
         },
         icons: {
           ...WORKSPACE_COMMAND_CENTER_ICONS,

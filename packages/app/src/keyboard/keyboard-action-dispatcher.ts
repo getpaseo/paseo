@@ -1,7 +1,7 @@
 export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "workspace";
 
 export type WorkspacePanelTarget = "changes" | "files" | "pull-request";
-export type WorkspacePanelPlacement = "supporting" | "side-panel" | "focused-pane";
+export type WorkspacePanelPlacement = "supporting" | "side-pane" | "focused-pane";
 
 export type KeyboardActionId =
   | "agent.interrupt"
@@ -42,7 +42,6 @@ export type KeyboardActionId =
   | "workspace.pane.move-tab.up"
   | "workspace.pane.move-tab.down"
   | "workspace.pane.close"
-  | "workspace.explorer.maximize.toggle"
   | "workspace.focus.toggle"
   | "workspace.terminal.new"
   | "workspace.browser.new"
@@ -98,7 +97,6 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pane.move-tab.up"; scope: KeyboardActionScope }
   | { id: "workspace.pane.move-tab.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.close"; scope: KeyboardActionScope }
-  | { id: "workspace.explorer.maximize.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.focus.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
   | { id: "workspace.browser.new"; scope: KeyboardActionScope }
