@@ -3960,6 +3960,7 @@ function WorkspaceScreenContent({
     handleReorderTabsInPane,
   ]);
   const desktopContent = desktopSplitContent ?? content;
+  const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
 
   const workspacePanelContent = (
     <WorkspacePanelContent
@@ -3970,7 +3971,7 @@ function WorkspaceScreenContent({
 
   const workspaceCenterColumn = (
     <View style={styles.centerColumn}>
-      {desktopSplitContent ? null : renderWorkspaceScreenHeader()}
+      {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher

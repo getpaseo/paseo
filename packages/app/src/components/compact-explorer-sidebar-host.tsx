@@ -12,6 +12,7 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import { isWeb } from "@/constants/platform";
+import { DiffDocumentWorkspaceCacheProvider } from "@/git/diff-document/workspace-cache";
 import {
   resolveCompactExplorerSidebarHostModel,
   type CompactExplorerSidebarHostModel,
@@ -144,13 +145,15 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
         {children}
       </CompactExplorerOpenGestureSurface>
       {enabled && model ? (
-        <CompactExplorerSidebar
-          serverId={model.serverId}
-          workspaceId={model.workspaceId}
-          workspaceRoot={model.workspaceRoot}
-          isGit={model.isGit}
-          onOpenFile={handleOpenFile}
-        />
+        <DiffDocumentWorkspaceCacheProvider key={model.persistenceKey}>
+          <CompactExplorerSidebar
+            serverId={model.serverId}
+            workspaceId={model.workspaceId}
+            workspaceRoot={model.workspaceRoot}
+            isGit={model.isGit}
+            onOpenFile={handleOpenFile}
+          />
+        </DiffDocumentWorkspaceCacheProvider>
       ) : null}
     </>
   );

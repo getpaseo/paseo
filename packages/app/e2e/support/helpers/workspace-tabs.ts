@@ -95,11 +95,15 @@ async function openExplorerView(
   });
 }
 
-export async function openChangesPanel(page: Page): Promise<void> {
+export async function openChangesTreePanel(page: Page): Promise<void> {
   await openExplorerView(page, {
     tabTestId: "explorer-sidebar-tab-changes_tree",
     contentTestId: "changes-tree-panel",
   });
+}
+
+export async function openChangesPanel(page: Page): Promise<void> {
+  await openChangesTreePanel(page);
   const changedFile = page
     .locator('[data-testid^="diff-tree-file-"][data-testid$="-toggle"]')
     .filter({ visible: true })

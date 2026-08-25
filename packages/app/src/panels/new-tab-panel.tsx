@@ -200,7 +200,9 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
         return true;
       }
       if (action.id === "workspace.tab.target.files") {
-        itemsById.get("files")?.launch({ kind: "replace", tabId });
+        const filesItem = itemsById.get("files");
+        if (!filesItem) return false;
+        filesItem.launch({ kind: "replace", tabId });
         return true;
       }
       return false;

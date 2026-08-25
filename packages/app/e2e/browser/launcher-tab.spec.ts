@@ -11,6 +11,7 @@ import {
   countTabsOfKind,
   waitForTabBar,
   pressNewTabShortcut,
+  pressDirectNewTabShortcut,
   getTabTestIds,
   waitForTabWithTitle,
   measureTileTransition,
@@ -178,18 +179,22 @@ test.describe("Tab creation", () => {
     const agent = panel.getByRole("button", { name: /^Agent/ });
     const terminal = panel.getByRole("button", { name: /^Terminal/ });
     const changes = panel.getByRole("button", { name: /Changes/ });
-    const files = panel.getByRole("button", { name: /Files/ });
     const shortcutPrefix = process.platform === "darwin" ? /⇧⌘/ : /Ctrl.*Shift/;
     await expect(agent).toContainText(new RegExp(`${shortcutPrefix.source}.*A`));
     await expect(terminal).toContainText(new RegExp(`${shortcutPrefix.source}.*T`));
     await expect(changes).toContainText(new RegExp(`${shortcutPrefix.source}.*G`));
-    await expect(files).toContainText(new RegExp(`${shortcutPrefix.source}.*E`));
     await expect(agent).toBeFocused();
 
     await page.keyboard.press("ArrowDown");
     await expect(terminal).toBeFocused();
     await page.keyboard.press("ArrowUp");
     await expect(agent).toBeFocused();
+
+    await pressDirectNewTabShortcut(page, "e");
+    await expect(page.getByTestId("workspace-explorer-sidebar")).toBeVisible();
+    await expect(
+      page.getByTestId("file-explorer-tree-scroll").filter({ visible: true }),
+    ).toBeVisible();
 
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await panel.click({ position: { x: 20, y: 20 } });
