@@ -190,6 +190,49 @@ async function openTabIds(broker: BrowserToolsBroker): Promise<string[]> {
   return payload.result.tabs.map((tab) => tab.browserId);
 }
 
+describe("headless browser host tab announcements", () => {
+  test("tells viewers to refresh when the guest navigates itself", async () => {
+    const connection = browserWithTwoPages();
+    const { broker, sink } = await startHost({
+      endpoint: "http://localhost:9222",
+      endpointConnection: connection,
+    });
+    await openTabIds(broker);
+    // Chrome withholds this event unless discovery was turned on at attach.
+    expect(connection.commandsFor("Target.setDiscoverTargets")).toHaveLength(1);
+    const before = sink.announcements;
+
+    connection.emit({
+      method: "Target.targetInfoChanged",
+      params: { targetInfo: { targetId: "target-a", type: "page", url: "https://a.test/next" } },
+      sessionId: undefined,
+    });
+
+    // Without this the tab strip keeps the title the page had when it opened.
+    expect(sink.announcements).toBe(before + 1);
+  });
+
+  test("ignores a target the mirror never adopted", async () => {
+    const connection = browserWithTwoPages();
+    const { broker, sink } = await startHost({
+      endpoint: "http://localhost:9222",
+      endpointConnection: connection,
+    });
+    await openTabIds(broker);
+    const before = sink.announcements;
+
+    connection.emit({
+      method: "Target.targetInfoChanged",
+      params: {
+        targetInfo: { targetId: "worker", type: "service_worker", url: "https://a.test/sw.js" },
+      },
+      sessionId: undefined,
+    });
+
+    expect(sink.announcements).toBe(before);
+  });
+});
+
 describe("headless browser host registration", () => {
   test("registers no host and never dials when no endpoint is configured", async () => {
     const { broker, host, connectCalls } = await startHost({ endpoint: undefined });

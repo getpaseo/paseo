@@ -250,6 +250,11 @@ class HeadlessBrowserSession {
       supportedCommands: HEADLESS_BROWSER_HOST_COMMANDS,
       sendBrowserAutomationRequest: (request) => this.handleRequest(request),
     });
+    // Chrome withholds Target.targetInfoChanged until discovery is on, and that
+    // event is the only notice a viewer gets that the guest navigated itself.
+    void this.send({ method: "Target.setDiscoverTargets", params: { discover: true } }).catch(
+      () => {},
+    );
   }
 
   public dispose(): void {
@@ -655,7 +660,28 @@ class HeadlessBrowserSession {
     this.emitFrame(screencast.slot, { deviceWidth, deviceHeight }, data);
   }
 
+  private handleTargetInfoChanged(event: CdpEvent): void {
+    const info = isRecord(event.params.targetInfo) ? event.params.targetInfo : null;
+    const targetId = info ? readString(info.targetId) : null;
+    if (targetId === null) {
+      return;
+    }
+    for (const tab of this.tabsByBrowserId.values()) {
+      if (tab.targetId === targetId) {
+        this.sink.announceTabsChanged();
+        return;
+      }
+    }
+  }
+
   private handleCdpEvent(event: CdpEvent): void {
+    // The guest navigates on its own too - a link, a redirect, a script - so the
+    // tab list is refreshed from Chrome's own notice rather than only after a
+    // command this host served, which would leave viewers on a stale title.
+    if (event.method === "Target.targetInfoChanged") {
+      this.handleTargetInfoChanged(event);
+      return;
+    }
     if (event.method !== "Page.screencastFrame" || event.sessionId === undefined) {
       return;
     }
